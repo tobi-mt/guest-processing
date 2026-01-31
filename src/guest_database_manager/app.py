@@ -250,7 +250,7 @@ def upload_file_section(db: GuestDatabase) -> None:
 
                     if df is not None:
                         st.subheader("📋 Data Preview")
-                        st.dataframe(df.head(10), use_container_width=True)
+                        st.dataframe(df.head(10), width='stretch')
                         st.info(f"Total rows: {len(df)}")
                     else:
                         st.error("Unable to read the file. Please check the encoding.")
@@ -673,13 +673,13 @@ def display_analytics(db: GuestDatabase) -> None:
         # Processing status pie chart
         chart = create_stats_chart(stats)
         if chart:
-            st.plotly_chart(chart, use_container_width=True)
+            st.plotly_chart(chart, width='stretch')
 
     with col2:
         # Email actions pie chart
         email_chart = create_email_actions_chart(email_stats)
         if email_chart:
-            st.plotly_chart(email_chart, use_container_width=True)
+            st.plotly_chart(email_chart, width='stretch')
         else:
             st.info("📧 No email actions yet. Start accepting, rejecting, or skipping guests to see the breakdown.")
 
@@ -710,7 +710,7 @@ def display_analytics(db: GuestDatabase) -> None:
                             title="Guests Added Over Time",
                             labels={"date_only": "Date", "count": "Number of Guests"}
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                     else:
                         st.info("📅 Need more data points to show timeline")
                 else:
@@ -738,7 +738,7 @@ def display_analytics(db: GuestDatabase) -> None:
                 ]
             }
             summary_df = pd.DataFrame(summary_data)
-            st.dataframe(summary_df, use_container_width=True)
+            st.dataframe(summary_df, width='stretch')
         else:
             st.info("📊 No email actions to summarize yet")
 
@@ -762,7 +762,7 @@ def display_analytics(db: GuestDatabase) -> None:
                     labels={"x": "Count", "y": "Profession"},
                 )
                 fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             else:
                 st.info("No profession data available.")
 
@@ -775,7 +775,7 @@ def display_analytics(db: GuestDatabase) -> None:
             if not source_files.empty:
                 fig = px.pie(values=source_files.values, names=source_files.index, title="Guests by Source File")
                 fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             else:
                 st.info("No source file data available.")
 

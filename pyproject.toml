@@ -7,19 +7,15 @@ name = "guest-database-manager"
 dynamic = ["version"]
 description = "A comprehensive web application for managing guest data from CSV/Excel files with database persistence and visualization."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 license = "MIT"
 keywords = ["database", "csv", "excel", "guest-management", "streamlit"]
 authors = [
-  { name = "Guest Database Manager", email = "admin@example.com" },
+  { name = "Guest Database Manager", email = "team@mirrortalkpodcast.com" },
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
