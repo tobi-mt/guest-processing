@@ -1,0 +1,12 @@
+#!/bin/bash
+# Guest Database Manager macOS App Bundle Launcher
+
+# Get the directory containing the original project (3 levels up from this script)
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$APP_DIR/../../../" && pwd)"
+
+# Change to project directory
+cd "$PROJECT_DIR"
+
+# Execute the main command file
+exec "$PROJECT_DIR/Guest Database Manager.command"

@@ -1,0 +1,164 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "guest-database-manager"
+dynamic = ["version"]
+description = "A comprehensive web application for managing guest data from CSV/Excel files with database persistence and visualization."
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = ["database", "csv", "excel", "guest-management", "streamlit"]
+authors = [
+  { name = "Guest Database Manager", email = "admin@example.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "streamlit>=1.28.0",
+  "pandas>=2.0.0",
+  "plotly>=5.17.0",
+  "openpyxl>=3.1.0",
+  "xlrd>=2.0.1",
+  "pytest>=7.0.0",
+  "cryptography>=41.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-username/guest-database-manager"
+Documentation = "https://github.com/your-username/guest-database-manager#readme"
+Repository = "https://github.com/your-username/guest-database-manager"
+Issues = "https://github.com/your-username/guest-database-manager/issues"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+  "black>=23.0.0",
+  "ruff>=0.1.0",
+  "mypy>=1.0.0",
+  "build>=0.10.0",
+]
+
+[project.scripts]
+guest-manager = "guest_database_manager.cli:main"
+
+[tool.hatch.version]
+path = "src/guest_database_manager/__about__.py"
+
+# Configure environments to be created in project workspace
+[tool.hatch.envs.default]
+type = "virtual"
+path = ".hatch/default"
+dependencies = [
+  "coverage[toml]>=6.5",
+  "pytest",
+]
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "coverage run -m pytest {args:tests}"
+cov-report = [
+  "- coverage combine",
+  "coverage report",
+]
+cov = [
+  "test-cov",
+  "cov-report",
+]
+
+[[tool.hatch.envs.all.matrix]]
+python = ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+[tool.hatch.envs.lint]
+type = "virtual"
+path = ".hatch/lint"
+detached = true
+dependencies = [
+  "black>=23.1.0",
+  "mypy>=1.0.0",
+  "ruff>=0.0.243",
+]
+[tool.hatch.envs.lint.scripts]
+typing = "mypy --install-types --non-interactive {args:src/guest_database_manager tests}"
+style = [
+  "ruff check {args:.}",
+  "black --check --diff {args:.}",
+]
+fmt = [
+  "black {args:.}",
+  "ruff check --fix {args:.}",
+  "style",
+]
+all = [
+  "style",
+  "typing",
+]
+
+[tool.black]
+target-version = ["py38"]
+line-length = 120
+skip-string-normalization = true
+
+[tool.ruff]
+target-version = "py38"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "B",    # flake8-bugbear
+  "C4",   # flake8-comprehensions
+  "UP",   # pyupgrade
+]
+ignore = [
+  "E501",  # Line too long (let Black handle this)
+  "B007",  # Loop control variable not used
+  "T201",  # print statements are OK in CLI tools
+  "S603",  # subprocess calls are OK in CLI tools
+]
+unfixable = [
+  # Don't touch unused imports
+  "F401",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["guest_database_manager"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can use magic values, assertions, and relative imports
+"tests/**/*" = ["PLR2004", "S101", "TID252"]
+
+[tool.coverage.run]
+source_pkgs = ["guest_database_manager", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/guest_database_manager/__about__.py",
+]
+
+[tool.coverage.paths]
+guest_database_manager = ["src/guest_database_manager", "*/guest-database-manager/src/guest_database_manager"]
+tests = ["tests", "*/guest-database-manager/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
