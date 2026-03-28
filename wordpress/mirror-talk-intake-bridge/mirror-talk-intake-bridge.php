@@ -11,6 +11,24 @@ if (!defined('ABSPATH')) {
 }
 
 add_action('wpcf7_mail_sent', 'mirror_talk_send_guest_intake_to_api');
+add_filter('wpcf7_validate_text*', 'mirror_talk_validate_human_check', 20, 2);
+add_filter('wpcf7_validate_text', 'mirror_talk_validate_human_check', 20, 2);
+
+function mirror_talk_validate_human_check($result, $tag) {
+    $tag = new WPCF7_FormTag($tag);
+
+    if ($tag->name !== 'human_check') {
+        return $result;
+    }
+
+    $value = isset($_POST['human_check']) ? trim(wp_unslash($_POST['human_check'])) : '';
+
+    if (strtoupper($value) !== 'MIRROR') {
+        $result->invalidate($tag, 'Please type MIRROR exactly to confirm you are a real person.');
+    }
+
+    return $result;
+}
 
 function mirror_talk_send_guest_intake_to_api($contact_form) {
     if (!$contact_form instanceof WPCF7_ContactForm) {

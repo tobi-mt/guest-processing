@@ -5,7 +5,9 @@ from typing import Dict, List, Any, Optional
 
 try:
     from .constants import COLUMN_MAPPINGS
-except ImportError:
+except ImportError as exc:
+    if "attempted relative import" not in str(exc):
+        raise
     from constants import COLUMN_MAPPINGS
 
 

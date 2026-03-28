@@ -1,6 +1,14 @@
 # WordPress Integration Guide
 
-This repo now includes a WordPress plugin scaffold for rendering the guest intake form directly inside `www.mirrortalkpodcast.com`.
+This file is retained for reference only.
+
+The recommended live flow is now:
+
+- host the intake page on Railway
+- link to the hosted intake page from WordPress
+- submit directly into the backend/database
+
+The earlier WordPress-native plugin approach is no longer the recommended launch path.
 
 Plugin location:
 

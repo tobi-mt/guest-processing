@@ -7,7 +7,9 @@ from typing import Optional
 
 try:
     from .constants import ENCODING_OPTIONS
-except ImportError:
+except ImportError as exc:
+    if "attempted relative import" not in str(exc):
+        raise
     from constants import ENCODING_OPTIONS
 
 logger = logging.getLogger(__name__)

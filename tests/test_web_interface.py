@@ -13,6 +13,7 @@ from guest_database_manager.web_interface import (
     GuestWebService,
     WebInterfaceError,
     build_guest_payload,
+    validate_intake_payload,
 )
 
 
@@ -69,9 +70,44 @@ def test_web_service_can_create_public_intake_submission(temp_db):
         {
             "full_name": "Amara Stone",
             "email": "amara@example.com",
-            "passionate_topics": "Healing, resilience, and faith",
+            "background": "I am a speaker and advocate whose work focuses on healing, resilience, and community storytelling.",
+            "profession": "I work as a coach and facilitator after years of leading programs centered on recovery and growth.",
+            "passionate_topics": "I love discussing healing, resilience, faith, emotional honesty, and what it takes to rebuild after hard seasons.",
+            "message": "I want listeners to remember that healing is possible, honesty is powerful, and small consistent steps can change a life.",
+            "experience": "I have spoken on podcasts, live panels, and community events where I share my story and practical lessons from it.",
+            "additional_info": "I care deeply about meaningful conversations that leave people encouraged, grounded, and more hopeful than before.",
         }
     )
 
     assert created_guest["original_file_name"] == INTAKE_SOURCE_NAME
     assert created_guest["email_status"] is None
+
+
+def test_validate_intake_payload_rejects_spam_keywords():
+    """Spammy submissions should be rejected before insertion."""
+    with pytest.raises(WebInterfaceError):
+        validate_intake_payload(
+            {
+                "background": "I offer premium SEO backlink services for your website.",
+                "profession": "SEO seller with many services available right now.",
+                "passionate_topics": "Marketing marketing marketing marketing marketing marketing marketing marketing",
+                "message": "Buy now buy now buy now buy now buy now buy now buy now buy now",
+                "experience": "Lots of guest posts across many websites with backlinks included always.",
+                "additional_info": "Visit http://spam.example and http://spam2.example today.",
+            }
+        )
+
+
+def test_validate_intake_payload_rejects_low_effort_answers():
+    """Very short long-form answers should be rejected."""
+    with pytest.raises(WebInterfaceError):
+        validate_intake_payload(
+            {
+                "background": "Short answer only",
+                "profession": "Another short answer",
+                "passionate_topics": "Too short here",
+                "message": "Still too short",
+                "experience": "Barely enough",
+                "additional_info": "Not detailed",
+            }
+        )

@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import webbrowser
+from base64 import b64decode
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +27,8 @@ ALLOWED_ORIGINS = {
     "http://127.0.0.1:8501",
 }
 API_TOKEN_ENV_VAR = "MIRROR_TALK_INTAKE_API_TOKEN"
+DASHBOARD_USERNAME_ENV_VAR = "MIRROR_TALK_DASHBOARD_USERNAME"
+DASHBOARD_PASSWORD_ENV_VAR = "MIRROR_TALK_DASHBOARD_PASSWORD"
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -44,10 +48,38 @@ FORM_FIELDS = {
     "social_handles",
     "has_social_media",
 }
+LONG_TEXT_FIELDS = [
+    "background",
+    "profession",
+    "passionate_topics",
+    "message",
+    "experience",
+    "additional_info",
+]
+SPAM_KEYWORDS = {
+    "seo",
+    "casino",
+    "crypto",
+    "backlink",
+    "guest post service",
+    "viagra",
+    "betting",
+    "loan",
+}
 
 
 class WebInterfaceError(Exception):
     """Raised when a web request payload is invalid."""
+
+
+def _word_count(text: str) -> int:
+    """Count words in a text block."""
+    return len(re.findall(r"\b\w+\b", text))
+
+
+def _link_count(text: str) -> int:
+    """Count link-like fragments in a text block."""
+    return len(re.findall(r"https?://|www\.", text.lower()))
 
 
 def _normalize_text(value: Any) -> str:
@@ -55,6 +87,25 @@ def _normalize_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def validate_intake_payload(payload: Dict[str, str]) -> None:
+    """Reject obviously spammy or low-effort intake submissions."""
+    combined_text = " ".join(str(payload.get(field, "")) for field in payload).lower()
+
+    if any(keyword in combined_text for keyword in SPAM_KEYWORDS):
+        raise WebInterfaceError("Your submission was flagged as spam.")
+
+    if _link_count(combined_text) > 5:
+        raise WebInterfaceError("Too many links in submission.")
+
+    for field in LONG_TEXT_FIELDS:
+        value = str(payload.get(field, "")).strip()
+        if not value:
+            continue
+        if _word_count(value) < 8:
+            field_label = field.replace("_", " ")
+            raise WebInterfaceError(f"Please provide a more complete answer for: {field_label}")
 
 
 def build_guest_payload(payload: Dict[str, Any], source_name: str = FORM_SOURCE_NAME) -> Dict[str, Any]:
@@ -71,6 +122,9 @@ def build_guest_payload(payload: Dict[str, Any], source_name: str = FORM_SOURCE_
     email = guest_data["email"]
     if email and "@" not in email:
         raise WebInterfaceError("Email address must contain '@'.")
+
+    if source_name == INTAKE_SOURCE_NAME:
+        validate_intake_payload(guest_data)
 
     return guest_data
 
@@ -149,7 +203,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.NO_CONTENT)
         self._send_cors_headers(origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Api-Token")
         self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
 
@@ -159,6 +213,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             return
 
         if self.path in {"/dashboard", "/index.html"}:
+            if not self._is_authorized_dashboard_request():
+                self._send_basic_auth_challenge()
+                return
             self._serve_static("index.html")
             return
 
@@ -168,6 +225,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/guests":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
             self._send_json(HTTPStatus.OK, self.service.list_guests())
             return
 
@@ -175,6 +235,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/api/guests":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
             payload = self._read_json_payload()
             try:
                 guest = self.service.create_guest(payload)
@@ -207,6 +270,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             return
 
         if self.path.startswith("/api/guests/") and self.path.endswith("/status"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
             guest_id = self._extract_guest_id(self.path, suffix="/status")
             if guest_id is None:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
@@ -230,6 +296,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802
         if self.path.startswith("/api/guests/"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
             guest_id = self._extract_guest_id(self.path)
             if guest_id is None:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
@@ -285,6 +354,33 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
         request_token = self.headers.get("X-Api-Token", "").strip()
         return bool(request_token) and request_token == configured_token
+
+    def _is_authorized_dashboard_request(self) -> bool:
+        configured_username = os.environ.get(DASHBOARD_USERNAME_ENV_VAR, "").strip()
+        configured_password = os.environ.get(DASHBOARD_PASSWORD_ENV_VAR, "").strip()
+
+        if not configured_username and not configured_password:
+            return True
+
+        auth_header = self.headers.get("Authorization", "")
+        if not auth_header.startswith("Basic "):
+            return False
+
+        try:
+            encoded_credentials = auth_header.split(" ", 1)[1]
+            decoded_credentials = b64decode(encoded_credentials).decode("utf-8")
+            username, password = decoded_credentials.split(":", 1)
+        except Exception:
+            return False
+
+        return username == configured_username and password == configured_password
+
+    def _send_basic_auth_challenge(self) -> None:
+        self.send_response(HTTPStatus.UNAUTHORIZED)
+        self.send_header("WWW-Authenticate", 'Basic realm="Mirror Talk Dashboard"')
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Authentication required")
 
     @staticmethod
     def _extract_guest_id(path: str, suffix: str = "") -> Optional[int]:

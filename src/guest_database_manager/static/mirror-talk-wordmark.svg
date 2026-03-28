@@ -1,0 +1,7 @@
+<svg width="280" height="72" viewBox="0 0 280 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="1" y="1" width="278" height="70" rx="22" fill="#FFF8F0" stroke="#D7C7B0" stroke-width="2"/>
+  <circle cx="39" cy="36" r="20" fill="#145A4A" opacity="0.12"/>
+  <path d="M31 43V29h2.8l5.2 8.2 5.2-8.2H47V43h-3v-9.1l-4.3 6.7h-1.3L34.1 34V43H31Z" fill="#145A4A"/>
+  <text x="66" y="31" fill="#2D241A" font-family="Georgia, 'Times New Roman', serif" font-size="20" font-weight="700">Mirror Talk</text>
+  <text x="66" y="49" fill="#705B45" font-family="'Avenir Next', 'Segoe UI', sans-serif" font-size="11" letter-spacing="1.8">PODCAST</text>
+</svg>

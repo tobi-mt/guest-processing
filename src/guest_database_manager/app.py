@@ -15,7 +15,9 @@ try:
     from guest_database_manager.constants import DEFAULT_DB_PATH
     from guest_database_manager.database import GuestDatabase
     from guest_database_manager.email_manager import EmailManager, get_common_smtp_configs
-except ImportError:
+except ImportError as exc:
+    if "No module named 'guest_database_manager'" not in str(exc) and "attempted relative import" not in str(exc):
+        raise
     # Support direct `streamlit run src/guest_database_manager/app.py` execution.
     from constants import DEFAULT_DB_PATH
     from database import GuestDatabase

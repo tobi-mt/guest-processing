@@ -13,7 +13,9 @@ import streamlit as st
 
 try:
     from .config_manager import ConfigManager
-except ImportError:
+except ImportError as exc:
+    if "attempted relative import" not in str(exc):
+        raise
     from config_manager import ConfigManager
 
 

@@ -10,10 +10,33 @@
     <div class="intake-shell">
       <aside class="intake-sidebar">
         <div>
+          <div class="brand-lockup">
+            <img class="brand-logo" src="/static/mirror-talk-logo.png" alt="Mirror Talk Podcast logo" />
+            <div class="brand-copy">
+              <p class="brand-name">Mirror Talk</p>
+              <p class="brand-subtitle">Podcast</p>
+            </div>
+          </div>
           <p class="eyebrow">Mirror Talk Podcast</p>
           <h1>Share the story only you can tell.</h1>
           <p class="sidebar-copy">
-            This guided application helps us understand your voice, values, and the conversation you want to bring to our listeners.
+            Mirror Talk is built around soulful, human conversations. This short application helps us understand your lived experience, your perspective, and the kind of message you want to bring to our listeners.
+          </p>
+        </div>
+
+        <div class="sidebar-panel">
+          <h2 class="sidebar-panel-title">What We Look For</h2>
+          <ul class="sidebar-bullets">
+            <li>Thoughtful, personal, honest answers</li>
+            <li>A clear story or perspective worth sharing</li>
+            <li>Topics that create depth, reflection, and hope</li>
+          </ul>
+        </div>
+
+        <div class="sidebar-panel">
+          <h2 class="sidebar-panel-title">What Happens Next</h2>
+          <p class="sidebar-panel-copy">
+            Every application is reviewed carefully. If your story feels like a strong fit for an upcoming episode, our team will reach out by email.
           </p>
         </div>
 
@@ -27,16 +50,25 @@
       <main class="intake-panel">
         <div class="panel-header">
           <div>
+            <div class="brand-lockup compact">
+              <img class="brand-logo" src="/static/mirror-talk-logo.png" alt="Mirror Talk Podcast logo" />
+              <div class="brand-copy">
+                <p class="brand-name">Mirror Talk</p>
+                <p class="brand-subtitle">Podcast</p>
+              </div>
+            </div>
             <p class="eyebrow">Guest Intake Questionnaire</p>
-            <h2>Podcast Application</h2>
+            <h2>Apply To Join Mirror Talk</h2>
+            <p class="panel-intro">
+              Please answer with care and detail. Generic, promotional, or spam-like applications may be declined automatically.
+            </p>
           </div>
-          <a href="/dashboard" class="admin-link">Team Dashboard</a>
         </div>
 
         <form id="intake-form" class="intake-form">
           <section class="form-step active" data-step="1">
             <h3>Let’s start with the essentials.</h3>
-            <p class="step-copy">Tell us who you are and how our team can reach you.</p>
+            <p class="step-copy">Tell us who you are, where we can find your work, and how to contact you if your application is shortlisted.</p>
 
             <label>
               Full Name
@@ -52,29 +84,13 @@
             </label>
             <label>
               Social Media Handles
-              <input name="social_handles" type="text" placeholder="@name or platform links" />
-            </label>
-            <label>
-              Do you have a website?
-              <select name="website_available">
-                <option value="">Not set</option>
-                <option value="Yes">Yes</option>
-                <option value="No">No</option>
-              </select>
-            </label>
-            <label>
-              Do you have social media handles?
-              <select name="social_media_available">
-                <option value="">Prefer not to say</option>
-                <option value="Yes">Yes</option>
-                <option value="No">No</option>
-              </select>
+              <textarea name="social_handles" rows="4" placeholder="Instagram: @name&#10;LinkedIn: linkedin.com/in/name&#10;YouTube: youtube.com/@name" required></textarea>
             </label>
           </section>
 
           <section class="form-step" data-step="2">
             <h3>Tell us about your journey.</h3>
-            <p class="step-copy">We want a concise sense of your story and the perspective you would bring to the show.</p>
+            <p class="step-copy">We want a clear sense of your story, your professional path, and the lived perspective you would bring to a meaningful conversation.</p>
 
             <label class="full-width">
               A brief overview of your personal and professional background
@@ -92,7 +108,7 @@
 
           <section class="form-step" data-step="3">
             <h3>Help us understand the fit.</h3>
-            <p class="step-copy">These final answers help us decide whether your application is a strong match for an episode.</p>
+            <p class="step-copy">These final answers help us understand the value your conversation could bring to the Mirror Talk audience.</p>
 
             <label class="full-width">
               What message or takeaway would you like to leave with our listeners?
@@ -119,7 +135,7 @@
           <div class="step-footer">
             <button type="button" id="back-button" class="secondary-button">Back</button>
             <div class="step-footer-right">
-              <span id="step-counter">Step 1 of 4</span>
+              <span id="step-counter">Step 1 of 3</span>
               <button type="button" id="next-button" class="primary-button">Continue</button>
               <button type="submit" id="submit-button" class="primary-button hidden">Submit Application</button>
             </div>

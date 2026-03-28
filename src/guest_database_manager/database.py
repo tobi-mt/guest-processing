@@ -9,7 +9,9 @@ try:
     from .data_mapper import DataMapper
     from .file_reader import FileReader
     from .schema_manager import SchemaManager
-except ImportError:
+except ImportError as exc:
+    if "attempted relative import" not in str(exc):
+        raise
     from constants import DEFAULT_DB_PATH
     from data_mapper import DataMapper
     from file_reader import FileReader
