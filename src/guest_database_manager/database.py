@@ -1,9 +1,8 @@
-"""Refactored Guest database management module - Simplified and optimized."""
-
-import sqlite3
 import logging
+import sqlite3
+from json import dumps
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from .constants import DEFAULT_DB_PATH
@@ -40,8 +39,8 @@ class GuestDatabase:
                     background, profession, motivation, life_experiences, core_values, 
                     faith_practice, beliefs_align, favorite_quote, passionate_topics, message_takeaway,
                     podcast_experience, additional_info, following_us, is_processed,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    original_file_name, original_data, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """, (
                 guest_data.get('full_name'), guest_data.get('full_name'), guest_data.get('email'), 
                 guest_data.get('website'), guest_data.get('social_handles'),
@@ -49,7 +48,8 @@ class GuestDatabase:
                 guest_data.get('life_experiences'), guest_data.get('core_values'), guest_data.get('faith'), 
                 guest_data.get('alignment'), guest_data.get('favorite_quote'), guest_data.get('passionate_topics'), 
                 guest_data.get('message'), guest_data.get('experience'), guest_data.get('additional_info'), 
-                guest_data.get('has_social_media'), guest_data.get('is_processed', False)
+                guest_data.get('has_social_media'), guest_data.get('is_processed', False),
+                guest_data.get('original_file_name'), guest_data.get('original_data')
             ))
             conn.commit()
             return cursor.lastrowid
@@ -63,7 +63,8 @@ class GuestDatabase:
                     background = ?, profession = ?, motivation = ?, life_experiences = ?, 
                     core_values = ?, faith_practice = ?, beliefs_align = ?, favorite_quote = ?,
                     passionate_topics = ?, message_takeaway = ?, podcast_experience = ?, 
-                    additional_info = ?, following_us = ?, is_processed = ?,
+                    additional_info = ?, following_us = ?, is_processed = ?, email_status = ?,
+                    email_sent_at = ?, skip_reason = ?, original_file_name = ?, original_data = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (
@@ -73,7 +74,9 @@ class GuestDatabase:
                 guest_data.get('core_values'), guest_data.get('faith'), guest_data.get('alignment'), 
                 guest_data.get('favorite_quote'), guest_data.get('passionate_topics'), guest_data.get('message'), 
                 guest_data.get('experience'), guest_data.get('additional_info'), guest_data.get('has_social_media'), 
-                guest_data.get('is_processed'), guest_id
+                guest_data.get('is_processed'), guest_data.get('email_status'),
+                guest_data.get('email_sent_at'), guest_data.get('skip_reason'),
+                guest_data.get('original_file_name'), guest_data.get('original_data'), guest_id
             ))
             conn.commit()
     
@@ -151,6 +154,32 @@ class GuestDatabase:
                    email_status = 'rejected',
                    email_sent_at = CURRENT_TIMESTAMP,
                    updated_at = CURRENT_TIMESTAMP 
+                WHERE id = ?
+            """, (guest_id,))
+            conn.commit()
+
+    def accept_guest_without_email(self, guest_id: int) -> None:
+        """Mark guest as accepted without sending an email."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.execute("""
+                UPDATE guests SET
+                   is_processed = TRUE,
+                   email_status = 'accepted',
+                   email_sent_at = NULL,
+                   updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (guest_id,))
+            conn.commit()
+
+    def reject_guest_without_email(self, guest_id: int) -> None:
+        """Mark guest as rejected without sending an email."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.execute("""
+                UPDATE guests SET
+                   is_processed = TRUE,
+                   email_status = 'rejected',
+                   email_sent_at = NULL,
+                   updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (guest_id,))
             conn.commit()
@@ -234,6 +263,8 @@ class GuestDatabase:
         for index, row in df.iterrows():
             try:
                 guest_data = self.mapper.clean_guest_data(row)
+                guest_data['original_file_name'] = Path(file_path).name
+                guest_data['original_data'] = dumps(row.fillna("").to_dict(), ensure_ascii=False)
                 
                 # Validate data
                 is_valid, error_msg = self.mapper.validate_guest_data(guest_data)

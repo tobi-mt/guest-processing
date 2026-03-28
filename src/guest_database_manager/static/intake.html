@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mirror Talk Podcast Guest Intake</title>
+    <link rel="stylesheet" href="/static/intake.css" />
+  </head>
+  <body>
+    <div class="intake-shell">
+      <aside class="intake-sidebar">
+        <div>
+          <p class="eyebrow">Mirror Talk Podcast</p>
+          <h1>Share the story only you can tell.</h1>
+          <p class="sidebar-copy">
+            This guided application helps us understand your voice, values, and the conversation you want to bring to our listeners.
+          </p>
+        </div>
+
+        <ol class="step-list">
+          <li class="step-item active" data-step-indicator="1">Contact</li>
+          <li class="step-item" data-step-indicator="2">Story</li>
+          <li class="step-item" data-step-indicator="3">Fit</li>
+        </ol>
+      </aside>
+
+      <main class="intake-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Guest Intake Questionnaire</p>
+            <h2>Podcast Application</h2>
+          </div>
+          <a href="/dashboard" class="admin-link">Team Dashboard</a>
+        </div>
+
+        <form id="intake-form" class="intake-form">
+          <section class="form-step active" data-step="1">
+            <h3>Let’s start with the essentials.</h3>
+            <p class="step-copy">Tell us who you are and how our team can reach you.</p>
+
+            <label>
+              Full Name
+              <input name="full_name" type="text" required />
+            </label>
+            <label>
+              Email Address
+              <input name="email" type="email" required />
+            </label>
+            <label>
+              Website
+              <input name="website" type="url" />
+            </label>
+            <label>
+              Social Media Handles
+              <input name="social_handles" type="text" placeholder="@name or platform links" />
+            </label>
+            <label>
+              Do you have a website?
+              <select name="website_available">
+                <option value="">Not set</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+            </label>
+            <label>
+              Do you have social media handles?
+              <select name="social_media_available">
+                <option value="">Prefer not to say</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="form-step" data-step="2">
+            <h3>Tell us about your journey.</h3>
+            <p class="step-copy">We want a concise sense of your story and the perspective you would bring to the show.</p>
+
+            <label class="full-width">
+              A brief overview of your personal and professional background
+              <textarea name="background" rows="5" required></textarea>
+            </label>
+            <label class="full-width">
+              What is your current profession, and what led you to this career path?
+              <textarea name="profession" rows="4" required></textarea>
+            </label>
+            <label class="full-width">
+              What topics or themes are you most passionate about discussing?
+              <textarea name="passionate_topics" rows="4" required></textarea>
+            </label>
+          </section>
+
+          <section class="form-step" data-step="3">
+            <h3>Help us understand the fit.</h3>
+            <p class="step-copy">These final answers help us decide whether your application is a strong match for an episode.</p>
+
+            <label class="full-width">
+              What message or takeaway would you like to leave with our listeners?
+              <textarea name="message" rows="4" required></textarea>
+            </label>
+            <label class="full-width">
+              Have you been a guest on podcasts or spoken at events before?
+              <textarea name="experience" rows="3"></textarea>
+            </label>
+            <label class="full-width">
+              Is there anything else you'd like us to know about you?
+              <textarea name="additional_info" rows="4"></textarea>
+            </label>
+            <label class="full-width">
+              Are you following us on podcast platforms and social media?
+              <select name="has_social_media">
+                <option value="">Prefer not to say</option>
+                <option value="Yes">Yes</option>
+                <option value="No">Not yet</option>
+              </select>
+            </label>
+          </section>
+
+          <div class="step-footer">
+            <button type="button" id="back-button" class="secondary-button">Back</button>
+            <div class="step-footer-right">
+              <span id="step-counter">Step 1 of 4</span>
+              <button type="button" id="next-button" class="primary-button">Continue</button>
+              <button type="submit" id="submit-button" class="primary-button hidden">Submit Application</button>
+            </div>
+          </div>
+        </form>
+
+        <div id="intake-message" class="intake-message" aria-live="polite"></div>
+      </main>
+    </div>
+
+    <script src="/static/intake.js" defer></script>
+  </body>
+</html>

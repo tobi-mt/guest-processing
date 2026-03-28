@@ -4,7 +4,6 @@
 """Streamlit application for Guest Database Manager."""
 
 import io
-import sys
 from pathlib import Path
 
 import pandas as pd
@@ -12,11 +11,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# Add the parent directory to the Python path to enable imports
-sys.path.insert(0, str(Path(__file__).parent))
-
-from database import GuestDatabase
-from email_manager import EmailManager, get_common_smtp_configs
+try:
+    from guest_database_manager.constants import DEFAULT_DB_PATH
+    from guest_database_manager.database import GuestDatabase
+    from guest_database_manager.email_manager import EmailManager, get_common_smtp_configs
+except ImportError:
+    # Support direct `streamlit run src/guest_database_manager/app.py` execution.
+    from constants import DEFAULT_DB_PATH
+    from database import GuestDatabase
+    from email_manager import EmailManager, get_common_smtp_configs
 
 
 def setup_page_config() -> None:
@@ -29,8 +32,7 @@ def setup_page_config() -> None:
 def initialize_database() -> GuestDatabase:
     """Initialize the database connection."""
     if "database" not in st.session_state:
-        # Use the main database file with the correct schema
-        st.session_state.database = GuestDatabase("guest_database.db")
+        st.session_state.database = GuestDatabase(DEFAULT_DB_PATH)
     return st.session_state.database
 
 
@@ -332,11 +334,17 @@ def display_guest_table(db: GuestDatabase, email_manager: EmailManager) -> None:
             filtered_df["full_name"].str.contains(search_term, case=False, na=False)
             | filtered_df["email"].str.contains(search_term, case=False, na=False)
         )
-        # Add more searchable fields if they exist
-        if "current_path" in filtered_df.columns:
-            mask = mask | filtered_df["current_path"].str.contains(search_term, case=False, na=False)
-        if "personal_professional_background" in filtered_df.columns:
-            mask = mask | filtered_df["personal_professional_background"].str.contains(search_term, case=False, na=False)
+        searchable_columns = [
+            "profession",
+            "background",
+            "passionate_topics",
+            "additional_info",
+            "social_media_handles",
+            "website",
+        ]
+        for column in searchable_columns:
+            if column in filtered_df.columns:
+                mask = mask | filtered_df[column].astype(str).str.contains(search_term, case=False, na=False)
         filtered_df = filtered_df[mask]
 
     # Pagination
@@ -388,7 +396,10 @@ def display_guest_table(db: GuestDatabase, email_manager: EmailManager) -> None:
 
                 # Show email status if available
                 if pd.notna(row.get("email_status")) and row["email_status"]:
-                    st.write(f"� Email: {row['email_status']}")
+                    st.write(f"📨 Status: {row['email_status'].title()}")
+
+                if pd.notna(row.get("skip_reason")) and row["skip_reason"]:
+                    st.write(f"📝 Skip Reason: {row['skip_reason']}")
 
                 # Show following status if available
                 if pd.notna(row.get("following_us")) and row["following_us"]:
@@ -445,9 +456,13 @@ def display_guest_table(db: GuestDatabase, email_manager: EmailManager) -> None:
 
                 with col1:
                     st.subheader("📋 Basic Information")
-                    if pd.notna(row.get("personal_professional_background")) and row["personal_professional_background"]:
+                    if pd.notna(row.get("background")) and row["background"]:
                         st.write("**Background:**")
-                        st.write(row["personal_professional_background"])
+                        st.write(row["background"])
+
+                    if pd.notna(row.get("profession")) and row["profession"]:
+                        st.write("**Profession:**")
+                        st.write(row["profession"])
 
                     if pd.notna(row.get("motivation")) and row["motivation"]:
                         st.write("**Motivation:**")
@@ -457,9 +472,13 @@ def display_guest_table(db: GuestDatabase, email_manager: EmailManager) -> None:
                         st.write("**Core Values:**")
                         st.write(row["core_values"])
 
-                    if pd.notna(row.get("favourite_quote")) and row["favourite_quote"]:
+                    if pd.notna(row.get("favorite_quote")) and row["favorite_quote"]:
                         st.write("**Favorite Quote:**")
-                        st.write(row["favourite_quote"])
+                        st.write(row["favorite_quote"])
+
+                    if pd.notna(row.get("life_experiences")) and row["life_experiences"]:
+                        st.write("**Life Experiences:**")
+                        st.write(row["life_experiences"])
 
                 with col2:
                     st.subheader("🎙️ Podcast Relevant")
@@ -479,19 +498,35 @@ def display_guest_table(db: GuestDatabase, email_manager: EmailManager) -> None:
                         st.write("**Additional Info:**")
                         st.write(row["additional_info"])
 
+                    if pd.notna(row.get("beliefs_align")) and row["beliefs_align"]:
+                        st.write("**Belief Alignment:**")
+                        st.write(row["beliefs_align"])
+
+                    if pd.notna(row.get("faith_practice")) and row["faith_practice"]:
+                        st.write("**Faith / Practice:**")
+                        st.write(row["faith_practice"])
+
                 # Social media and following status
                 st.subheader("🌐 Online Presence")
                 col3, col4 = st.columns(2)
 
                 with col3:
-                    if pd.notna(row.get("social_media")) and row["social_media"]:
+                    if pd.notna(row.get("social_media_handles")) and row["social_media_handles"]:
                         st.write("**Social Media Handles:**")
-                        st.write(row["social_media"])
+                        st.write(row["social_media_handles"])
+
+                    if pd.notna(row.get("website")) and row["website"]:
+                        st.write("**Website:**")
+                        st.write(row["website"])
 
                 with col4:
-                    if pd.notna(row.get("following_status")) and row["following_status"]:
-                        st.write("**Following Status:**")
-                        st.write(row["following_status"])
+                    if pd.notna(row.get("following_us")) and row["following_us"]:
+                        st.write("**Following Us:**")
+                        st.write(row["following_us"])
+
+                    if pd.notna(row.get("original_file_name")) and row["original_file_name"]:
+                        st.write("**Imported From:**")
+                        st.write(row["original_file_name"])
 
             # Email action dialogs
             handle_email_dialogs(row, db, email_manager)
@@ -551,7 +586,7 @@ def handle_email_dialogs(row: dict, db: GuestDatabase, email_manager: EmailManag
 
             with col2:
                 if st.button("📝 Accept Without Email", key=f"accept_no_email_{guest_id}"):
-                    db.mark_guest_processed(guest_id)
+                    db.accept_guest_without_email(guest_id)
                     st.success(f"✅ {guest_name} marked as accepted (no email sent)")
                     st.session_state[f"show_accept_dialog_{guest_id}"] = False
                     st.rerun()
@@ -607,7 +642,7 @@ def handle_email_dialogs(row: dict, db: GuestDatabase, email_manager: EmailManag
 
             with col2:
                 if st.button("📝 Reject Without Email", key=f"reject_no_email_{guest_id}"):
-                    db.mark_guest_processed(guest_id)
+                    db.reject_guest_without_email(guest_id)
                     st.success(f"❌ {guest_name} marked as rejected (no email sent)")
                     st.session_state[f"show_reject_dialog_{guest_id}"] = False
                     st.rerun()

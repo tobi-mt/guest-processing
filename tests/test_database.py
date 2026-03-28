@@ -97,3 +97,36 @@ def test_clean_database(temp_db):
     assert isinstance(result, dict)
     assert 'removed' in result
     assert 'fixed' in result
+
+
+def test_import_stores_source_metadata(temp_db, sample_csv_file):
+    """Imported guests should keep the source file name for analytics and traceability."""
+    temp_db.add_guest_from_csv(sample_csv_file)
+
+    guests_list = temp_db.get_all_guests()
+    assert guests_list
+    assert all(guest["original_file_name"] == sample_csv_file.name for guest in guests_list)
+    assert all(guest["original_data"] for guest in guests_list)
+
+
+def test_accept_and_reject_without_email_set_status(temp_db, sample_csv_file):
+    """Manual decisions without email should still set a meaningful guest status."""
+    temp_db.add_guest_from_csv(sample_csv_file)
+    guests_list = temp_db.get_all_guests()
+
+    first_guest_id = guests_list[0]["id"]
+    second_guest_id = guests_list[1]["id"]
+
+    temp_db.accept_guest_without_email(first_guest_id)
+    temp_db.reject_guest_without_email(second_guest_id)
+
+    accepted_guest = temp_db.get_guest_by_id(first_guest_id)
+    rejected_guest = temp_db.get_guest_by_id(second_guest_id)
+
+    assert accepted_guest["is_processed"] == 1
+    assert accepted_guest["email_status"] == "accepted"
+    assert accepted_guest["email_sent_at"] is None
+
+    assert rejected_guest["is_processed"] == 1
+    assert rejected_guest["email_status"] == "rejected"
+    assert rejected_guest["email_sent_at"] is None

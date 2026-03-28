@@ -7,8 +7,8 @@ A modern, comprehensive web application for managing guest data from CSV/Excel f
 - **📁 File Upload**: Support for CSV and Excel files with robust encoding detection
 - **🗄️ Database Storage**: SQLite database with automatic schema management
 - **👥 Guest Management**: Interactive table with search, filtering, and pagination
-- **� Email Integration**: Send customizable acceptance/rejection emails to guests
-- **�📊 Analytics**: Beautiful charts and visualizations using Plotly
+- **📧 Email Integration**: Send customizable acceptance/rejection emails to guests
+- **📊 Analytics**: Beautiful charts and visualizations using Plotly
 - **🔄 Status Tracking**: Mark guests as processed/unprocessed with timestamp tracking
 - **🧹 Data Cleaning**: Automatic data validation and cleaning
 - **🖥️ Modern UI**: Responsive Streamlit interface with Bootstrap styling
@@ -193,7 +193,7 @@ The application expects CSV/Excel files with the following columns (case-sensiti
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.12+
 - Hatch (for development)
 
 ### Setup Development Environment

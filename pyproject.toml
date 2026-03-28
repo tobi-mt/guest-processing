@@ -26,15 +26,14 @@ dependencies = [
   "plotly>=5.17.0",
   "openpyxl>=3.1.0",
   "xlrd>=2.0.1",
-  "pytest>=7.0.0",
   "cryptography>=41.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-username/guest-database-manager"
-Documentation = "https://github.com/your-username/guest-database-manager#readme"
-Repository = "https://github.com/your-username/guest-database-manager"
-Issues = "https://github.com/your-username/guest-database-manager/issues"
+Homepage = "https://bitbucket.org/tobi-projects/guest-processing"
+Documentation = "https://bitbucket.org/tobi-projects/guest-processing/src/main/README.md"
+Repository = "https://bitbucket.org/tobi-projects/guest-processing"
+Issues = "https://bitbucket.org/tobi-projects/guest-processing/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -51,6 +50,12 @@ guest-manager = "guest_database_manager.cli:main"
 
 [tool.hatch.version]
 path = "src/guest_database_manager/__about__.py"
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/guest_database_manager/static" = "guest_database_manager/static"
+
+[tool.hatch.build.targets.sdist.force-include]
+"src/guest_database_manager/static" = "src/guest_database_manager/static"
 
 # Configure environments to be created in project workspace
 [tool.hatch.envs.default]
@@ -73,7 +78,7 @@ cov = [
 ]
 
 [[tool.hatch.envs.all.matrix]]
-python = ["3.8", "3.9", "3.10", "3.11", "3.12"]
+python = ["3.12"]
 
 [tool.hatch.envs.lint]
 type = "virtual"
@@ -101,12 +106,12 @@ all = [
 ]
 
 [tool.black]
-target-version = ["py38"]
+target-version = ["py312"]
 line-length = 120
 skip-string-normalization = true
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]

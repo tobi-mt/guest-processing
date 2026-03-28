@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Guest Database Manager</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Internal Dashboard</p>
+          <h1>Guest Database Manager</h1>
+          <p class="hero-copy">
+            Review direct submissions, update statuses, and manage your podcast intake pipeline in one place.
+          </p>
+        </div>
+        <div class="hero-card" id="stats-panel">
+          <div class="metric">
+            <span>Total</span>
+            <strong id="metric-total">0</strong>
+          </div>
+          <div class="metric">
+            <span>Processed</span>
+            <strong id="metric-processed">0</strong>
+          </div>
+          <div class="metric">
+            <span>Unprocessed</span>
+            <strong id="metric-unprocessed">0</strong>
+          </div>
+          <a class="dashboard-link" href="/intake">Open Public Intake Form</a>
+        </div>
+      </header>
+
+      <main class="main-grid">
+        <section class="panel form-panel">
+          <div class="section-heading">
+            <p class="eyebrow">Manual Entry</p>
+            <h2>Add Guest Directly</h2>
+          </div>
+
+          <form id="guest-form" class="guest-form">
+            <label>
+              Full Name
+              <input name="full_name" type="text" required />
+            </label>
+            <label>
+              Email
+              <input name="email" type="email" />
+            </label>
+            <label>
+              Website
+              <input name="website" type="url" />
+            </label>
+            <label>
+              Profession
+              <input name="profession" type="text" />
+            </label>
+            <label>
+              Social Handles
+              <input name="social_handles" type="text" />
+            </label>
+            <label>
+              Following Us?
+              <select name="has_social_media">
+                <option value="">Not set</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+            </label>
+            <label class="full-width">
+              Background
+              <textarea name="background" rows="3"></textarea>
+            </label>
+            <label class="full-width">
+              Motivation
+              <textarea name="motivation" rows="3"></textarea>
+            </label>
+            <label class="full-width">
+              Life Experiences
+              <textarea name="life_experiences" rows="3"></textarea>
+            </label>
+            <label class="full-width">
+              Core Values
+              <textarea name="core_values" rows="3"></textarea>
+            </label>
+            <label class="full-width">
+              Favorite Quote
+              <textarea name="favorite_quote" rows="2"></textarea>
+            </label>
+            <label class="full-width">
+              Passionate Topics
+              <textarea name="passionate_topics" rows="3"></textarea>
+            </label>
+            <label class="full-width">
+              Additional Info
+              <textarea name="additional_info" rows="3"></textarea>
+            </label>
+            <div class="form-actions full-width">
+              <button type="submit" class="primary-button">Save Guest</button>
+              <button type="reset" class="secondary-button">Clear Form</button>
+            </div>
+          </form>
+
+          <p id="form-message" class="message" aria-live="polite"></p>
+        </section>
+
+        <section class="panel list-panel">
+          <div class="section-heading section-heading-inline">
+            <div>
+              <p class="eyebrow">Pipeline</p>
+              <h2>Guests</h2>
+            </div>
+            <button id="refresh-button" class="secondary-button">Refresh</button>
+          </div>
+
+          <div id="guest-list" class="guest-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <template id="guest-card-template">
+      <article class="guest-card">
+        <div class="guest-card-head">
+          <div>
+            <h3 class="guest-name"></h3>
+            <p class="guest-meta"></p>
+          </div>
+          <span class="status-pill"></span>
+        </div>
+        <p class="guest-summary"></p>
+        <div class="guest-details"></div>
+        <div class="guest-actions">
+          <button data-action="accepted" class="primary-button small-button">Accept</button>
+          <button data-action="rejected" class="secondary-button small-button">Reject</button>
+          <button data-action="skipped" class="secondary-button small-button">Skip</button>
+          <button data-action="unprocessed" class="ghost-button small-button">Reset</button>
+          <button data-action="delete" class="danger-button small-button">Delete</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

@@ -11,7 +11,10 @@ from typing import Dict, Optional
 
 import streamlit as st
 
-from config_manager import ConfigManager
+try:
+    from .config_manager import ConfigManager
+except ImportError:
+    from config_manager import ConfigManager
 
 
 class EmailManager:

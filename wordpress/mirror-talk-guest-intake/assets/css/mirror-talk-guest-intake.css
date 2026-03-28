@@ -1,0 +1,211 @@
+.mirror-talk-intake-wrapper {
+  --mt-bg: linear-gradient(135deg, #fcf8f0 0%, #f1e4d1 100%);
+  --mt-panel: rgba(255, 252, 247, 0.96);
+  --mt-panel-strong: #fffdf9;
+  --mt-border: rgba(77, 57, 37, 0.1);
+  --mt-text: #2d241a;
+  --mt-muted: #725d46;
+  --mt-accent: #0f5d4f;
+  --mt-accent-soft: #dff1ea;
+  --mt-danger: #962f20;
+  margin: 2rem 0;
+  color: var(--mt-text);
+}
+
+.mirror-talk-intake-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  gap: 1.25rem;
+  border: 1px solid var(--mt-border);
+  border-radius: 28px;
+  background: var(--mt-bg);
+  padding: clamp(1rem, 3vw, 2rem);
+  box-shadow: 0 24px 70px rgba(49, 31, 14, 0.1);
+}
+
+.mirror-talk-intake-sidebar,
+.mirror-talk-intake-main {
+  border-radius: 24px;
+}
+
+.mirror-talk-intake-sidebar {
+  padding: 1.5rem;
+  background: rgba(255, 251, 245, 0.75);
+  border: 1px solid rgba(77, 57, 37, 0.08);
+}
+
+.mirror-talk-intake-main {
+  padding: 1.5rem;
+  background: var(--mt-panel);
+  border: 1px solid rgba(77, 57, 37, 0.08);
+}
+
+.mirror-talk-intake-eyebrow {
+  margin: 0 0 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.76rem;
+  color: var(--mt-accent);
+}
+
+.mirror-talk-intake-title {
+  margin: 0 0 0.5rem;
+  font-size: clamp(1.7rem, 3vw, 2.6rem);
+  line-height: 1.05;
+}
+
+.mirror-talk-intake-subtitle,
+.mirror-talk-intake-step-copy,
+.mirror-talk-intake-message {
+  color: var(--mt-muted);
+}
+
+.mirror-talk-intake-step-list {
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.mirror-talk-intake-step-indicator {
+  padding: 0.85rem 1rem;
+  border-radius: 18px;
+  background: rgba(114, 93, 70, 0.08);
+  color: var(--mt-muted);
+  font-weight: 600;
+}
+
+.mirror-talk-intake-step-indicator.is-active {
+  background: var(--mt-accent-soft);
+  color: var(--mt-accent);
+}
+
+.mirror-talk-intake-step {
+  display: none;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.95rem;
+}
+
+.mirror-talk-intake-step.is-active {
+  display: grid;
+}
+
+.mirror-talk-intake-step h3 {
+  margin: 0 0 0.25rem;
+  grid-column: 1 / -1;
+  font-size: 1.35rem;
+}
+
+.mirror-talk-intake-step-copy {
+  margin: 0 0 0.5rem;
+  grid-column: 1 / -1;
+}
+
+.mirror-talk-intake-field {
+  display: grid;
+  gap: 0.45rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.mirror-talk-intake-field.is-full {
+  grid-column: 1 / -1;
+}
+
+.mirror-talk-intake-field input,
+.mirror-talk-intake-field select,
+.mirror-talk-intake-field textarea,
+.mirror-talk-intake-actions button {
+  font: inherit;
+}
+
+.mirror-talk-intake-field input,
+.mirror-talk-intake-field select,
+.mirror-talk-intake-field textarea {
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(77, 57, 37, 0.14);
+  background: var(--mt-panel-strong);
+  color: var(--mt-text);
+  box-sizing: border-box;
+}
+
+.mirror-talk-intake-field textarea {
+  resize: vertical;
+  min-height: 120px;
+}
+
+.mirror-talk-intake-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.mirror-talk-intake-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mirror-talk-intake-counter {
+  color: var(--mt-muted);
+  font-size: 0.95rem;
+}
+
+.mirror-talk-intake-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.85rem 1.2rem;
+  cursor: pointer;
+}
+
+.mirror-talk-intake-button.is-primary {
+  background: var(--mt-accent);
+  color: #fff;
+}
+
+.mirror-talk-intake-button.is-secondary {
+  background: rgba(15, 93, 79, 0.1);
+  color: var(--mt-accent);
+}
+
+.mirror-talk-intake-button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mirror-talk-intake-message {
+  min-height: 1.5rem;
+  margin-top: 0.9rem;
+}
+
+.mirror-talk-intake-message.is-success {
+  color: var(--mt-accent);
+}
+
+.mirror-talk-intake-message.is-error {
+  color: var(--mt-danger);
+}
+
+@media (max-width: 782px) {
+  .mirror-talk-intake-card {
+    grid-template-columns: 1fr;
+  }
+
+  .mirror-talk-intake-step {
+    grid-template-columns: 1fr;
+  }
+
+  .mirror-talk-intake-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mirror-talk-intake-actions-right {
+    justify-content: space-between;
+  }
+}
