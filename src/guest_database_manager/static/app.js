@@ -13,6 +13,13 @@ const metrics = {
   unprocessed: document.getElementById("metric-unprocessed"),
 };
 
+const insights = {
+  accepted: document.getElementById("insight-accepted"),
+  rejected: document.getElementById("insight-rejected"),
+  skipped: document.getElementById("insight-skipped"),
+  acceptanceRate: document.getElementById("insight-acceptance-rate"),
+};
+
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -138,6 +145,16 @@ function renderGuests(payload) {
   metrics.total.textContent = payload.stats.total ?? 0;
   metrics.processed.textContent = payload.stats.processed ?? 0;
   metrics.unprocessed.textContent = payload.stats.unprocessed ?? 0;
+
+  const accepted = payload.email_stats.accepted_emails ?? 0;
+  const rejected = payload.email_stats.rejected_emails ?? 0;
+  const skipped = payload.email_stats.skipped_guests ?? 0;
+  const decided = accepted + rejected + skipped;
+
+  insights.accepted.textContent = accepted;
+  insights.rejected.textContent = rejected;
+  insights.skipped.textContent = skipped;
+  insights.acceptanceRate.textContent = decided ? `${Math.round((accepted / decided) * 100)}%` : "0%";
 
   guestList.innerHTML = "";
   if (!payload.guests.length) {
