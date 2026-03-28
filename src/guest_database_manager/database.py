@@ -266,7 +266,7 @@ class GuestDatabase:
             try:
                 guest_data = self.mapper.clean_guest_data(row)
                 guest_data['original_file_name'] = Path(source_name or file_path).name
-                guest_data['original_data'] = dumps(row.fillna("").to_dict(), ensure_ascii=False)
+                guest_data['original_data'] = dumps(row.fillna("").to_dict(), ensure_ascii=False, default=str)
                 
                 # Validate data
                 is_valid, error_msg = self.mapper.validate_guest_data(guest_data)

@@ -5,6 +5,7 @@
 
 import json
 
+import pandas as pd
 import pytest
 
 from guest_database_manager.web_interface import (
@@ -97,6 +98,31 @@ def test_web_service_can_import_uploaded_csv(temp_db):
     imported_guest = service.list_guests()["guests"][0]
     assert imported_guest["original_file_name"] == "guest-intake.csv"
     assert imported_guest["email"] == "jordan@example.com"
+
+
+def test_web_service_can_import_uploaded_excel_with_timestamp_columns(temp_db, tmp_path):
+    """Excel imports should tolerate timestamp metadata columns from form exports."""
+    service = GuestWebService(temp_db.db_path)
+    excel_path = tmp_path / "guest-intake.xlsx"
+    dataframe = pd.DataFrame(
+        [
+            {
+                "Start time": pd.Timestamp("2026-01-20 21:51:28"),
+                "Completion time": pd.Timestamp("2026-01-20 21:54:39"),
+                "Full name": "David Fullmer",
+                "Guest's Email": "becomeseven808@gmail.com",
+                "Website": "https://www.becomingseven.com",
+            }
+        ]
+    )
+    dataframe.to_excel(excel_path, index=False)
+
+    result = service.import_guest_file(excel_path.name, excel_path.read_bytes())
+
+    assert result["imported"] == 1
+    imported_guest = service.list_guests()["guests"][0]
+    assert imported_guest["full_name"] == "David Fullmer"
+    assert imported_guest["email"] == "becomeseven808@gmail.com"
 
 
 def test_web_service_can_export_guests_to_csv(temp_db):
