@@ -35,6 +35,84 @@ function guestStatusLabel(guest) {
   return guest.is_processed ? "processed" : "unprocessed";
 }
 
+function normalizeClipboardValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).trim();
+}
+
+function parseOriginalData(guest) {
+  if (!guest.original_data) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(guest.original_data);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function buildIntakeClipboardText(guest) {
+  const original = parseOriginalData(guest);
+  const sections = [
+    ["Full Name", guest.full_name],
+    ["Email", guest.email],
+    ["Website", guest.website],
+    ["Profession", guest.profession || original.profession],
+    ["Social Media Handles", guest.social_handles || original.social_handles || original.social_media_handles],
+    ["Background", guest.background || original.background],
+    ["Motivation", guest.motivation || original.motivation],
+    ["Life Experiences", guest.life_experiences || original.life_experiences],
+    ["Core Values", guest.core_values || original.core_values],
+    ["Favorite Quote", guest.favorite_quote || original.favorite_quote],
+    ["Faith / Practice", guest.faith || original.faith],
+    ["Beliefs Align", guest.alignment || original.alignment],
+    ["Passionate Topics", guest.passionate_topics || original.passionate_topics],
+    ["Message / Takeaway", guest.message || original.message],
+    ["Previous Podcast / Speaking Experience", guest.experience || original.experience],
+    ["Additional Info", guest.additional_info || original.additional_info],
+    ["Following Mirror Talk", guest.has_social_media || original.has_social_media],
+    ["Source", guest.original_file_name],
+    ["Status", guestStatusLabel(guest)],
+    ["Skip Reason", guest.skip_reason],
+  ];
+
+  return sections
+    .map(([label, value]) => [label, normalizeClipboardValue(value)])
+    .filter(([, value]) => value)
+    .map(([label, value]) => `${label}:\n${value}`)
+    .join("\n\n");
+}
+
+async function copyGuestIntake(guest) {
+  const clipboardText = buildIntakeClipboardText(guest);
+  if (!clipboardText) {
+    throw new Error("No intake details available to copy.");
+  }
+
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(clipboardText);
+    return;
+  }
+
+  const helper = document.createElement("textarea");
+  helper.value = clipboardText;
+  helper.setAttribute("readonly", "");
+  helper.style.position = "absolute";
+  helper.style.left = "-9999px";
+  document.body.appendChild(helper);
+  helper.select();
+
+  try {
+    document.execCommand("copy");
+  } finally {
+    document.body.removeChild(helper);
+  }
+}
+
 function renderGuests(payload) {
   metrics.total.textContent = payload.stats.total ?? 0;
   metrics.processed.textContent = payload.stats.processed ?? 0;
@@ -71,7 +149,10 @@ function renderGuests(payload) {
         const action = button.dataset.action;
 
         try {
-          if (action === "delete") {
+          if (action === "copy") {
+            await copyGuestIntake(guest);
+            setMessage(`Copied ${guest.full_name}'s intake details.`, "success");
+          } else if (action === "delete") {
             await fetchJSON(`/api/guests/${guest.id}`, { method: "DELETE" });
             setMessage(`Deleted ${guest.full_name}.`, "success");
           } else if (action === "skipped") {
