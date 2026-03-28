@@ -6,11 +6,16 @@ import json
 import mimetypes
 import os
 import re
+import tempfile
 import webbrowser
+from csv import DictWriter
 from base64 import b64decode
 from dataclasses import dataclass
+from email.parser import BytesParser
+from email.policy import default
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -154,6 +159,44 @@ class GuestWebService:
             "email_stats": self.database.get_email_stats(),
         }
 
+    def export_guests_csv(self) -> str:
+        """Export all guests as a CSV string for occasional admin downloads."""
+        guests = self.database.get_all_guests()
+        fieldnames = [
+            "id",
+            "full_name",
+            "email",
+            "website",
+            "social_media_handles",
+            "background",
+            "profession",
+            "motivation",
+            "life_experiences",
+            "core_values",
+            "faith_practice",
+            "beliefs_align",
+            "favorite_quote",
+            "passionate_topics",
+            "message_takeaway",
+            "podcast_experience",
+            "additional_info",
+            "following_us",
+            "is_processed",
+            "email_status",
+            "email_sent_at",
+            "skip_reason",
+            "original_file_name",
+            "date_added",
+            "updated_at",
+        ]
+
+        buffer = StringIO()
+        writer = DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for guest in guests:
+            writer.writerow({name: guest.get(name, "") for name in fieldnames})
+        return buffer.getvalue()
+
     def create_guest(self, payload: Dict[str, Any], source_name: str = FORM_SOURCE_NAME) -> Dict[str, Any]:
         """Create a guest directly from the web form."""
         guest_data = build_guest_payload(payload, source_name=source_name)
@@ -164,6 +207,21 @@ class GuestWebService:
     def create_intake_submission(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create a guest submission from the public intake questionnaire."""
         return self.create_guest(payload, source_name=INTAKE_SOURCE_NAME)
+
+    def import_guest_file(self, filename: str, content: bytes, encoding: str = "utf-8") -> Dict[str, int]:
+        """Import guests from an uploaded CSV or Excel file."""
+        suffix = Path(filename).suffix.lower()
+        if suffix not in {".csv", ".xlsx", ".xls"}:
+            raise WebInterfaceError("Please upload a CSV or Excel file.")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            tmp_file.write(content)
+            temp_path = Path(tmp_file.name)
+
+        try:
+            return self.database.import_from_file(str(temp_path), encoding=encoding, source_name=filename)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
     def update_guest_status(self, guest_id: int, status: str, skip_reason: str = "") -> Dict[str, Any]:
         """Update a guest processing status."""
@@ -231,6 +289,17 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, self.service.list_guests())
             return
 
+        if self.path == "/api/export":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_csv(
+                HTTPStatus.OK,
+                self.service.export_guests_csv(),
+                filename="mirror-talk-guests.csv",
+            )
+            return
+
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -267,6 +336,29 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     "guest": guest,
                 },
             )
+            return
+
+        if self.path == "/api/import":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            try:
+                fields, files = self._read_multipart_form_data()
+                uploaded_file = files.get("file")
+                if not uploaded_file:
+                    raise WebInterfaceError("Please choose a CSV or Excel file to import.")
+
+                result = self.service.import_guest_file(
+                    uploaded_file["filename"],
+                    uploaded_file["content"],
+                    encoding=fields.get("encoding", "utf-8"),
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, result)
             return
 
         if self.path.startswith("/api/guests/") and self.path.endswith("/status"):
@@ -320,6 +412,44 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         raw_data = self.rfile.read(content_length)
         return json.loads(raw_data.decode("utf-8"))
 
+    def _read_multipart_form_data(self) -> tuple[Dict[str, str], Dict[str, Dict[str, Any]]]:
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length == 0:
+            raise WebInterfaceError("Upload request was empty.")
+
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            raise WebInterfaceError("Upload request must use multipart form data.")
+
+        raw_data = self.rfile.read(content_length)
+        message = BytesParser(policy=default).parsebytes(
+            f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + raw_data
+        )
+
+        fields: Dict[str, str] = {}
+        files: Dict[str, Dict[str, Any]] = {}
+
+        for part in message.iter_parts():
+            name = part.get_param("name", header="content-disposition")
+            if not name:
+                continue
+
+            filename = part.get_filename()
+            payload = part.get_payload(decode=True) or b""
+
+            if filename:
+                files[name] = {
+                    "filename": filename,
+                    "content": payload,
+                    "content_type": part.get_content_type(),
+                }
+                continue
+
+            charset = part.get_content_charset() or "utf-8"
+            fields[name] = payload.decode(charset, errors="replace").strip()
+
+        return fields, files
+
     def _serve_static(self, relative_path: str) -> None:
         safe_path = (STATIC_DIR / relative_path).resolve()
         if not safe_path.is_file() or STATIC_DIR.resolve() not in safe_path.parents and safe_path != STATIC_DIR.resolve():
@@ -338,6 +468,16 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self._send_cors_headers(self.headers.get("Origin"))
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(response)))
+        self.end_headers()
+        self.wfile.write(response)
+
+    def _send_csv(self, status: HTTPStatus, payload: str, filename: str) -> None:
+        response = payload.encode("utf-8")
+        self.send_response(status)
+        self._send_cors_headers(self.headers.get("Origin"))
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(response)))
         self.end_headers()
         self.wfile.write(response)

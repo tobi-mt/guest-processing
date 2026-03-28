@@ -1,8 +1,11 @@
 const form = document.getElementById("guest-form");
+const importForm = document.getElementById("import-form");
+const importMessage = document.getElementById("import-message");
 const message = document.getElementById("form-message");
 const guestList = document.getElementById("guest-list");
 const template = document.getElementById("guest-card-template");
 const refreshButton = document.getElementById("refresh-button");
+const exportButton = document.getElementById("export-button");
 
 const metrics = {
   total: document.getElementById("metric-total"),
@@ -23,9 +26,27 @@ async function fetchJSON(url, options = {}) {
   return data;
 }
 
+async function fetchUpload(url, formData) {
+  const response = await fetch(url, {
+    method: "POST",
+    body: formData,
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Upload failed");
+  }
+  return data;
+}
+
 function setMessage(text, tone = "") {
   message.textContent = text;
   message.className = `message ${tone}`.trim();
+}
+
+function setImportMessage(text, tone = "") {
+  importMessage.textContent = text;
+  importMessage.className = `message ${tone}`.trim();
 }
 
 function guestStatusLabel(guest) {
@@ -208,8 +229,35 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
+importForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(importForm);
+  const uploadedFile = formData.get("file");
+
+  if (!(uploadedFile instanceof File) || !uploadedFile.name) {
+    setImportMessage("Please choose a CSV or Excel file.", "error");
+    return;
+  }
+
+  try {
+    const result = await fetchUpload("/api/import", formData);
+    importForm.reset();
+    setImportMessage(
+      `Import finished. New: ${result.imported}, Updated: ${result.updated}, Skipped: ${result.skipped}, Errors: ${result.errors}.`,
+      result.errors ? "error" : "success",
+    );
+    await loadGuests();
+  } catch (error) {
+    setImportMessage(error.message, "error");
+  }
+});
+
 refreshButton.addEventListener("click", async () => {
   await loadGuests();
+});
+
+exportButton.addEventListener("click", () => {
+  window.location.href = "/api/export";
 });
 
 loadGuests();

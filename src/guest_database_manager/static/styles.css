@@ -167,6 +167,13 @@ p {
   align-items: center;
 }
 
+.import-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 220px auto;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
 .guest-form {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -343,6 +350,10 @@ button:hover {
   }
 
   .guest-form {
+    grid-template-columns: 1fr;
+  }
+
+  .import-form {
     grid-template-columns: 1fr;
   }
 }

@@ -239,7 +239,7 @@ class GuestDatabase:
     
     # ==================== Import Operations ====================
     
-    def import_from_file(self, file_path: str, encoding: str = 'utf-8') -> Dict[str, int]:
+    def import_from_file(self, file_path: str, encoding: str = 'utf-8', source_name: Optional[str] = None) -> Dict[str, int]:
         """
         Import guest data from CSV or Excel file.
         
@@ -265,7 +265,7 @@ class GuestDatabase:
         for index, row in df.iterrows():
             try:
                 guest_data = self.mapper.clean_guest_data(row)
-                guest_data['original_file_name'] = Path(file_path).name
+                guest_data['original_file_name'] = Path(source_name or file_path).name
                 guest_data['original_data'] = dumps(row.fillna("").to_dict(), ensure_ascii=False)
                 
                 # Validate data

@@ -36,12 +36,42 @@
             <span>Unprocessed</span>
             <strong id="metric-unprocessed">0</strong>
           </div>
+          <button id="export-button" class="secondary-button" type="button">Download CSV</button>
           <a class="dashboard-link" href="/intake">Open Public Intake Form</a>
         </div>
       </header>
 
       <main class="main-grid">
         <section class="panel form-panel">
+          <div class="section-heading">
+            <p class="eyebrow">Occasional Import</p>
+            <h2>Upload CSV Or Excel</h2>
+            <p class="hero-copy">
+              Use this only when you need to backfill or bulk import guests. Direct website intake will still be your main flow.
+            </p>
+          </div>
+
+          <form id="import-form" class="import-form">
+            <label class="full-width">
+              Guest File
+              <input id="import-file" name="file" type="file" accept=".csv,.xlsx,.xls" required />
+            </label>
+            <label>
+              CSV Encoding
+              <select name="encoding">
+                <option value="utf-8">UTF-8</option>
+                <option value="latin-1">Latin-1</option>
+                <option value="iso-8859-1">ISO-8859-1</option>
+                <option value="cp1252">CP1252</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="secondary-button">Import File</button>
+            </div>
+          </form>
+
+          <p id="import-message" class="message" aria-live="polite"></p>
+
           <div class="section-heading">
             <p class="eyebrow">Manual Entry</p>
             <h2>Add Guest Directly</h2>

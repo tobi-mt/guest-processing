@@ -83,6 +83,40 @@ def test_web_service_can_create_public_intake_submission(temp_db):
     assert created_guest["email_status"] is None
 
 
+def test_web_service_can_import_uploaded_csv(temp_db):
+    """Uploaded CSV imports should reuse the shared import pipeline and keep the source filename."""
+    service = GuestWebService(temp_db.db_path)
+    csv_bytes = (
+        "Full name,Email,Website\n"
+        "Jordan Rivers,jordan@example.com,https://jord.example.com\n"
+    ).encode("utf-8")
+
+    result = service.import_guest_file("guest-intake.csv", csv_bytes)
+
+    assert result["imported"] == 1
+    imported_guest = service.list_guests()["guests"][0]
+    assert imported_guest["original_file_name"] == "guest-intake.csv"
+    assert imported_guest["email"] == "jordan@example.com"
+
+
+def test_web_service_can_export_guests_to_csv(temp_db):
+    """Dashboard exports should return a CSV with the imported guest data."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "Amina Hart",
+            "email": "amina@example.com",
+            "website": "https://amina.example.com",
+            "background": "Author and speaker",
+        }
+    )
+
+    exported_csv = service.export_guests_csv()
+
+    assert "full_name,email,website" in exported_csv
+    assert "Amina Hart,amina@example.com,https://amina.example.com" in exported_csv
+
+
 def test_validate_intake_payload_rejects_spam_keywords():
     """Spammy submissions should be rejected before insertion."""
     with pytest.raises(WebInterfaceError):
