@@ -297,18 +297,6 @@ function renderPromoReadiness(readiness) {
   `;
 }
 
-function renderTitleSuggestions(titles) {
-  if (!titles || !titles.length) {
-    return "";
-  }
-  return `
-    <div class="operations-preview">
-      <strong class="insight-label">Title Suggestions</strong>
-      <ul>${titles.map((title) => `<li>${title}</li>`).join("")}</ul>
-    </div>
-  `;
-}
-
 function renderCopyAssist(copyAssist) {
   if (!copyAssist) {
     return "";
@@ -802,7 +790,6 @@ function renderEpisodes(episodes, totalCount) {
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
       ${renderPromoReadiness(episode.promotion_readiness)}
-      ${renderTitleSuggestions(episode.title_suggestions)}
       ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
@@ -1088,7 +1075,6 @@ function renderRecommendations(recommendations, totalCount) {
       ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${episode.archive_overlap.message}</p></div>` : ""}
       ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}
       ${renderPromoReadiness(episode.promotion_readiness)}
-      ${renderTitleSuggestions(episode.title_suggestions)}
       ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>

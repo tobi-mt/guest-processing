@@ -441,7 +441,6 @@ def test_planning_payload_includes_grounded_editorial_assist(temp_db):
     recommendation = planning["recommendations"][0]
 
     assert episode["promotion_readiness"]["score"] >= 70
-    assert episode["title_suggestions"]
     assert "summary" in episode["copy_assist"]
     assert episode["copy_assist"]["show_notes_intro"]
     assert recommendation["promotion_readiness"]["score"] >= 70

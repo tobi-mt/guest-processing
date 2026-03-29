@@ -29,7 +29,6 @@ from guest_database_manager.database import GuestDatabase
 from guest_database_manager.email_manager import EmailManager
 from guest_database_manager.episode_planner import (
     build_episode_copy_assist,
-    build_episode_title_suggestions,
     build_promotion_readiness,
     build_release_recommendations,
     parse_episode_import_csv,
@@ -289,7 +288,6 @@ class GuestWebService:
         for episode in episodes:
             enriched = dict(episode)
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
-            enriched["title_suggestions"] = build_episode_title_suggestions(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
         return {
