@@ -221,6 +221,33 @@ function formatDateForDateTimeInput(value) {
   return normalized.slice(0, 16);
 }
 
+function transcriptExpectedSoon(episode) {
+  const releaseStatus = normalizeText(episode.release_status);
+  if (releaseStatus === "released") {
+    return true;
+  }
+  if (releaseStatus !== "scheduled") {
+    return false;
+  }
+  const releaseDate = parseDate(episode.release_date);
+  if (!releaseDate) {
+    return false;
+  }
+  const millisecondsUntilRelease = releaseDate.getTime() - Date.now();
+  const daysUntilRelease = millisecondsUntilRelease / (1000 * 60 * 60 * 24);
+  return daysUntilRelease <= 14;
+}
+
+function transcriptStatusLabel(episode) {
+  if (episode.transcript_text) {
+    return "Available";
+  }
+  if (transcriptExpectedSoon(episode)) {
+    return "Missing";
+  }
+  return "Not expected yet";
+}
+
 function getEpisodeYear(episode) {
   const releaseYear = parseDate(episode.release_date);
   if (releaseYear) return String(releaseYear.getFullYear());
@@ -406,7 +433,7 @@ function renderEpisodeBadges(episode) {
   }
   if (episode.transcript_text) {
     badges.push('<span class="signal-chip good">Transcript Available</span>');
-  } else {
+  } else if (transcriptExpectedSoon(episode)) {
     badges.push('<span class="signal-chip warning">Missing Transcript</span>');
   }
   return badges.length ? `<div class="signal-list">${badges.join("")}</div>` : "";
@@ -706,7 +733,7 @@ function filterEpisodes(episodes) {
     if (transcriptStatus === "has_transcript" && !episode.transcript_text) {
       return false;
     }
-    if (transcriptStatus === "missing_transcript" && episode.transcript_text) {
+    if (transcriptStatus === "missing_transcript" && (episode.transcript_text || !transcriptExpectedSoon(episode))) {
       return false;
     }
     if (activeEpisodePreset === "ready_to_schedule") {
@@ -852,7 +879,7 @@ function renderEpisodes(episodes, totalCount) {
         <span>Priority: ${episode.priority_score ?? 0}</span>
         <span>Show Notes: ${episode.show_notes_url ? "Ready" : "Missing"}</span>
         <span>Files: ${episode.release_files_url ? "Ready" : "Missing"}</span>
-        <span>Transcript: ${episode.transcript_text ? "Available" : "Missing"}</span>
+        <span>Transcript: ${transcriptStatusLabel(episode)}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
       ${renderPromoReadiness(episode.promotion_readiness)}
