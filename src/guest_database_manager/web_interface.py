@@ -16,9 +16,11 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from openpyxl import Workbook
 
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
@@ -88,6 +90,64 @@ SPAM_KEYWORDS = {
     "viagra",
     "betting",
     "loan",
+}
+
+EXPORTABLE_FIELDS: Dict[str, list[str]] = {
+    "guests": [
+        "full_name",
+        "email",
+        "website",
+        "profession",
+        "social_media_handles",
+        "background",
+        "passionate_topics",
+        "email_status",
+        "original_file_name",
+        "date_added",
+    ],
+    "interviews": [
+        "guest_name",
+        "guest_email",
+        "title",
+        "scheduled_for",
+        "timezone",
+        "join_url",
+        "confirmation_status",
+        "reminder_status",
+        "calendar_event_id",
+        "calendar_source",
+    ],
+    "episodes": [
+        "guest_name",
+        "guest_email",
+        "website",
+        "episode_title",
+        "topic",
+        "category",
+        "interview_date",
+        "release_date",
+        "release_status",
+        "production_status",
+        "promotion_status",
+        "priority_score",
+        "legacy_episode_number",
+        "riverside_status",
+        "source_file_name",
+        "recommendation_reason",
+    ],
+    "recommendations": [
+        "guest_name",
+        "guest_email",
+        "episode_title",
+        "topic",
+        "category",
+        "interview_date",
+        "production_status",
+        "promotion_status",
+        "priority_score",
+        "recommended_release_date",
+        "recommendation_reason",
+    ],
 }
 
 
@@ -229,6 +289,74 @@ class GuestWebService:
         for guest in guests:
             writer.writerow({name: guest.get(name, "") for name in fieldnames})
         return buffer.getvalue()
+
+    def export_records(self, list_name: str, fields: list[str], export_format: str) -> tuple[bytes, str, str]:
+        """Export a chosen list with selected fields as CSV or Excel."""
+        normalized_list = list_name.strip().lower()
+        if normalized_list not in EXPORTABLE_FIELDS:
+            raise WebInterfaceError("That list cannot be exported.")
+
+        allowed_fields = EXPORTABLE_FIELDS[normalized_list]
+        selected_fields = [field for field in fields if field in allowed_fields]
+        if not selected_fields:
+            raise WebInterfaceError("Please choose at least one valid field to export.")
+
+        normalized_format = export_format.strip().lower()
+        if normalized_format not in {"csv", "xlsx"}:
+            raise WebInterfaceError("Export format must be CSV or Excel.")
+
+        records = self._records_for_export(normalized_list)
+        if normalized_format == "csv":
+            csv_text = self._records_to_csv(records, selected_fields)
+            return (
+                csv_text.encode("utf-8"),
+                f"mirror-talk-{normalized_list}.csv",
+                "text/csv; charset=utf-8",
+            )
+
+        workbook_bytes = self._records_to_xlsx(records, selected_fields)
+        return (
+            workbook_bytes,
+            f"mirror-talk-{normalized_list}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    def _records_for_export(self, list_name: str) -> list[Dict[str, Any]]:
+        """Collect the requested record set for export."""
+        if list_name == "guests":
+            return [serialize_guest(guest) for guest in self.database.get_all_guests()]
+        if list_name == "interviews":
+            return self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
+        if list_name == "episodes":
+            return self.database.list_episodes()
+        if list_name == "recommendations":
+            episodes = self.database.list_episodes()
+            return build_release_recommendations(episodes, reference=datetime.now())
+        raise WebInterfaceError("That list cannot be exported.")
+
+    @staticmethod
+    def _records_to_csv(records: list[Dict[str, Any]], fields: list[str]) -> str:
+        """Serialize records to CSV using the selected fields."""
+        buffer = StringIO()
+        writer = DictWriter(buffer, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        for record in records:
+            writer.writerow({field: record.get(field, "") for field in fields})
+        return buffer.getvalue()
+
+    @staticmethod
+    def _records_to_xlsx(records: list[Dict[str, Any]], fields: list[str]) -> bytes:
+        """Serialize records to an Excel workbook using the selected fields."""
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Export"
+        worksheet.append(fields)
+        for record in records:
+            worksheet.append([record.get(field, "") for field in fields])
+
+        output = BytesIO()
+        workbook.save(output)
+        return output.getvalue()
 
     def create_guest(self, payload: Dict[str, Any], source_name: str = FORM_SOURCE_NAME) -> Dict[str, Any]:
         """Create a guest directly from the web form."""
@@ -846,6 +974,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if self.path == "/api/exports":
+            self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "Use POST for flexible exports"})
+            return
+
         if self.path == "/api/operations":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -960,6 +1092,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.CREATED, interview)
+            return
+
+        if self.path == "/api/exports":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                content, filename, content_type = self.service.export_records(
+                    payload.get("list_name", ""),
+                    payload.get("fields", []),
+                    payload.get("format", "csv"),
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_file(HTTPStatus.OK, content, filename=filename, content_type=content_type)
             return
 
         if self.path == "/api/episodes":
@@ -1285,6 +1436,15 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(response)))
         self.end_headers()
         self.wfile.write(response)
+
+    def _send_file(self, status: HTTPStatus, payload: bytes, filename: str, content_type: str) -> None:
+        self.send_response(status)
+        self._send_cors_headers(self.headers.get("Origin"))
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def _send_cors_headers(self, origin: Optional[str]) -> None:
         if origin in ALLOWED_ORIGINS:

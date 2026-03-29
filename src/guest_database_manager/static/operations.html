@@ -227,6 +227,39 @@
           </form>
 
           <p id="episode-import-message" class="message" aria-live="polite"></p>
+
+          <div class="section-heading">
+            <p class="eyebrow">Flexible Export</p>
+            <h2>Export Lists As CSV Or Excel</h2>
+          </div>
+
+          <form id="operations-export-form" class="guest-form">
+            <label>
+              List To Export
+              <select id="export-list-name" name="list_name">
+                <option value="episodes">Episodes</option>
+                <option value="recommendations">Recommendations</option>
+                <option value="interviews">Interviews</option>
+                <option value="guests">Guests</option>
+              </select>
+            </label>
+            <label>
+              Format
+              <select name="format">
+                <option value="csv">CSV</option>
+                <option value="xlsx">Excel (.xlsx)</option>
+              </select>
+            </label>
+            <fieldset class="full-width export-fieldset">
+              <legend>Fields</legend>
+              <div id="export-fields" class="export-field-grid"></div>
+            </fieldset>
+            <div class="form-actions full-width">
+              <button type="submit" class="secondary-button">Export Selected Fields</button>
+            </div>
+          </form>
+
+          <p id="operations-export-message" class="message" aria-live="polite"></p>
         </section>
 
         <section class="panel list-panel">

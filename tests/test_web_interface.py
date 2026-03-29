@@ -4,9 +4,11 @@
 """Tests for the direct web interface service layer."""
 
 import json
+from io import BytesIO
 
 import pandas as pd
 import pytest
+from openpyxl import load_workbook
 
 from guest_database_manager.web_interface import (
     EMAIL_FROM_ENV_VAR,
@@ -238,6 +240,65 @@ def test_web_service_can_export_guests_to_csv(temp_db):
 
     assert "full_name,email,website" in exported_csv
     assert "Amina Hart,amina@example.com,https://amina.example.com" in exported_csv
+
+
+def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):
+    """Flexible export should allow narrow CSV extracts for episode planning."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Amina Hart",
+            "guest_email": "amina@example.com",
+            "episode_title": "Healing With Honesty",
+            "topic": "Healing With Honesty",
+            "category": "Personal Development",
+            "promotion_status": "ready",
+        }
+    )
+
+    payload, filename, content_type = service.export_records(
+        "episodes",
+        ["guest_name", "guest_email"],
+        "csv",
+    )
+
+    assert filename == "mirror-talk-episodes.csv"
+    assert content_type.startswith("text/csv")
+    exported_csv = payload.decode("utf-8")
+    assert "guest_name,guest_email" in exported_csv
+    assert "Amina Hart,amina@example.com" in exported_csv
+    assert "category" not in exported_csv
+
+
+def test_web_service_can_export_selected_episode_fields_as_excel(temp_db):
+    """Flexible export should support Excel downloads with selected fields only."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Building Calm Under Pressure",
+            "topic": "Building Calm Under Pressure",
+            "category": "Finance",
+            "promotion_status": "ready",
+        }
+    )
+
+    payload, filename, content_type = service.export_records(
+        "episodes",
+        ["guest_name", "promotion_status"],
+        "xlsx",
+    )
+
+    workbook = load_workbook(filename=BytesIO(payload))
+    worksheet = workbook.active
+
+    assert filename == "mirror-talk-episodes.xlsx"
+    assert content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert worksheet["A1"].value == "guest_name"
+    assert worksheet["B1"].value == "promotion_status"
+    assert worksheet["A2"].value == "Jordan Rivers"
+    assert worksheet["B2"].value == "ready"
 
 
 def test_web_service_can_send_acceptance_email(monkeypatch, temp_db):

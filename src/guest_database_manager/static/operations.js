@@ -1,9 +1,13 @@
 const interviewForm = document.getElementById("interview-form");
 const episodeForm = document.getElementById("episode-form");
 const episodeImportForm = document.getElementById("episode-import-form");
+const operationsExportForm = document.getElementById("operations-export-form");
+const exportListName = document.getElementById("export-list-name");
+const exportFields = document.getElementById("export-fields");
 const interviewMessage = document.getElementById("interview-message");
 const episodeMessage = document.getElementById("episode-message");
 const episodeImportMessage = document.getElementById("episode-import-message");
+const operationsExportMessage = document.getElementById("operations-export-message");
 const reminderMessage = document.getElementById("reminder-message");
 const reminderList = document.getElementById("reminder-list");
 const interviewList = document.getElementById("interview-list");
@@ -13,6 +17,63 @@ const refreshButton = document.getElementById("operations-refresh-button");
 const sendWeeklyRemindersButton = document.getElementById("send-weekly-reminders-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
 let latestReminderCandidates = [];
+const EXPORT_FIELD_CONFIG = {
+  guests: [
+    ["full_name", "Full Name"],
+    ["email", "Email"],
+    ["website", "Website"],
+    ["profession", "Profession"],
+    ["social_media_handles", "Social Handles"],
+    ["background", "Background"],
+    ["passionate_topics", "Passionate Topics"],
+    ["email_status", "Decision"],
+    ["original_file_name", "Source"],
+    ["date_added", "Date Added"],
+  ],
+  interviews: [
+    ["guest_name", "Guest Name"],
+    ["guest_email", "Guest Email"],
+    ["title", "Title"],
+    ["scheduled_for", "Scheduled For"],
+    ["timezone", "Timezone"],
+    ["join_url", "Join URL"],
+    ["confirmation_status", "Confirmation"],
+    ["reminder_status", "Reminder Status"],
+    ["calendar_event_id", "Calendar Event ID"],
+    ["calendar_source", "Calendar Source"],
+  ],
+  episodes: [
+    ["guest_name", "Guest Name"],
+    ["guest_email", "Guest Email"],
+    ["website", "Website"],
+    ["episode_title", "Episode Title"],
+    ["topic", "Topic"],
+    ["category", "Category"],
+    ["interview_date", "Interview Date"],
+    ["release_date", "Release Date"],
+    ["release_status", "Release Status"],
+    ["production_status", "Production Status"],
+    ["promotion_status", "Promotion Status"],
+    ["priority_score", "Priority Score"],
+    ["legacy_episode_number", "Episode Number"],
+    ["riverside_status", "Riverside Status"],
+    ["source_file_name", "Source File"],
+    ["recommendation_reason", "Recommendation Reason"],
+  ],
+  recommendations: [
+    ["guest_name", "Guest Name"],
+    ["guest_email", "Guest Email"],
+    ["episode_title", "Episode Title"],
+    ["topic", "Topic"],
+    ["category", "Category"],
+    ["interview_date", "Interview Date"],
+    ["production_status", "Production Status"],
+    ["promotion_status", "Promotion Status"],
+    ["priority_score", "Priority Score"],
+    ["recommended_release_date", "Recommended Release Date"],
+    ["recommendation_reason", "Recommendation Reason"],
+  ],
+};
 
 const stats = {
   interviewsTotal: document.getElementById("ops-interviews-total"),
@@ -45,6 +106,32 @@ async function postForm(url, formData) {
     throw new Error(data.error || "Request failed");
   }
   return data;
+}
+
+async function downloadExport(payload) {
+  const response = await fetch("/api/exports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Export failed");
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename=\"([^\"]+)\"/);
+  const filename = match ? match[1] : "mirror-talk-export";
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(objectUrl);
 }
 
 function setMessage(node, text, tone = "") {
@@ -179,6 +266,22 @@ function renderRecommendations(recommendations) {
       </div>
     `;
     recommendationList.appendChild(card);
+  });
+}
+
+function renderExportFields() {
+  const selectedList = exportListName.value;
+  const fields = EXPORT_FIELD_CONFIG[selectedList] || [];
+  exportFields.innerHTML = "";
+
+  fields.forEach(([fieldName, label], index) => {
+    const option = document.createElement("label");
+    option.className = "export-field-option";
+    option.innerHTML = `
+      <input type="checkbox" name="fields" value="${fieldName}" ${index < 4 ? "checked" : ""} />
+      <span>${label}</span>
+    `;
+    exportFields.appendChild(option);
   });
 }
 
@@ -317,6 +420,25 @@ episodeImportForm.addEventListener("submit", async (event) => {
   }
 });
 
+operationsExportForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const selectedFields = Array.from(
+    operationsExportForm.querySelectorAll("input[name='fields']:checked"),
+    (input) => input.value,
+  );
+
+  try {
+    await downloadExport({
+      list_name: exportListName.value,
+      format: operationsExportForm.elements.format.value,
+      fields: selectedFields,
+    });
+    setMessage(operationsExportMessage, "Export is downloading.", "success");
+  } catch (error) {
+    setMessage(operationsExportMessage, error.message, "error");
+  }
+});
+
 refreshButton.addEventListener("click", async () => {
   try {
     await loadOperations();
@@ -370,6 +492,11 @@ sendWeeklyRemindersButton.addEventListener("click", async () => {
   }
 });
 
+exportListName.addEventListener("change", () => {
+  renderExportFields();
+});
+
+renderExportFields();
 loadOperations().catch((error) => {
   setMessage(interviewMessage, error.message, "error");
 });
