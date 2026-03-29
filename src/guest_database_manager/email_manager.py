@@ -9,7 +9,14 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Dict, Optional
 
-import streamlit as st
+try:
+    import streamlit as st
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
+except ImportError:  # pragma: no cover - streamlit is available in app env, but keep backend-safe fallback
+    st = None
+
+    def get_script_run_ctx() -> None:
+        return None
 
 try:
     from .config_manager import ConfigManager
@@ -30,6 +37,7 @@ class EmailManager:
         self.password: Optional[str] = None
         self.from_email: Optional[str] = None
         self.from_name: Optional[str] = None
+        self.last_error: str = ""
 
         # Initialize config manager for persistent settings
         self.config_manager = ConfigManager()
@@ -60,6 +68,32 @@ class EmailManager:
     def is_configured(self) -> bool:
         """Check if email is properly configured."""
         return all([self.smtp_server, self.smtp_port, self.username, self.password, self.from_email])
+
+    def _can_report_with_streamlit(self) -> bool:
+        """Return whether streamlit UI feedback is safe in this execution context."""
+        return st is not None and get_script_run_ctx() is not None
+
+    def _report_send_failure(self, error_msg: str) -> None:
+        """Optionally mirror email failures into the Streamlit UI when one exists."""
+        if not self._can_report_with_streamlit():
+            return
+
+        if "Application-specific password required" in error_msg or "InvalidSecondFactor" in error_msg:
+            st.error("🔒 **Gmail App Password Required**")
+            st.error("Your Gmail account requires an App Password instead of your regular password.")
+            st.info("**How to fix this:**")
+            st.info("1. Enable 2-Factor Authentication on your Google Account")
+            st.info("2. Go to Google Account → Security → App passwords")
+            st.info("3. Generate an App Password for 'Mail'")
+            st.info("4. Use that 16-character password instead of your regular password")
+            st.info("5. Learn more: https://support.google.com/mail/?p=InvalidSecondFactor")
+        elif "authentication failed" in error_msg.lower():
+            st.error("❌ **Authentication Failed**")
+            st.error("Please check your username and password are correct.")
+            if self.smtp_server and "gmail" in self.smtp_server.lower():
+                st.info("💡 For Gmail: Make sure you're using an App Password, not your regular password")
+        else:
+            st.error(f"❌ **Failed to send email:** {error_msg}")
 
     def get_acceptance_template(self, guest_name: str, custom_message: str = "") -> Dict[str, str]:
         """Get the email template for guest acceptance.
@@ -164,8 +198,11 @@ Mirror Talk Podcast"""
         Returns:
             True if email sent successfully, False otherwise
         """
+        self.last_error = ""
+
         if not self.is_configured():
-            raise ValueError("Email not configured. Please configure SMTP settings first.")
+            self.last_error = "Email not configured. Please configure SMTP settings first."
+            raise ValueError(self.last_error)
 
         try:
             # Create message
@@ -189,25 +226,8 @@ Mirror Talk Podcast"""
 
         except (smtplib.SMTPException, ssl.SSLError, OSError) as e:
             error_msg = str(e)
-
-            # Provide specific guidance for common Gmail errors
-            if "Application-specific password required" in error_msg or "InvalidSecondFactor" in error_msg:
-                st.error("🔒 **Gmail App Password Required**")
-                st.error("Your Gmail account requires an App Password instead of your regular password.")
-                st.info("**How to fix this:**")
-                st.info("1. Enable 2-Factor Authentication on your Google Account")
-                st.info("2. Go to Google Account → Security → App passwords")
-                st.info("3. Generate an App Password for 'Mail'")
-                st.info("4. Use that 16-character password instead of your regular password")
-                st.info("5. Learn more: https://support.google.com/mail/?p=InvalidSecondFactor")
-            elif "authentication failed" in error_msg.lower():
-                st.error("❌ **Authentication Failed**")
-                st.error("Please check your username and password are correct.")
-                if "gmail" in self.smtp_server.lower():
-                    st.info("💡 For Gmail: Make sure you're using an App Password, not your regular password")
-            else:
-                st.error(f"❌ **Failed to send email:** {error_msg}")
-
+            self.last_error = error_msg
+            self._report_send_failure(error_msg)
             return False
 
     def send_acceptance_email(self, guest_name: str, to_email: str, custom_message: str = "") -> bool:

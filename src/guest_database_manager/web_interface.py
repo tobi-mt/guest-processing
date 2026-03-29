@@ -314,6 +314,9 @@ class GuestWebService:
                 sent = email_manager.send_rejection_email(guest_name, guest_email, custom_message)
 
         if not sent:
+            error_detail = (email_manager.last_error or "").strip()
+            if error_detail:
+                raise WebInterfaceError(f"The email could not be sent: {error_detail}")
             raise WebInterfaceError("The email could not be sent. Please check the server email configuration.")
 
         if normalized_status == "accepted":
