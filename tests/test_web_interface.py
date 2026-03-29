@@ -564,6 +564,19 @@ def test_google_calendar_sync_recognizes_soulful_podcast_event_markers():
     assert GoogleCalendarSyncClient._looks_like_podcast_event(event, query="Mirror Talk") is True
 
 
+def test_operations_list_reports_calendar_sync_enabled(monkeypatch, temp_db):
+    """Operations payload should surface whether Google Calendar sync is configured."""
+    monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
+    monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
+    monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+
+    service = GuestWebService(temp_db.db_path)
+    payload = service.list_operations()
+
+    assert payload["calendar_sync_enabled"] is True
+
+
 def test_validate_intake_payload_rejects_spam_keywords():
     """Spammy submissions should be rejected before insertion."""
     with pytest.raises(WebInterfaceError):

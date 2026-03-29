@@ -9,6 +9,7 @@ const episodeList = document.getElementById("episode-list");
 const refreshButton = document.getElementById("operations-refresh-button");
 const sendWeeklyRemindersButton = document.getElementById("send-weekly-reminders-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
+let latestReminderCandidates = [];
 
 const stats = {
   interviewsTotal: document.getElementById("ops-interviews-total"),
@@ -108,6 +109,7 @@ function renderEpisodes(episodes) {
 }
 
 function renderReminderCandidates(interviews) {
+  latestReminderCandidates = interviews;
   reminderList.innerHTML = "";
 
   if (!interviews.length) {
@@ -126,7 +128,45 @@ function renderReminderCandidates(interviews) {
         <span>Email: ${interview.guest_email || "Not set"}</span>
         <span>Confirmation: ${interview.confirmation_status || "pending"}</span>
       </div>
+      <div class="operations-actions">
+        <button type="button" class="secondary-button" data-reminder-action="preview">Preview Email</button>
+        <button type="button" class="primary-button" data-reminder-action="send">Send Reminder</button>
+      </div>
+      <div class="operations-preview hidden"></div>
     `;
+
+    const previewPanel = card.querySelector(".operations-preview");
+    const previewButton = card.querySelector("[data-reminder-action='preview']");
+    const sendButton = card.querySelector("[data-reminder-action='send']");
+
+    previewButton.addEventListener("click", async () => {
+      try {
+        const preview = await fetchJSON(`/api/interviews/${interview.id}/reminder-template`);
+        card.classList.add("selected");
+        previewPanel.classList.remove("hidden");
+        previewPanel.innerHTML = `
+          <h4>${preview.subject}</h4>
+          <p>To: ${interview.guest_email || "No email address"}</p>
+          <pre>${preview.body}</pre>
+        `;
+      } catch (error) {
+        setMessage(reminderMessage, error.message, "error");
+      }
+    });
+
+    sendButton.addEventListener("click", async () => {
+      try {
+        await fetchJSON(`/api/interviews/${interview.id}/send-reminder`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        setMessage(reminderMessage, `Reminder sent to ${interview.guest_name}.`, "success");
+        await loadOperations();
+      } catch (error) {
+        setMessage(reminderMessage, error.message, "error");
+      }
+    });
+
     reminderList.appendChild(card);
   });
 }
@@ -211,6 +251,11 @@ syncCalendarButton.addEventListener("click", async () => {
 });
 
 sendWeeklyRemindersButton.addEventListener("click", async () => {
+  if (!latestReminderCandidates.length) {
+    setMessage(reminderMessage, "There are no reviewed reminder candidates to send right now.", "error");
+    return;
+  }
+
   try {
     const result = await fetchJSON("/api/reminders/send-weekly", {
       method: "POST",

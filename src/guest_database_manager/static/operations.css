@@ -18,6 +18,11 @@
   background: var(--panel-strong);
 }
 
+.operations-card.selected {
+  border-color: rgba(20, 90, 74, 0.22);
+  box-shadow: 0 10px 24px rgba(20, 90, 74, 0.08);
+}
+
 .operations-card h3,
 .operations-card p {
   overflow-wrap: anywhere;
@@ -33,6 +38,39 @@
 
 .operations-meta span {
   overflow-wrap: anywhere;
+}
+
+.review-copy {
+  margin-bottom: 16px;
+}
+
+.operations-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.operations-preview {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(91, 70, 47, 0.10);
+}
+
+.operations-preview h4,
+.operations-preview p {
+  overflow-wrap: anywhere;
+}
+
+.operations-preview pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.6;
+  color: var(--muted);
 }
 
 .top-spaced {
