@@ -13,6 +13,12 @@ def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _slug_words(value: str) -> list[str]:
+    """Return meaningful title-case words from a text field."""
+    words = [part.strip(" ,.-") for part in _clean_text(value).split()]
+    return [word for word in words if word]
+
+
 def _parse_legacy_date(value: str) -> str:
     text = _clean_text(value)
     if not text:
@@ -229,6 +235,154 @@ def _promotion_readiness_score(episode: Dict[str, Any]) -> tuple[float, str]:
     return -2.0, "promotion readiness is still unclear"
 
 
+def build_promotion_readiness(episode: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a deterministic promotion-readiness summary from stored episode fields."""
+    score = 0
+    strengths: list[str] = []
+    blockers: list[str] = []
+
+    episode_title = _clean_text(episode.get("episode_title"))
+    topic = _clean_text(episode.get("topic"))
+    category = _clean_text(episode.get("category"))
+    guest_name = _clean_text(episode.get("guest_name"))
+    guest_email = _clean_text(episode.get("guest_email"))
+    website = _clean_text(episode.get("website"))
+    show_notes_url = _clean_text(episode.get("show_notes_url"))
+    release_files_url = _clean_text(episode.get("release_files_url"))
+    recommendation_reason = _clean_text(episode.get("recommendation_reason"))
+    production_status = _clean_text(episode.get("production_status")).lower()
+    promotion_status = _clean_text(episode.get("promotion_status")).lower()
+
+    if episode_title:
+        score += 14
+        strengths.append("episode title is set")
+    else:
+        blockers.append("episode title is still missing")
+
+    if topic:
+        score += 12
+        strengths.append("topic is clearly defined")
+    else:
+        blockers.append("topic is still missing")
+
+    if category:
+        score += 10
+        strengths.append("category is assigned")
+    else:
+        blockers.append("category is still missing")
+
+    if guest_name and guest_email:
+        score += 12
+        strengths.append("guest details are complete")
+    elif guest_name:
+        score += 5
+        blockers.append("guest email is still missing")
+    else:
+        blockers.append("guest details are incomplete")
+
+    if website:
+        score += 4
+    if recommendation_reason:
+        score += 4
+
+    if production_status == "ready":
+        score += 18
+        strengths.append("production is marked ready")
+    elif production_status == "editing":
+        score += 8
+        blockers.append("episode is still in editing")
+    elif production_status == "recorded":
+        score += 5
+        blockers.append("episode is recorded but not marked ready")
+    else:
+        blockers.append("production stage is still too early")
+
+    if promotion_status in {"ready", "released"}:
+        score += 18
+        strengths.append("promotion assets are marked ready")
+    elif promotion_status == "needs_assets":
+        blockers.append("promotion assets are still missing")
+    else:
+        blockers.append("promotion readiness has not been confirmed")
+
+    if show_notes_url:
+        score += 6
+        strengths.append("show notes link is ready")
+    if release_files_url:
+        score += 6
+        strengths.append("guest files link is ready")
+
+    score = max(0, min(100, score))
+    if score >= 80:
+        label = "Ready to publish"
+    elif score >= 60:
+        label = "Nearly ready"
+    elif score >= 40:
+        label = "Needs prep"
+    else:
+        label = "Blocked"
+
+    return {
+        "score": score,
+        "label": label,
+        "strengths": strengths[:4],
+        "blockers": blockers[:4],
+    }
+
+
+def build_episode_title_suggestions(episode: Dict[str, Any]) -> list[str]:
+    """Generate grounded title variants from the stored episode fields."""
+    guest_name = _clean_text(episode.get("guest_name"))
+    topic = _clean_text(episode.get("topic")) or _clean_text(episode.get("episode_title"))
+    category = _clean_text(episode.get("category"))
+
+    if not topic:
+        return []
+
+    core_topic = " ".join(_slug_words(topic)[:8]).strip()
+    if not core_topic:
+        return []
+
+    suggestions = [
+        core_topic,
+        f"{core_topic} with {guest_name}" if guest_name else "",
+        f"Mirror Talk: {core_topic}",
+        f"{core_topic} | Mirror Talk",
+        f"{category}: {core_topic}" if category else "",
+    ]
+
+    unique: list[str] = []
+    seen = set()
+    for suggestion in suggestions:
+        cleaned = suggestion.strip()
+        key = cleaned.casefold()
+        if cleaned and key not in seen:
+            seen.add(key)
+            unique.append(cleaned)
+    return unique[:4]
+
+
+def build_episode_copy_assist(episode: Dict[str, Any]) -> Dict[str, str]:
+    """Build simple, grounded promo copy from the episode record."""
+    guest_name = _clean_text(episode.get("guest_name")) or "our guest"
+    topic = _clean_text(episode.get("topic")) or _clean_text(episode.get("episode_title")) or "a meaningful conversation"
+    category = _clean_text(episode.get("category"))
+    episode_title = _clean_text(episode.get("episode_title")) or topic
+
+    summary = f"{guest_name} joins Mirror Talk for a conversation about {topic.lower()}."
+    if category:
+        summary += f" The episode sits within our {category} conversations."
+
+    social_caption = f"New on Mirror Talk: {episode_title}. {guest_name} joins us to explore {topic.lower()}."
+    newsletter_blurb = f"This week on Mirror Talk, {guest_name} joins us for {topic.lower()}."
+
+    return {
+        "summary": summary,
+        "social_caption": social_caption,
+        "newsletter_blurb": newsletter_blurb,
+    }
+
+
 def _guest_recency_penalty(episode: Dict[str, Any], recent_releases: List[Dict[str, Any]]) -> tuple[float, str]:
     """Avoid back-to-back appearances from the same guest."""
     guest_name = _clean_text(episode.get("guest_name")).casefold()
@@ -395,11 +549,14 @@ def build_release_recommendations(
         for episode in remaining:
             score = float(episode.get("base_priority_score") or 0)
             reasons = list(episode.get("base_recommendation_reasons") or [])
+            why_now = list(reasons)
+            watchouts: List[str] = []
 
             season_score, season_reason = _month_theme_score(episode, slot)
             score += season_score
             if season_reason:
                 reasons.append(season_reason)
+                why_now.append(season_reason)
 
             category = _clean_text(episode.get("category"))
             guest_name = _clean_text(episode.get("guest_name")).casefold()
@@ -407,19 +564,33 @@ def build_release_recommendations(
             if category and category not in simulated_recent_categories[:4]:
                 score += 7
                 reasons.append("keeps the next release run varied")
+                why_now.append("keeps the next release run varied")
             elif category:
                 score -= 5
+                watchouts.append("category is already close to the current release mix")
 
             if guest_name and guest_name not in simulated_recent_guests[:6]:
                 score += 3
             elif guest_name:
                 score -= 6
                 reasons.append("another recent appearance from the same guest voice")
+                watchouts.append("guest voice is still fresh in the recent archive")
+
+            readiness = build_promotion_readiness(episode)
+            if readiness["score"] >= 60:
+                why_now.extend(readiness["strengths"][:2])
+            else:
+                watchouts.extend(readiness["blockers"][:2])
 
             candidate = dict(episode)
             candidate["priority_score"] = round(score, 1)
             candidate["recommendation_reason"] = "; ".join(dict.fromkeys(reasons)) or "good fit for the next available slot"
             candidate["recommended_release_date"] = slot.strftime("%Y-%m-%d %H:%M:%S")
+            candidate["why_now"] = list(dict.fromkeys(why_now))[:4]
+            candidate["watchouts"] = list(dict.fromkeys(watchouts))[:4]
+            candidate["promotion_readiness"] = readiness
+            candidate["title_suggestions"] = build_episode_title_suggestions(episode)
+            candidate["copy_assist"] = build_episode_copy_assist(episode)
             scored_candidates.append(candidate)
 
         scored_candidates.sort(

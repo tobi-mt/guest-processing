@@ -277,6 +277,47 @@ function deriveRecommendationSignals(episode) {
   return signals;
 }
 
+function renderPromoReadiness(readiness) {
+  if (!readiness) {
+    return "";
+  }
+  const strengths = (readiness.strengths || []).slice(0, 2).map((item) => `<li>${item}</li>`).join("");
+  const blockers = (readiness.blockers || []).slice(0, 2).map((item) => `<li>${item}</li>`).join("");
+  return `
+    <div class="operations-preview">
+      <p><strong>Promotion Readiness:</strong> ${readiness.score}/100 · ${readiness.label}</p>
+      ${strengths ? `<div class="insight-stack"><strong class="insight-label">Ready signals</strong><ul>${strengths}</ul></div>` : ""}
+      ${blockers ? `<div class="insight-stack caution"><strong class="insight-label">Still blocking</strong><ul>${blockers}</ul></div>` : ""}
+    </div>
+  `;
+}
+
+function renderTitleSuggestions(titles) {
+  if (!titles || !titles.length) {
+    return "";
+  }
+  return `
+    <div class="operations-preview">
+      <strong class="insight-label">Title Suggestions</strong>
+      <ul>${titles.map((title) => `<li>${title}</li>`).join("")}</ul>
+    </div>
+  `;
+}
+
+function renderCopyAssist(copyAssist) {
+  if (!copyAssist) {
+    return "";
+  }
+  return `
+    <div class="operations-preview">
+      <strong class="insight-label">Promo Copy Assist</strong>
+      <p>${copyAssist.summary || ""}</p>
+      <p><strong>Social:</strong> ${copyAssist.social_caption || ""}</p>
+      <p><strong>Newsletter:</strong> ${copyAssist.newsletter_blurb || ""}</p>
+    </div>
+  `;
+}
+
 function splitRecommendationInsights(reason) {
   const text = String(reason || "").trim();
   if (!text) {
@@ -703,11 +744,15 @@ function renderEpisodes(episodes, totalCount) {
         <span>Release: ${formatDateTime(episode.release_date)}</span>
         <span>Status: ${episode.release_status || "unplanned"} / ${episode.production_status || "idea"}</span>
         <span>Promo: ${episode.promotion_status || "unknown"}</span>
+        <span>Readiness: ${episode.promotion_readiness?.score ?? 0}/100</span>
         <span>Priority: ${episode.priority_score ?? 0}</span>
         <span>Show Notes: ${episode.show_notes_url ? "Ready" : "Missing"}</span>
         <span>Files: ${episode.release_files_url ? "Ready" : "Missing"}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
+      ${renderPromoReadiness(episode.promotion_readiness)}
+      ${renderTitleSuggestions(episode.title_suggestions)}
+      ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
         <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
@@ -986,6 +1031,11 @@ function renderRecommendations(recommendations, totalCount) {
         ${insights.strengths.length ? `<div class="insight-stack"><strong class="insight-label">Why now</strong><ul>${insights.strengths.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
         ${insights.cautions.length ? `<div class="insight-stack caution"><strong class="insight-label">Watchouts</strong><ul>${insights.cautions.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       </div>
+      ${episode.why_now?.length ? `<div class="operations-preview"><strong class="insight-label">Why this next</strong><ul>${episode.why_now.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
+      ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
+      ${renderPromoReadiness(episode.promotion_readiness)}
+      ${renderTitleSuggestions(episode.title_suggestions)}
+      ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
         <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>

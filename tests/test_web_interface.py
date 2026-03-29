@@ -414,6 +414,35 @@ def test_release_recommendations_skip_already_scheduled_episodes(temp_db):
     assert recommendations[0]["guest_name"] == "Needs A Slot"
 
 
+def test_planning_payload_includes_grounded_editorial_assist(temp_db):
+    """Planning payload should expose deterministic readiness and copy/title suggestions."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+            "episode_title": "Building Calm Under Pressure",
+            "topic": "Building Calm Under Pressure",
+            "category": "Finance",
+            "production_status": "ready",
+            "promotion_status": "ready",
+            "show_notes_url": "https://mirrortalkpodcast.com/episodes/building-calm",
+            "release_files_url": "https://downloads.mirrortalkpodcast.com/building-calm",
+        }
+    )
+
+    planning = service.list_planning()
+    episode = planning["episodes"][0]
+    recommendation = planning["recommendations"][0]
+
+    assert episode["promotion_readiness"]["score"] >= 70
+    assert episode["title_suggestions"]
+    assert "summary" in episode["copy_assist"]
+    assert recommendation["promotion_readiness"]["score"] >= 70
+    assert recommendation["why_now"]
+
+
 def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):
     """Flexible export should allow narrow CSV extracts for episode planning."""
     service = GuestWebService(temp_db.db_path)
