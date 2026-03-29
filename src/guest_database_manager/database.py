@@ -34,6 +34,42 @@ def _prefer_existing_metadata(existing_value: Optional[str], new_value: Optional
     return new_value
 
 
+def _is_blank_import_value(value: Any) -> bool:
+    """Treat None, NaN-like values, and empty strings as blank import cells."""
+    if value is None:
+        return True
+    try:
+        if value != value:
+            return True
+    except Exception:
+        pass
+    return str(value).strip() == ""
+
+
+def _clean_import_row_dict(row: Any) -> Dict[str, Any]:
+    """Remove blank-header columns and normalize empty cell values for import metadata."""
+    cleaned: Dict[str, Any] = {}
+    for key, value in row.items():
+        header = str(key).strip() if key is not None else ""
+        lowered_header = header.casefold()
+        if not header or lowered_header.startswith("unnamed:"):
+            continue
+        cleaned[header] = "" if _is_blank_import_value(value) else value
+    return cleaned
+
+
+def _row_has_non_empty_values(row: Any) -> bool:
+    """Return True when a row has at least one non-empty value under a real header."""
+    for key, value in row.items():
+        header = str(key).strip() if key is not None else ""
+        lowered_header = header.casefold()
+        if not header or lowered_header.startswith("unnamed:"):
+            continue
+        if not _is_blank_import_value(value):
+            return True
+    return False
+
+
 class GuestDatabase:
     """Manages the SQLite database for guest information with simplified interface."""
     
@@ -287,6 +323,12 @@ class GuestDatabase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def delete_interview(self, interview_id: int) -> None:
+        """Delete an interview from the database."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.execute("DELETE FROM interviews WHERE id = ?", (interview_id,))
+            conn.commit()
+
     def upsert_episode(self, episode_data: Dict[str, Any]) -> tuple[int, str]:
         """Insert or update an episode using interview id when available."""
         interview_id = episode_data.get("interview_id")
@@ -412,6 +454,12 @@ class GuestDatabase:
             cursor = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def delete_episode(self, episode_id: int) -> None:
+        """Delete an episode from the database."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
+            conn.commit()
 
     def log_reminder(self, interview_id: int, reminder_type: str, sent_to: str, status: str, provider: str = "", notes: str = "") -> int:
         """Record a reminder attempt for an interview."""
@@ -618,9 +666,18 @@ class GuestDatabase:
         # Process each row
         for index, row in df.iterrows():
             try:
+                if not _row_has_non_empty_values(row):
+                    logger.info("Row %d: Skipped blank row", index + 1)
+                    stats['skipped'] += 1
+                    continue
+
                 guest_data = self.mapper.clean_guest_data(row)
                 guest_data['original_file_name'] = Path(source_name or file_path).name
-                guest_data['original_data'] = dumps(row.fillna("").to_dict(), ensure_ascii=False, default=str)
+                guest_data['original_data'] = dumps(
+                    _clean_import_row_dict(row.fillna("").to_dict()),
+                    ensure_ascii=False,
+                    default=str,
+                )
                 
                 # Validate data
                 is_valid, error_msg = self.mapper.validate_guest_data(guest_data)

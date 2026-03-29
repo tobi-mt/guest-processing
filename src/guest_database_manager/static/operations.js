@@ -72,10 +72,12 @@ function renderInterviews(interviews) {
       </div>
       <div class="operations-actions">
         ${calendarButton}
+        <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
       </div>
     `;
 
     const calendarPushButton = card.querySelector("[data-calendar-action='push']");
+    const deleteButton = card.querySelector("[data-interview-action='delete']");
     if (calendarPushButton) {
       calendarPushButton.addEventListener("click", async () => {
         calendarPushButton.disabled = true;
@@ -91,6 +93,27 @@ function renderInterviews(interviews) {
           setMessage(interviewMessage, error.message, "error");
           calendarPushButton.disabled = false;
           calendarPushButton.textContent = "Update Google Calendar Event";
+        }
+      });
+    }
+
+    if (deleteButton) {
+      deleteButton.addEventListener("click", async () => {
+        const label = interview.guest_name || "this interview";
+        if (!window.confirm(`Delete ${label} from the database?`)) {
+          return;
+        }
+
+        deleteButton.disabled = true;
+        deleteButton.textContent = "Deleting...";
+        try {
+          await fetchJSON(`/api/interviews/${interview.id}`, { method: "DELETE" });
+          setMessage(interviewMessage, `Deleted ${label}.`, "success");
+          await loadOperations();
+        } catch (error) {
+          setMessage(interviewMessage, error.message, "error");
+          deleteButton.disabled = false;
+          deleteButton.textContent = "Delete";
         }
       });
     }

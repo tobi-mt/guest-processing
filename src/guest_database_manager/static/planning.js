@@ -189,7 +189,31 @@ function renderEpisodes(episodes) {
         <span>Priority: ${episode.priority_score ?? 0}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
+      <div class="operations-actions">
+        <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
+      </div>
     `;
+
+    const deleteButton = card.querySelector("[data-episode-action='delete']");
+    deleteButton.addEventListener("click", async () => {
+      const label = episode.episode_title || episode.guest_name || "this episode";
+      if (!window.confirm(`Delete ${label} from the database?`)) {
+        return;
+      }
+
+      deleteButton.disabled = true;
+      deleteButton.textContent = "Deleting...";
+      try {
+        await fetchJSON(`/api/episodes/${episode.id}`, { method: "DELETE" });
+        setMessage(episodeMessage, `Deleted ${label}.`, "success");
+        await loadPlanning();
+      } catch (error) {
+        setMessage(episodeMessage, error.message, "error");
+        deleteButton.disabled = false;
+        deleteButton.textContent = "Delete";
+      }
+    });
+
     episodeList.appendChild(card);
   });
 }

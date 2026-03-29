@@ -168,6 +168,22 @@ def test_web_service_can_import_uploaded_csv(temp_db):
     assert imported_guest["email"] == "jordan@example.com"
 
 
+def test_web_service_skips_blank_uploaded_guest_rows(temp_db):
+    """Uploaded guest files should ignore rows that are completely empty."""
+    service = GuestWebService(temp_db.db_path)
+    csv_bytes = (
+        "Full name,Email,Website\n"
+        "Jordan Rivers,jordan@example.com,https://jord.example.com\n"
+        ",,\n"
+    ).encode("utf-8")
+
+    result = service.import_guest_file("guest-intake.csv", csv_bytes)
+
+    assert result["imported"] == 1
+    assert result["skipped"] == 1
+    assert len(service.list_guests()["guests"]) == 1
+
+
 def test_web_service_can_import_uploaded_excel_with_timestamp_columns(temp_db, tmp_path):
     """Excel imports should tolerate timestamp metadata columns from form exports."""
     service = GuestWebService(temp_db.db_path)
@@ -224,6 +240,24 @@ def test_web_service_can_import_episode_history_and_queue_csvs(temp_db):
     assert queue_episode["website"] == "https://jordan.example.com"
 
 
+def test_web_service_episode_import_ignores_blank_rows_and_headers(temp_db):
+    """Episode planning imports should ignore empty rows and unnamed columns."""
+    service = GuestWebService(temp_db.db_path)
+    queue_csv = (
+        "Names,Email,,Topic,Category,Interview Date,Riverside FM Status\n"
+        "Jordan Rivers,jordan@example.com,,Building Calm Under Pressure,Finance,11/03/2026,Processing\n"
+        ",,,,,,\n"
+    ).encode("utf-8")
+
+    result = service.import_episode_file("MT Guest List - Not Yet Released.csv", queue_csv)
+    planning = service.list_planning()
+
+    assert result["imported"] == 1
+    assert result["updated"] == 0
+    assert len(planning["episodes"]) == 1
+    assert planning["episodes"][0]["guest_name"] == "Jordan Rivers"
+
+
 def test_web_service_can_export_guests_to_csv(temp_db):
     """Dashboard exports should return a CSV with the imported guest data."""
     service = GuestWebService(temp_db.db_path)
@@ -240,6 +274,33 @@ def test_web_service_can_export_guests_to_csv(temp_db):
 
     assert "full_name,email,website" in exported_csv
     assert "Amina Hart,amina@example.com,https://amina.example.com" in exported_csv
+
+
+def test_web_service_can_delete_interview_and_episode(temp_db):
+    """Operations records should be removable through the web service."""
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Jordan Rivers and Tobi Ojekunle",
+            "scheduled_for": "2026-04-08T17:00",
+        }
+    )
+    episode = service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Healing Through Hard Seasons",
+            "topic": "Healing",
+            "interview_id": interview["id"],
+        }
+    )
+
+    assert service.delete_episode(episode["id"]) == {"deleted": True, "id": episode["id"]}
+    assert service.delete_interview(interview["id"]) == {"deleted": True, "id": interview["id"]}
+    assert service.list_planning()["episodes"] == []
+    assert service.list_operations()["interviews"] == []
 
 
 def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):

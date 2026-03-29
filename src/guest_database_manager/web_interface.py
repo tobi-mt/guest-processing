@@ -526,6 +526,14 @@ class GuestWebService:
         self.database.delete_guest(guest_id)
         return {"deleted": True, "id": guest_id}
 
+    def delete_interview(self, interview_id: int) -> Dict[str, Any]:
+        """Delete an interview and return a small confirmation payload."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+        self.database.delete_interview(interview_id)
+        return {"deleted": True, "id": interview_id}
+
     def create_interview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create or update an interview record."""
         interview_data = {
@@ -638,6 +646,14 @@ class GuestWebService:
         episode_data.update(payload)
         saved = self.create_episode(episode_data)
         return saved
+
+    def delete_episode(self, episode_id: int) -> Dict[str, Any]:
+        """Delete an episode and return a small confirmation payload."""
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode not found.")
+        self.database.delete_episode(episode_id)
+        return {"deleted": True, "id": episode_id}
 
     def get_due_weekly_reminders(self, *, reference: Optional[datetime] = None) -> list[Dict[str, Any]]:
         """Return interviews due for a weekly confirmation reminder."""
@@ -1405,6 +1421,34 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.OK, self.service.delete_guest(guest_id))
+            return
+
+        if self.path.startswith("/api/interviews/"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            interview_id = self._extract_record_id(self.path, "/api/interviews/")
+            if interview_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                return
+            try:
+                self._send_json(HTTPStatus.OK, self.service.delete_interview(interview_id))
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+
+        if self.path.startswith("/api/episodes/"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            episode_id = self._extract_record_id(self.path, "/api/episodes/")
+            if episode_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                return
+            try:
+                self._send_json(HTTPStatus.OK, self.service.delete_episode(episode_id))
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})

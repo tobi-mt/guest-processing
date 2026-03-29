@@ -273,3 +273,50 @@ def test_upsert_episode_and_log_reminder(temp_db):
     assert stats["episodes_total"] == 1
     assert stats["episodes_scheduled"] == 1
     assert stats["reminders_sent"] == 1
+
+
+def test_delete_interview_and_episode(temp_db):
+    """Interview and episode records should be removable from the operations store."""
+    interview_id, _ = temp_db.upsert_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Jordan Rivers and Tobi Ojekunle",
+            "scheduled_for": "2026-04-08 17:00:00",
+        }
+    )
+    episode_id, _ = temp_db.upsert_episode(
+        {
+            "interview_id": interview_id,
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Healing Through Hard Seasons",
+            "topic": "Healing",
+        }
+    )
+
+    temp_db.delete_episode(episode_id)
+    temp_db.delete_interview(interview_id)
+
+    assert temp_db.get_episode_by_id(episode_id) is None
+    assert temp_db.get_interview_by_id(interview_id) is None
+
+
+def test_import_skips_blank_rows_and_blank_header_columns(temp_db, tmp_path):
+    """Guest imports should ignore empty rows and unnamed empty columns."""
+    csv_path = tmp_path / "guests-with-blank-rows.csv"
+    csv_path.write_text(
+        "Full name,Email,,Website\n"
+        "Jordan Rivers,jordan@example.com,,https://jordan.example.com\n"
+        ",,,\n",
+        encoding="utf-8",
+    )
+
+    result = temp_db.import_from_file(str(csv_path))
+
+    guests = temp_db.get_all_guests()
+    assert result["imported"] == 1
+    assert result["skipped"] == 1
+    assert len(guests) == 1
+    assert guests[0]["full_name"] == "Jordan Rivers"
+    assert guests[0]["original_data"] == '{"Full name": "Jordan Rivers", "Email": "jordan@example.com", "Website": "https://jordan.example.com"}'

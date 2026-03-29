@@ -27,7 +27,13 @@ def _parse_legacy_date(value: str) -> str:
 
 
 def _normalize_row(row: Dict[str, Any]) -> Dict[str, str]:
-    return {_clean_text(key): _clean_text(value) for key, value in row.items() if key is not None}
+    normalized: Dict[str, str] = {}
+    for key, value in row.items():
+        header = _clean_text(key)
+        if not header:
+            continue
+        normalized[header] = _clean_text(value)
+    return normalized
 
 
 def _map_queue_status_to_production_status(status: str) -> str:
