@@ -145,6 +145,7 @@ EXPORTABLE_FIELDS: Dict[str, list[str]] = {
         "riverside_status",
         "show_notes_url",
         "release_files_url",
+        "transcript_text",
         "source_file_name",
         "recommendation_reason",
     ],
@@ -707,6 +708,7 @@ class GuestWebService:
             "source_type": _normalize_text(payload.get("source_type")),
             "show_notes_url": _normalize_text(payload.get("show_notes_url")),
             "release_files_url": _normalize_text(payload.get("release_files_url")),
+            "transcript_text": _normalize_text(payload.get("transcript_text")),
             "notes": _normalize_text(payload.get("notes")),
         }
 

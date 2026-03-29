@@ -429,6 +429,7 @@ def test_planning_payload_includes_grounded_editorial_assist(temp_db):
             "promotion_status": "ready",
             "show_notes_url": "https://mirrortalkpodcast.com/episodes/building-calm",
             "release_files_url": "https://downloads.mirrortalkpodcast.com/building-calm",
+            "transcript_text": "We explored how calm under pressure begins with honest self-awareness. Jordan reflected on building better financial boundaries through practice.",
         }
     )
 
@@ -439,6 +440,7 @@ def test_planning_payload_includes_grounded_editorial_assist(temp_db):
     assert episode["promotion_readiness"]["score"] >= 70
     assert episode["title_suggestions"]
     assert "summary" in episode["copy_assist"]
+    assert episode["copy_assist"]["show_notes_intro"]
     assert recommendation["promotion_readiness"]["score"] >= 70
     assert recommendation["why_now"]
 
@@ -1085,6 +1087,46 @@ def test_episode_recommendations_flag_archive_overlap_without_hard_blocking(temp
 
     assert recommendation["archive_overlap"]["status"] in {"risky", "revisit"}
     assert recommendation["archive_overlap"]["message"]
+
+
+def test_episode_recommendations_flag_recent_topic_clusters(temp_db):
+    """Recommendations should warn when a theme is already warm across the last 10 releases."""
+    service = GuestWebService(temp_db.db_path)
+
+    for offset in range(3):
+        service.create_episode(
+            {
+                "guest_name": f"Recent Healing Guest {offset}",
+                "guest_email": f"recent-healing-{offset}@example.com",
+                "episode_title": f"Healing Through Honest Reflection {offset}",
+                "topic": f"Healing Through Honest Reflection {offset}",
+                "category": "Mental Health",
+                "interview_date": "2025-10-01",
+                "release_date": f"2026-03-{10 + offset:02d}",
+                "release_status": "released",
+                "production_status": "released",
+                "promotion_status": "released",
+            }
+        )
+
+    service.create_episode(
+        {
+            "guest_name": "Queued Healing Guest",
+            "guest_email": "queued-healing@example.com",
+            "episode_title": "Healing Through Honest Awareness",
+            "topic": "Healing Through Honest Awareness",
+            "category": "Mental Health",
+            "interview_date": "2025-12-01",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    planning = service.list_planning()
+    recommendation = next(item for item in planning["recommendations"] if item["guest_name"] == "Queued Healing Guest")
+
+    assert recommendation["topic_cluster_warning"]["status"] in {"warm", "active"}
+    assert recommendation["topic_cluster_warning"]["message"]
 
 
 def test_operations_are_sorted_by_nearest_upcoming_interview_first(temp_db):

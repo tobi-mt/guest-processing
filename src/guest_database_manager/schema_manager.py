@@ -162,6 +162,7 @@ class SchemaManager:
         ("source_type", "TEXT"),
         ("show_notes_url", "TEXT"),
         ("release_files_url", "TEXT"),
+        ("transcript_text", "TEXT"),
     ]
     
     @staticmethod

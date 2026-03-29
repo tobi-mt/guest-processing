@@ -87,6 +87,7 @@ const EXPORT_FIELD_CONFIG = {
     ["riverside_status", "Riverside Status"],
     ["show_notes_url", "Show Notes URL"],
     ["release_files_url", "Files URL"],
+    ["transcript_text", "Transcript"],
     ["source_file_name", "Source File"],
     ["recommendation_reason", "Recommendation Reason"],
   ],
@@ -314,6 +315,8 @@ function renderCopyAssist(copyAssist) {
       <p>${copyAssist.summary || ""}</p>
       <p><strong>Social:</strong> ${copyAssist.social_caption || ""}</p>
       <p><strong>Newsletter:</strong> ${copyAssist.newsletter_blurb || ""}</p>
+      ${copyAssist.show_notes_intro ? `<p><strong>Show notes intro:</strong> ${copyAssist.show_notes_intro}</p>` : ""}
+      ${copyAssist.quote_pull ? `<p><strong>Quote pull:</strong> ${copyAssist.quote_pull}</p>` : ""}
     </div>
   `;
 }
@@ -419,6 +422,7 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeForm.elements.riverside_status.value = episode.riverside_status || "";
   episodeForm.elements.show_notes_url.value = episode.show_notes_url || "";
   episodeForm.elements.release_files_url.value = episode.release_files_url || "";
+  episodeForm.elements.transcript_text.value = episode.transcript_text || "";
   episodeForm.elements.recommendation_reason.value = episode.recommendation_reason || "";
   episodeForm.elements.notes.value = episode.notes || "";
   episodeSubmitButton.textContent = "Update Episode";
@@ -463,6 +467,7 @@ function renderEpisodeInlineEditor(container, episode) {
       ${createFieldMarkup("Topic", `<input name="topic" type="text" value="${episode.topic || ""}" />`, true)}
       ${createFieldMarkup("Show Note / Blogpost URL", `<input name="show_notes_url" type="url" value="${episode.show_notes_url || ""}" />`, true)}
       ${createFieldMarkup("Files URL", `<input name="release_files_url" type="url" value="${episode.release_files_url || ""}" />`, true)}
+      ${createFieldMarkup("Transcript", `<textarea name="transcript_text" rows="5">${episode.transcript_text || ""}</textarea>`, true)}
       ${createFieldMarkup("Notes", `<textarea name="notes" rows="3">${episode.notes || ""}</textarea>`, true)}
       <div class="inline-editor-actions full-width">
         <button type="submit" class="primary-button">Save Changes</button>
@@ -748,6 +753,7 @@ function renderEpisodes(episodes, totalCount) {
         <span>Priority: ${episode.priority_score ?? 0}</span>
         <span>Show Notes: ${episode.show_notes_url ? "Ready" : "Missing"}</span>
         <span>Files: ${episode.release_files_url ? "Ready" : "Missing"}</span>
+        <span>Transcript: ${episode.transcript_text ? "Available" : "Missing"}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
       ${renderPromoReadiness(episode.promotion_readiness)}
@@ -1035,6 +1041,7 @@ function renderRecommendations(recommendations, totalCount) {
       ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${episode.archive_overlap.message}</p></div>` : ""}
+      ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}
       ${renderPromoReadiness(episode.promotion_readiness)}
       ${renderTitleSuggestions(episode.title_suggestions)}
       ${renderCopyAssist(episode.copy_assist)}

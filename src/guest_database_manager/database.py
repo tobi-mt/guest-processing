@@ -387,6 +387,7 @@ class GuestDatabase:
                 episode_data.get("source_type"),
                 episode_data.get("show_notes_url"),
                 episode_data.get("release_files_url"),
+                episode_data.get("transcript_text"),
                 episode_data.get("notes"),
             )
 
@@ -398,7 +399,7 @@ class GuestDatabase:
                         topic = ?, category = ?, interview_date = ?, recording_date = ?, release_date = ?,
                         release_status = ?, production_status = ?, promotion_status = ?, priority_score = ?, recommendation_reason = ?,
                         legacy_episode_number = ?, riverside_status = ?, source_file_name = ?, source_type = ?,
-                        show_notes_url = ?, release_files_url = ?,
+                        show_notes_url = ?, release_files_url = ?, transcript_text = ?,
                         notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
@@ -413,8 +414,8 @@ class GuestDatabase:
                     guest_id, interview_id, guest_name, guest_email, website, episode_title, topic, category,
                     interview_date, recording_date, release_date, release_status, production_status,
                     promotion_status, priority_score, recommendation_reason, legacy_episode_number, riverside_status,
-                    source_file_name, source_type, show_notes_url, release_files_url, notes, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    source_file_name, source_type, show_notes_url, release_files_url, transcript_text, notes, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 fields,
             )

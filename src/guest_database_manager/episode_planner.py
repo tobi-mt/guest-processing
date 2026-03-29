@@ -19,6 +19,15 @@ def _slug_words(value: str) -> list[str]:
     return [word for word in words if word]
 
 
+def _transcript_sentences(episode: Dict[str, Any], limit: int = 3) -> list[str]:
+    """Extract a few grounded transcript sentences for drafting help."""
+    transcript = _clean_text(episode.get("transcript_text"))
+    if not transcript:
+        return []
+    sentences = [part.strip() for part in transcript.replace("\n", " ").split(".") if part.strip()]
+    return [sentence for sentence in sentences if len(sentence.split()) >= 6][:limit]
+
+
 def _parse_legacy_date(value: str) -> str:
     text = _clean_text(value)
     if not text:
@@ -335,11 +344,15 @@ def build_episode_title_suggestions(episode: Dict[str, Any]) -> list[str]:
     guest_name = _clean_text(episode.get("guest_name"))
     topic = _clean_text(episode.get("topic")) or _clean_text(episode.get("episode_title"))
     category = _clean_text(episode.get("category"))
+    transcript_sentences = _transcript_sentences(episode, limit=1)
 
     if not topic:
         return []
 
     core_topic = " ".join(_slug_words(topic)[:8]).strip()
+    transcript_phrase = ""
+    if transcript_sentences:
+        transcript_phrase = " ".join(_slug_words(transcript_sentences[0])[:6]).strip()
     if not core_topic:
         return []
 
@@ -349,6 +362,7 @@ def build_episode_title_suggestions(episode: Dict[str, Any]) -> list[str]:
         f"Mirror Talk: {core_topic}",
         f"{core_topic} | Mirror Talk",
         f"{category}: {core_topic}" if category else "",
+        transcript_phrase if transcript_phrase and transcript_phrase.casefold() != core_topic.casefold() else "",
     ]
 
     unique: list[str] = []
@@ -368,18 +382,25 @@ def build_episode_copy_assist(episode: Dict[str, Any]) -> Dict[str, str]:
     topic = _clean_text(episode.get("topic")) or _clean_text(episode.get("episode_title")) or "a meaningful conversation"
     category = _clean_text(episode.get("category"))
     episode_title = _clean_text(episode.get("episode_title")) or topic
+    transcript_sentences = _transcript_sentences(episode, limit=2)
 
     summary = f"{guest_name} joins Mirror Talk for a conversation about {topic.lower()}."
     if category:
         summary += f" The episode sits within our {category} conversations."
+    if transcript_sentences:
+        summary += f" In the conversation, {transcript_sentences[0][0].lower() + transcript_sentences[0][1:] if len(transcript_sentences[0]) > 1 else transcript_sentences[0].lower()}."
 
     social_caption = f"New on Mirror Talk: {episode_title}. {guest_name} joins us to explore {topic.lower()}."
     newsletter_blurb = f"This week on Mirror Talk, {guest_name} joins us for {topic.lower()}."
+    show_notes_intro = transcript_sentences[0] if transcript_sentences else summary
+    quote_pull = transcript_sentences[1] if len(transcript_sentences) > 1 else ""
 
     return {
         "summary": summary,
         "social_caption": social_caption,
         "newsletter_blurb": newsletter_blurb,
+        "show_notes_intro": show_notes_intro,
+        "quote_pull": quote_pull,
     }
 
 
@@ -436,6 +457,32 @@ def _archive_overlap_warning(episode: Dict[str, Any], released_history: List[Dic
         "message": f"touches a familiar theme from {matched_title}, but may still work as a fresh revisit",
         "matched_episode": matched_title,
     }
+
+
+def _recent_topic_cluster_warning(episode: Dict[str, Any], released_history: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Warn when a topic cluster is already overrepresented in the last 10 releases."""
+    recent_releases = released_history[:10]
+    current_keywords = _theme_keyword_set(episode)
+    if not current_keywords:
+        return {"status": "clear", "message": ""}
+
+    cluster_hits = 0
+    for released in recent_releases:
+        overlap = current_keywords.intersection(_theme_keyword_set(released))
+        if len(overlap) >= 2:
+            cluster_hits += 1
+
+    if cluster_hits >= 3:
+        return {
+            "status": "warm",
+            "message": "this topic cluster is already warm across the last 10 released episodes",
+        }
+    if cluster_hits >= 1:
+        return {
+            "status": "active",
+            "message": "this theme has appeared recently in the last 10 released episodes",
+        }
+    return {"status": "clear", "message": ""}
 
 
 def apply_sequence_warnings(recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -690,6 +737,13 @@ def build_release_recommendations(
             elif archive_overlap["status"] == "revisit":
                 why_now.append(archive_overlap["message"])
 
+            topic_cluster = _recent_topic_cluster_warning(episode, released_history)
+            if topic_cluster["status"] == "warm":
+                score -= 8
+                watchouts.append(topic_cluster["message"])
+            elif topic_cluster["status"] == "active":
+                watchouts.append(topic_cluster["message"])
+
             candidate = dict(episode)
             candidate["priority_score"] = round(score, 1)
             candidate["recommendation_reason"] = "; ".join(dict.fromkeys(reasons)) or "good fit for the next available slot"
@@ -700,6 +754,7 @@ def build_release_recommendations(
             candidate["title_suggestions"] = build_episode_title_suggestions(episode)
             candidate["copy_assist"] = build_episode_copy_assist(episode)
             candidate["archive_overlap"] = archive_overlap
+            candidate["topic_cluster_warning"] = topic_cluster
             scored_candidates.append(candidate)
 
         scored_candidates.sort(
