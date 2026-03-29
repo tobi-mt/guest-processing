@@ -469,6 +469,29 @@ def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
     assert "production stage is still too early" not in episode["promotion_readiness"]["blockers"]
 
 
+def test_copy_assist_does_not_treat_guest_name_as_topic(temp_db):
+    """Copy assist should not invent a fake topic by echoing the guest name."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Magic Barclay",
+            "guest_email": "magic@example.com",
+            "episode_title": "Magic Barclay",
+            "topic": "",
+            "category": "General Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    episode = service.list_planning()["episodes"][0]
+    copy_assist = episode["copy_assist"]
+
+    assert "about magic barclay" not in copy_assist["summary"].lower()
+    assert "explore magic barclay" not in copy_assist["social_caption"].lower()
+    assert "for magic barclay" not in copy_assist["newsletter_blurb"].lower()
+
+
 def test_list_planning_reports_ask_sync_configuration(monkeypatch, temp_db):
     """Planning payload should signal when Ask Mirror Talk sync is configured."""
     monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")

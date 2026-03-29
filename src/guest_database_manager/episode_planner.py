@@ -28,6 +28,21 @@ def _transcript_sentences(episode: Dict[str, Any], limit: int = 3) -> list[str]:
     return [sentence for sentence in sentences if len(sentence.split()) >= 6][:limit]
 
 
+def _topic_like_text(value: str, guest_name: str) -> str:
+    """Return topic text only when it carries more meaning than the guest name itself."""
+    text = _clean_text(value)
+    guest = _clean_text(guest_name)
+    if not text:
+        return ""
+    text_words = {word.casefold() for word in _slug_words(text)}
+    guest_words = {word.casefold() for word in _slug_words(guest)}
+    if not text_words:
+        return ""
+    if guest_words and len(text_words - guest_words) < 2:
+        return ""
+    return text
+
+
 def _parse_legacy_date(value: str) -> str:
     text = _clean_text(value)
     if not text:
@@ -396,19 +411,26 @@ def build_episode_title_suggestions(episode: Dict[str, Any]) -> list[str]:
 def build_episode_copy_assist(episode: Dict[str, Any]) -> Dict[str, str]:
     """Build simple, grounded promo copy from the episode record."""
     guest_name = _clean_text(episode.get("guest_name")) or "our guest"
-    topic = _clean_text(episode.get("topic")) or _clean_text(episode.get("episode_title")) or "a meaningful conversation"
+    topic = _topic_like_text(episode.get("topic"), guest_name)
+    if not topic:
+        topic = _topic_like_text(episode.get("episode_title"), guest_name)
     category = _clean_text(episode.get("category"))
-    episode_title = _clean_text(episode.get("episode_title")) or topic
+    episode_title = _clean_text(episode.get("episode_title")) or topic or guest_name
     transcript_sentences = _transcript_sentences(episode, limit=2)
 
-    summary = f"{guest_name} joins Mirror Talk for a conversation about {topic.lower()}."
+    if topic:
+        summary = f"{guest_name} joins Mirror Talk for a conversation about {topic.lower()}."
+        social_caption = f"New on Mirror Talk: {episode_title}. {guest_name} joins us to explore {topic.lower()}."
+        newsletter_blurb = f"This week on Mirror Talk, {guest_name} joins us for {topic.lower()}."
+    else:
+        summary = f"{guest_name} joins Mirror Talk for a thoughtful conversation."
+        social_caption = f"New on Mirror Talk: {episode_title}. {guest_name} joins us for a thoughtful conversation."
+        newsletter_blurb = f"This week on Mirror Talk, we are joined by {guest_name} for a thoughtful conversation."
     if category:
         summary += f" The episode sits within our {category} conversations."
     if transcript_sentences:
         summary += f" In the conversation, {transcript_sentences[0][0].lower() + transcript_sentences[0][1:] if len(transcript_sentences[0]) > 1 else transcript_sentences[0].lower()}."
 
-    social_caption = f"New on Mirror Talk: {episode_title}. {guest_name} joins us to explore {topic.lower()}."
-    newsletter_blurb = f"This week on Mirror Talk, {guest_name} joins us for {topic.lower()}."
     show_notes_intro = transcript_sentences[0] if transcript_sentences else summary
     quote_pull = transcript_sentences[1] if len(transcript_sentences) > 1 else ""
 
