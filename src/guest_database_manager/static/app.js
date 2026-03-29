@@ -814,6 +814,10 @@ function renderGuestAiSummary(guest) {
     .join("");
   const strengths = (support.strengths || []).slice(0, 2).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   const cautions = (support.cautions || []).slice(0, 2).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const acceptedMatches = (support.accepted_guest_matches || [])
+    .slice(0, 3)
+    .map((name) => `<span class="context-link">${escapeHtml(name)}</span>`)
+    .join("");
 
   return `
     <div class="guest-ai-card">
@@ -829,6 +833,7 @@ function renderGuestAiSummary(guest) {
         <p class="guest-ai-confidence">Confidence: ${escapeHtml(support.confidence || "medium")}</p>
       </div>
       ${signals ? `<div class="signal-list guest-ai-signals">${signals}</div>` : ""}
+      ${acceptedMatches ? `<div class="guest-ai-match-row"><strong>Similar accepted guests</strong><div class="context-links">${acceptedMatches}</div></div>` : ""}
       <div class="guest-ai-grid">
         ${strengths ? `<div class="guest-ai-block"><strong>Why it could work</strong><ul>${strengths}</ul></div>` : ""}
         ${cautions ? `<div class="guest-ai-block caution"><strong>Watchouts</strong><ul>${cautions}</ul></div>` : ""}

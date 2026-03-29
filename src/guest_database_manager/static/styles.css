@@ -529,6 +529,21 @@ button:disabled {
   color: var(--muted);
 }
 
+.advisory-copy {
+  max-width: 56ch;
+  color: var(--muted);
+}
+
+.guest-ai-match-row {
+  margin-top: 12px;
+}
+
+.guest-ai-match-row strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
 .guest-ai-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

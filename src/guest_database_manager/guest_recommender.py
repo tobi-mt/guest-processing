@@ -72,6 +72,55 @@ def _keyword_matches(text: str, keywords: Iterable[str]) -> list[str]:
     return [keyword for keyword in keywords if keyword in normalized]
 
 
+def _theme_tokens(guest: Dict[str, Any]) -> set[str]:
+    """Extract lightweight thematic tokens from a guest profile."""
+    fields = [
+        guest.get("background"),
+        guest.get("profession"),
+        guest.get("passionate_topics"),
+        guest.get("message_takeaway"),
+        guest.get("core_values"),
+        guest.get("additional_info"),
+    ]
+    tokens: set[str] = set()
+    for field in fields:
+        for raw_token in _clean_text(field).replace(",", " ").replace(".", " ").split():
+            token = raw_token.strip(" -_/").casefold()
+            if len(token) >= 5:
+                tokens.add(token)
+    return tokens
+
+
+def _accepted_history_signal(guest: Dict[str, Any], accepted_history: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compare a guest with previously accepted guests using only stored profile themes."""
+    current_name = _normalize_text(guest.get("full_name") or guest.get("name"))
+    current_tokens = _theme_tokens(guest)
+    if not current_tokens:
+        return {"bonus": 0.0, "reason": "", "matches": []}
+
+    ranked_matches: list[tuple[int, str]] = []
+    for accepted_guest in accepted_history:
+        accepted_name = _clean_text(accepted_guest.get("full_name") or accepted_guest.get("name"))
+        if not accepted_name or _normalize_text(accepted_name) == current_name:
+            continue
+        overlap = current_tokens.intersection(_theme_tokens(accepted_guest))
+        if len(overlap) >= 2:
+            ranked_matches.append((len(overlap), accepted_name))
+
+    ranked_matches.sort(key=lambda item: (-item[0], item[1].casefold()))
+    top_matches = [name for _, name in ranked_matches[:3]]
+    if not top_matches:
+        return {"bonus": 0.0, "reason": "", "matches": []}
+
+    strongest_overlap = ranked_matches[0][0]
+    bonus = min(10.0, 2.5 * strongest_overlap)
+    if len(top_matches) == 1:
+        reason = f"shares themes with a guest you previously accepted ({top_matches[0]})"
+    else:
+        reason = f"shares themes with guests you previously accepted ({', '.join(top_matches[:2])})"
+    return {"bonus": bonus, "reason": reason, "matches": top_matches}
+
+
 def _build_signals(score: float, strengths: list[str], cautions: list[str], matched_keywords: list[str]) -> list[Dict[str, str]]:
     """Build compact UI signals from the score and explanation."""
     signals: list[Dict[str, str]] = []
@@ -95,7 +144,7 @@ def _build_signals(score: float, strengths: list[str], cautions: list[str], matc
     return signals[:4]
 
 
-def score_guest(guest: Dict[str, Any]) -> Dict[str, Any]:
+def score_guest(guest: Dict[str, Any], accepted_history: Iterable[Dict[str, Any]] | None = None) -> Dict[str, Any]:
     """Return an explainable recommendation payload for a single guest."""
     background = _clean_text(guest.get("background"))
     profession = _clean_text(guest.get("profession"))
@@ -199,6 +248,11 @@ def score_guest(guest: Dict[str, Any]) -> Dict[str, Any]:
         score -= 6
         cautions.append("listener takeaway is not clearly stated")
 
+    accepted_history_signal = _accepted_history_signal(guest, accepted_history or [])
+    if accepted_history_signal["bonus"] > 0:
+        score += accepted_history_signal["bonus"]
+        strengths.append(accepted_history_signal["reason"])
+
     score = max(0.0, min(100.0, round(score, 1)))
 
     if score >= 58:
@@ -235,15 +289,21 @@ def score_guest(guest: Dict[str, Any]) -> Dict[str, Any]:
         "strengths": strengths[:3],
         "cautions": cautions[:3],
         "signals": _build_signals(score, strengths, cautions, matched_keywords),
+        "accepted_guest_matches": accepted_history_signal["matches"],
         "model_version": "mirror-talk-intake-v1",
     }
 
 
 def enrich_guests_with_recommendations(guests: Iterable[Dict[str, Any]]) -> list[Dict[str, Any]]:
     """Attach decision-support payloads to guest records."""
+    guest_list = list(guests)
+    accepted_history = [
+        guest for guest in guest_list
+        if _normalize_text(guest.get("email_status")) == "accepted"
+    ]
     enriched: list[Dict[str, Any]] = []
-    for guest in guests:
-        recommendation = score_guest(guest)
+    for guest in guest_list:
+        recommendation = score_guest(guest, accepted_history=accepted_history)
         enriched_guest = dict(guest)
         enriched_guest["decision_support"] = recommendation
         enriched.append(enriched_guest)

@@ -576,6 +576,37 @@ def test_list_guests_includes_decision_support_and_stats(temp_db):
     assert first_guest["decision_support"]["signals"]
 
 
+def test_guest_decision_support_can_reference_previously_accepted_guests(temp_db):
+    """Guest review assist should use Mirror Talk's own accepted history as context."""
+    service = GuestWebService(temp_db.db_path)
+    accepted = service.create_guest(
+        {
+            "full_name": "Accepted Reference",
+            "email": "accepted@example.com",
+            "background": "I speak about healing, purpose, resilience, and identity after hard life transitions.",
+            "profession": "Coach and speaker focused on healing and resilience.",
+            "passionate_topics": "Healing, identity, purpose, resilience.",
+            "message": "I want listeners to leave with more hope and courage.",
+        }
+    )
+    service.update_guest_status(accepted["id"], "accepted")
+    service.create_guest(
+        {
+            "full_name": "New Similar Guest",
+            "email": "new@example.com",
+            "background": "My work focuses on healing, resilience, and identity after difficult seasons.",
+            "profession": "Speaker focused on healing and personal growth.",
+            "passionate_topics": "Healing, resilience, identity, and purpose.",
+            "message": "I want listeners to leave feeling hopeful.",
+        }
+    )
+
+    payload = service.list_guests()
+    new_guest = next(guest for guest in payload["guests"] if guest["full_name"] == "New Similar Guest")
+
+    assert "Accepted Reference" in new_guest["decision_support"]["accepted_guest_matches"]
+
+
 def test_web_service_prefers_resend_for_hosted_email(monkeypatch, temp_db):
     """Hosted dashboard should configure Resend when its API key is present."""
 
