@@ -424,6 +424,86 @@ def test_web_service_can_create_interview_and_episode_records(temp_db):
     assert len(operations["episodes"]) == 1
 
 
+def test_operations_are_sorted_by_nearest_upcoming_interview_first(temp_db):
+    """Operations should prioritize the closest upcoming interview and keep history below."""
+    service = GuestWebService(temp_db.db_path)
+
+    service.create_interview(
+        {
+            "guest_name": "Past Guest",
+            "guest_email": "past@example.com",
+            "title": "Past recording",
+            "scheduled_for": "2026-03-20 12:00:00",
+            "timezone": "Europe/Berlin",
+            "calendar_event_id": "past-interview",
+        }
+    )
+    service.create_interview(
+        {
+            "guest_name": "Soon Guest",
+            "guest_email": "soon@example.com",
+            "title": "Soon recording",
+            "scheduled_for": "2026-03-31 09:00:00",
+            "timezone": "Europe/Berlin",
+            "calendar_event_id": "soon-interview",
+        }
+    )
+    service.create_interview(
+        {
+            "guest_name": "Later Guest",
+            "guest_email": "later@example.com",
+            "title": "Later recording",
+            "scheduled_for": "2026-04-05 15:00:00",
+            "timezone": "Europe/Berlin",
+            "calendar_event_id": "later-interview",
+        }
+    )
+
+    ordered = service._sort_interviews_by_upcoming_priority(
+        service.database.list_interviews(),
+        reference=__import__("datetime").datetime(2026, 3, 30, 8, 0, 0),
+    )
+
+    assert [item["guest_name"] for item in ordered] == [
+        "Soon Guest",
+        "Later Guest",
+        "Past Guest",
+    ]
+
+
+def test_due_weekly_reminders_follow_nearest_upcoming_order(temp_db):
+    """Reminder review should show the nearest interview due this week first."""
+    service = GuestWebService(temp_db.db_path)
+
+    service.create_interview(
+        {
+            "guest_name": "Wednesday Guest",
+            "guest_email": "wednesday@example.com",
+            "title": "Midweek recording",
+            "scheduled_for": "2026-03-31 14:00:00",
+            "timezone": "Europe/Berlin",
+            "calendar_event_id": "wednesday-interview",
+        }
+    )
+    service.create_interview(
+        {
+            "guest_name": "Friday Guest",
+            "guest_email": "friday@example.com",
+            "title": "Friday recording",
+            "scheduled_for": "2026-04-03 10:00:00",
+            "timezone": "Europe/Berlin",
+            "calendar_event_id": "friday-interview",
+        }
+    )
+
+    due = service.get_due_weekly_reminders(reference=__import__("datetime").datetime(2026, 3, 30, 9, 0, 0))
+
+    assert [item["guest_name"] for item in due] == [
+        "Wednesday Guest",
+        "Friday Guest",
+    ]
+
+
 def test_web_service_requires_interview_and_episode_basics(temp_db):
     """Operations records should validate their essential fields."""
     service = GuestWebService(temp_db.db_path)

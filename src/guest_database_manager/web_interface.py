@@ -179,10 +179,11 @@ class GuestWebService:
 
     def list_operations(self) -> Dict[str, Any]:
         """Return the current interview and episode operations data."""
+        interviews = self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
         reminder_candidates = [self._serialize_interview_reminder(candidate) for candidate in self.get_due_weekly_reminders()]
         return {
             "stats": self.database.get_operations_stats(),
-            "interviews": self.database.list_interviews(),
+            "interviews": interviews,
             "episodes": self.database.list_episodes(),
             "reminder_candidates": reminder_candidates,
             "calendar_sync_enabled": self._build_google_calendar_client() is not None,
@@ -442,7 +443,12 @@ class GuestWebService:
         reference = reference or datetime.now()
 
         candidates: list[Dict[str, Any]] = []
-        for interview in self.database.list_interviews():
+        interviews = self._sort_interviews_by_upcoming_priority(
+            self.database.list_interviews(),
+            reference=reference,
+        )
+
+        for interview in interviews:
             scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
             if not scheduled_for:
                 continue
@@ -464,6 +470,28 @@ class GuestWebService:
             candidates.append(interview)
 
         return candidates
+
+    def _sort_interviews_by_upcoming_priority(
+        self,
+        interviews: list[Dict[str, Any]],
+        *,
+        reference: Optional[datetime] = None,
+    ) -> list[Dict[str, Any]]:
+        """Show the nearest upcoming interview first, then keep past interviews below."""
+        reference = reference or datetime.now()
+
+        def sort_key(interview: Dict[str, Any]) -> tuple[Any, ...]:
+            scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+            if not scheduled_for:
+                return (2, datetime.max, -int(interview.get("id") or 0))
+
+            comparison_reference = self._align_reference_datetime(reference, scheduled_for)
+            if scheduled_for >= comparison_reference:
+                return (0, scheduled_for, int(interview.get("id") or 0))
+
+            return (1, -scheduled_for.timestamp(), -int(interview.get("id") or 0))
+
+        return sorted(interviews, key=sort_key)
 
     def preview_interview_reminder(self, interview_id: int) -> Dict[str, Any]:
         """Return the reminder email template for an interview."""
@@ -624,6 +652,15 @@ class GuestWebService:
             scheduled_for.strftime("%A %d %B %Y at %H:%M") if scheduled_for else _normalize_text(interview.get("scheduled_for"))
         )
         return serialized
+
+    @staticmethod
+    def _align_reference_datetime(reference: datetime, scheduled_for: datetime) -> datetime:
+        """Align the comparison reference to the interview datetime awareness."""
+        if scheduled_for.tzinfo is not None and reference.tzinfo is None:
+            return reference.replace(tzinfo=scheduled_for.tzinfo)
+        if scheduled_for.tzinfo is None and reference.tzinfo is not None:
+            return reference.astimezone().replace(tzinfo=None)
+        return reference
 
     def _build_google_calendar_client(self) -> Optional[GoogleCalendarSyncClient]:
         """Build the Google Calendar client from environment configuration."""
