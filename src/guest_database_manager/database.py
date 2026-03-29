@@ -27,6 +27,28 @@ def _normalized_identity(value: Optional[str]) -> str:
     return str(value).strip().casefold()
 
 
+def _normalized_episode_identity(value: Optional[str]) -> str:
+    """Normalize episode identity fields for duplicate matching."""
+    return _normalized_identity(value)
+
+
+def _episode_row_text(row: Dict[str, Any], key: str) -> str:
+    """Return a trimmed text value for an episode row field."""
+    return str(row.get(key) or "").strip()
+
+
+def _episode_status_rank(value: str, *, kind: str) -> int:
+    """Rank episode status fields so the most advanced useful state wins."""
+    normalized = _normalized_episode_identity(value)
+    if kind == "release":
+        order = {"released": 3, "scheduled": 2, "unplanned": 1}
+    elif kind == "production":
+        order = {"released": 5, "ready": 4, "editing": 3, "recorded": 2, "idea": 1}
+    else:
+        order = {"released": 4, "ready": 3, "needs_assets": 2, "unknown": 1}
+    return order.get(normalized, 0)
+
+
 def _prefer_existing_metadata(existing_value: Optional[str], new_value: Optional[str]) -> Optional[str]:
     """Keep the original source metadata when a guest is updated."""
     if existing_value and str(existing_value).strip():
@@ -371,6 +393,9 @@ class GuestDatabase:
                 )
                 existing_row = cursor.fetchone()
 
+            if not existing_row:
+                existing_row = self._find_existing_episode_row(conn, episode_data)
+
             fields = (
                 episode_data.get("guest_id"),
                 interview_id,
@@ -428,6 +453,228 @@ class GuestDatabase:
             )
             conn.commit()
             return cursor.lastrowid, "created"
+
+    def _find_existing_episode_row(self, conn: sqlite3.Connection, episode_data: Dict[str, Any]) -> Optional[sqlite3.Row]:
+        """Find an existing episode using normalized archive/import identity fields."""
+        guest_name = _normalized_episode_identity(episode_data.get("guest_name"))
+        guest_email = _normalized_episode_identity(episode_data.get("guest_email"))
+        topic = _normalized_episode_identity(episode_data.get("topic"))
+        episode_title = _normalized_episode_identity(episode_data.get("episode_title"))
+        release_date = _normalized_episode_identity(episode_data.get("release_date"))
+        interview_date = _normalized_episode_identity(episode_data.get("interview_date"))
+        source_file_name = _normalized_episode_identity(episode_data.get("source_file_name"))
+
+        lookup_paths = [
+            (
+                guest_name and release_date,
+                """
+                SELECT id FROM episodes
+                WHERE LOWER(COALESCE(guest_name, '')) = ?
+                  AND LOWER(COALESCE(release_date, '')) = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (guest_name, release_date),
+            ),
+            (
+                guest_email and release_date,
+                """
+                SELECT id FROM episodes
+                WHERE LOWER(COALESCE(guest_email, '')) = ?
+                  AND LOWER(COALESCE(release_date, '')) = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (guest_email, release_date),
+            ),
+            (
+                guest_name and topic and interview_date,
+                """
+                SELECT id FROM episodes
+                WHERE LOWER(COALESCE(guest_name, '')) = ?
+                  AND LOWER(COALESCE(topic, '')) = ?
+                  AND LOWER(COALESCE(interview_date, '')) = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (guest_name, topic, interview_date),
+            ),
+            (
+                guest_name and episode_title and interview_date,
+                """
+                SELECT id FROM episodes
+                WHERE LOWER(COALESCE(guest_name, '')) = ?
+                  AND LOWER(COALESCE(episode_title, '')) = ?
+                  AND LOWER(COALESCE(interview_date, '')) = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (guest_name, episode_title, interview_date),
+            ),
+            (
+                source_file_name and guest_name and release_date,
+                """
+                SELECT id FROM episodes
+                WHERE LOWER(COALESCE(source_file_name, '')) = ?
+                  AND LOWER(COALESCE(guest_name, '')) = ?
+                  AND LOWER(COALESCE(release_date, '')) = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (source_file_name, guest_name, release_date),
+            ),
+            (
+                source_file_name and guest_name and topic and interview_date,
+                """
+                SELECT id FROM episodes
+                WHERE LOWER(COALESCE(source_file_name, '')) = ?
+                  AND LOWER(COALESCE(guest_name, '')) = ?
+                  AND LOWER(COALESCE(topic, '')) = ?
+                  AND LOWER(COALESCE(interview_date, '')) = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (source_file_name, guest_name, topic, interview_date),
+            ),
+        ]
+
+        for should_run, query, params in lookup_paths:
+            if not should_run:
+                continue
+            cursor = conn.execute(query, params)
+            row = cursor.fetchone()
+            if row:
+                return row
+
+        return None
+
+    def _episode_duplicate_key_groups(self, episode_rows: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        """Group likely duplicate episodes using strong import/archive identity keys."""
+        active_rows = list(episode_rows)
+        groups: List[List[Dict[str, Any]]] = []
+
+        def normalized_key(parts: List[Optional[str]]) -> tuple[str, ...]:
+            return tuple(_normalized_episode_identity(part) for part in parts)
+
+        for key_builder in (
+            lambda row: ("legacy",) + normalized_key([row.get("legacy_episode_number")]),
+            lambda row: ("guest_release",) + normalized_key([row.get("guest_name"), row.get("release_date")]),
+            lambda row: ("guest_topic_interview",) + normalized_key([row.get("guest_name"), row.get("topic"), row.get("interview_date")]),
+            lambda row: ("guest_title_interview",) + normalized_key([row.get("guest_name"), row.get("episode_title"), row.get("interview_date")]),
+        ):
+            grouped: Dict[tuple[str, ...], List[Dict[str, Any]]] = {}
+            for row in active_rows:
+                key = key_builder(row)
+                if any(not part for part in key[1:]):
+                    continue
+                grouped.setdefault(key, []).append(row)
+
+            duplicate_ids: set[int] = set()
+            for rows in grouped.values():
+                if len(rows) > 1:
+                    groups.append(rows)
+                    duplicate_ids.update(int(row["id"]) for row in rows)
+
+            if duplicate_ids:
+                active_rows = [row for row in active_rows if int(row["id"]) not in duplicate_ids]
+
+        return groups
+
+    def _episode_canonical_score(self, row: Dict[str, Any]) -> tuple[int, int]:
+        """Score episode rows so cleanup keeps the strongest canonical record."""
+        score = 0
+        if _episode_row_text(row, "legacy_episode_number"):
+            score += 100
+        if _episode_row_text(row, "guest_email"):
+            score += 12
+        if _episode_row_text(row, "website"):
+            score += 6
+        if _episode_row_text(row, "topic"):
+            score += 12
+        if _episode_row_text(row, "category"):
+            score += 8
+        if _episode_row_text(row, "interview_date"):
+            score += 6
+        if _episode_row_text(row, "release_date"):
+            score += 6
+        if _episode_row_text(row, "show_notes_url"):
+            score += 10
+        if _episode_row_text(row, "release_files_url"):
+            score += 10
+        if _episode_row_text(row, "transcript_text"):
+            score += 18
+        if _episode_row_text(row, "source_file_name"):
+            score += 4
+        if _normalized_episode_identity(row.get("source_type")) in {"released_archive", "release_queue"}:
+            score += 8
+        score += _episode_status_rank(_episode_row_text(row, "release_status"), kind="release") * 3
+        score += _episode_status_rank(_episode_row_text(row, "production_status"), kind="production") * 2
+        score += _episode_status_rank(_episode_row_text(row, "promotion_status"), kind="promotion")
+        return score, -int(row["id"])
+
+    def _best_episode_text_value(self, rows: List[Dict[str, Any]], key: str) -> str:
+        """Pick the most trustworthy non-empty text value for a merged episode field."""
+        sorted_rows = sorted(rows, key=self._episode_canonical_score, reverse=True)
+        for row in sorted_rows:
+            value = _episode_row_text(row, key)
+            if value:
+                return value
+        return ""
+
+    def _best_episode_long_text_value(self, rows: List[Dict[str, Any]], key: str) -> str:
+        """Pick the richest long-form value while keeping the strongest row as tiebreaker."""
+        candidates = []
+        for row in rows:
+            value = _episode_row_text(row, key)
+            if value:
+                score, inverse_id = self._episode_canonical_score(row)
+                candidates.append((len(value), score, inverse_id, value))
+        if not candidates:
+            return ""
+        candidates.sort(reverse=True)
+        return candidates[0][3]
+
+    def _merge_duplicate_episode_rows(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Merge duplicate episode rows into a single conservative canonical record."""
+        canonical = dict(max(rows, key=self._episode_canonical_score))
+        canonical["guest_id"] = canonical.get("guest_id")
+        canonical["interview_id"] = canonical.get("interview_id")
+        canonical["guest_name"] = self._best_episode_text_value(rows, "guest_name")
+        canonical["guest_email"] = self._best_episode_text_value(rows, "guest_email")
+        canonical["website"] = self._best_episode_text_value(rows, "website")
+        canonical["episode_title"] = self._best_episode_text_value(rows, "episode_title")
+        canonical["topic"] = self._best_episode_text_value(rows, "topic")
+        canonical["category"] = self._best_episode_text_value(rows, "category")
+        canonical["interview_date"] = self._best_episode_text_value(rows, "interview_date")
+        canonical["recording_date"] = self._best_episode_text_value(rows, "recording_date")
+        canonical["release_date"] = self._best_episode_text_value(rows, "release_date")
+        canonical["legacy_episode_number"] = self._best_episode_text_value(rows, "legacy_episode_number")
+        canonical["riverside_status"] = self._best_episode_text_value(rows, "riverside_status")
+        canonical["source_file_name"] = self._best_episode_text_value(rows, "source_file_name")
+        canonical["source_type"] = self._best_episode_text_value(rows, "source_type")
+        canonical["show_notes_url"] = self._best_episode_text_value(rows, "show_notes_url")
+        canonical["release_files_url"] = self._best_episode_text_value(rows, "release_files_url")
+        canonical["transcript_text"] = self._best_episode_long_text_value(rows, "transcript_text")
+        canonical["notes"] = self._best_episode_long_text_value(rows, "notes")
+        canonical["recommendation_reason"] = self._best_episode_long_text_value(rows, "recommendation_reason")
+        canonical["priority_score"] = max(float(row.get("priority_score") or 0) for row in rows)
+
+        canonical["release_status"] = max(
+            (_episode_row_text(row, "release_status") for row in rows),
+            key=lambda value: _episode_status_rank(value, kind="release"),
+            default="unplanned",
+        )
+        canonical["production_status"] = max(
+            (_episode_row_text(row, "production_status") for row in rows),
+            key=lambda value: _episode_status_rank(value, kind="production"),
+            default="idea",
+        )
+        canonical["promotion_status"] = max(
+            (_episode_row_text(row, "promotion_status") for row in rows),
+            key=lambda value: _episode_status_rank(value, kind="promotion"),
+            default="unknown",
+        )
+        return canonical
 
     def list_episodes(self) -> List[Dict]:
         """Return all episodes ordered by planned release date."""
@@ -776,7 +1023,7 @@ class GuestDatabase:
         Returns:
             Dictionary with cleanup statistics
         """
-        stats = {'removed': 0, 'fixed': 0}
+        stats = {'removed': 0, 'fixed': 0, 'episodes_removed': 0, 'episodes_merged': 0}
         
         with sqlite3.connect(str(self.db_path)) as conn:
             # Find and remove duplicate guests (same name and email)
@@ -802,8 +1049,59 @@ class GuestDatabase:
                 WHERE is_processed IS NULL
             """)
             stats['fixed'] += conn.total_changes
-            
+
+            conn.row_factory = sqlite3.Row
+            episode_rows = [dict(row) for row in conn.execute("SELECT * FROM episodes ORDER BY id ASC").fetchall()]
+            for group in self._episode_duplicate_key_groups(episode_rows):
+                merged = self._merge_duplicate_episode_rows(group)
+                keep_id = int(merged["id"])
+                fields = (
+                    merged.get("guest_id"),
+                    merged.get("interview_id"),
+                    merged.get("guest_name"),
+                    merged.get("guest_email"),
+                    merged.get("website"),
+                    merged.get("episode_title"),
+                    merged.get("topic"),
+                    merged.get("category"),
+                    merged.get("interview_date"),
+                    merged.get("recording_date"),
+                    merged.get("release_date"),
+                    merged.get("release_status", "unplanned"),
+                    merged.get("production_status", "idea"),
+                    merged.get("promotion_status", "unknown"),
+                    merged.get("priority_score", 0),
+                    merged.get("recommendation_reason"),
+                    merged.get("legacy_episode_number"),
+                    merged.get("riverside_status"),
+                    merged.get("source_file_name"),
+                    merged.get("source_type"),
+                    merged.get("show_notes_url"),
+                    merged.get("release_files_url"),
+                    merged.get("transcript_text"),
+                    merged.get("notes"),
+                    keep_id,
+                )
+                conn.execute(
+                    """
+                    UPDATE episodes SET
+                        guest_id = ?, interview_id = ?, guest_name = ?, guest_email = ?, website = ?, episode_title = ?,
+                        topic = ?, category = ?, interview_date = ?, recording_date = ?, release_date = ?,
+                        release_status = ?, production_status = ?, promotion_status = ?, priority_score = ?, recommendation_reason = ?,
+                        legacy_episode_number = ?, riverside_status = ?, source_file_name = ?, source_type = ?,
+                        show_notes_url = ?, release_files_url = ?, transcript_text = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    fields,
+                )
+                duplicate_ids = [int(row["id"]) for row in group if int(row["id"]) != keep_id]
+                for duplicate_id in duplicate_ids:
+                    conn.execute("DELETE FROM episodes WHERE id = ?", (duplicate_id,))
+                    stats["episodes_removed"] += 1
+                if duplicate_ids:
+                    stats["episodes_merged"] += 1
+
             conn.commit()
-        
+
         logger.info("Database cleaned. Stats: %s", stats)
         return stats

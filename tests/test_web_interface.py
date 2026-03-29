@@ -324,6 +324,33 @@ def test_web_service_episode_import_ignores_blank_rows_and_headers(temp_db):
     assert planning["episodes"][0]["guest_name"] == "Jordan Rivers"
 
 
+def test_web_service_episode_import_reimport_updates_instead_of_creating_duplicates(temp_db):
+    """Re-importing the same episode CSV should update existing rows, not flood the database."""
+    service = GuestWebService(temp_db.db_path)
+    released_csv = (
+        "Name,Email,Website,Topic,Category,Interview Date,Release Date\n"
+        "Amina Hart,amina@example.com,https://amina.example.com,Healing With Honesty,Personal Development,14/10/2024,07/01/2025\n"
+    ).encode("utf-8")
+    queue_csv = (
+        "Names,Email,Website,Topic,Category,Interview Date,Riverside FM Status\n"
+        "Jordan Rivers,jordan@example.com,https://jordan.example.com,Building Calm Under Pressure,Finance,11/03/2026,Processing\n"
+    ).encode("utf-8")
+
+    first_released = service.import_episode_file("MT Guest List - 2026.csv", released_csv)
+    second_released = service.import_episode_file("MT Guest List - 2026.csv", released_csv)
+    first_queue = service.import_episode_file("MT Guest List - Not Yet Released.csv", queue_csv)
+    second_queue = service.import_episode_file("MT Guest List - Not Yet Released.csv", queue_csv)
+    planning = service.list_planning()
+
+    assert first_released["imported"] == 1
+    assert second_released["imported"] == 0
+    assert second_released["updated"] == 1
+    assert first_queue["imported"] == 1
+    assert second_queue["imported"] == 0
+    assert second_queue["updated"] == 1
+    assert len(planning["episodes"]) == 2
+
+
 def test_web_service_can_export_guests_to_csv(temp_db):
     """Dashboard exports should return a CSV with the imported guest data."""
     service = GuestWebService(temp_db.db_path)

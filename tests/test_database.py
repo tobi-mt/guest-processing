@@ -320,3 +320,61 @@ def test_import_skips_blank_rows_and_blank_header_columns(temp_db, tmp_path):
     assert len(guests) == 1
     assert guests[0]["full_name"] == "Jordan Rivers"
     assert guests[0]["original_data"] == '{"Full name": "Jordan Rivers", "Email": "jordan@example.com", "Website": "https://jordan.example.com"}'
+
+
+def test_clean_database_merges_duplicate_episode_rows(temp_db):
+    """Episode cleanup should merge duplicate archive rows conservatively."""
+    import sqlite3
+
+    with sqlite3.connect(str(temp_db.db_path)) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO episodes (
+                guest_name, guest_email, episode_title, topic, release_date, release_status,
+                legacy_episode_number, source_file_name, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                "Confessions Series",
+                "",
+                "Hello Fear, My Old Friend",
+                "Hello Fear, My Old Friend",
+                "2025-06-07",
+                "released",
+                "363",
+                "MT Guest List - 2025.csv",
+            ),
+        )
+        first_id = cursor.lastrowid
+        cursor = conn.execute(
+            """
+            INSERT INTO episodes (
+                guest_name, guest_email, episode_title, topic, release_date, release_status,
+                transcript_text, source_file_name, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                "Confessions Series",
+                "",
+                "Different Wrong Title",
+                "Hello Fear, My Old Friend",
+                "2025-06-07",
+                "released",
+                "A richer transcript that should be preserved.",
+                "MT Guest List - 2025.csv",
+            ),
+        )
+        second_id = cursor.lastrowid
+        conn.commit()
+
+    assert first_id != second_id
+
+    result = temp_db.clean_database()
+    episodes = temp_db.list_episodes()
+
+    assert result["episodes_merged"] == 1
+    assert result["episodes_removed"] == 1
+    assert len(episodes) == 1
+    assert episodes[0]["legacy_episode_number"] == "363"
+    assert episodes[0]["episode_title"] == "Hello Fear, My Old Friend"
+    assert episodes[0]["transcript_text"] == "A richer transcript that should be preserved."
