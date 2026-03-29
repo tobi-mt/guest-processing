@@ -161,6 +161,22 @@
   background: rgba(223, 242, 234, 0.42);
 }
 
+.checkbox-option {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: start;
+  gap: 10px;
+  font-weight: 500;
+  padding: 12px 14px;
+  border: 1px solid rgba(91, 70, 47, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.checkbox-option input {
+  margin-top: 3px;
+}
+
 .operations-card h3,
 .operations-card p {
   overflow-wrap: anywhere;

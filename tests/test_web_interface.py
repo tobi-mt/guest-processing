@@ -11,6 +11,9 @@ import pytest
 from openpyxl import load_workbook
 
 from guest_database_manager.web_interface import (
+    ASK_MIRROR_TALK_BASE_URL_ENV_VAR,
+    ASK_MIRROR_TALK_PASSWORD_ENV_VAR,
+    ASK_MIRROR_TALK_USERNAME_ENV_VAR,
     EMAIL_FROM_ENV_VAR,
     EMAIL_FROM_NAME_ENV_VAR,
     EMAIL_PASSWORD_ENV_VAR,
@@ -443,6 +446,61 @@ def test_planning_payload_includes_grounded_editorial_assist(temp_db):
     assert episode["copy_assist"]["show_notes_intro"]
     assert recommendation["promotion_readiness"]["score"] >= 70
     assert recommendation["why_now"]
+
+
+def test_list_planning_reports_ask_sync_configuration(monkeypatch, temp_db):
+    """Planning payload should signal when Ask Mirror Talk sync is configured."""
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+
+    service = GuestWebService(temp_db.db_path)
+
+    assert service.list_planning()["ask_sync_enabled"] is True
+
+
+def test_web_service_can_sync_matching_transcripts_from_ask_mirror_talk(monkeypatch, temp_db):
+    """Planning should be able to enrich matching episodes from Ask Mirror Talk."""
+
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def export_episodes(self, **kwargs):
+            assert kwargs["include_transcript"] is True
+            return [
+                {
+                    "title": "Building Calm Under Pressure",
+                    "transcript_text": "We explored how calm grows through honest practice.",
+                },
+                {
+                    "title": "Another Episode",
+                    "transcript_text": "Unused transcript.",
+                },
+            ]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Building Calm Under Pressure",
+            "topic": "Building Calm Under Pressure",
+        }
+    )
+
+    result = service.sync_ask_mirror_talk_transcripts()
+    updated_episode = service.list_planning()["episodes"][0]
+
+    assert result["updated"] == 1
+    assert result["matched"] == 1
+    assert updated_episode["id"] == episode["id"]
+    assert updated_episode["transcript_text"] == "We explored how calm grows through honest practice."
 
 
 def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):

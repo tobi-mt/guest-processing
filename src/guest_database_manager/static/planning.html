@@ -203,6 +203,35 @@
           <details class="operations-tool">
             <summary>
               <div>
+                <p class="eyebrow">Ask Mirror Talk</p>
+                <h2>Sync Transcripts From Ask Mirror Talk</h2>
+                <p class="tool-copy">Reuse the transcripts already stored in Ask Mirror Talk to enrich matching episodes here without pasting them manually.</p>
+              </div>
+            </summary>
+
+            <div class="operations-tool-body">
+              <form id="ask-sync-form" class="guest-form">
+                <label>
+                  Search In Ask Mirror Talk
+                  <input name="search" type="text" placeholder="Optional title filter" />
+                  <small class="field-hint">Leave blank to scan the full Ask Mirror Talk episode catalog.</small>
+                </label>
+                <label class="checkbox-option full-width">
+                  <input name="overwrite_existing" type="checkbox" />
+                  <span>Replace transcripts that are already stored in planning.</span>
+                </label>
+                <div class="form-actions full-width">
+                  <button type="submit" class="secondary-button">Sync Matching Transcripts</button>
+                </div>
+              </form>
+
+              <p id="ask-sync-message" class="message" aria-live="polite"></p>
+            </div>
+          </details>
+
+          <details class="operations-tool">
+            <summary>
+              <div>
                 <p class="eyebrow">Flexible Export</p>
                 <h2>Export Lists As CSV Or Excel</h2>
                 <p class="tool-copy">Export exactly the fields you need, from a full episode sheet to a simple name-and-email list.</p>

@@ -1,5 +1,6 @@
 const episodeForm = document.getElementById("episode-form");
 const episodeImportForm = document.getElementById("episode-import-form");
+const askSyncForm = document.getElementById("ask-sync-form");
 const planningExportForm = document.getElementById("planning-export-form");
 const episodeSubmitButton = document.getElementById("episode-submit-button");
 const episodeResetButton = document.getElementById("episode-reset-button");
@@ -8,6 +9,7 @@ const exportFields = document.getElementById("export-fields");
 const episodeCategoryOptions = document.getElementById("episode-category-options");
 const episodeMessage = document.getElementById("episode-message");
 const episodeImportMessage = document.getElementById("episode-import-message");
+const askSyncMessage = document.getElementById("ask-sync-message");
 const planningExportMessage = document.getElementById("planning-export-message");
 const episodeList = document.getElementById("episode-list");
 const recommendationList = document.getElementById("recommendation-list");
@@ -1178,6 +1180,27 @@ episodeImportForm.addEventListener("submit", async (event) => {
     await loadPlanning();
   } catch (error) {
     setMessage(episodeImportMessage, error.message, "error");
+  }
+});
+
+askSyncForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = Object.fromEntries(new FormData(askSyncForm).entries());
+  payload.overwrite_existing = Boolean(askSyncForm.elements.overwrite_existing.checked);
+  try {
+    const result = await fetchJSON("/api/ask-mirror-talk/sync", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const summary = [
+      `Updated ${result.updated} episode${result.updated === 1 ? "" : "s"}`,
+      `${result.matched} matched`,
+      `${result.unmatched_local} unmatched`,
+    ].join(" · ");
+    setMessage(askSyncMessage, summary, "success");
+    await loadPlanning();
+  } catch (error) {
+    setMessage(askSyncMessage, error.message, "error");
   }
 });
 

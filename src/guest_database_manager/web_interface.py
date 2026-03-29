@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 
 from openpyxl import Workbook
 
+from guest_database_manager.ask_mirror_talk_client import AskMirrorTalkClient, AskMirrorTalkClientError
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.email_manager import EmailManager
@@ -65,6 +66,9 @@ GOOGLE_REFRESH_TOKEN_ENV_VAR = "MIRROR_TALK_GOOGLE_REFRESH_TOKEN"
 GOOGLE_CALENDAR_ID_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_ID"
 GOOGLE_CALENDAR_QUERY_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_QUERY"
 GOOGLE_CALENDAR_TIMEZONE_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_TIMEZONE"
+ASK_MIRROR_TALK_BASE_URL_ENV_VAR = "MIRROR_TALK_ASK_BASE_URL"
+ASK_MIRROR_TALK_USERNAME_ENV_VAR = "MIRROR_TALK_ASK_USERNAME"
+ASK_MIRROR_TALK_PASSWORD_ENV_VAR = "MIRROR_TALK_ASK_PASSWORD"
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -293,6 +297,7 @@ class GuestWebService:
             "episodes": enriched_episodes,
             "recommendations": build_release_recommendations(enriched_episodes, reference=datetime.now()),
             "available_categories": self.database.list_episode_categories(),
+            "ask_sync_enabled": self._build_ask_mirror_talk_client() is not None,
         }
 
     def export_guests_csv(self) -> str:
@@ -436,6 +441,13 @@ class GuestWebService:
         if normalized_status == "scheduled" and _normalize_text(normalized.get("production_status")).lower() == "released":
             normalized["production_status"] = "ready"
         return normalized
+
+    @staticmethod
+    def _episode_match_key(value: Any) -> str:
+        """Create a conservative normalized title key for transcript sync."""
+        normalized = _normalize_text(value).lower()
+        normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+        return " ".join(part for part in normalized.split() if part)
 
     @staticmethod
     def _records_to_csv(records: list[Dict[str, Any]], fields: list[str]) -> str:
@@ -686,6 +698,7 @@ class GuestWebService:
             _normalize_text(payload.get("release_status")),
         )
         episode_data = {
+            "id": payload.get("id"),
             "guest_id": payload.get("guest_id"),
             "interview_id": payload.get("interview_id"),
             "guest_name": _normalize_text(payload.get("guest_name")),
@@ -746,6 +759,80 @@ class GuestWebService:
             "imported": imported,
             "updated": updated,
             "total": imported + updated,
+        }
+
+    def sync_ask_mirror_talk_transcripts(
+        self,
+        *,
+        overwrite_existing: bool = False,
+        limit: int = 1000,
+        search: str = "",
+    ) -> Dict[str, Any]:
+        """Enrich local planning records with transcripts from Ask Mirror Talk."""
+        client = self._build_ask_mirror_talk_client()
+        if client is None:
+            raise WebInterfaceError("Ask Mirror Talk sync is not configured.")
+
+        try:
+            remote_episodes = client.export_episodes(limit=limit, search=search, include_transcript=True)
+        except AskMirrorTalkClientError as exc:
+            raise WebInterfaceError(str(exc)) from exc
+
+        remote_by_title: dict[str, Dict[str, Any]] = {}
+        for remote_episode in remote_episodes:
+            match_key = self._episode_match_key(remote_episode.get("title"))
+            if match_key and match_key not in remote_by_title:
+                remote_by_title[match_key] = remote_episode
+
+        local_episodes = self.database.list_episodes()
+        updated = 0
+        matched = 0
+        skipped_existing = 0
+        skipped_without_remote_transcript = 0
+        skipped_without_title = 0
+        updated_titles: list[str] = []
+
+        for episode in local_episodes:
+            match_key = self._episode_match_key(episode.get("episode_title"))
+            if not match_key:
+                skipped_without_title += 1
+                continue
+
+            remote_episode = remote_by_title.get(match_key)
+            if not remote_episode:
+                continue
+
+            matched += 1
+            transcript_text = _normalize_text(remote_episode.get("transcript_text"))
+            if not transcript_text:
+                skipped_without_remote_transcript += 1
+                continue
+
+            if _normalize_text(episode.get("transcript_text")) and not overwrite_existing:
+                skipped_existing += 1
+                continue
+
+            self.update_episode(
+                episode["id"],
+                {
+                    "transcript_text": transcript_text,
+                    "source_type": _normalize_text(episode.get("source_type")) or "ask_mirror_talk_sync",
+                    "source_file_name": _normalize_text(episode.get("source_file_name")) or "Ask Mirror Talk",
+                },
+            )
+            updated += 1
+            updated_titles.append(_normalize_text(episode.get("episode_title")))
+
+        unmatched_local = max(len(local_episodes) - matched - skipped_without_title, 0)
+        return {
+            "remote_episodes": len(remote_episodes),
+            "matched": matched,
+            "updated": updated,
+            "skipped_existing": skipped_existing,
+            "skipped_without_remote_transcript": skipped_without_remote_transcript,
+            "skipped_without_title": skipped_without_title,
+            "unmatched_local": unmatched_local,
+            "updated_titles": updated_titles[:10],
         }
 
     def update_episode(self, episode_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1214,6 +1301,16 @@ class GuestWebService:
             default_timezone=timezone_name,
         )
 
+    @staticmethod
+    def _build_ask_mirror_talk_client() -> Optional[AskMirrorTalkClient]:
+        """Build the Ask Mirror Talk client from environment configuration."""
+        base_url = os.environ.get(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "").strip()
+        username = os.environ.get(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "").strip()
+        password = os.environ.get(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "").strip()
+        if not all([base_url, username, password]):
+            return None
+        return AskMirrorTalkClient(base_url=base_url, username=username, password=password)
+
     def _build_email_manager(self) -> EmailManager:
         """Build an email manager from environment configuration for the hosted dashboard."""
         email_manager = EmailManager()
@@ -1558,6 +1655,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 result = self.service.import_episode_file(
                     uploaded_file["filename"],
                     uploaded_file["content"],
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path == "/api/ask-mirror-talk/sync":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                result = self.service.sync_ask_mirror_talk_transcripts(
+                    overwrite_existing=bool(payload.get("overwrite_existing")),
+                    limit=int(payload.get("limit", 1000) or 1000),
+                    search=_normalize_text(payload.get("search")),
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

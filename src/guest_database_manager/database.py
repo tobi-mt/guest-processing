@@ -332,12 +332,19 @@ class GuestDatabase:
     def upsert_episode(self, episode_data: Dict[str, Any]) -> tuple[int, str]:
         """Insert or update an episode using interview id when available."""
         interview_id = episode_data.get("interview_id")
+        episode_id = episode_data.get("id")
 
         with sqlite3.connect(str(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
 
             existing_row = None
-            if interview_id:
+            if episode_id:
+                cursor = conn.execute(
+                    "SELECT id FROM episodes WHERE id = ? LIMIT 1",
+                    (episode_id,),
+                )
+                existing_row = cursor.fetchone()
+            elif interview_id:
                 cursor = conn.execute(
                     "SELECT id FROM episodes WHERE interview_id = ? LIMIT 1",
                     (interview_id,),
