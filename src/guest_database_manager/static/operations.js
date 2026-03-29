@@ -17,7 +17,6 @@ const interviewResultsMeta = document.getElementById("interview-results-meta");
 const interviewLoadMoreButton = document.getElementById("interview-load-more");
 const interviewPresetButtons = Array.from(document.querySelectorAll("[data-interview-preset]"));
 const refreshButton = document.getElementById("operations-refresh-button");
-const sendWeeklyRemindersButton = document.getElementById("send-weekly-reminders-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
 
 let latestOperationsPayload = { interviews: [], reminder_candidates: [], stats: {} };
@@ -82,6 +81,24 @@ function formatDateTime(value) {
 function formatDateForDateTimeInput(value) {
   if (!value) return "";
   return String(value).replace(" ", "T").slice(0, 16);
+}
+
+function formatConfirmationStatus(value) {
+  const labels = {
+    pending: "Pending reply",
+    confirmed: "Confirmed",
+    reschedule_requested: "Reschedule requested",
+  };
+  return labels[normalizeText(value)] || value || "Pending reply";
+}
+
+function formatReminderStatus(value) {
+  const labels = {
+    not_scheduled: "Not sent yet",
+    queued: "Queued",
+    sent: "Sent",
+  };
+  return labels[normalizeText(value)] || value || "Not sent yet";
 }
 
 function parseDate(value) {
@@ -191,7 +208,7 @@ function renderInterviewInlineEditor(container, interview) {
       `)}
       ${createFieldMarkup("Reminder", `
         <select name="reminder_status">
-          <option value="not_scheduled" ${normalizeText(interview.reminder_status) === "not_scheduled" ? "selected" : ""}>Not Scheduled</option>
+          <option value="not_scheduled" ${normalizeText(interview.reminder_status) === "not_scheduled" ? "selected" : ""}>Not Sent Yet</option>
           <option value="queued" ${normalizeText(interview.reminder_status) === "queued" ? "selected" : ""}>Queued</option>
           <option value="sent" ${normalizeText(interview.reminder_status) === "sent" ? "selected" : ""}>Sent</option>
         </select>
@@ -369,6 +386,26 @@ function filterReminderCandidates(interviews) {
   });
 }
 
+async function updateInterviewStatus(interview, payload, pendingLabel, successLabel, actionFeedbackNode) {
+  activeInterviewActionFeedback = {
+    id: interview.id,
+    text: pendingLabel,
+    tone: "pending",
+  };
+  actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+
+  await fetchJSON(`/api/interviews/${interview.id}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+  activeInterviewActionFeedback = {
+    id: interview.id,
+    text: successLabel,
+    tone: "success",
+  };
+}
+
 function renderInterviews(interviews, totalCount) {
   interviewList.innerHTML = "";
   updateResultsMeta(
@@ -409,8 +446,8 @@ function renderInterviews(interviews, totalCount) {
       <div class="operations-meta">
         <span>Scheduled: ${formatDateTime(interview.scheduled_for)}</span>
         <span>Email: ${interview.guest_email || "Not set"}</span>
-        <span>Confirmation: ${interview.confirmation_status || "pending"}</span>
-        <span>Reminder: ${interview.reminder_status || "not_scheduled"}</span>
+        <span>Confirmation: ${formatConfirmationStatus(interview.confirmation_status)}</span>
+        <span>Reminder: ${formatReminderStatus(interview.reminder_status)}</span>
       </div>
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/dashboard", interview.guest_name || interview.guest_email)}">View Guest</a>
@@ -419,7 +456,10 @@ function renderInterviews(interviews, totalCount) {
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-interview-action="edit">${activeInterviewEditorId === interview.id ? "Hide Quick Edit" : "Quick Edit"}</button>
         <button type="button" class="ghost-button" data-interview-action="form">Open In Form</button>
+        <button type="button" class="ghost-button" data-interview-action="mark-confirmed">Mark Confirmed</button>
+        <button type="button" class="ghost-button" data-interview-action="mark-pending">Mark Pending</button>
         ${reminderButtons}
+        <button type="button" class="ghost-button" data-interview-action="mark-reminder-unsent">Reminder Not Sent</button>
         ${calendarButton}
         <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
       </div>
@@ -430,8 +470,11 @@ function renderInterviews(interviews, totalCount) {
 
     const editButton = card.querySelector("[data-interview-action='edit']");
     const formButton = card.querySelector("[data-interview-action='form']");
+    const markConfirmedButton = card.querySelector("[data-interview-action='mark-confirmed']");
+    const markPendingButton = card.querySelector("[data-interview-action='mark-pending']");
     const previewReminderButton = card.querySelector("[data-interview-action='preview-reminder']");
     const sendReminderButton = card.querySelector("[data-interview-action='send-reminder']");
+    const markReminderUnsentButton = card.querySelector("[data-interview-action='mark-reminder-unsent']");
     const calendarPushButton = card.querySelector("[data-calendar-action='push']");
     const deleteButton = card.querySelector("[data-interview-action='delete']");
     const editorNode = card.querySelector("[data-interview-editor]");
@@ -452,6 +495,50 @@ function renderInterviews(interviews, totalCount) {
       editorNode.classList.remove("hidden");
       renderInterviewInlineEditor(editorNode, interview);
     }
+
+    markConfirmedButton.addEventListener("click", async () => {
+      markConfirmedButton.disabled = true;
+      markConfirmedButton.textContent = "Confirming...";
+      try {
+        await updateInterviewStatus(
+          interview,
+          { confirmation_status: "confirmed" },
+          `Marking ${interview.guest_name || "guest"} confirmed...`,
+          `${interview.guest_name || "Guest"} marked confirmed.`,
+          actionFeedbackNode,
+        );
+        setMessage(interviewMessage, `${interview.guest_name || "Guest"} marked confirmed.`, "success");
+        await loadOperations();
+      } catch (error) {
+        activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        setMessage(interviewMessage, error.message, "error");
+        markConfirmedButton.disabled = false;
+        markConfirmedButton.textContent = "Mark Confirmed";
+      }
+    });
+
+    markPendingButton.addEventListener("click", async () => {
+      markPendingButton.disabled = true;
+      markPendingButton.textContent = "Updating...";
+      try {
+        await updateInterviewStatus(
+          interview,
+          { confirmation_status: "pending" },
+          `Marking ${interview.guest_name || "guest"} as pending reply...`,
+          `${interview.guest_name || "Guest"} moved back to pending reply.`,
+          actionFeedbackNode,
+        );
+        setMessage(interviewMessage, `${interview.guest_name || "Guest"} moved back to pending reply.`, "success");
+        await loadOperations();
+      } catch (error) {
+        activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        setMessage(interviewMessage, error.message, "error");
+        markPendingButton.disabled = false;
+        markPendingButton.textContent = "Mark Pending";
+      }
+    });
 
     if (previewReminderButton) {
       previewReminderButton.addEventListener("click", async () => {
@@ -515,6 +602,28 @@ function renderInterviews(interviews, totalCount) {
         }
       });
     }
+
+    markReminderUnsentButton.addEventListener("click", async () => {
+      markReminderUnsentButton.disabled = true;
+      markReminderUnsentButton.textContent = "Updating...";
+      try {
+        await updateInterviewStatus(
+          interview,
+          { reminder_status: "not_scheduled" },
+          `Resetting reminder status for ${interview.guest_name || "guest"}...`,
+          `${interview.guest_name || "Guest"} marked as not sent yet.`,
+          actionFeedbackNode,
+        );
+        setMessage(interviewMessage, `${interview.guest_name || "Guest"} marked as not sent yet.`, "success");
+        await loadOperations();
+      } catch (error) {
+        activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        setMessage(interviewMessage, error.message, "error");
+        markReminderUnsentButton.disabled = false;
+        markReminderUnsentButton.textContent = "Reminder Not Sent";
+      }
+    });
 
     if (calendarPushButton) {
       calendarPushButton.addEventListener("click", async () => {
@@ -601,12 +710,13 @@ function renderReminderCandidates(interviews, totalCount) {
       <div class="operations-meta">
         <span>Scheduled: ${interview.scheduled_for_display || formatDateTime(interview.scheduled_for)}</span>
         <span>Email: ${interview.guest_email || "Not set"}</span>
-        <span>Confirmation: ${interview.confirmation_status || "pending"}</span>
+        <span>Confirmation: ${formatConfirmationStatus(interview.confirmation_status)}</span>
       </div>
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/planning", interview.guest_name || interview.guest_email)}">Open Planning</a>
       </div>
       <div class="operations-actions">
+        <button type="button" class="ghost-button" data-reminder-action="mark-confirmed">Mark Confirmed</button>
         <button type="button" class="secondary-button" data-reminder-action="preview">Preview Email</button>
         <button type="button" class="primary-button" data-reminder-action="send">Send Reminder</button>
       </div>
@@ -614,8 +724,26 @@ function renderReminderCandidates(interviews, totalCount) {
     `;
 
     const previewPanel = card.querySelector(".operations-preview");
+    const markConfirmedButton = card.querySelector("[data-reminder-action='mark-confirmed']");
     const previewButton = card.querySelector("[data-reminder-action='preview']");
     const sendButton = card.querySelector("[data-reminder-action='send']");
+
+    markConfirmedButton.addEventListener("click", async () => {
+      markConfirmedButton.disabled = true;
+      markConfirmedButton.textContent = "Confirming...";
+      try {
+        await fetchJSON(`/api/interviews/${interview.id}`, {
+          method: "POST",
+          body: JSON.stringify({ confirmation_status: "confirmed" }),
+        });
+        setMessage(reminderMessage, `${interview.guest_name || "Guest"} marked confirmed.`, "success");
+        await loadOperations();
+      } catch (error) {
+        setMessage(reminderMessage, error.message, "error");
+        markConfirmedButton.disabled = false;
+        markConfirmedButton.textContent = "Mark Confirmed";
+      }
+    });
 
     previewButton.addEventListener("click", async () => {
       try {
@@ -743,39 +871,6 @@ syncCalendarButton.addEventListener("click", async () => {
   } finally {
     syncCalendarButton.disabled = false;
     syncCalendarButton.textContent = "Sync Google Calendar";
-  }
-});
-
-sendWeeklyRemindersButton.addEventListener("click", async () => {
-  const visibleReminders = filterReminderCandidates(latestOperationsPayload.reminder_candidates || []);
-  if (!visibleReminders.length) {
-    setMessage(reminderMessage, "There are no reviewed reminder candidates to send right now.", "error");
-    return;
-  }
-
-  sendWeeklyRemindersButton.disabled = true;
-  sendWeeklyRemindersButton.textContent = "Sending...";
-  setMessage(reminderMessage, "Sending this week's reminders...", "pending");
-  try {
-    const result = await fetchJSON("/api/reminders/send-weekly", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-    if (result.errors?.length) {
-      setMessage(
-        reminderMessage,
-        `Sent ${result.count} reminder(s), but ${result.errors.length} interview(s) still need attention.`,
-        "error",
-      );
-    } else {
-      setMessage(reminderMessage, `Sent ${result.count} weekly reminder(s).`, "success");
-    }
-    await loadOperations();
-  } catch (error) {
-    setMessage(reminderMessage, error.message, "error");
-  } finally {
-    sendWeeklyRemindersButton.disabled = false;
-    sendWeeklyRemindersButton.textContent = "Send All Reviewed Reminders";
   }
 });
 
