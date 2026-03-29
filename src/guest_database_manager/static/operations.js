@@ -36,6 +36,10 @@ const stats = {
   remindersDue: document.getElementById("ops-reminders-due"),
 };
 
+function buildScopedLink(path, value) {
+  return `${path}?q=${encodeURIComponent(value || "")}`;
+}
+
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -278,6 +282,10 @@ function renderInterviews(interviews, totalCount) {
         <span>Confirmation: ${interview.confirmation_status || "pending"}</span>
         <span>Reminder: ${interview.reminder_status || "not_scheduled"}</span>
       </div>
+      <div class="context-links">
+        <a class="context-link" href="${buildScopedLink("/dashboard", interview.guest_name || interview.guest_email)}">View Guest</a>
+        <a class="context-link" href="${buildScopedLink("/planning", interview.guest_name || interview.guest_email)}">View Planning</a>
+      </div>
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-interview-action="edit">Edit</button>
         ${calendarButton}
@@ -370,6 +378,9 @@ function renderReminderCandidates(interviews, totalCount) {
         <span>Scheduled: ${interview.scheduled_for_display || formatDateTime(interview.scheduled_for)}</span>
         <span>Email: ${interview.guest_email || "Not set"}</span>
         <span>Confirmation: ${interview.confirmation_status || "pending"}</span>
+      </div>
+      <div class="context-links">
+        <a class="context-link" href="${buildScopedLink("/planning", interview.guest_name || interview.guest_email)}">Open Planning</a>
       </div>
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-reminder-action="preview">Preview Email</button>
@@ -563,7 +574,22 @@ interviewPresetButtons.forEach((button) => {
   });
 });
 
+function applyUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  const query = params.get("q");
+  const preset = params.get("preset");
+
+  if (query) {
+    interviewSearchInput.value = query;
+    reminderSearchInput.value = query;
+  }
+  if (preset && interviewPresetButtons.some((button) => button.dataset.interviewPreset === preset)) {
+    activeInterviewPreset = preset;
+  }
+}
+
 resetInterviewForm();
+applyUrlState();
 loadOperations().catch((error) => {
   setMessage(interviewMessage, error.message, "error");
 });

@@ -477,6 +477,46 @@ button:disabled {
   font-size: 0.92rem;
 }
 
+.context-links,
+.signal-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.context-link,
+.signal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.context-link {
+  background: rgba(20, 90, 74, 0.08);
+  color: var(--accent);
+}
+
+.signal-chip {
+  background: rgba(112, 91, 69, 0.08);
+  color: var(--muted);
+}
+
+.signal-chip.warning {
+  background: rgba(143, 45, 31, 0.1);
+  color: var(--danger);
+}
+
+.signal-chip.good {
+  background: rgba(20, 90, 74, 0.12);
+  color: var(--accent);
+}
+
 .guest-details {
   display: grid;
   gap: 6px;

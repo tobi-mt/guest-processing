@@ -35,6 +35,11 @@ let activeGuestEditor = null;
 let activeGuestPreset = "all";
 let visibleGuestCount = GUEST_PAGE_SIZE;
 
+function buildGuestScopedLink(path, guest) {
+  const query = encodeURIComponent(guest.full_name || guest.email || "");
+  return `${path}?q=${query}`;
+}
+
 function composerFeedbackMarkup(feedback) {
   if (!feedback?.text) {
     return "";
@@ -537,6 +542,15 @@ function renderGuests(payload) {
     if (guest.passionate_topics) details.push(`Topics: ${guest.passionate_topics}`);
     if (guest.original_file_name) details.push(`Source: ${guest.original_file_name}`);
     node.querySelector(".guest-details").innerHTML = details.map((detail) => `<span>${detail}</span>`).join("");
+    node.querySelector(".guest-details").insertAdjacentHTML(
+      "beforeend",
+      `
+        <div class="context-links">
+          <a class="context-link" href="${buildGuestScopedLink("/operations", guest)}">Open In Operations</a>
+          <a class="context-link" href="${buildGuestScopedLink("/planning", guest)}">Open In Planning</a>
+        </div>
+      `,
+    );
 
     node.querySelectorAll("[data-action]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -710,6 +724,19 @@ guestPresetButtons.forEach((button) => {
   });
 });
 
+function applyUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  const query = params.get("q");
+  const preset = params.get("preset");
+
+  if (query) {
+    guestSearch.value = query;
+  }
+  if (preset && guestPresetButtons.some((button) => button.dataset.guestPreset === preset)) {
+    activeGuestPreset = preset;
+  }
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -718,4 +745,5 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+applyUrlState();
 loadGuests();

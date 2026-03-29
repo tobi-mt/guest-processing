@@ -109,6 +109,10 @@ const stats = {
   needsAssets: document.getElementById("plan-episodes-need-assets"),
 };
 
+function buildScopedLink(path, value) {
+  return `${path}?q=${encodeURIComponent(value || "")}`;
+}
+
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -229,6 +233,27 @@ function updatePresetButtons(buttons, activeValue, dataName) {
   buttons.forEach((button) => {
     button.classList.toggle("active", button.dataset[dataName] === activeValue);
   });
+}
+
+function deriveRecommendationSignals(episode) {
+  const text = normalizeText(episode.recommendation_reason);
+  const signals = [];
+  if (text.includes("needs promo assets") || text.includes("promotion readiness is still unclear")) {
+    signals.push({ label: "Promo Risk", tone: "warning" });
+  }
+  if (text.includes("same guest appeared very recently") || text.includes("same guest has already been featured")) {
+    signals.push({ label: "Guest Recency", tone: "warning" });
+  }
+  if (text.includes("already warm in the recent release mix") || text.includes("dominates")) {
+    signals.push({ label: "Category Fatigue", tone: "warning" });
+  }
+  if (text.includes("seasonal focus")) {
+    signals.push({ label: "Seasonal Fit", tone: "good" });
+  }
+  if (text.includes("ready to publish") || text.includes("promotion assets look ready")) {
+    signals.push({ label: "Release Ready", tone: "good" });
+  }
+  return signals;
 }
 
 function populateSelect(selectNode, values, defaultLabel) {
@@ -484,6 +509,10 @@ function renderEpisodes(episodes, totalCount) {
         <span>Priority: ${episode.priority_score ?? 0}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
+      <div class="context-links">
+        <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
+        <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
+      </div>
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-episode-action="edit">Edit / Schedule</button>
         <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
@@ -544,6 +573,7 @@ function renderRecommendations(recommendations, totalCount) {
   }
 
   visibleRecommendations.forEach((episode, index) => {
+    const signals = deriveRecommendationSignals(episode);
     const card = document.createElement("article");
     card.className = "operations-card recommendation-card";
     card.innerHTML = `
@@ -557,8 +587,13 @@ function renderRecommendations(recommendations, totalCount) {
         <span>Production: ${episode.production_status || "idea"}</span>
         <span>Promo: ${episode.promotion_status || "unknown"}</span>
       </div>
+      ${signals.length ? `<div class="signal-list">${signals.map((signal) => `<span class="signal-chip ${signal.tone}">${signal.label}</span>`).join("")}</div>` : ""}
       <div class="operations-preview">
         <p>${episode.recommendation_reason || "Good fit for the next release slot."}</p>
+      </div>
+      <div class="context-links">
+        <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
+        <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
       </div>
       <div class="operations-actions">
         <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
@@ -760,8 +795,23 @@ episodePresetButtons.forEach((button) => {
   });
 });
 
+function applyUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  const query = params.get("q");
+  const preset = params.get("preset");
+
+  if (query) {
+    episodeSearchInput.value = query;
+    recommendationSearchInput.value = query;
+  }
+  if (preset && episodePresetButtons.some((button) => button.dataset.episodePreset === preset)) {
+    activeEpisodePreset = preset;
+  }
+}
+
 renderExportFields();
 resetEpisodeForm();
+applyUrlState();
 loadPlanning().catch((error) => {
   setMessage(episodeMessage, error.message, "error");
 });
