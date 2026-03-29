@@ -511,6 +511,42 @@ def test_web_service_can_send_acceptance_email(monkeypatch, temp_db):
     assert updated_guest["email_status"] == "accepted"
 
 
+def test_list_guests_includes_decision_support_and_stats(temp_db):
+    """The dashboard payload should include explainable guest recommendations."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "Amina Hart",
+            "email": "amina@example.com",
+            "website": "https://amina.example.com",
+            "background": "I help people heal, grow, and rebuild meaning after difficult seasons through honest storytelling and practical reflection.",
+            "profession": "I work as a coach and speaker focused on healing, resilience, and emotional honesty.",
+            "passionate_topics": "Healing, faith, identity, purpose, relationships, and resilient growth.",
+            "message": "I want listeners to leave feeling hopeful and more courageous about their own next steps.",
+            "additional_info": "I love meaningful conversations that are honest, reflective, and grounded in lived experience.",
+            "has_social_media": "Yes",
+        }
+    )
+    service.create_guest(
+        {
+            "full_name": "Promo Person",
+            "background": "SEO backlink opportunity.",
+            "profession": "Growth hacker",
+            "passionate_topics": "Lead generation and sales funnel wins.",
+        }
+    )
+
+    payload = service.list_guests()
+
+    assert "recommendation_stats" in payload
+    assert payload["recommendation_stats"]["strong_fits"] >= 1
+    assert payload["recommendation_stats"]["high_risk"] >= 1
+    first_guest = next(guest for guest in payload["guests"] if guest["full_name"] == "Amina Hart")
+    assert first_guest["decision_support"]["score"] >= 58
+    assert first_guest["decision_support"]["suggested_decision"] == "approve"
+    assert first_guest["decision_support"]["signals"]
+
+
 def test_web_service_prefers_resend_for_hosted_email(monkeypatch, temp_db):
     """Hosted dashboard should configure Resend when its API key is present."""
 

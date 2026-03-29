@@ -28,6 +28,13 @@ const insights = {
   acceptanceRate: document.getElementById("insight-acceptance-rate"),
 };
 
+const recommendationInsights = {
+  strongFits: document.getElementById("ai-strong-fits"),
+  reviewQueue: document.getElementById("ai-review-queue"),
+  highRisk: document.getElementById("ai-high-risk"),
+  averageScore: document.getElementById("ai-average-score"),
+};
+
 let emailEnabled = false;
 let latestPayload = null;
 let activeEmailComposer = null;
@@ -162,8 +169,12 @@ function guestMatchesSearch(guest, query) {
 }
 
 function guestMatchesPreset(guest, preset) {
+  const support = guest.decision_support || {};
   if (preset === "all") return true;
   if (preset === "needs_review") return !guest.is_processed;
+  if (preset === "ai_strong_fit") return support.suggested_decision === "approve";
+  if (preset === "ai_review") return support.suggested_decision === "review";
+  if (preset === "ai_risky") return support.suggested_decision === "decline";
   if (preset === "accepted") return guestStatusLabel(guest) === "accepted";
   if (preset === "rejected") return guestStatusLabel(guest) === "rejected";
   if (preset === "no_email") return !normalizeText(guest.email);
@@ -182,6 +193,13 @@ function guestSortRank(guest) {
 function sortGuests(guests, sortMode) {
   const sorted = [...guests];
   sorted.sort((left, right) => {
+    if (sortMode === "recommendation") {
+      const scoreDifference = Number(right.decision_support?.score || 0) - Number(left.decision_support?.score || 0);
+      if (scoreDifference !== 0) {
+        return scoreDifference;
+      }
+      return Number(right.id || 0) - Number(left.id || 0);
+    }
     if (sortMode === "name") {
       return String(left.full_name || "").localeCompare(String(right.full_name || ""));
     }
@@ -217,6 +235,13 @@ function updateGuestPresetButtons() {
   guestPresetButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.guestPreset === activeGuestPreset);
   });
+}
+
+function recommendationTone(support) {
+  const decision = support?.suggested_decision;
+  if (decision === "approve") return "good";
+  if (decision === "decline") return "warning";
+  return "neutral";
 }
 
 function normalizeClipboardValue(value) {
@@ -404,6 +429,10 @@ function renderGuests(payload) {
   insights.rejected.textContent = rejected;
   insights.skipped.textContent = skipped;
   insights.acceptanceRate.textContent = decided ? `${Math.round((accepted / decided) * 100)}%` : "0%";
+  recommendationInsights.strongFits.textContent = payload.recommendation_stats?.strong_fits ?? 0;
+  recommendationInsights.reviewQueue.textContent = payload.recommendation_stats?.review_queue ?? 0;
+  recommendationInsights.highRisk.textContent = payload.recommendation_stats?.high_risk ?? 0;
+  recommendationInsights.averageScore.textContent = payload.recommendation_stats?.average_score ?? 0;
 
   const filteredGuests = sortGuests(
     payload.guests.filter((guest) => {
@@ -437,11 +466,13 @@ function renderGuests(payload) {
     const composer = node.querySelector(".email-composer");
     const editor = node.querySelector(".inline-editor");
     const actionFeedbackNode = node.querySelector(".card-action-feedback");
+    const aiSummaryNode = node.querySelector(".guest-ai-summary");
 
     node.querySelector(".guest-name").textContent = guest.full_name || "Unnamed Guest";
     node.querySelector(".guest-meta").textContent = guest.email || "No email provided";
     node.querySelector(".guest-summary").textContent =
       guest.background || guest.additional_info || "No background added yet.";
+    aiSummaryNode.innerHTML = renderGuestAiSummary(guest);
 
     statusPill.textContent = guestStatusLabel(guest);
     statusPill.classList.add(guestStatusLabel(guest));
@@ -770,6 +801,40 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function renderGuestAiSummary(guest) {
+  const support = guest.decision_support;
+  if (!support) {
+    return "";
+  }
+
+  const signals = (support.signals || [])
+    .map((signal) => `<span class="signal-chip ${signal.tone || "neutral"}">${escapeHtml(signal.label)}</span>`)
+    .join("");
+  const strengths = (support.strengths || []).slice(0, 2).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const cautions = (support.cautions || []).slice(0, 2).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+
+  return `
+    <div class="guest-ai-card">
+      <div class="guest-ai-head">
+        <div>
+          <p class="composer-eyebrow">AI Review Assist</p>
+          <div class="guest-ai-title-row">
+            <strong class="guest-ai-score">${Math.round(Number(support.score || 0))}/100</strong>
+            <span class="guest-ai-badge ${recommendationTone(support)}">${escapeHtml(support.recommendation_label || "Needs Human Review")}</span>
+          </div>
+          <p class="guest-ai-copy">${escapeHtml(support.summary || "")}</p>
+        </div>
+        <p class="guest-ai-confidence">Confidence: ${escapeHtml(support.confidence || "medium")}</p>
+      </div>
+      ${signals ? `<div class="signal-list guest-ai-signals">${signals}</div>` : ""}
+      <div class="guest-ai-grid">
+        ${strengths ? `<div class="guest-ai-block"><strong>Why it could work</strong><ul>${strengths}</ul></div>` : ""}
+        ${cautions ? `<div class="guest-ai-block caution"><strong>Watchouts</strong><ul>${cautions}</ul></div>` : ""}
+      </div>
+    </div>
+  `;
 }
 
 applyUrlState();

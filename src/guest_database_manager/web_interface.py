@@ -27,6 +27,10 @@ from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.email_manager import EmailManager
 from guest_database_manager.episode_planner import build_release_recommendations, parse_episode_import_csv
+from guest_database_manager.guest_recommender import (
+    build_guest_recommendation_stats,
+    enrich_guests_with_recommendations,
+)
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -247,11 +251,12 @@ class GuestWebService:
 
     def list_guests(self) -> Dict[str, Any]:
         """Return all guests for the frontend."""
-        guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
+        guests = [serialize_guest(guest) for guest in enrich_guests_with_recommendations(self.database.get_all_guests())]
         return {
             "guests": guests,
             "stats": self.database.get_stats(),
             "email_stats": self.database.get_email_stats(),
+            "recommendation_stats": build_guest_recommendation_stats(guests),
             "email_enabled": self._build_email_manager().is_configured(),
         }
 

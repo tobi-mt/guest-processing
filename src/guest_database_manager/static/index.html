@@ -61,6 +61,28 @@
             </div>
           </div>
 
+          <div class="insight-card">
+            <p class="insight-title">AI Review Assist</p>
+            <div class="insight-grid">
+              <div class="insight-stat accepted">
+                <span>Strong Fits</span>
+                <strong id="ai-strong-fits">0</strong>
+              </div>
+              <div class="insight-stat neutral">
+                <span>Review Queue</span>
+                <strong id="ai-review-queue">0</strong>
+              </div>
+              <div class="insight-stat rejected">
+                <span>High Risk</span>
+                <strong id="ai-high-risk">0</strong>
+              </div>
+              <div class="insight-stat neutral">
+                <span>Avg Fit Score</span>
+                <strong id="ai-average-score">0</strong>
+              </div>
+            </div>
+          </div>
+
           <button id="export-button" class="secondary-button" type="button">Download CSV</button>
           <a class="dashboard-link" href="/operations">Open Podcast Operations</a>
           <a class="dashboard-link" href="/planning">Open Episode Planning</a>
@@ -196,6 +218,7 @@
                 <span>Sort By</span>
                 <select id="guest-sort">
                   <option value="newest">Newest First</option>
+                  <option value="recommendation">Best AI Fit</option>
                   <option value="name">Guest Name</option>
                   <option value="decision">Decision</option>
                   <option value="oldest">Oldest First</option>
@@ -208,6 +231,9 @@
           <div class="view-presets" id="guest-presets">
             <button type="button" class="preset-chip active" data-guest-preset="all">All Guests</button>
             <button type="button" class="preset-chip" data-guest-preset="needs_review">Needs Review</button>
+            <button type="button" class="preset-chip" data-guest-preset="ai_strong_fit">AI Strong Fits</button>
+            <button type="button" class="preset-chip" data-guest-preset="ai_review">AI Review Queue</button>
+            <button type="button" class="preset-chip" data-guest-preset="ai_risky">AI High Risk</button>
             <button type="button" class="preset-chip" data-guest-preset="accepted">Accepted</button>
             <button type="button" class="preset-chip" data-guest-preset="rejected">Declined</button>
             <button type="button" class="preset-chip" data-guest-preset="no_email">Missing Email</button>
@@ -230,6 +256,7 @@
           </div>
           <span class="status-pill"></span>
         </div>
+        <div class="guest-ai-summary"></div>
         <p class="guest-summary"></p>
         <div class="guest-details"></div>
         <div class="guest-actions">
