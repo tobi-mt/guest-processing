@@ -214,7 +214,7 @@ def test_web_service_can_import_episode_history_and_queue_csvs(temp_db):
     service = GuestWebService(temp_db.db_path)
     released_csv = (
         "Name,Email,Website,Topic,Category,Interview Date,Release Date,Episode Number\n"
-        "Amina Hart,amina@example.com,https://amina.example.com,Healing With Honesty,Personal Development,14/10/2025,07/01/2026,423\n"
+        "Amina Hart,amina@example.com,https://amina.example.com,Healing With Honesty,Personal Development,14/10/2024,07/01/2025,423\n"
     ).encode("utf-8")
     queue_csv = (
         " Names,Email,Website,Topic,Category,Interview Date,Riverside FM Status\n"
@@ -238,6 +238,22 @@ def test_web_service_can_import_episode_history_and_queue_csvs(temp_db):
     assert queue_episode["production_status"] == "editing"
     assert queue_episode["promotion_status"] == "needs_assets"
     assert queue_episode["website"] == "https://jordan.example.com"
+
+
+def test_web_service_imports_future_release_dates_as_scheduled(temp_db):
+    """Imported archive rows with future release dates should stay scheduled, not released."""
+    service = GuestWebService(temp_db.db_path)
+    future_csv = (
+        "Name,Email,Website,Topic,Category,Interview Date,Release Date,Episode Number\n"
+        "Future Guest,future@example.com,https://future.example.com,The Next Chapter,Personal Development,14/10/2098,07/01/2099,999\n"
+    ).encode("utf-8")
+
+    result = service.import_episode_file("MT Guest List - 2099.csv", future_csv)
+    episode = service.list_planning()["episodes"][0]
+
+    assert result["imported"] == 1
+    assert episode["release_status"] == "scheduled"
+    assert episode["production_status"] == "ready"
 
 
 def test_web_service_episode_import_ignores_blank_rows_and_headers(temp_db):
@@ -276,6 +292,22 @@ def test_web_service_can_export_guests_to_csv(temp_db):
     assert "Amina Hart,amina@example.com,https://amina.example.com" in exported_csv
 
 
+def test_create_episode_with_release_date_defaults_to_scheduled(temp_db):
+    """Saving a dated episode should automatically classify it as scheduled unless released explicitly."""
+    service = GuestWebService(temp_db.db_path)
+
+    episode = service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Building Calm Under Pressure",
+            "release_date": "2026-04-14T17:00",
+        }
+    )
+
+    assert episode["release_status"] == "scheduled"
+
+
 def test_web_service_can_delete_interview_and_episode(temp_db):
     """Operations records should be removable through the web service."""
     service = GuestWebService(temp_db.db_path)
@@ -301,6 +333,38 @@ def test_web_service_can_delete_interview_and_episode(temp_db):
     assert service.delete_interview(interview["id"]) == {"deleted": True, "id": interview["id"]}
     assert service.list_planning()["episodes"] == []
     assert service.list_operations()["interviews"] == []
+
+
+def test_release_recommendations_skip_already_scheduled_episodes(temp_db):
+    """Scheduled episodes should not be re-recommended for the next open slot."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Ready and Scheduled",
+            "guest_email": "scheduled@example.com",
+            "episode_title": "Already On The Calendar",
+            "topic": "Already On The Calendar",
+            "release_date": "2026-04-14T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Needs A Slot",
+            "guest_email": "queue@example.com",
+            "episode_title": "Still Waiting",
+            "topic": "Still Waiting",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    recommendations = service.list_planning()["recommendations"]
+
+    assert len(recommendations) == 1
+    assert recommendations[0]["guest_name"] == "Needs A Slot"
 
 
 def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):

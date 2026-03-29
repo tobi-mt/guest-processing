@@ -1,6 +1,8 @@
 const episodeForm = document.getElementById("episode-form");
 const episodeImportForm = document.getElementById("episode-import-form");
 const planningExportForm = document.getElementById("planning-export-form");
+const episodeSubmitButton = document.getElementById("episode-submit-button");
+const episodeResetButton = document.getElementById("episode-reset-button");
 const exportListName = document.getElementById("export-list-name");
 const exportFields = document.getElementById("export-fields");
 const episodeCategoryOptions = document.getElementById("episode-category-options");
@@ -145,6 +147,52 @@ function formatDateTime(value) {
   });
 }
 
+function formatDateForDateInput(value) {
+  if (!value) return "";
+  return String(value).slice(0, 10);
+}
+
+function formatDateForDateTimeInput(value) {
+  if (!value) return "";
+  const normalized = String(value).replace(" ", "T");
+  return normalized.slice(0, 16);
+}
+
+function resetEpisodeForm() {
+  episodeForm.reset();
+  episodeForm.elements.id.value = "";
+  episodeForm.elements.release_status.value = "unplanned";
+  episodeForm.elements.production_status.value = "idea";
+  episodeForm.elements.promotion_status.value = "unknown";
+  episodeForm.elements.priority_score.value = "0";
+  episodeSubmitButton.textContent = "Save Episode";
+  episodeResetButton.hidden = true;
+}
+
+function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } = {}) {
+  episodeForm.elements.id.value = episode.id || "";
+  episodeForm.elements.guest_name.value = episode.guest_name || "";
+  episodeForm.elements.guest_email.value = episode.guest_email || "";
+  episodeForm.elements.website.value = episode.website || "";
+  episodeForm.elements.episode_title.value = episode.episode_title || "";
+  episodeForm.elements.topic.value = episode.topic || "";
+  episodeForm.elements.category.value = episode.category || "";
+  episodeForm.elements.interview_date.value = formatDateForDateInput(episode.interview_date);
+  episodeForm.elements.recording_date.value = formatDateForDateInput(episode.recording_date);
+  episodeForm.elements.release_date.value = formatDateForDateTimeInput(releaseDate || episode.release_date);
+  episodeForm.elements.release_status.value = releaseStatus || episode.release_status || "unplanned";
+  episodeForm.elements.production_status.value = episode.production_status || "idea";
+  episodeForm.elements.promotion_status.value = episode.promotion_status || "unknown";
+  episodeForm.elements.priority_score.value = episode.priority_score ?? 0;
+  episodeForm.elements.legacy_episode_number.value = episode.legacy_episode_number || "";
+  episodeForm.elements.riverside_status.value = episode.riverside_status || "";
+  episodeForm.elements.recommendation_reason.value = episode.recommendation_reason || "";
+  episodeForm.elements.notes.value = episode.notes || "";
+  episodeSubmitButton.textContent = "Update Episode";
+  episodeResetButton.hidden = false;
+  episodeForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function renderCategoryOptions(categories) {
   episodeCategoryOptions.innerHTML = "";
   (categories || []).forEach((category) => {
@@ -190,11 +238,17 @@ function renderEpisodes(episodes) {
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
       <div class="operations-actions">
+        <button type="button" class="secondary-button" data-episode-action="edit">Edit / Schedule</button>
         <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
       </div>
     `;
 
+    const editButton = card.querySelector("[data-episode-action='edit']");
     const deleteButton = card.querySelector("[data-episode-action='delete']");
+    editButton.addEventListener("click", () => {
+      loadEpisodeIntoForm(episode);
+      setMessage(episodeMessage, `Editing ${episode.episode_title || episode.guest_name || "episode"}.`, "success");
+    });
     deleteButton.addEventListener("click", async () => {
       const label = episode.episode_title || episode.guest_name || "this episode";
       if (!window.confirm(`Delete ${label} from the database?`)) {
@@ -241,7 +295,45 @@ function renderRecommendations(recommendations) {
       <div class="operations-preview">
         <p>${episode.recommendation_reason || "Good fit for the next release slot."}</p>
       </div>
+      <div class="operations-actions">
+        <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
+        <button type="button" class="secondary-button" data-recommendation-action="edit">Review In Form</button>
+      </div>
     `;
+    const scheduleButton = card.querySelector("[data-recommendation-action='schedule']");
+    const editButton = card.querySelector("[data-recommendation-action='edit']");
+    scheduleButton.addEventListener("click", async () => {
+      try {
+        const payload = {
+          ...episode,
+          release_date: formatDateForDateTimeInput(episode.recommended_release_date),
+          release_status: "scheduled",
+        };
+        await fetchJSON(`/api/episodes/${episode.id}`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setMessage(
+          episodeMessage,
+          `Scheduled ${episode.episode_title || episode.guest_name || "episode"} for ${formatDateTime(episode.recommended_release_date)}.`,
+          "success",
+        );
+        await loadPlanning();
+      } catch (error) {
+        setMessage(episodeMessage, error.message, "error");
+      }
+    });
+    editButton.addEventListener("click", () => {
+      loadEpisodeIntoForm(episode, {
+        releaseDate: episode.recommended_release_date,
+        releaseStatus: "scheduled",
+      });
+      setMessage(
+        episodeMessage,
+        `Loaded ${episode.episode_title || episode.guest_name || "episode"} with the recommended release slot.`,
+        "success",
+      );
+    });
     recommendationList.appendChild(card);
   });
 }
@@ -262,21 +354,24 @@ async function loadPlanning() {
 episodeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const payload = Object.fromEntries(new FormData(episodeForm).entries());
+  const episodeId = payload.id;
+  delete payload.id;
   try {
-    await fetchJSON("/api/episodes", {
+    await fetchJSON(episodeId ? `/api/episodes/${episodeId}` : "/api/episodes", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    episodeForm.reset();
-    episodeForm.elements.release_status.value = "unplanned";
-    episodeForm.elements.production_status.value = "idea";
-    episodeForm.elements.promotion_status.value = "unknown";
-    episodeForm.elements.priority_score.value = "0";
-    setMessage(episodeMessage, "Episode saved.", "success");
+    resetEpisodeForm();
+    setMessage(episodeMessage, episodeId ? "Episode updated." : "Episode saved.", "success");
     await loadPlanning();
   } catch (error) {
     setMessage(episodeMessage, error.message, "error");
   }
+});
+
+episodeResetButton.addEventListener("click", () => {
+  resetEpisodeForm();
+  setMessage(episodeMessage, "Back to creating a new episode.", "success");
 });
 
 episodeImportForm.addEventListener("submit", async (event) => {
@@ -324,6 +419,7 @@ refreshButton.addEventListener("click", async () => {
 });
 
 renderExportFields();
+resetEpisodeForm();
 loadPlanning().catch((error) => {
   setMessage(episodeMessage, error.message, "error");
 });

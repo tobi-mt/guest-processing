@@ -78,11 +78,24 @@ def _detect_source_type(filename: str) -> str:
     return "released_archive"
 
 
-def parse_episode_import_csv(content: bytes, filename: str) -> List[Dict[str, Any]]:
+def _infer_release_status(*, release_date: str, source_type: str, reference: datetime) -> str:
+    """Decide whether an imported episode is already released or still scheduled."""
+    parsed_release = _parse_episode_date(release_date)
+    if not parsed_release:
+        return "unplanned"
+    if parsed_release.date() > reference.date():
+        return "scheduled"
+    if source_type == "released_archive":
+        return "released"
+    return "scheduled"
+
+
+def parse_episode_import_csv(content: bytes, filename: str, *, reference: datetime | None = None) -> List[Dict[str, Any]]:
     """Convert a legacy episode CSV into normalized episode records."""
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(StringIO(text))
     source_type = _detect_source_type(filename)
+    reference = reference or datetime.now()
     episodes: List[Dict[str, Any]] = []
 
     for raw_row in reader:
@@ -94,9 +107,16 @@ def parse_episode_import_csv(content: bytes, filename: str) -> List[Dict[str, An
         interview_date = _parse_legacy_date(row.get("Interview Date", ""))
         legacy_episode_number = row.get("Episode Number") or row.get("") or ""
         riverside_status = row.get("Riverside FM Status", "")
+        release_status = _infer_release_status(
+            release_date=release_date,
+            source_type=source_type,
+            reference=reference,
+        )
         production_status = (
             "released"
-            if release_date and source_type == "released_archive"
+            if release_status == "released"
+            else "ready"
+            if release_status == "scheduled"
             else _map_queue_status_to_production_status(riverside_status)
         )
         promotion_status = _infer_promotion_status(
@@ -122,7 +142,7 @@ def parse_episode_import_csv(content: bytes, filename: str) -> List[Dict[str, An
                 "interview_date": interview_date,
                 "recording_date": interview_date,
                 "release_date": release_date,
-                "release_status": "released" if release_date and source_type == "released_archive" else "unplanned",
+                "release_status": release_status,
                 "production_status": production_status,
                 "promotion_status": promotion_status,
                 "priority_score": 0,
@@ -321,11 +341,11 @@ def build_release_recommendations(
     episodes = list(episodes)
     released_history = [
         episode for episode in episodes
-        if _clean_text(episode.get("release_status")).lower() == "released" or _parse_episode_date(episode.get("release_date"))
+        if _clean_text(episode.get("release_status")).lower() == "released"
     ]
     queue = [
         episode for episode in episodes
-        if _clean_text(episode.get("release_status")).lower() != "released"
+        if _clean_text(episode.get("release_status")).lower() not in {"released", "scheduled"}
     ]
     if not queue:
         return []

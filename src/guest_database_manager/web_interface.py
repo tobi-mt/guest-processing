@@ -172,6 +172,17 @@ def _normalize_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _normalize_episode_release_status(release_date: str, release_status: str) -> str:
+    """Treat dated future episodes as scheduled unless explicitly released."""
+    normalized_status = _normalize_text(release_status).lower()
+    normalized_date = _normalize_text(release_date)
+    if normalized_status == "released":
+        return "released"
+    if normalized_date:
+        return "scheduled"
+    return normalized_status or "unplanned"
+
+
 def validate_intake_payload(payload: Dict[str, str]) -> None:
     """Reject obviously spammy or low-effort intake submissions."""
     combined_text = " ".join(str(payload.get(field, "")) for field in payload).lower()
@@ -576,6 +587,11 @@ class GuestWebService:
 
     def create_episode(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create or update an episode record."""
+        normalized_release_date = _normalize_text(payload.get("release_date"))
+        normalized_release_status = _normalize_episode_release_status(
+            normalized_release_date,
+            _normalize_text(payload.get("release_status")),
+        )
         episode_data = {
             "guest_id": payload.get("guest_id"),
             "interview_id": payload.get("interview_id"),
@@ -587,8 +603,8 @@ class GuestWebService:
             "category": _normalize_text(payload.get("category")),
             "interview_date": _normalize_text(payload.get("interview_date")),
             "recording_date": _normalize_text(payload.get("recording_date")),
-            "release_date": _normalize_text(payload.get("release_date")),
-            "release_status": _normalize_text(payload.get("release_status")) or "unplanned",
+            "release_date": normalized_release_date,
+            "release_status": normalized_release_status,
             "production_status": _normalize_text(payload.get("production_status")) or "idea",
             "promotion_status": _normalize_text(payload.get("promotion_status")) or "unknown",
             "priority_score": payload.get("priority_score") or 0,
@@ -617,7 +633,7 @@ class GuestWebService:
         if suffix != ".csv":
             raise WebInterfaceError("Please upload a CSV file for episode planning import.")
 
-        episodes = parse_episode_import_csv(content, filename)
+        episodes = parse_episode_import_csv(content, filename, reference=datetime.now())
         if not episodes:
             raise WebInterfaceError("No episode rows were found in that CSV file.")
 

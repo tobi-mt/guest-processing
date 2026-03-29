@@ -68,6 +68,7 @@
             </div>
 
             <form id="episode-form" class="guest-form">
+              <input name="id" type="hidden" />
               <label>
                 Guest Name
                 <input name="guest_name" type="text" required />
@@ -154,7 +155,8 @@
                 <textarea name="notes" rows="3"></textarea>
               </label>
               <div class="form-actions full-width">
-                <button type="submit" class="primary-button">Save Episode</button>
+                <button id="episode-submit-button" type="submit" class="primary-button">Save Episode</button>
+                <button id="episode-reset-button" type="button" class="secondary-button" hidden>Cancel Editing</button>
               </div>
             </form>
 
