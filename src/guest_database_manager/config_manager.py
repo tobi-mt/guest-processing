@@ -8,7 +8,14 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
-import streamlit as st
+try:
+    import streamlit as st
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
+except ImportError:  # pragma: no cover - keep config loading safe outside Streamlit
+    st = None
+
+    def get_script_run_ctx() -> None:
+        return None
 from cryptography.fernet import Fernet
 
 
@@ -49,6 +56,19 @@ class ConfigManager:
     def _decrypt_password(self, encrypted_password: str) -> str:
         """Decrypt password from storage."""
         return self.cipher.decrypt(encrypted_password.encode()).decode()
+
+    def _can_report_with_streamlit(self) -> bool:
+        """Return whether Streamlit UI feedback is safe in this execution context."""
+        return st is not None and get_script_run_ctx() is not None
+
+    def _report_error(self, text: str, *, warning: bool = False) -> None:
+        """Optionally surface config issues to the Streamlit UI."""
+        if not self._can_report_with_streamlit():
+            return
+        if warning:
+            st.warning(text)
+        else:
+            st.error(text)
 
     def save_email_config(
         self,
@@ -95,7 +115,7 @@ class ConfigManager:
             return True
 
         except (OSError, ValueError) as e:
-            st.error(f"Failed to save email configuration: {str(e)}")
+            self._report_error(f"Failed to save email configuration: {str(e)}")
             return False
 
     def load_email_config(self) -> Optional[Dict[str, any]]:
@@ -119,7 +139,7 @@ class ConfigManager:
             return email_config
 
         except (OSError, ValueError, json.JSONDecodeError) as e:
-            st.warning(f"Failed to load email configuration: {str(e)}")
+            self._report_error(f"Failed to load email configuration: {str(e)}", warning=True)
             return None
 
     def clear_email_config(self) -> bool:
@@ -133,7 +153,7 @@ class ConfigManager:
                 self.config_file.unlink()
             return True
         except OSError as e:
-            st.error(f"Failed to clear email configuration: {str(e)}")
+            self._report_error(f"Failed to clear email configuration: {str(e)}")
             return False
 
     def has_email_config(self) -> bool:
