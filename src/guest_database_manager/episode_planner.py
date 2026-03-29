@@ -383,6 +383,69 @@ def build_episode_copy_assist(episode: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
+def _theme_keyword_set(episode: Dict[str, Any]) -> set[str]:
+    """Extract lightweight topical keywords from episode metadata."""
+    source = " ".join(
+        [
+            _clean_text(episode.get("episode_title")),
+            _clean_text(episode.get("topic")),
+            _clean_text(episode.get("category")),
+        ]
+    ).casefold()
+    tokens: set[str] = set()
+    for raw in source.replace(",", " ").replace(".", " ").replace("/", " ").split():
+        token = raw.strip(" -_")
+        if len(token) >= 5:
+            tokens.add(token)
+    return tokens
+
+
+def apply_sequence_warnings(recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Flag multi-week sequencing risks across the selected recommendation run."""
+    category_counts: Dict[str, int] = {}
+    guest_counts: Dict[str, int] = {}
+
+    for episode in recommendations:
+        category = _clean_text(episode.get("category"))
+        guest = _clean_text(episode.get("guest_name")).casefold()
+        if category:
+            category_counts[category] = category_counts.get(category, 0) + 1
+        if guest:
+            guest_counts[guest] = guest_counts.get(guest, 0) + 1
+
+    enriched: List[Dict[str, Any]] = []
+    for index, episode in enumerate(recommendations):
+        warnings = list(episode.get("watchouts") or [])
+        category = _clean_text(episode.get("category"))
+        guest = _clean_text(episode.get("guest_name")).casefold()
+        current_keywords = _theme_keyword_set(episode)
+
+        if category and category_counts.get(category, 0) >= 2:
+            warnings.append("this category appears more than once in the current recommended run")
+        if guest and guest_counts.get(guest, 0) >= 2:
+            warnings.append("this guest appears more than once in the current recommended run")
+
+        if index > 0:
+            previous = recommendations[index - 1]
+            previous_keywords = _theme_keyword_set(previous)
+            overlap = current_keywords.intersection(previous_keywords)
+            if len(overlap) >= 2:
+                warnings.append("this topic overlaps heavily with the previous recommended release")
+
+        if index < len(recommendations) - 1:
+            next_episode = recommendations[index + 1]
+            next_keywords = _theme_keyword_set(next_episode)
+            overlap = current_keywords.intersection(next_keywords)
+            if len(overlap) >= 2:
+                warnings.append("the following week may feel too similar in topic or framing")
+
+        enriched_episode = dict(episode)
+        enriched_episode["sequence_warnings"] = list(dict.fromkeys(warnings))[:4]
+        enriched.append(enriched_episode)
+
+    return enriched
+
+
 def _guest_recency_penalty(episode: Dict[str, Any], recent_releases: List[Dict[str, Any]]) -> tuple[float, str]:
     """Avoid back-to-back appearances from the same guest."""
     guest_name = _clean_text(episode.get("guest_name")).casefold()
@@ -613,4 +676,4 @@ def build_release_recommendations(
             simulated_recent_guests.insert(0, chosen_guest)
         slot += timedelta(days=7)
 
-    return selected
+    return apply_sequence_warnings(selected)

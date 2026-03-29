@@ -1001,6 +1001,54 @@ def test_episode_recommendations_factor_seasonality_promo_readiness_and_guest_di
     assert top_recommendation["promotion_status"] == "ready"
 
 
+def test_episode_recommendations_include_multi_week_sequence_warnings(temp_db):
+    """Recommendations should flag repetitive multi-week runs across the selected lineup."""
+    service = GuestWebService(temp_db.db_path)
+
+    service.create_episode(
+        {
+            "guest_name": "Finance Guest One",
+            "guest_email": "finance1@example.com",
+            "episode_title": "Building Calm Under Pressure",
+            "topic": "Building Calm Under Pressure",
+            "category": "Finance",
+            "interview_date": "2025-12-01",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Finance Guest Two",
+            "guest_email": "finance2@example.com",
+            "episode_title": "Building Better Financial Calm",
+            "topic": "Building Better Financial Calm",
+            "category": "Finance",
+            "interview_date": "2025-12-08",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Healing Guest",
+            "guest_email": "healing@example.com",
+            "episode_title": "Healing Through Honest Reflection",
+            "topic": "Healing Through Honest Reflection",
+            "category": "Mental Health",
+            "interview_date": "2025-11-15",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    planning = service.list_planning()
+    finance_recommendations = [item for item in planning["recommendations"] if item["category"] == "Finance"]
+
+    assert finance_recommendations
+    assert any(item["sequence_warnings"] for item in finance_recommendations)
+
+
 def test_operations_are_sorted_by_nearest_upcoming_interview_first(temp_db):
     """Operations should prioritize the closest upcoming interview and keep history below."""
     service = GuestWebService(temp_db.db_path)

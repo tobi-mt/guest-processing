@@ -1033,6 +1033,7 @@ function renderRecommendations(recommendations, totalCount) {
       </div>
       ${episode.why_now?.length ? `<div class="operations-preview"><strong class="insight-label">Why this next</strong><ul>${episode.why_now.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
+      ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${renderPromoReadiness(episode.promotion_readiness)}
       ${renderTitleSuggestions(episode.title_suggestions)}
       ${renderCopyAssist(episode.copy_assist)}
