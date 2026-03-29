@@ -3,11 +3,14 @@
 # SPDX-License-Identifier: MIT
 """Email functionality for Guest Database Manager."""
 
+import html
 import smtplib
 import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Dict, Optional
+
+import requests
 
 try:
     import streamlit as st
@@ -37,6 +40,7 @@ class EmailManager:
         self.password: Optional[str] = None
         self.from_email: Optional[str] = None
         self.from_name: Optional[str] = None
+        self.resend_api_key: Optional[str] = None
         self.last_error: str = ""
 
         # Initialize config manager for persistent settings
@@ -64,10 +68,23 @@ class EmailManager:
         self.password = password
         self.from_email = from_email
         self.from_name = from_name
+        self.resend_api_key = None
+
+    def configure_resend(self, api_key: str, from_email: str, from_name: str = "") -> None:
+        """Configure Resend API delivery."""
+        self.resend_api_key = api_key
+        self.from_email = from_email
+        self.from_name = from_name
+        self.smtp_server = None
+        self.smtp_port = None
+        self.username = None
+        self.password = None
 
     def is_configured(self) -> bool:
         """Check if email is properly configured."""
-        return all([self.smtp_server, self.smtp_port, self.username, self.password, self.from_email])
+        resend_ready = all([self.resend_api_key, self.from_email])
+        smtp_ready = all([self.smtp_server, self.smtp_port, self.username, self.password, self.from_email])
+        return resend_ready or smtp_ready
 
     def _can_report_with_streamlit(self) -> bool:
         """Return whether streamlit UI feedback is safe in this execution context."""
@@ -187,6 +204,76 @@ Mirror Talk Podcast"""
 
         return {"subject": subject, "body": body}
 
+    def _resend_from_address(self) -> str:
+        """Format the Resend sender address."""
+        if self.from_name:
+            return f"{self.from_name} <{self.from_email}>"
+        return self.from_email or ""
+
+    def _build_html_body(self, body: str) -> str:
+        """Convert plain text into simple HTML for API-based sends."""
+        paragraphs = [segment.strip() for segment in body.split("\n\n") if segment.strip()]
+        if not paragraphs:
+            return "<p></p>"
+
+        rendered = []
+        for paragraph in paragraphs:
+            escaped = html.escape(paragraph).replace("\n", "<br />")
+            rendered.append(f"<p>{escaped}</p>")
+        return "".join(rendered)
+
+    def _send_via_resend(self, to_email: str, subject: str, body: str) -> bool:
+        """Send an email through the Resend HTTPS API."""
+        if not self.resend_api_key or not self.from_email:
+            self.last_error = "Resend is not configured."
+            return False
+
+        payload = {
+            "from": self._resend_from_address(),
+            "to": [to_email],
+            "subject": subject,
+            "text": body,
+            "html": self._build_html_body(body),
+        }
+
+        try:
+            response = requests.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {self.resend_api_key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "guest-database-manager/0.1.0",
+                },
+                json=payload,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            self.last_error = str(exc)
+            return False
+
+        if response.ok:
+            self.last_error = ""
+            return True
+
+        error_message = ""
+        try:
+            error_payload = response.json()
+        except ValueError:
+            error_payload = {}
+
+        if isinstance(error_payload, dict):
+            error_message = (
+                error_payload.get("message")
+                or error_payload.get("error")
+                or error_payload.get("name")
+                or ""
+            )
+            if isinstance(error_message, dict):
+                error_message = error_message.get("message", "")
+
+        self.last_error = error_message or response.text.strip() or f"Resend returned HTTP {response.status_code}"
+        return False
+
     def send_email(self, to_email: str, subject: str, body: str) -> bool:
         """Send an email.
 
@@ -203,6 +290,12 @@ Mirror Talk Podcast"""
         if not self.is_configured():
             self.last_error = "Email not configured. Please configure SMTP settings first."
             raise ValueError(self.last_error)
+
+        if self.resend_api_key:
+            sent = self._send_via_resend(to_email, subject, body)
+            if not sent:
+                self._report_send_failure(self.last_error)
+            return sent
 
         try:
             # Create message

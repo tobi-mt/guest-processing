@@ -39,6 +39,7 @@ EMAIL_SMTP_SERVER_ENV_VAR = "MIRROR_TALK_SMTP_SERVER"
 EMAIL_SMTP_PORT_ENV_VAR = "MIRROR_TALK_SMTP_PORT"
 EMAIL_USERNAME_ENV_VAR = "MIRROR_TALK_SMTP_USERNAME"
 EMAIL_PASSWORD_ENV_VAR = "MIRROR_TALK_SMTP_PASSWORD"
+EMAIL_RESEND_API_KEY_ENV_VAR = "MIRROR_TALK_RESEND_API_KEY"
 EMAIL_FROM_ENV_VAR = "MIRROR_TALK_FROM_EMAIL"
 EMAIL_FROM_NAME_ENV_VAR = "MIRROR_TALK_FROM_NAME"
 FORM_FIELDS = {
@@ -343,14 +344,24 @@ class GuestWebService:
         email_manager.password = None
         email_manager.from_email = None
         email_manager.from_name = None
+        email_manager.resend_api_key = None
+        resend_api_key = os.environ.get(EMAIL_RESEND_API_KEY_ENV_VAR, "").strip()
         smtp_server = os.environ.get(EMAIL_SMTP_SERVER_ENV_VAR, "").strip()
         smtp_username = os.environ.get(EMAIL_USERNAME_ENV_VAR, "").strip()
         smtp_password = os.environ.get(EMAIL_PASSWORD_ENV_VAR, "").strip()
         from_email = os.environ.get(EMAIL_FROM_ENV_VAR, "").strip()
+        from_name = os.environ.get(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast").strip()
+
+        if resend_api_key and from_email:
+            email_manager.configure_resend(
+                api_key=resend_api_key,
+                from_email=from_email,
+                from_name=from_name,
+            )
+            return email_manager
 
         if smtp_server and smtp_username and smtp_password and from_email:
             smtp_port_raw = os.environ.get(EMAIL_SMTP_PORT_ENV_VAR, "587").strip() or "587"
-            from_name = os.environ.get(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast").strip()
             try:
                 smtp_port = int(smtp_port_raw)
             except ValueError as exc:

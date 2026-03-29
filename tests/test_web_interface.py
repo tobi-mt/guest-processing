@@ -12,6 +12,7 @@ from guest_database_manager.web_interface import (
     EMAIL_FROM_ENV_VAR,
     EMAIL_FROM_NAME_ENV_VAR,
     EMAIL_PASSWORD_ENV_VAR,
+    EMAIL_RESEND_API_KEY_ENV_VAR,
     EMAIL_SMTP_PORT_ENV_VAR,
     EMAIL_SMTP_SERVER_ENV_VAR,
     EMAIL_USERNAME_ENV_VAR,
@@ -239,6 +240,36 @@ def test_web_service_can_send_acceptance_email(monkeypatch, temp_db):
     updated_guest = service.send_guest_decision_email(guest["id"], "accepted", "Welcome aboard")
 
     assert updated_guest["email_status"] == "accepted"
+
+
+def test_web_service_prefers_resend_for_hosted_email(monkeypatch, temp_db):
+    """Hosted dashboard should configure Resend when its API key is present."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+            self.last_error = ""
+            self.resend_used = False
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+            self.resend_used = True
+            self.from_email = kwargs["from_email"]
+
+        def configure_smtp(self, **kwargs):
+            raise AssertionError("SMTP should not be configured when Resend is available")
+
+        def is_configured(self):
+            return self.configured
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+
+    assert service.list_guests()["email_enabled"] is True
 
 
 def test_web_service_can_return_email_template(monkeypatch, temp_db):
