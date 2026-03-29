@@ -248,6 +248,7 @@ class GuestWebService:
             "interviews": interviews,
             "episodes": episodes,
             "recommendations": build_release_recommendations(episodes, reference=datetime.now()),
+            "available_categories": self.database.list_episode_categories(),
             "reminder_candidates": reminder_candidates,
             "calendar_sync_enabled": self._build_google_calendar_client() is not None,
         }

@@ -152,8 +152,10 @@
               </label>
               <label>
                 Category
-                <input name="category" type="text" />
+                <input name="category" type="text" list="episode-category-options" />
+                <small class="field-hint">Choose an existing Mirror Talk category or type a new one.</small>
               </label>
+              <datalist id="episode-category-options"></datalist>
               <label>
                 Interview Date
                 <input name="interview_date" type="date" />

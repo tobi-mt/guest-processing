@@ -4,6 +4,7 @@ const episodeImportForm = document.getElementById("episode-import-form");
 const operationsExportForm = document.getElementById("operations-export-form");
 const exportListName = document.getElementById("export-list-name");
 const exportFields = document.getElementById("export-fields");
+const episodeCategoryOptions = document.getElementById("episode-category-options");
 const interviewMessage = document.getElementById("interview-message");
 const episodeMessage = document.getElementById("episode-message");
 const episodeImportMessage = document.getElementById("episode-import-message");
@@ -269,6 +270,15 @@ function renderRecommendations(recommendations) {
   });
 }
 
+function renderCategoryOptions(categories) {
+  episodeCategoryOptions.innerHTML = "";
+  (categories || []).forEach((category) => {
+    const option = document.createElement("option");
+    option.value = category;
+    episodeCategoryOptions.appendChild(option);
+  });
+}
+
 function renderExportFields() {
   const selectedList = exportListName.value;
   const fields = EXPORT_FIELD_CONFIG[selectedList] || [];
@@ -355,6 +365,7 @@ async function loadOperations() {
   stats.episodesTotal.textContent = payload.stats.episodes_total ?? 0;
   stats.episodesScheduled.textContent = payload.stats.episodes_scheduled ?? 0;
   stats.remindersDue.textContent = payload.reminder_candidates?.length ?? 0;
+  renderCategoryOptions(payload.available_categories || []);
   renderReminderCandidates(payload.reminder_candidates || []);
   renderInterviews(payload.interviews);
   renderRecommendations(payload.recommendations || []);

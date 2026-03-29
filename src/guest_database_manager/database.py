@@ -391,6 +391,20 @@ class GuestDatabase:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def list_episode_categories(self) -> List[str]:
+        """Return known episode categories ordered by how often they appear."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            cursor = conn.execute(
+                """
+                SELECT category, COUNT(*) AS usage_count
+                FROM episodes
+                WHERE TRIM(COALESCE(category, '')) <> ''
+                GROUP BY category
+                ORDER BY usage_count DESC, LOWER(category) ASC
+                """
+            )
+            return [row[0] for row in cursor.fetchall()]
+
     def get_episode_by_id(self, episode_id: int) -> Optional[Dict]:
         """Fetch a single episode by id."""
         with sqlite3.connect(str(self.db_path)) as conn:

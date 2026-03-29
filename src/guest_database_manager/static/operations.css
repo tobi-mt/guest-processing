@@ -27,6 +27,12 @@
   margin-bottom: 0;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
 .operations-card {
   padding: 18px;
   border: 1px solid var(--border);

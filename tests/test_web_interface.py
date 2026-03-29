@@ -516,6 +516,43 @@ def test_web_service_can_create_interview_and_episode_records(temp_db):
     assert len(operations["episodes"]) == 1
 
 
+def test_operations_expose_known_episode_categories_for_guided_input(temp_db):
+    """Episode entry should expose common categories from existing episode records."""
+    service = GuestWebService(temp_db.db_path)
+
+    service.create_episode(
+        {
+            "guest_name": "Guest One",
+            "guest_email": "one@example.com",
+            "episode_title": "Personal Growth Story",
+            "topic": "Personal Growth Story",
+            "category": "Personal Development",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Guest Two",
+            "guest_email": "two@example.com",
+            "episode_title": "Finance Story",
+            "topic": "Finance Story",
+            "category": "Finance",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Guest Three",
+            "guest_email": "three@example.com",
+            "episode_title": "Another Personal Growth Story",
+            "topic": "Another Personal Growth Story",
+            "category": "Personal Development",
+        }
+    )
+
+    operations = service.list_operations()
+
+    assert operations["available_categories"][:2] == ["Personal Development", "Finance"]
+
+
 def test_episode_recommendations_prefer_variety_and_ready_queue(temp_db):
     """Release recommendations should surface strong ready candidates for the next Tuesday slot."""
     service = GuestWebService(temp_db.db_path)
