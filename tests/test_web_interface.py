@@ -386,6 +386,51 @@ def test_web_service_rejects_email_send_without_server_config(temp_db):
         service.send_guest_decision_email(guest["id"], "accepted", "")
 
 
+def test_web_service_can_create_interview_and_episode_records(temp_db):
+    """Operations records should be created through the service layer without touching guest intake flows."""
+    service = GuestWebService(temp_db.db_path)
+
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Mirror Talk conversation",
+            "scheduled_for": "2026-04-08 17:00:00",
+            "timezone": "Europe/Berlin",
+            "calendar_event_id": "event_ops_1",
+        }
+    )
+    episode = service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Healing Through Hard Seasons",
+            "topic": "Healing",
+            "category": "Personal Growth",
+            "release_status": "scheduled",
+            "production_status": "recorded",
+        }
+    )
+
+    operations = service.list_operations()
+
+    assert interview["calendar_event_id"] == "event_ops_1"
+    assert episode["episode_title"] == "Healing Through Hard Seasons"
+    assert len(operations["interviews"]) == 1
+    assert len(operations["episodes"]) == 1
+
+
+def test_web_service_requires_interview_and_episode_basics(temp_db):
+    """Operations records should validate their essential fields."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError):
+        service.create_interview({"guest_name": "", "scheduled_for": ""})
+
+    with pytest.raises(WebInterfaceError):
+        service.create_episode({"guest_name": "Jordan Rivers", "episode_title": ""})
+
+
 def test_validate_intake_payload_rejects_spam_keywords():
     """Spammy submissions should be rejected before insertion."""
     with pytest.raises(WebInterfaceError):

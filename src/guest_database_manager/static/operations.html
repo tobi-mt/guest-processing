@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mirror Talk Podcast Operations</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/operations.css" />
+  </head>
+  <body>
+    <div class="page-shell operations-shell">
+      <header class="hero operations-hero">
+        <div>
+          <div class="brand-lockup">
+            <img class="brand-logo" src="/static/mirror-talk-logo.png" alt="Mirror Talk Podcast logo" />
+            <div class="brand-copy">
+              <p class="brand-name">Mirror Talk</p>
+              <p class="brand-subtitle">Podcast</p>
+            </div>
+          </div>
+          <p class="eyebrow">Podcast Operations</p>
+          <h1>Interviews, release planning, and next steps.</h1>
+          <p class="hero-copy">
+            This workspace keeps upcoming interviews, unreleased episodes, and scheduling decisions in one place so reminders and release recommendations can grow from real data.
+          </p>
+        </div>
+        <div class="hero-card">
+          <div class="metric-grid">
+            <div class="metric">
+              <span>Interviews</span>
+              <strong id="ops-interviews-total">0</strong>
+            </div>
+            <div class="metric">
+              <span>Pending Confirmations</span>
+              <strong id="ops-interviews-pending">0</strong>
+            </div>
+            <div class="metric">
+              <span>Episodes</span>
+              <strong id="ops-episodes-total">0</strong>
+            </div>
+            <div class="metric">
+              <span>Scheduled Releases</span>
+              <strong id="ops-episodes-scheduled">0</strong>
+            </div>
+          </div>
+          <a class="dashboard-link" href="/dashboard">Open Guest Dashboard</a>
+        </div>
+      </header>
+
+      <main class="main-grid operations-grid">
+        <section class="panel operations-form-panel">
+          <div class="section-heading">
+            <p class="eyebrow">Interview Tracker</p>
+            <h2>Add Or Update Interview</h2>
+          </div>
+
+          <form id="interview-form" class="guest-form">
+            <label>
+              Guest Name
+              <input name="guest_name" type="text" required />
+            </label>
+            <label>
+              Guest Email
+              <input name="guest_email" type="email" />
+            </label>
+            <label class="full-width">
+              Title
+              <input name="title" type="text" placeholder="Mirror Talk conversation with..." />
+            </label>
+            <label>
+              Scheduled For
+              <input name="scheduled_for" type="datetime-local" required />
+            </label>
+            <label>
+              Timezone
+              <input name="timezone" type="text" value="Europe/Berlin" />
+            </label>
+            <label class="full-width">
+              Calendar Event ID
+              <input name="calendar_event_id" type="text" placeholder="Useful later for Google Calendar sync" />
+            </label>
+            <label class="full-width">
+              Riverside / Join URL
+              <input name="join_url" type="url" />
+            </label>
+            <label>
+              Confirmation Status
+              <select name="confirmation_status">
+                <option value="pending">Pending</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="reschedule_requested">Reschedule Requested</option>
+              </select>
+            </label>
+            <label>
+              Reminder Status
+              <select name="reminder_status">
+                <option value="not_scheduled">Not Scheduled</option>
+                <option value="queued">Queued</option>
+                <option value="sent">Sent</option>
+              </select>
+            </label>
+            <label class="full-width">
+              Notes
+              <textarea name="notes" rows="3"></textarea>
+            </label>
+            <div class="form-actions full-width">
+              <button type="submit" class="primary-button">Save Interview</button>
+            </div>
+          </form>
+
+          <p id="interview-message" class="message" aria-live="polite"></p>
+
+          <div class="section-heading">
+            <p class="eyebrow">Episode Pipeline</p>
+            <h2>Add Or Update Episode</h2>
+          </div>
+
+          <form id="episode-form" class="guest-form">
+            <label>
+              Guest Name
+              <input name="guest_name" type="text" required />
+            </label>
+            <label>
+              Guest Email
+              <input name="guest_email" type="email" />
+            </label>
+            <label class="full-width">
+              Episode Title
+              <input name="episode_title" type="text" required />
+            </label>
+            <label>
+              Topic
+              <input name="topic" type="text" />
+            </label>
+            <label>
+              Category
+              <input name="category" type="text" />
+            </label>
+            <label>
+              Interview Date
+              <input name="interview_date" type="date" />
+            </label>
+            <label>
+              Recording Date
+              <input name="recording_date" type="date" />
+            </label>
+            <label>
+              Release Date
+              <input name="release_date" type="datetime-local" />
+            </label>
+            <label>
+              Release Status
+              <select name="release_status">
+                <option value="unplanned">Unplanned</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="released">Released</option>
+              </select>
+            </label>
+            <label>
+              Production Status
+              <select name="production_status">
+                <option value="idea">Idea</option>
+                <option value="recorded">Recorded</option>
+                <option value="editing">Editing</option>
+                <option value="ready">Ready</option>
+                <option value="released">Released</option>
+              </select>
+            </label>
+            <label>
+              Priority Score
+              <input name="priority_score" type="number" min="0" max="10" step="0.5" value="0" />
+            </label>
+            <label class="full-width">
+              Recommendation Reason
+              <textarea name="recommendation_reason" rows="2"></textarea>
+            </label>
+            <label class="full-width">
+              Notes
+              <textarea name="notes" rows="3"></textarea>
+            </label>
+            <div class="form-actions full-width">
+              <button type="submit" class="primary-button">Save Episode</button>
+            </div>
+          </form>
+
+          <p id="episode-message" class="message" aria-live="polite"></p>
+        </section>
+
+        <section class="panel list-panel">
+          <div class="section-heading section-heading-inline">
+            <div>
+              <p class="eyebrow">Upcoming Interviews</p>
+              <h2>Interview Calendar</h2>
+            </div>
+            <button id="operations-refresh-button" class="secondary-button" type="button">Refresh</button>
+          </div>
+
+          <div id="interview-list" class="guest-list"></div>
+
+          <div class="section-heading top-spaced">
+            <div>
+              <p class="eyebrow">Release Planning</p>
+              <h2>Episodes</h2>
+            </div>
+          </div>
+
+          <div id="episode-list" class="guest-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/operations.js" defer></script>
+  </body>
+</html>

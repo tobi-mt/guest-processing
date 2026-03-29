@@ -1,0 +1,165 @@
+const interviewForm = document.getElementById("interview-form");
+const episodeForm = document.getElementById("episode-form");
+const interviewMessage = document.getElementById("interview-message");
+const episodeMessage = document.getElementById("episode-message");
+const interviewList = document.getElementById("interview-list");
+const episodeList = document.getElementById("episode-list");
+const refreshButton = document.getElementById("operations-refresh-button");
+
+const stats = {
+  interviewsTotal: document.getElementById("ops-interviews-total"),
+  interviewsPending: document.getElementById("ops-interviews-pending"),
+  episodesTotal: document.getElementById("ops-episodes-total"),
+  episodesScheduled: document.getElementById("ops-episodes-scheduled"),
+};
+
+async function fetchJSON(url, options = {}) {
+  const response = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Request failed");
+  }
+  return data;
+}
+
+function setMessage(node, text, tone = "") {
+  node.textContent = text;
+  node.className = `message ${tone}`.trim();
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "Not set";
+  }
+
+  const normalized = String(value).replace(" ", "T");
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("en-GB", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function renderInterviews(interviews) {
+  interviewList.innerHTML = "";
+
+  if (!interviews.length) {
+    interviewList.innerHTML = "<p class='guest-summary'>No interviews tracked yet.</p>";
+    return;
+  }
+
+  interviews.forEach((interview) => {
+    const card = document.createElement("article");
+    card.className = "operations-card";
+    card.innerHTML = `
+      <h3>${interview.guest_name || "Unnamed guest"}</h3>
+      <p>${interview.title || "Mirror Talk interview"}</p>
+      <div class="operations-meta">
+        <span>Scheduled: ${formatDateTime(interview.scheduled_for)}</span>
+        <span>Email: ${interview.guest_email || "Not set"}</span>
+        <span>Confirmation: ${interview.confirmation_status || "pending"}</span>
+        <span>Reminder: ${interview.reminder_status || "not_scheduled"}</span>
+      </div>
+    `;
+    interviewList.appendChild(card);
+  });
+}
+
+function renderEpisodes(episodes) {
+  episodeList.innerHTML = "";
+
+  if (!episodes.length) {
+    episodeList.innerHTML = "<p class='guest-summary'>No episodes tracked yet.</p>";
+    return;
+  }
+
+  episodes.forEach((episode) => {
+    const card = document.createElement("article");
+    card.className = "operations-card";
+    card.innerHTML = `
+      <h3>${episode.episode_title || "Untitled episode"}</h3>
+      <p>${episode.guest_name || "Guest not set"}</p>
+      <div class="operations-meta">
+        <span>Topic: ${episode.topic || "Not set"}</span>
+        <span>Category: ${episode.category || "Not set"}</span>
+        <span>Release: ${formatDateTime(episode.release_date)}</span>
+        <span>Status: ${episode.release_status || "unplanned"} / ${episode.production_status || "idea"}</span>
+        <span>Priority: ${episode.priority_score ?? 0}</span>
+      </div>
+    `;
+    episodeList.appendChild(card);
+  });
+}
+
+async function loadOperations() {
+  const payload = await fetchJSON("/api/operations");
+  stats.interviewsTotal.textContent = payload.stats.interviews_total ?? 0;
+  stats.interviewsPending.textContent = payload.stats.interviews_pending_confirmation ?? 0;
+  stats.episodesTotal.textContent = payload.stats.episodes_total ?? 0;
+  stats.episodesScheduled.textContent = payload.stats.episodes_scheduled ?? 0;
+  renderInterviews(payload.interviews);
+  renderEpisodes(payload.episodes);
+}
+
+interviewForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = Object.fromEntries(new FormData(interviewForm).entries());
+
+  try {
+    await fetchJSON("/api/interviews", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    interviewForm.reset();
+    interviewForm.elements.timezone.value = "Europe/Berlin";
+    interviewForm.elements.confirmation_status.value = "pending";
+    interviewForm.elements.reminder_status.value = "not_scheduled";
+    setMessage(interviewMessage, "Interview saved.", "success");
+    await loadOperations();
+  } catch (error) {
+    setMessage(interviewMessage, error.message, "error");
+  }
+});
+
+episodeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = Object.fromEntries(new FormData(episodeForm).entries());
+
+  try {
+    await fetchJSON("/api/episodes", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    episodeForm.reset();
+    episodeForm.elements.release_status.value = "unplanned";
+    episodeForm.elements.production_status.value = "idea";
+    episodeForm.elements.priority_score.value = "0";
+    setMessage(episodeMessage, "Episode saved.", "success");
+    await loadOperations();
+  } catch (error) {
+    setMessage(episodeMessage, error.message, "error");
+  }
+});
+
+refreshButton.addEventListener("click", async () => {
+  try {
+    await loadOperations();
+  } catch (error) {
+    setMessage(interviewMessage, error.message, "error");
+  }
+});
+
+loadOperations().catch((error) => {
+  setMessage(interviewMessage, error.message, "error");
+});

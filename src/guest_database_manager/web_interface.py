@@ -169,6 +169,14 @@ class GuestWebService:
             "email_enabled": self._build_email_manager().is_configured(),
         }
 
+    def list_operations(self) -> Dict[str, Any]:
+        """Return the current interview and episode operations data."""
+        return {
+            "stats": self.database.get_operations_stats(),
+            "interviews": self.database.list_interviews(),
+            "episodes": self.database.list_episodes(),
+        }
+
     def export_guests_csv(self) -> str:
         """Export all guests as a CSV string for occasional admin downloads."""
         guests = self.database.get_all_guests()
@@ -336,6 +344,88 @@ class GuestWebService:
         self.database.delete_guest(guest_id)
         return {"deleted": True, "id": guest_id}
 
+    def create_interview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Create or update an interview record."""
+        interview_data = {
+            "guest_id": payload.get("guest_id"),
+            "guest_name": _normalize_text(payload.get("guest_name")),
+            "guest_email": _normalize_text(payload.get("guest_email")),
+            "calendar_event_id": _normalize_text(payload.get("calendar_event_id")),
+            "title": _normalize_text(payload.get("title")),
+            "scheduled_for": _normalize_text(payload.get("scheduled_for")),
+            "timezone": _normalize_text(payload.get("timezone")) or "Europe/Berlin",
+            "join_url": _normalize_text(payload.get("join_url")),
+            "status": _normalize_text(payload.get("status")) or "scheduled",
+            "confirmation_status": _normalize_text(payload.get("confirmation_status")) or "pending",
+            "reminder_status": _normalize_text(payload.get("reminder_status")) or "not_scheduled",
+            "reminder_sent_at": _normalize_text(payload.get("reminder_sent_at")),
+            "notes": _normalize_text(payload.get("notes")),
+        }
+
+        if not interview_data["guest_name"]:
+            raise WebInterfaceError("Interview guest name is required.")
+        if not interview_data["scheduled_for"]:
+            raise WebInterfaceError("Interview date and time are required.")
+
+        interview_id, _ = self.database.upsert_interview(interview_data)
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview could not be saved.")
+        return interview
+
+    def update_interview(self, interview_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an interview record."""
+        current = self.database.get_interview_by_id(interview_id)
+        if not current:
+            raise WebInterfaceError("Interview not found.")
+
+        interview_data = dict(current)
+        interview_data.update(payload)
+        saved = self.create_interview(interview_data)
+        return saved
+
+    def create_episode(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Create or update an episode record."""
+        episode_data = {
+            "guest_id": payload.get("guest_id"),
+            "interview_id": payload.get("interview_id"),
+            "guest_name": _normalize_text(payload.get("guest_name")),
+            "guest_email": _normalize_text(payload.get("guest_email")),
+            "episode_title": _normalize_text(payload.get("episode_title")),
+            "topic": _normalize_text(payload.get("topic")),
+            "category": _normalize_text(payload.get("category")),
+            "interview_date": _normalize_text(payload.get("interview_date")),
+            "recording_date": _normalize_text(payload.get("recording_date")),
+            "release_date": _normalize_text(payload.get("release_date")),
+            "release_status": _normalize_text(payload.get("release_status")) or "unplanned",
+            "production_status": _normalize_text(payload.get("production_status")) or "idea",
+            "priority_score": payload.get("priority_score") or 0,
+            "recommendation_reason": _normalize_text(payload.get("recommendation_reason")),
+            "notes": _normalize_text(payload.get("notes")),
+        }
+
+        if not episode_data["guest_name"]:
+            raise WebInterfaceError("Episode guest name is required.")
+        if not episode_data["episode_title"]:
+            raise WebInterfaceError("Episode title is required.")
+
+        episode_id, _ = self.database.upsert_episode(episode_data)
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode could not be saved.")
+        return episode
+
+    def update_episode(self, episode_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an episode record."""
+        current = self.database.get_episode_by_id(episode_id)
+        if not current:
+            raise WebInterfaceError("Episode not found.")
+
+        episode_data = dict(current)
+        episode_data.update(payload)
+        saved = self.create_episode(episode_data)
+        return saved
+
     def _build_email_manager(self) -> EmailManager:
         """Build an email manager from environment configuration for the hosted dashboard."""
         email_manager = EmailManager()
@@ -409,6 +499,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._serve_static("index.html")
             return
 
+        if self.path in {"/operations", "/operations.html"}:
+            if not self._is_authorized_dashboard_request():
+                self._send_basic_auth_challenge()
+                return
+            self._serve_static("operations.html")
+            return
+
         if self.path.startswith("/static/"):
             relative_path = self.path.removeprefix("/static/")
             self._serve_static(relative_path)
@@ -430,6 +527,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self.service.export_guests_csv(),
                 filename="mirror-talk-guests.csv",
             )
+            return
+
+        if self.path == "/api/operations":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.list_operations())
             return
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -491,6 +595,36 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path == "/api/interviews":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                interview = self.service.create_interview(payload)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.CREATED, interview)
+            return
+
+        if self.path == "/api/episodes":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                episode = self.service.create_episode(payload)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.CREATED, episode)
             return
 
         if self.path.startswith("/api/guests/") and self.path.endswith("/status"):
@@ -560,6 +694,46 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.OK, template)
+            return
+
+        if self.path.startswith("/api/interviews/"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            interview_id = self._extract_record_id(self.path, "/api/interviews/")
+            if interview_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                interview = self.service.update_interview(interview_id, payload)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, interview)
+            return
+
+        if self.path.startswith("/api/episodes/"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            episode_id = self._extract_record_id(self.path, "/api/episodes/")
+            if episode_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                episode = self.service.update_episode(episode_id, payload)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, episode)
             return
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -708,6 +882,14 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             trimmed = trimmed[: -len(suffix)]
         trimmed = trimmed.strip("/")
 
+        try:
+            return int(trimmed)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _extract_record_id(path: str, prefix: str) -> Optional[int]:
+        trimmed = path.removeprefix(prefix).strip("/")
         try:
             return int(trimmed)
         except ValueError:

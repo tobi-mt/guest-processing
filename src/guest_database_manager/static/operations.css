@@ -1,0 +1,46 @@
+.operations-shell {
+  width: min(1260px, calc(100vw - 28px));
+}
+
+.operations-grid {
+  grid-template-columns: minmax(340px, 460px) 1fr;
+}
+
+.operations-form-panel,
+.operations-hero {
+  min-width: 0;
+}
+
+.operations-card {
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--panel-strong);
+}
+
+.operations-card h3,
+.operations-card p {
+  overflow-wrap: anywhere;
+}
+
+.operations-meta {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.operations-meta span {
+  overflow-wrap: anywhere;
+}
+
+.top-spaced {
+  margin-top: 28px;
+}
+
+@media (max-width: 900px) {
+  .operations-grid {
+    grid-template-columns: 1fr;
+  }
+}
