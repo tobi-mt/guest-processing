@@ -589,6 +589,48 @@ def test_web_service_can_use_date_proximity_for_guest_match(monkeypatch, temp_db
     assert updated_episode["episode_title"] == "A Different Published Title"
 
 
+def test_web_service_can_match_by_first_or_last_name_with_date_anchor(monkeypatch, temp_db):
+    """Partial guest-name matches should only work when another signal makes them safe."""
+
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def export_episodes(self, **kwargs):
+            return [
+                {
+                    "id": 61,
+                    "title": "Volk on Grief, Healing and Spiritual Solace",
+                    "description": "A moving Mirror Talk conversation about grief and healing.",
+                    "published_at": "2026-04-02T03:00:00",
+                    "transcript_text": "Catia reflects on healing through grief and finding spiritual solace.",
+                }
+            ]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Victoria Volk",
+            "guest_email": "victoria@example.com",
+            "episode_title": "Grief and Healing",
+            "topic": "Grief and Healing",
+            "release_date": "2026-04-01T17:00",
+        }
+    )
+
+    result = service.sync_ask_mirror_talk_transcripts()
+    updated_episode = service.list_planning()["episodes"][0]
+
+    assert result["matched"] == 1
+    assert result["matched_by_guest"] == 1
+    assert updated_episode["episode_title"] == "Volk on Grief, Healing and Spiritual Solace"
+
+
 def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):
     """Flexible export should allow narrow CSV extracts for episode planning."""
     service = GuestWebService(temp_db.db_path)

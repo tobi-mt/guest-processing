@@ -515,6 +515,20 @@ class GuestWebService:
         if len(guest_tokens) >= 2 and title_hits >= len(guest_tokens) - 1:
             return 500 + overlap_bonus + date_bonus, "guest_partial"
 
+        primary_tokens = []
+        if guest_tokens:
+            primary_tokens.append(guest_tokens[0])
+        if len(guest_tokens) > 1:
+            primary_tokens.append(guest_tokens[-1])
+        primary_tokens = list(dict.fromkeys(primary_tokens))
+
+        partial_title_hits = sum(token in remote_title_tokens for token in primary_tokens)
+        partial_description_hits = sum(token in remote_description_tokens for token in primary_tokens)
+        if partial_title_hits and (date_bonus >= 50 or overlap_bonus >= 20):
+            return 360 + overlap_bonus + date_bonus, "guest_name_fragment"
+        if partial_description_hits and date_bonus >= 50:
+            return 320 + overlap_bonus + date_bonus, "guest_name_fragment"
+
         return 0, ""
 
     @staticmethod
