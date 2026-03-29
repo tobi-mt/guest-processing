@@ -25,6 +25,7 @@ body {
     radial-gradient(circle at top left, rgba(239, 190, 119, 0.35), transparent 28%),
     radial-gradient(circle at bottom right, rgba(15, 93, 79, 0.16), transparent 22%),
     linear-gradient(180deg, #fcf7f0 0%, #f3e8d7 100%);
+  overflow-x: hidden;
 }
 
 .intake-shell {
@@ -68,6 +69,7 @@ body {
 .form-step h3,
 .sidebar-panel-title {
   font-family: Georgia, "Times New Roman", serif;
+  overflow-wrap: anywhere;
 }
 
 .eyebrow {
@@ -124,6 +126,7 @@ body {
 .intake-message {
   color: var(--muted);
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .sidebar-panel {
@@ -148,6 +151,7 @@ body {
 .sidebar-panel-copy {
   margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .sidebar-quote {
@@ -159,6 +163,7 @@ body {
   color: #5e4934;
   font-size: 1rem;
   line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
 .step-list {
@@ -203,6 +208,7 @@ body {
   max-width: 58ch;
   color: var(--muted);
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .progress-strip {
@@ -233,6 +239,7 @@ body {
   margin: 0;
   color: var(--muted);
   font-size: 0.95rem;
+  overflow-wrap: anywhere;
 }
 
 .admin-link {
@@ -273,6 +280,7 @@ label small {
   color: var(--muted);
   font-weight: 400;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 input,
@@ -376,6 +384,7 @@ button {
   margin-bottom: 0;
   color: var(--muted);
   line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
 .success-note {
@@ -438,6 +447,45 @@ button {
   .intake-panel {
     padding: 18px;
     border-radius: 22px;
+  }
+
+  .brand-lockup,
+  .brand-lockup.compact {
+    align-items: flex-start;
+  }
+
+  .brand-copy,
+  .panel-header,
+  .step-footer-right {
+    min-width: 0;
+  }
+
+  .intake-sidebar h1 {
+    font-size: 2rem;
+    line-height: 1.12;
+  }
+
+  .intake-panel h2,
+  .success-panel h3 {
+    font-size: 1.7rem;
+    line-height: 1.15;
+  }
+
+  .brand-name {
+    font-size: 1.2rem;
+  }
+
+  .brand-subtitle,
+  .eyebrow,
+  .progress-caption,
+  #step-counter {
+    font-size: 0.78rem;
+  }
+
+  .step-footer-right,
+  .step-footer-right button,
+  .step-footer button {
+    width: 100%;
   }
 
   .progress-strip {

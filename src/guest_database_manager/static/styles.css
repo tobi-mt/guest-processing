@@ -219,6 +219,7 @@ body {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.55rem;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .brand-subtitle {
@@ -239,6 +240,7 @@ p {
   max-width: 58ch;
   color: var(--muted);
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .main-grid {
@@ -412,6 +414,7 @@ button:disabled {
 .guest-details,
 .message {
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .guest-summary {
@@ -492,6 +495,7 @@ button:disabled {
 .composer-meta {
   color: var(--muted);
   text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .composer-field {
@@ -534,6 +538,14 @@ button:disabled {
     font-size: 1.35rem;
   }
 
+  h1,
+  h2,
+  h3,
+  .metric strong,
+  .insight-stat strong {
+    overflow-wrap: anywhere;
+  }
+
   .guest-form {
     grid-template-columns: 1fr;
   }
@@ -555,6 +567,11 @@ button:disabled {
   }
 
   .list-toolbar button {
+    width: 100%;
+  }
+
+  .guest-actions button,
+  .composer-actions button {
     width: 100%;
   }
 
