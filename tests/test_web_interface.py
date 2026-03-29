@@ -12,6 +12,7 @@ from guest_database_manager.web_interface import (
     EMAIL_FROM_ENV_VAR,
     EMAIL_FROM_NAME_ENV_VAR,
     EMAIL_PASSWORD_ENV_VAR,
+    EMAIL_CC_ENV_VAR,
     EMAIL_RESEND_API_KEY_ENV_VAR,
     EMAIL_SMTP_PORT_ENV_VAR,
     EMAIL_SMTP_SERVER_ENV_VAR,
@@ -255,6 +256,7 @@ def test_web_service_prefers_resend_for_hosted_email(monkeypatch, temp_db):
             self.configured = True
             self.resend_used = True
             self.from_email = kwargs["from_email"]
+            self.cc_email = kwargs["cc_email"]
 
         def configure_smtp(self, **kwargs):
             raise AssertionError("SMTP should not be configured when Resend is available")
@@ -266,10 +268,41 @@ def test_web_service_prefers_resend_for_hosted_email(monkeypatch, temp_db):
     monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
     monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
     monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+    monkeypatch.setenv(EMAIL_CC_ENV_VAR, "podcast.mirrortalk@gmail.com")
 
     service = GuestWebService(temp_db.db_path)
 
     assert service.list_guests()["email_enabled"] is True
+
+
+def test_web_service_passes_cc_email_to_smtp(monkeypatch, temp_db):
+    """Hosted dashboard should pass the CC address into SMTP config."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+            self.last_error = ""
+            self.cc_email = None
+
+        def configure_smtp(self, **kwargs):
+            self.configured = True
+            self.cc_email = kwargs["cc_email"]
+
+        def is_configured(self):
+            return self.configured
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_SMTP_SERVER_ENV_VAR, "smtp.example.com")
+    monkeypatch.setenv(EMAIL_SMTP_PORT_ENV_VAR, "587")
+    monkeypatch.setenv(EMAIL_USERNAME_ENV_VAR, "mirror@example.com")
+    monkeypatch.setenv(EMAIL_PASSWORD_ENV_VAR, "top-secret")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "mirror@example.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+    monkeypatch.setenv(EMAIL_CC_ENV_VAR, "podcast.mirrortalk@gmail.com")
+
+    service = GuestWebService(temp_db.db_path)
+
+    assert service._build_email_manager().cc_email == "podcast.mirrortalk@gmail.com"
 
 
 def test_web_service_can_return_email_template(monkeypatch, temp_db):

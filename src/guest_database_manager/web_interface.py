@@ -42,6 +42,7 @@ EMAIL_PASSWORD_ENV_VAR = "MIRROR_TALK_SMTP_PASSWORD"
 EMAIL_RESEND_API_KEY_ENV_VAR = "MIRROR_TALK_RESEND_API_KEY"
 EMAIL_FROM_ENV_VAR = "MIRROR_TALK_FROM_EMAIL"
 EMAIL_FROM_NAME_ENV_VAR = "MIRROR_TALK_FROM_NAME"
+EMAIL_CC_ENV_VAR = "MIRROR_TALK_CC_EMAIL"
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -351,12 +352,14 @@ class GuestWebService:
         smtp_password = os.environ.get(EMAIL_PASSWORD_ENV_VAR, "").strip()
         from_email = os.environ.get(EMAIL_FROM_ENV_VAR, "").strip()
         from_name = os.environ.get(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast").strip()
+        cc_email = os.environ.get(EMAIL_CC_ENV_VAR, "podcast.mirrortalk@gmail.com").strip()
 
         if resend_api_key and from_email:
             email_manager.configure_resend(
                 api_key=resend_api_key,
                 from_email=from_email,
                 from_name=from_name,
+                cc_email=cc_email,
             )
             return email_manager
 
@@ -374,6 +377,7 @@ class GuestWebService:
                 password=smtp_password,
                 from_email=from_email,
                 from_name=from_name,
+                cc_email=cc_email,
             )
 
         return email_manager

@@ -40,6 +40,7 @@ class EmailManager:
         self.password: Optional[str] = None
         self.from_email: Optional[str] = None
         self.from_name: Optional[str] = None
+        self.cc_email: Optional[str] = None
         self.resend_api_key: Optional[str] = None
         self.last_error: str = ""
 
@@ -50,7 +51,14 @@ class EmailManager:
         self.load_saved_config()
 
     def configure_smtp(
-        self, smtp_server: str, smtp_port: int, username: str, password: str, from_email: str, from_name: str = ""
+        self,
+        smtp_server: str,
+        smtp_port: int,
+        username: str,
+        password: str,
+        from_email: str,
+        from_name: str = "",
+        cc_email: str = "",
     ) -> None:
         """Configure SMTP settings.
 
@@ -68,13 +76,15 @@ class EmailManager:
         self.password = password
         self.from_email = from_email
         self.from_name = from_name
+        self.cc_email = cc_email or None
         self.resend_api_key = None
 
-    def configure_resend(self, api_key: str, from_email: str, from_name: str = "") -> None:
+    def configure_resend(self, api_key: str, from_email: str, from_name: str = "", cc_email: str = "") -> None:
         """Configure Resend API delivery."""
         self.resend_api_key = api_key
         self.from_email = from_email
         self.from_name = from_name
+        self.cc_email = cc_email or None
         self.smtp_server = None
         self.smtp_port = None
         self.username = None
@@ -235,6 +245,8 @@ Mirror Talk Podcast"""
             "text": body,
             "html": self._build_html_body(body),
         }
+        if self.cc_email:
+            payload["cc"] = [self.cc_email]
 
         try:
             response = requests.post(
@@ -303,6 +315,8 @@ Mirror Talk Podcast"""
             msg['From'] = f"{self.from_name} <{self.from_email}>" if self.from_name else self.from_email
             msg['To'] = to_email
             msg['Subject'] = subject
+            if self.cc_email:
+                msg['Cc'] = self.cc_email
 
             # Attach body
             msg.attach(MIMEText(body, 'plain'))
@@ -313,7 +327,10 @@ Mirror Talk Podcast"""
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls(context=context)
                 server.login(self.username, self.password)
-                server.send_message(msg)
+                recipients = [to_email]
+                if self.cc_email:
+                    recipients.append(self.cc_email)
+                server.send_message(msg, to_addrs=recipients)
 
             return True
 
