@@ -261,6 +261,23 @@ def build_promotion_readiness(episode: Dict[str, Any]) -> Dict[str, Any]:
     recommendation_reason = _clean_text(episode.get("recommendation_reason"))
     production_status = _clean_text(episode.get("production_status")).lower()
     promotion_status = _clean_text(episode.get("promotion_status")).lower()
+    release_status = _clean_text(episode.get("release_status")).lower()
+
+    if release_status == "released":
+        if episode_title:
+            strengths.append("episode is already published")
+        if show_notes_url:
+            strengths.append("show notes link is live")
+        if release_files_url:
+            strengths.append("guest files link is ready")
+        if guest_name and guest_email:
+            strengths.append("guest follow-up details are complete")
+        return {
+            "score": 100,
+            "label": "Released",
+            "strengths": strengths[:4] or ["episode is already published"],
+            "blockers": [],
+        }
 
     if episode_title:
         score += 14

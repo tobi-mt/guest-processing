@@ -447,6 +447,28 @@ def test_planning_payload_includes_grounded_editorial_assist(temp_db):
     assert recommendation["why_now"]
 
 
+def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
+    """Released episodes should not be described as too early in production."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Already Published",
+            "topic": "Already Published",
+            "release_status": "released",
+            "production_status": "released",
+            "promotion_status": "released",
+            "show_notes_url": "https://mirrortalkpodcast.com/episodes/already-published",
+        }
+    )
+
+    episode = service.list_planning()["episodes"][0]
+
+    assert episode["promotion_readiness"]["label"] == "Released"
+    assert "production stage is still too early" not in episode["promotion_readiness"]["blockers"]
+
+
 def test_list_planning_reports_ask_sync_configuration(monkeypatch, temp_db):
     """Planning payload should signal when Ask Mirror Talk sync is configured."""
     monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
