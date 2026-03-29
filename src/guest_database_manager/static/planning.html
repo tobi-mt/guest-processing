@@ -226,6 +226,7 @@
               </form>
 
               <p id="ask-sync-message" class="message" aria-live="polite"></p>
+              <div id="ask-sync-breakdown" class="operations-preview hidden"></div>
             </div>
           </details>
 
@@ -361,6 +362,14 @@
                 <option value="editing">Editing</option>
                 <option value="ready">Ready</option>
                 <option value="released">Released</option>
+              </select>
+            </label>
+            <label class="toolbar-field">
+              <span>Transcript</span>
+              <select id="episode-transcript-filter">
+                <option value="">All Transcript States</option>
+                <option value="has_transcript">Has Transcript</option>
+                <option value="missing_transcript">Missing Transcript</option>
               </select>
             </label>
             <label class="toolbar-field">

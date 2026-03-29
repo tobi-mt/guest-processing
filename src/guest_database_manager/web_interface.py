@@ -473,6 +473,25 @@ class GuestWebService:
         return min(overlap * 10, 60)
 
     @classmethod
+    def _episode_date_proximity_score(cls, episode: Dict[str, Any], remote_episode: Dict[str, Any]) -> int:
+        """Use publish/release proximity as a supporting match signal."""
+        local_date = (
+            cls._parse_datetime_static(episode.get("release_date"))
+            or cls._parse_datetime_static(episode.get("interview_date"))
+        )
+        remote_date = cls._parse_datetime_static(remote_episode.get("published_at"))
+        if not local_date or not remote_date:
+            return 0
+        day_gap = abs((local_date.date() - remote_date.date()).days)
+        if day_gap <= 3:
+            return 80
+        if day_gap <= 14:
+            return 50
+        if day_gap <= 45:
+            return 20
+        return 0
+
+    @classmethod
     def _score_ask_episode_match(cls, episode: Dict[str, Any], remote_episode: Dict[str, Any]) -> tuple[int, str]:
         """Return a conservative score and method for Ask Mirror Talk matching."""
         local_title_key = cls._episode_match_key(episode.get("episode_title"))
@@ -487,15 +506,16 @@ class GuestWebService:
         remote_title_tokens = set(cls._word_tokens(remote_episode.get("title")))
         remote_description_tokens = set(cls._word_tokens(remote_episode.get("description")))
         overlap_bonus = cls._episode_title_overlap_score(episode, remote_episode)
+        date_bonus = cls._episode_date_proximity_score(episode, remote_episode)
 
         if all(token in remote_title_tokens for token in guest_tokens):
-            return 800 + overlap_bonus, "guest_title"
+            return 800 + overlap_bonus + date_bonus, "guest_title"
         if all(token in remote_description_tokens for token in guest_tokens):
-            return 700 + overlap_bonus, "guest_description"
+            return 700 + overlap_bonus + date_bonus, "guest_description"
 
         title_hits = sum(token in remote_title_tokens for token in guest_tokens)
         if len(guest_tokens) >= 2 and title_hits >= len(guest_tokens) - 1:
-            return 500 + overlap_bonus, "guest_partial"
+            return 500 + overlap_bonus + date_bonus, "guest_partial"
 
         return 0, ""
 
@@ -837,6 +857,8 @@ class GuestWebService:
         skipped_existing = 0
         skipped_without_remote_transcript = 0
         skipped_without_title = 0
+        updated_transcript = 0
+        updated_title_only = 0
         updated_titles: list[str] = []
         used_remote_ids: set[Any] = set()
 
@@ -889,10 +911,13 @@ class GuestWebService:
             }
             if should_update_transcript:
                 payload["transcript_text"] = transcript_text
+                updated_transcript += 1
             elif not transcript_text:
                 skipped_without_remote_transcript += 1
             if should_update_title:
                 payload["episode_title"] = remote_title
+                if not should_update_transcript:
+                    updated_title_only += 1
 
             self.update_episode(
                 episode["id"],
@@ -908,6 +933,8 @@ class GuestWebService:
             "matched_by_title": matched_by_title,
             "matched_by_guest": matched_by_guest,
             "updated": updated,
+            "updated_transcript": updated_transcript,
+            "updated_title_only": updated_title_only,
             "skipped_ambiguous": skipped_ambiguous,
             "skipped_existing": skipped_existing,
             "skipped_without_remote_transcript": skipped_without_remote_transcript,

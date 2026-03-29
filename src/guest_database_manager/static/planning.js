@@ -10,6 +10,7 @@ const episodeCategoryOptions = document.getElementById("episode-category-options
 const episodeMessage = document.getElementById("episode-message");
 const episodeImportMessage = document.getElementById("episode-import-message");
 const askSyncMessage = document.getElementById("ask-sync-message");
+const askSyncBreakdown = document.getElementById("ask-sync-breakdown");
 const planningExportMessage = document.getElementById("planning-export-message");
 const episodeList = document.getElementById("episode-list");
 const recommendationList = document.getElementById("recommendation-list");
@@ -25,6 +26,7 @@ const episodeCategoryFilter = document.getElementById("episode-category-filter")
 const episodeYearFilter = document.getElementById("episode-year-filter");
 const episodeReleaseFilter = document.getElementById("episode-release-filter");
 const episodeProductionFilter = document.getElementById("episode-production-filter");
+const episodeTranscriptFilter = document.getElementById("episode-transcript-filter");
 const episodeSort = document.getElementById("episode-sort");
 const episodeResultsMeta = document.getElementById("episode-results-meta");
 const episodeLoadMoreButton = document.getElementById("episode-load-more");
@@ -323,6 +325,39 @@ function renderCopyAssist(copyAssist) {
   `;
 }
 
+function renderAskSyncBreakdown(result) {
+  if (!result) {
+    askSyncBreakdown.classList.add("hidden");
+    askSyncBreakdown.innerHTML = "";
+    return;
+  }
+  const items = [
+    ["Matched by title", result.matched_by_title ?? 0],
+    ["Matched by guest", result.matched_by_guest ?? 0],
+    ["Updated transcript", result.updated_transcript ?? 0],
+    ["Updated title only", result.updated_title_only ?? 0],
+    ["Skipped ambiguous", result.skipped_ambiguous ?? 0],
+  ];
+  askSyncBreakdown.classList.remove("hidden");
+  askSyncBreakdown.innerHTML = `
+    <strong class="insight-label">Sync breakdown</strong>
+    <ul>${items.map(([label, value]) => `<li>${label}: ${value}</li>`).join("")}</ul>
+  `;
+}
+
+function renderEpisodeBadges(episode) {
+  const badges = [];
+  if (normalizeText(episode.source_type) === "ask_mirror_talk_sync") {
+    badges.push('<span class="signal-chip good">Ask Synced</span>');
+  }
+  if (episode.transcript_text) {
+    badges.push('<span class="signal-chip good">Transcript Available</span>');
+  } else {
+    badges.push('<span class="signal-chip warning">Missing Transcript</span>');
+  }
+  return badges.length ? `<div class="signal-list">${badges.join("")}</div>` : "";
+}
+
 function splitRecommendationInsights(reason) {
   const text = String(reason || "").trim();
   if (!text) {
@@ -588,6 +623,7 @@ function filterEpisodes(episodes) {
   const year = episodeYearFilter.value;
   const releaseStatus = episodeReleaseFilter.value;
   const productionStatus = episodeProductionFilter.value;
+  const transcriptStatus = episodeTranscriptFilter.value;
   const sortMode = episodeSort.value || "closest_release";
 
   const filtered = episodes.filter((episode) => {
@@ -611,6 +647,12 @@ function filterEpisodes(episodes) {
       return false;
     }
     if (productionStatus && normalizeText(episode.production_status) !== productionStatus) {
+      return false;
+    }
+    if (transcriptStatus === "has_transcript" && !episode.transcript_text) {
+      return false;
+    }
+    if (transcriptStatus === "missing_transcript" && episode.transcript_text) {
       return false;
     }
     if (activeEpisodePreset === "ready_to_schedule") {
@@ -745,6 +787,7 @@ function renderEpisodes(episodes, totalCount) {
     card.innerHTML = `
       <h3>${episode.episode_title || "Untitled episode"}</h3>
       <p>${episode.guest_name || "Guest not set"}</p>
+      ${renderEpisodeBadges(episode)}
       <div class="operations-meta">
         <span>Topic: ${episode.topic || "Not set"}</span>
         <span>Category: ${episode.category || "Not set"}</span>
@@ -1198,9 +1241,11 @@ askSyncForm.addEventListener("submit", async (event) => {
       `${result.unmatched_local} unmatched`,
     ].join(" · ");
     setMessage(askSyncMessage, summary, "success");
+    renderAskSyncBreakdown(result);
     await loadPlanning();
   } catch (error) {
     setMessage(askSyncMessage, error.message, "error");
+    renderAskSyncBreakdown(null);
   }
 });
 
@@ -1240,6 +1285,7 @@ refreshButton.addEventListener("click", async () => {
   episodeYearFilter,
   episodeReleaseFilter,
   episodeProductionFilter,
+  episodeTranscriptFilter,
   episodeSort,
 ].forEach((node) => {
   node.addEventListener("input", () => {

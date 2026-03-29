@@ -542,8 +542,52 @@ def test_web_service_can_match_ask_episode_by_guest_name_and_update_title(monkey
     assert result["updated"] == 1
     assert result["matched"] == 1
     assert result["matched_by_guest"] == 1
+    assert result["updated_transcript"] == 1
+    assert result["updated_title_only"] == 0
     assert updated_episode["episode_title"] == "Jordan Rivers on Building Calm Under Pressure"
     assert updated_episode["transcript_text"] == "Jordan explains how honest practice helps people stay calm under pressure."
+
+
+def test_web_service_can_use_date_proximity_for_guest_match(monkeypatch, temp_db):
+    """Release-date proximity should strengthen an otherwise weak guest match."""
+
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def export_episodes(self, **kwargs):
+            return [
+                {
+                    "id": 51,
+                    "title": "A Different Published Title",
+                    "description": "A thoughtful Mirror Talk conversation with Jordan Rivers.",
+                    "published_at": "2026-04-01T03:00:00",
+                    "transcript_text": "Jordan reflects on healing and resilience with practical honesty.",
+                }
+            ]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Internal Working Title",
+            "topic": "Healing and Resilience",
+            "release_date": "2026-04-01T17:00",
+        }
+    )
+
+    result = service.sync_ask_mirror_talk_transcripts()
+    updated_episode = service.list_planning()["episodes"][0]
+
+    assert result["matched"] == 1
+    assert result["matched_by_guest"] == 1
+    assert updated_episode["episode_title"] == "A Different Published Title"
 
 
 def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):
