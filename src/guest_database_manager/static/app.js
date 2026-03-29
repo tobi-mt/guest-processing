@@ -8,6 +8,8 @@ const refreshButton = document.getElementById("refresh-button");
 const exportButton = document.getElementById("export-button");
 const decisionFilter = document.getElementById("decision-filter");
 const guestSearch = document.getElementById("guest-search");
+const guestSort = document.getElementById("guest-sort");
+const guestResultsMeta = document.getElementById("guest-results-meta");
 
 const metrics = {
   total: document.getElementById("metric-total"),
@@ -110,12 +112,54 @@ function guestMatchesSearch(guest, query) {
     return true;
   }
 
-  const haystack = [guest.full_name, guest.email]
+  const haystack = [guest.full_name, guest.email, guest.website, guest.profession, guest.original_file_name]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
 
   return haystack.includes(normalizedQuery);
+}
+
+function guestSortRank(guest) {
+  const status = guestStatusLabel(guest);
+  if (status === "accepted") return 0;
+  if (status === "rejected") return 1;
+  if (status === "skipped") return 2;
+  if (status === "processed") return 3;
+  return 4;
+}
+
+function sortGuests(guests, sortMode) {
+  const sorted = [...guests];
+  sorted.sort((left, right) => {
+    if (sortMode === "name") {
+      return String(left.full_name || "").localeCompare(String(right.full_name || ""));
+    }
+    if (sortMode === "decision") {
+      const rankDifference = guestSortRank(left) - guestSortRank(right);
+      if (rankDifference !== 0) {
+        return rankDifference;
+      }
+      return String(left.full_name || "").localeCompare(String(right.full_name || ""));
+    }
+    if (sortMode === "oldest") {
+      return Number(left.id || 0) - Number(right.id || 0);
+    }
+    return Number(right.id || 0) - Number(left.id || 0);
+  });
+  return sorted;
+}
+
+function updateResultsMeta(shown, total) {
+  if (!total) {
+    guestResultsMeta.textContent = "No guests in the pipeline yet.";
+    return;
+  }
+  if (shown === total) {
+    guestResultsMeta.textContent = `Showing all ${total} guest${total === 1 ? "" : "s"}.`;
+    return;
+  }
+  guestResultsMeta.textContent = `Showing ${shown} of ${total} guests after search and decision filtering.`;
 }
 
 function normalizeClipboardValue(value) {
@@ -215,11 +259,12 @@ function renderGuests(payload) {
 
   const activeFilter = decisionFilter.value;
   const searchQuery = guestSearch.value;
-  const guests = payload.guests.filter(
+  const guests = sortGuests(payload.guests.filter(
     (guest) => guestMatchesFilter(guest, activeFilter) && guestMatchesSearch(guest, searchQuery),
-  );
+  ), guestSort.value);
 
   guestList.innerHTML = "";
+  updateResultsMeta(guests.length, payload.guests.length);
   if (!guests.length) {
     if (payload.guests.length) {
       guestList.innerHTML = "<p class='guest-summary'>No guests match the current search and decision filter.</p>";
@@ -461,6 +506,12 @@ decisionFilter.addEventListener("change", () => {
 });
 
 guestSearch.addEventListener("input", () => {
+  if (latestPayload) {
+    renderGuests(latestPayload);
+  }
+});
+
+guestSort.addEventListener("change", () => {
   if (latestPayload) {
     renderGuests(latestPayload);
   }

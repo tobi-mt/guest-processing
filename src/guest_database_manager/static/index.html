@@ -192,10 +192,20 @@
                   <option value="processed">Processed</option>
                 </select>
               </label>
+              <label class="filter-field">
+                <span>Sort By</span>
+                <select id="guest-sort">
+                  <option value="newest">Newest First</option>
+                  <option value="name">Guest Name</option>
+                  <option value="decision">Decision</option>
+                  <option value="oldest">Oldest First</option>
+                </select>
+              </label>
               <button id="refresh-button" class="secondary-button">Refresh</button>
             </div>
           </div>
 
+          <p id="guest-results-meta" class="results-meta"></p>
           <div id="guest-list" class="guest-list"></div>
         </section>
       </main>
