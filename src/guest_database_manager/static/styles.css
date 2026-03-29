@@ -321,6 +321,16 @@ textarea {
   color: var(--text);
 }
 
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  accent-color: var(--accent);
+}
+
 textarea {
   resize: vertical;
   min-height: 96px;

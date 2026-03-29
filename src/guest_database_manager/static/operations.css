@@ -11,6 +11,22 @@
   min-width: 0;
 }
 
+.operations-form-panel {
+  display: grid;
+  gap: 22px;
+}
+
+.operations-section {
+  padding: 22px;
+  border: 1px solid rgba(91, 70, 47, 0.1);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.92) 0%, rgba(255, 249, 242, 0.86) 100%);
+}
+
+.section-copy {
+  margin-bottom: 0;
+}
+
 .operations-card {
   padding: 18px;
   border: 1px solid var(--border);
@@ -28,10 +44,68 @@
   background: linear-gradient(180deg, rgba(255, 248, 240, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
 }
 
+.operations-tool {
+  border: 1px solid rgba(91, 70, 47, 0.12);
+  border-radius: 22px;
+  background: rgba(255, 253, 249, 0.82);
+  overflow: hidden;
+}
+
+.operations-tool summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 20px 22px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.operations-tool summary::-webkit-details-marker {
+  display: none;
+}
+
+.operations-tool summary::after {
+  content: "+";
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(20, 90, 74, 0.08);
+  color: var(--accent);
+  font-size: 1.3rem;
+  font-weight: 500;
+}
+
+.operations-tool[open] summary::after {
+  content: "−";
+}
+
+.operations-tool h2,
+.operations-tool .eyebrow,
+.operations-tool .tool-copy {
+  margin-bottom: 0;
+}
+
+.tool-copy {
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.operations-tool-body {
+  padding: 0 22px 22px;
+  border-top: 1px solid rgba(91, 70, 47, 0.08);
+}
+
 .export-fieldset {
   border: 1px solid var(--border);
   border-radius: 18px;
   padding: 16px;
+  margin: 0;
 }
 
 .export-fieldset legend {
@@ -43,14 +117,30 @@
 .export-field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px 14px;
+  gap: 12px 14px;
 }
 
 .export-field-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: start;
+  gap: 10px;
   font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(91, 70, 47, 0.08);
+}
+
+.export-field-option input {
+  margin-top: 2px;
+}
+
+.export-field-option:hover {
+  border-color: rgba(20, 90, 74, 0.18);
+  background: rgba(223, 242, 234, 0.42);
 }
 
 .operations-card h3,
@@ -109,6 +199,17 @@
 
 @media (max-width: 900px) {
   .operations-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .operations-section,
+  .operations-tool summary,
+  .operations-tool-body {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .export-field-grid {
     grid-template-columns: 1fr;
   }
 }
