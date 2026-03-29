@@ -72,6 +72,19 @@ def create_parser() -> argparse.ArgumentParser:
         help=f"Database file path (default: {DEFAULT_DB_PATH})",
     )
 
+    reminders_parser = subparsers.add_parser("reminders", help="Send weekly interview reminder emails")
+    reminders_parser.add_argument(
+        "--db",
+        type=Path,
+        default=Path(DEFAULT_DB_PATH),
+        help=f"Database file path (default: {DEFAULT_DB_PATH})",
+    )
+    reminders_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview which reminders would be sent without sending emails",
+    )
+
     return parser
 
 
@@ -183,6 +196,32 @@ def clean_database(db_path: Path) -> None:
         sys.exit(1)
 
 
+def send_weekly_reminders(db_path: Path, dry_run: bool = False) -> None:
+    """Send or preview weekly interview reminders."""
+    try:
+        service = GuestWebService(db_path)
+        result = service.send_due_weekly_reminders(dry_run=dry_run)
+
+        if dry_run:
+            print(f"🗓️ Weekly reminder preview: {result['count']} interview(s) due")
+            for interview in result["interviews"]:
+                print(f" - {interview['guest_name']} | {interview['scheduled_for_display']}")
+            return
+
+        print(f"📨 Sent {result['count']} weekly reminder(s)")
+        for sent_interview in result["sent"]:
+            print(f" - {sent_interview['guest_name']} | {sent_interview['scheduled_for_display']}")
+
+        if result["errors"]:
+            print("⚠️ Some reminders could not be sent:")
+            for error in result["errors"]:
+                print(f" - {error['guest_name']}: {error['error']}")
+
+    except (OSError, ValueError) as e:
+        print(f"❌ Error sending reminders: {e}")
+        sys.exit(1)
+
+
 def main() -> None:
     """Main CLI entry point."""
     parser = create_parser()
@@ -203,6 +242,8 @@ def main() -> None:
         show_stats(args.db)
     elif args.command == "clean":
         clean_database(args.db)
+    elif args.command == "reminders":
+        send_weekly_reminders(args.db, args.dry_run)
     else:
         parser.print_help()
 

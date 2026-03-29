@@ -42,6 +42,10 @@
               <span>Scheduled Releases</span>
               <strong id="ops-episodes-scheduled">0</strong>
             </div>
+            <div class="metric">
+              <span>Reminder Candidates</span>
+              <strong id="ops-reminders-due">0</strong>
+            </div>
           </div>
           <a class="dashboard-link" href="/dashboard">Open Guest Dashboard</a>
         </div>
@@ -187,6 +191,17 @@
         </section>
 
         <section class="panel list-panel">
+          <div class="section-heading section-heading-inline">
+            <div>
+              <p class="eyebrow">Weekly Confirmations</p>
+              <h2>Reminder Candidates</h2>
+            </div>
+            <button id="send-weekly-reminders-button" class="secondary-button" type="button">Send This Week's Reminders</button>
+          </div>
+
+          <div id="reminder-message" class="message" aria-live="polite"></div>
+          <div id="reminder-list" class="guest-list"></div>
+
           <div class="section-heading section-heading-inline">
             <div>
               <p class="eyebrow">Upcoming Interviews</p>

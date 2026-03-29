@@ -6,6 +6,7 @@
 import html
 import smtplib
 import ssl
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Dict, Optional
@@ -211,6 +212,41 @@ Thank you again for considering Mirror Talk, and we wish you every success in th
 
 Warmly,
 Mirror Talk Podcast"""
+
+        return {"subject": subject, "body": body}
+
+    def get_interview_reminder_template(
+        self,
+        guest_name: str,
+        scheduled_for: datetime,
+        timezone_label: str,
+        join_url: str,
+    ) -> Dict[str, str]:
+        """Build the weekly confirmation reminder template for an upcoming interview."""
+        subject = f"MIRROR TALK Podcast Conversation with {guest_name}"
+        formatted_date = scheduled_for.strftime("%A %d %B, %Y")
+        formatted_time = scheduled_for.strftime("%H:%M")
+        join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
+
+        body = f"""Hello {guest_name},
+
+How are you doing?
+
+Our podcast conversation is scheduled for {formatted_date} at {formatted_time} {timezone_label}, and we look forward to it.
+
+Could you reply to this email to confirm our appointment?
+
+We will be recording on Riverside FM. Here is a link for you to join the call: {join_line}
+
+Your 5-star ratings and subscription to our podcast on Apple and Spotify Podcasts help us a lot.
+
+Thanks and warm regards,
+Your Favourite Podcast Host
+
+Please support us by following us on Spotify and Apple Podcasts. For more information, visit https://mirrortalkpodcast.com/join-our-family/
+
+Ask a question. Receive insight grounded in real conversations. Try it now: https://mirrortalkpodcast.com/ask-mirror-talk/
+"""
 
         return {"subject": subject, "body": body}
 

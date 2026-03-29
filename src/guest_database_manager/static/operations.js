@@ -2,15 +2,19 @@ const interviewForm = document.getElementById("interview-form");
 const episodeForm = document.getElementById("episode-form");
 const interviewMessage = document.getElementById("interview-message");
 const episodeMessage = document.getElementById("episode-message");
+const reminderMessage = document.getElementById("reminder-message");
+const reminderList = document.getElementById("reminder-list");
 const interviewList = document.getElementById("interview-list");
 const episodeList = document.getElementById("episode-list");
 const refreshButton = document.getElementById("operations-refresh-button");
+const sendWeeklyRemindersButton = document.getElementById("send-weekly-reminders-button");
 
 const stats = {
   interviewsTotal: document.getElementById("ops-interviews-total"),
   interviewsPending: document.getElementById("ops-interviews-pending"),
   episodesTotal: document.getElementById("ops-episodes-total"),
   episodesScheduled: document.getElementById("ops-episodes-scheduled"),
+  remindersDue: document.getElementById("ops-reminders-due"),
 };
 
 async function fetchJSON(url, options = {}) {
@@ -102,12 +106,38 @@ function renderEpisodes(episodes) {
   });
 }
 
+function renderReminderCandidates(interviews) {
+  reminderList.innerHTML = "";
+
+  if (!interviews.length) {
+    reminderList.innerHTML = "<p class='guest-summary'>No reminder emails are due for this week.</p>";
+    return;
+  }
+
+  interviews.forEach((interview) => {
+    const card = document.createElement("article");
+    card.className = "operations-card";
+    card.innerHTML = `
+      <h3>${interview.guest_name || "Unnamed guest"}</h3>
+      <p>${interview.title || "Mirror Talk conversation"}</p>
+      <div class="operations-meta">
+        <span>Scheduled: ${interview.scheduled_for_display || formatDateTime(interview.scheduled_for)}</span>
+        <span>Email: ${interview.guest_email || "Not set"}</span>
+        <span>Confirmation: ${interview.confirmation_status || "pending"}</span>
+      </div>
+    `;
+    reminderList.appendChild(card);
+  });
+}
+
 async function loadOperations() {
   const payload = await fetchJSON("/api/operations");
   stats.interviewsTotal.textContent = payload.stats.interviews_total ?? 0;
   stats.interviewsPending.textContent = payload.stats.interviews_pending_confirmation ?? 0;
   stats.episodesTotal.textContent = payload.stats.episodes_total ?? 0;
   stats.episodesScheduled.textContent = payload.stats.episodes_scheduled ?? 0;
+  stats.remindersDue.textContent = payload.reminder_candidates?.length ?? 0;
+  renderReminderCandidates(payload.reminder_candidates || []);
   renderInterviews(payload.interviews);
   renderEpisodes(payload.episodes);
 }
@@ -157,6 +187,27 @@ refreshButton.addEventListener("click", async () => {
     await loadOperations();
   } catch (error) {
     setMessage(interviewMessage, error.message, "error");
+  }
+});
+
+sendWeeklyRemindersButton.addEventListener("click", async () => {
+  try {
+    const result = await fetchJSON("/api/reminders/send-weekly", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (result.errors?.length) {
+      setMessage(
+        reminderMessage,
+        `Sent ${result.count} reminder(s), but ${result.errors.length} interview(s) still need attention.`,
+        "error",
+      );
+    } else {
+      setMessage(reminderMessage, `Sent ${result.count} weekly reminder(s).`, "success");
+    }
+    await loadOperations();
+  } catch (error) {
+    setMessage(reminderMessage, error.message, "error");
   }
 });
 

@@ -431,6 +431,60 @@ def test_web_service_requires_interview_and_episode_basics(temp_db):
         service.create_episode({"guest_name": "Jordan Rivers", "episode_title": ""})
 
 
+def test_web_service_can_preview_and_send_weekly_interview_reminders(monkeypatch, temp_db):
+    """Weekly interview reminders should use the hosted email path and update reminder tracking."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+            self.last_error = ""
+            self.resend_api_key = "re_test"
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def get_interview_reminder_template(self, guest_name, scheduled_for, timezone_label, join_url):
+            assert guest_name == "Jordan Rivers"
+            assert timezone_label == "CET"
+            return {"subject": "Reminder Subject", "body": f"Join here: {join_url}"}
+
+        def send_email(self, to_email, subject, body):
+            assert to_email == "jordan@example.com"
+            assert subject == "Reminder Subject"
+            assert "riverside.fm" in body
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Mirror Talk conversation",
+            "scheduled_for": "2026-03-30 17:00:00",
+            "timezone": "CET",
+            "join_url": "https://riverside.fm/example",
+            "calendar_event_id": "calendar-event-1",
+        }
+    )
+
+    preview = service.preview_interview_reminder(interview["id"])
+    assert preview["subject"] == "Reminder Subject"
+
+    sent_interview = service.send_interview_reminder(interview["id"])
+    assert sent_interview["reminder_status"] == "sent"
+
+    weekly_result = service.send_due_weekly_reminders(reference=__import__("datetime").datetime(2026, 3, 30), dry_run=True)
+    assert weekly_result["count"] == 0
+
+
 def test_validate_intake_payload_rejects_spam_keywords():
     """Spammy submissions should be rejected before insertion."""
     with pytest.raises(WebInterfaceError):

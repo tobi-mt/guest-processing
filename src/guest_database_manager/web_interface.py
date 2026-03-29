@@ -8,6 +8,7 @@ import os
 import re
 import tempfile
 import webbrowser
+from datetime import datetime, timedelta
 from csv import DictWriter
 from base64 import b64decode
 from dataclasses import dataclass
@@ -171,10 +172,12 @@ class GuestWebService:
 
     def list_operations(self) -> Dict[str, Any]:
         """Return the current interview and episode operations data."""
+        reminder_candidates = [self._serialize_interview_reminder(candidate) for candidate in self.get_due_weekly_reminders()]
         return {
             "stats": self.database.get_operations_stats(),
             "interviews": self.database.list_interviews(),
             "episodes": self.database.list_episodes(),
+            "reminder_candidates": reminder_candidates,
         }
 
     def export_guests_csv(self) -> str:
@@ -426,6 +429,145 @@ class GuestWebService:
         saved = self.create_episode(episode_data)
         return saved
 
+    def get_due_weekly_reminders(self, *, reference: Optional[datetime] = None) -> list[Dict[str, Any]]:
+        """Return interviews due for a weekly confirmation reminder."""
+        reference = reference or datetime.now()
+        week_start = reference - timedelta(days=reference.weekday())
+        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_end = week_start + timedelta(days=7)
+
+        candidates: list[Dict[str, Any]] = []
+        for interview in self.database.list_interviews():
+            scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+            if not scheduled_for:
+                continue
+            if not (week_start <= scheduled_for < week_end):
+                continue
+            if (interview.get("reminder_status") or "").strip().lower() == "sent":
+                continue
+            if not (interview.get("guest_email") or "").strip():
+                continue
+            candidates.append(interview)
+
+        return candidates
+
+    def preview_interview_reminder(self, interview_id: int) -> Dict[str, Any]:
+        """Return the reminder email template for an interview."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+
+        scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+        if not scheduled_for:
+            raise WebInterfaceError("Interview date is invalid or missing.")
+
+        guest_name = _normalize_text(interview.get("guest_name")) or "Guest"
+        timezone_label = _normalize_text(interview.get("timezone")) or "CET"
+        join_url = _normalize_text(interview.get("join_url"))
+
+        email_manager = self._build_email_manager()
+        template = email_manager.get_interview_reminder_template(
+            guest_name=guest_name,
+            scheduled_for=scheduled_for,
+            timezone_label=timezone_label,
+            join_url=join_url,
+        )
+        return {
+            "interview": self._serialize_interview_reminder(interview),
+            "subject": template["subject"],
+            "body": template["body"],
+        }
+
+    def send_interview_reminder(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+        """Send a weekly confirmation reminder for an interview and log it."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+
+        guest_email = _normalize_text(interview.get("guest_email"))
+        if not guest_email:
+            raise WebInterfaceError("This interview does not have a guest email.")
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            raise WebInterfaceError("Dashboard email is not configured on the server.")
+
+        preview = self.preview_interview_reminder(interview_id)
+        resolved_subject = subject.strip() or preview["subject"]
+        resolved_body = body.strip() or preview["body"]
+
+        sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        if not sent:
+            error_detail = (email_manager.last_error or "").strip()
+            if error_detail:
+                raise WebInterfaceError(f"The reminder email could not be sent: {error_detail}")
+            raise WebInterfaceError("The reminder email could not be sent.")
+
+        provider = "resend" if email_manager.resend_api_key else "smtp"
+        self.database.log_reminder(
+            interview_id=interview_id,
+            reminder_type="weekly_confirmation",
+            sent_to=guest_email,
+            status="sent",
+            provider=provider,
+            notes=resolved_subject,
+        )
+        updated = self.database.get_interview_by_id(interview_id)
+        if not updated:
+            raise WebInterfaceError("Interview not found after reminder send.")
+        return self._serialize_interview_reminder(updated)
+
+    def send_due_weekly_reminders(self, *, reference: Optional[datetime] = None, dry_run: bool = False) -> Dict[str, Any]:
+        """Send reminders for all due interviews in the current week."""
+        due_interviews = self.get_due_weekly_reminders(reference=reference)
+        if dry_run:
+            return {
+                "dry_run": True,
+                "count": len(due_interviews),
+                "interviews": [self._serialize_interview_reminder(interview) for interview in due_interviews],
+            }
+
+        sent = []
+        errors = []
+
+        for interview in due_interviews:
+            try:
+                sent_interview = self.send_interview_reminder(interview["id"])
+                sent.append(sent_interview)
+            except WebInterfaceError as exc:
+                errors.append({"interview_id": interview["id"], "guest_name": interview.get("guest_name"), "error": str(exc)})
+
+        return {
+            "dry_run": False,
+            "sent": sent,
+            "errors": errors,
+            "count": len(sent),
+        }
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> Optional[datetime]:
+        """Parse a stored interview datetime."""
+        normalized = _normalize_text(value)
+        if not normalized:
+            return None
+
+        try:
+            return datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                return datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return None
+
+    def _serialize_interview_reminder(self, interview: Dict[str, Any]) -> Dict[str, Any]:
+        """Return reminder-friendly interview data with formatted schedule info."""
+        serialized = dict(interview)
+        scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+        serialized["scheduled_for_display"] = (
+            scheduled_for.strftime("%A %d %B %Y at %H:%M") if scheduled_for else _normalize_text(interview.get("scheduled_for"))
+        )
+        return serialized
+
     def _build_email_manager(self) -> EmailManager:
         """Build an email manager from environment configuration for the hosted dashboard."""
         email_manager = EmailManager()
@@ -536,6 +678,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, self.service.list_operations())
             return
 
+        if self.path.startswith("/api/interviews/") and self.path.endswith("/reminder-template"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            interview_id = self._extract_record_id(self.path[: -len("/reminder-template")], "/api/interviews/")
+            if interview_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                return
+
+            try:
+                payload = self.service.preview_interview_reminder(interview_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -627,6 +788,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.CREATED, episode)
             return
 
+        if self.path == "/api/reminders/send-weekly":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            payload = self._read_json_payload()
+            reference_value = _normalize_text(payload.get("reference"))
+            dry_run = bool(payload.get("dry_run"))
+            reference = self.service._parse_datetime(reference_value) if reference_value else None
+
+            try:
+                result = self.service.send_due_weekly_reminders(reference=reference, dry_run=dry_run)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, result)
+            return
+
         if self.path.startswith("/api/guests/") and self.path.endswith("/status"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -699,6 +879,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/interviews/"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            if self.path.endswith("/send-reminder"):
+                interview_id = self._extract_record_id(self.path[: -len("/send-reminder")], "/api/interviews/")
+                if interview_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                    return
+
+                payload = self._read_json_payload()
+                try:
+                    interview = self.service.send_interview_reminder(
+                        interview_id,
+                        payload.get("subject", ""),
+                        payload.get("body", ""),
+                    )
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, interview)
                 return
 
             interview_id = self._extract_record_id(self.path, "/api/interviews/")
