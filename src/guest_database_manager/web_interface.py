@@ -450,6 +450,56 @@ class GuestWebService:
         return " ".join(part for part in normalized.split() if part)
 
     @staticmethod
+    def _word_tokens(value: Any) -> list[str]:
+        """Split a text into normalized comparison tokens."""
+        normalized = _normalize_text(value).lower()
+        normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+        return [part for part in normalized.split() if len(part) > 1]
+
+    @classmethod
+    def _person_tokens(cls, value: Any) -> list[str]:
+        """Split a guest name into meaningful person tokens."""
+        stop_words = {"and", "with", "the", "podcast", "mirror", "talk"}
+        return [part for part in cls._word_tokens(value) if part not in stop_words]
+
+    @classmethod
+    def _episode_title_overlap_score(cls, episode: Dict[str, Any], remote_episode: Dict[str, Any]) -> int:
+        """Score title/topic overlap to break ties for guest-based matches."""
+        local_tokens = set(cls._word_tokens(episode.get("episode_title"))) | set(cls._word_tokens(episode.get("topic")))
+        remote_tokens = set(cls._word_tokens(remote_episode.get("title")))
+        if not local_tokens or not remote_tokens:
+            return 0
+        overlap = len(local_tokens & remote_tokens)
+        return min(overlap * 10, 60)
+
+    @classmethod
+    def _score_ask_episode_match(cls, episode: Dict[str, Any], remote_episode: Dict[str, Any]) -> tuple[int, str]:
+        """Return a conservative score and method for Ask Mirror Talk matching."""
+        local_title_key = cls._episode_match_key(episode.get("episode_title"))
+        remote_title_key = cls._episode_match_key(remote_episode.get("title"))
+        if local_title_key and remote_title_key and local_title_key == remote_title_key:
+            return 1000, "title"
+
+        guest_tokens = cls._person_tokens(episode.get("guest_name"))
+        if not guest_tokens:
+            return 0, ""
+
+        remote_title_tokens = set(cls._word_tokens(remote_episode.get("title")))
+        remote_description_tokens = set(cls._word_tokens(remote_episode.get("description")))
+        overlap_bonus = cls._episode_title_overlap_score(episode, remote_episode)
+
+        if all(token in remote_title_tokens for token in guest_tokens):
+            return 800 + overlap_bonus, "guest_title"
+        if all(token in remote_description_tokens for token in guest_tokens):
+            return 700 + overlap_bonus, "guest_description"
+
+        title_hits = sum(token in remote_title_tokens for token in guest_tokens)
+        if len(guest_tokens) >= 2 and title_hits >= len(guest_tokens) - 1:
+            return 500 + overlap_bonus, "guest_partial"
+
+        return 0, ""
+
+    @staticmethod
     def _records_to_csv(records: list[Dict[str, Any]], fields: list[str]) -> str:
         """Serialize records to CSV using the selected fields."""
         buffer = StringIO()
@@ -778,56 +828,87 @@ class GuestWebService:
         except AskMirrorTalkClientError as exc:
             raise WebInterfaceError(str(exc)) from exc
 
-        remote_by_title: dict[str, Dict[str, Any]] = {}
-        for remote_episode in remote_episodes:
-            match_key = self._episode_match_key(remote_episode.get("title"))
-            if match_key and match_key not in remote_by_title:
-                remote_by_title[match_key] = remote_episode
-
         local_episodes = self.database.list_episodes()
         updated = 0
         matched = 0
+        matched_by_title = 0
+        matched_by_guest = 0
+        skipped_ambiguous = 0
         skipped_existing = 0
         skipped_without_remote_transcript = 0
         skipped_without_title = 0
         updated_titles: list[str] = []
+        used_remote_ids: set[Any] = set()
 
         for episode in local_episodes:
-            match_key = self._episode_match_key(episode.get("episode_title"))
-            if not match_key:
+            if not self._episode_match_key(episode.get("episode_title")) and not self._person_tokens(episode.get("guest_name")):
                 skipped_without_title += 1
                 continue
 
-            remote_episode = remote_by_title.get(match_key)
-            if not remote_episode:
+            candidates: list[tuple[int, str, Dict[str, Any]]] = []
+            for remote_episode in remote_episodes:
+                remote_id = remote_episode.get("id")
+                if remote_id in used_remote_ids:
+                    continue
+                score, method = self._score_ask_episode_match(episode, remote_episode)
+                if score > 0:
+                    candidates.append((score, method, remote_episode))
+
+            if not candidates:
+                continue
+
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            best_score, best_method, remote_episode = candidates[0]
+            if len(candidates) > 1 and best_score < 1000 and (best_score - candidates[1][0]) < 100:
+                skipped_ambiguous += 1
                 continue
 
             matched += 1
+            if best_method == "title":
+                matched_by_title += 1
+            else:
+                matched_by_guest += 1
+            used_remote_ids.add(remote_episode.get("id"))
+
             transcript_text = _normalize_text(remote_episode.get("transcript_text"))
-            if not transcript_text:
-                skipped_without_remote_transcript += 1
+            remote_title = _normalize_text(remote_episode.get("title"))
+            transcript_exists = bool(_normalize_text(episode.get("transcript_text")))
+            should_update_transcript = bool(transcript_text) and (overwrite_existing or not transcript_exists)
+            should_update_title = bool(remote_title) and remote_title != _normalize_text(episode.get("episode_title"))
+
+            if not should_update_transcript and not should_update_title:
+                if transcript_exists and transcript_text:
+                    skipped_existing += 1
+                elif not transcript_text and not should_update_title:
+                    skipped_without_remote_transcript += 1
                 continue
 
-            if _normalize_text(episode.get("transcript_text")) and not overwrite_existing:
-                skipped_existing += 1
-                continue
+            payload: Dict[str, Any] = {
+                "source_type": _normalize_text(episode.get("source_type")) or "ask_mirror_talk_sync",
+                "source_file_name": _normalize_text(episode.get("source_file_name")) or "Ask Mirror Talk",
+            }
+            if should_update_transcript:
+                payload["transcript_text"] = transcript_text
+            elif not transcript_text:
+                skipped_without_remote_transcript += 1
+            if should_update_title:
+                payload["episode_title"] = remote_title
 
             self.update_episode(
                 episode["id"],
-                {
-                    "transcript_text": transcript_text,
-                    "source_type": _normalize_text(episode.get("source_type")) or "ask_mirror_talk_sync",
-                    "source_file_name": _normalize_text(episode.get("source_file_name")) or "Ask Mirror Talk",
-                },
+                payload,
             )
             updated += 1
-            updated_titles.append(_normalize_text(episode.get("episode_title")))
+            updated_titles.append(remote_title or _normalize_text(episode.get("episode_title")))
 
         unmatched_local = max(len(local_episodes) - matched - skipped_without_title, 0)
         return {
             "remote_episodes": len(remote_episodes),
             "matched": matched,
+            "matched_by_title": matched_by_title,
+            "matched_by_guest": matched_by_guest,
             "updated": updated,
+            "skipped_ambiguous": skipped_ambiguous,
             "skipped_existing": skipped_existing,
             "skipped_without_remote_transcript": skipped_without_remote_transcript,
             "skipped_without_title": skipped_without_title,

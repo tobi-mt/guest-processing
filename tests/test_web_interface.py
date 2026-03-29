@@ -499,8 +499,51 @@ def test_web_service_can_sync_matching_transcripts_from_ask_mirror_talk(monkeypa
 
     assert result["updated"] == 1
     assert result["matched"] == 1
+    assert result["matched_by_title"] == 1
     assert updated_episode["id"] == episode["id"]
     assert updated_episode["transcript_text"] == "We explored how calm grows through honest practice."
+
+
+def test_web_service_can_match_ask_episode_by_guest_name_and_update_title(monkeypatch, temp_db):
+    """Planning sync should update the local episode title when Ask Mirror Talk has the published version."""
+
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def export_episodes(self, **kwargs):
+            return [
+                {
+                    "id": 77,
+                    "title": "Jordan Rivers on Building Calm Under Pressure",
+                    "description": "Jordan Rivers joins Mirror Talk for a conversation about calm under pressure and financial resilience.",
+                    "transcript_text": "Jordan explains how honest practice helps people stay calm under pressure.",
+                }
+            ]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Calm Under Pressure",
+            "topic": "Building Calm Under Pressure",
+        }
+    )
+
+    result = service.sync_ask_mirror_talk_transcripts()
+    updated_episode = service.list_planning()["episodes"][0]
+
+    assert result["updated"] == 1
+    assert result["matched"] == 1
+    assert result["matched_by_guest"] == 1
+    assert updated_episode["episode_title"] == "Jordan Rivers on Building Calm Under Pressure"
+    assert updated_episode["transcript_text"] == "Jordan explains how honest practice helps people stay calm under pressure."
 
 
 def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):
