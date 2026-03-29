@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
+from guest_database_manager.email_manager import EmailManager
 
 STATIC_DIR = Path(__file__).parent / "static"
 FORM_SOURCE_NAME = "Direct Web Entry"
@@ -34,6 +35,12 @@ ALLOWED_ORIGINS = {
 API_TOKEN_ENV_VAR = "MIRROR_TALK_INTAKE_API_TOKEN"
 DASHBOARD_USERNAME_ENV_VAR = "MIRROR_TALK_DASHBOARD_USERNAME"
 DASHBOARD_PASSWORD_ENV_VAR = "MIRROR_TALK_DASHBOARD_PASSWORD"
+EMAIL_SMTP_SERVER_ENV_VAR = "MIRROR_TALK_SMTP_SERVER"
+EMAIL_SMTP_PORT_ENV_VAR = "MIRROR_TALK_SMTP_PORT"
+EMAIL_USERNAME_ENV_VAR = "MIRROR_TALK_SMTP_USERNAME"
+EMAIL_PASSWORD_ENV_VAR = "MIRROR_TALK_SMTP_PASSWORD"
+EMAIL_FROM_ENV_VAR = "MIRROR_TALK_FROM_EMAIL"
+EMAIL_FROM_NAME_ENV_VAR = "MIRROR_TALK_FROM_NAME"
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -157,6 +164,7 @@ class GuestWebService:
             "guests": guests,
             "stats": self.database.get_stats(),
             "email_stats": self.database.get_email_stats(),
+            "email_enabled": self._build_email_manager().is_configured(),
         }
 
     def export_guests_csv(self) -> str:
@@ -245,10 +253,80 @@ class GuestWebService:
             raise WebInterfaceError("Guest not found.")
         return serialize_guest(guest)
 
+    def send_guest_decision_email(self, guest_id: int, status: str, custom_message: str = "") -> Dict[str, Any]:
+        """Send an approval/decline email and persist the resulting decision."""
+        normalized_status = status.strip().lower()
+        if normalized_status not in {"accepted", "rejected"}:
+            raise WebInterfaceError("Only accepted or rejected emails can be sent.")
+
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+
+        guest_email = (guest.get("email") or "").strip()
+        if not guest_email:
+            raise WebInterfaceError("This guest does not have an email address.")
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            raise WebInterfaceError("Dashboard email is not configured on the server.")
+
+        guest_name = (guest.get("full_name") or guest.get("name") or "Guest").strip()
+
+        if normalized_status == "accepted":
+            sent = email_manager.send_acceptance_email(guest_name, guest_email, custom_message)
+            if sent:
+                self.database.accept_guest_with_email(guest_id, custom_message)
+        else:
+            sent = email_manager.send_rejection_email(guest_name, guest_email, custom_message)
+            if sent:
+                self.database.reject_guest_with_email(guest_id, custom_message)
+
+        if not sent:
+            raise WebInterfaceError("The email could not be sent. Please check the server email configuration.")
+
+        updated_guest = self.database.get_guest_by_id(guest_id)
+        if not updated_guest:
+            raise WebInterfaceError("Guest not found after email send.")
+        return serialize_guest(updated_guest)
+
     def delete_guest(self, guest_id: int) -> Dict[str, Any]:
         """Delete a guest and return a small confirmation payload."""
         self.database.delete_guest(guest_id)
         return {"deleted": True, "id": guest_id}
+
+    def _build_email_manager(self) -> EmailManager:
+        """Build an email manager from environment configuration for the hosted dashboard."""
+        email_manager = EmailManager()
+        email_manager.smtp_server = None
+        email_manager.smtp_port = None
+        email_manager.username = None
+        email_manager.password = None
+        email_manager.from_email = None
+        email_manager.from_name = None
+        smtp_server = os.environ.get(EMAIL_SMTP_SERVER_ENV_VAR, "").strip()
+        smtp_username = os.environ.get(EMAIL_USERNAME_ENV_VAR, "").strip()
+        smtp_password = os.environ.get(EMAIL_PASSWORD_ENV_VAR, "").strip()
+        from_email = os.environ.get(EMAIL_FROM_ENV_VAR, "").strip()
+
+        if smtp_server and smtp_username and smtp_password and from_email:
+            smtp_port_raw = os.environ.get(EMAIL_SMTP_PORT_ENV_VAR, "587").strip() or "587"
+            from_name = os.environ.get(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast").strip()
+            try:
+                smtp_port = int(smtp_port_raw)
+            except ValueError as exc:
+                raise WebInterfaceError("Server email port is invalid.") from exc
+
+            email_manager.configure_smtp(
+                smtp_server=smtp_server,
+                smtp_port=smtp_port,
+                username=smtp_username,
+                password=smtp_password,
+                from_email=from_email,
+                from_name=from_name,
+            )
+
+        return email_manager
 
 
 class GuestWebRequestHandler(BaseHTTPRequestHandler):
@@ -376,6 +454,30 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     guest_id,
                     payload.get("status", ""),
                     payload.get("skip_reason", ""),
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, guest)
+            return
+
+        if self.path.startswith("/api/guests/") and self.path.endswith("/email-decision"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            guest_id = self._extract_guest_id(self.path, suffix="/email-decision")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                guest = self.service.send_guest_decision_email(
+                    guest_id,
+                    payload.get("status", ""),
+                    payload.get("custom_message", ""),
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

@@ -71,40 +71,40 @@ class EmailManager:
         Returns:
             Dictionary with subject and body
         """
-        subject = "🎉 Welcome to Our Podcast - Application Accepted!"
+        subject = "Your Mirror Talk Podcast application has been accepted"
 
         if custom_message:
-            body = f"""Dear {guest_name},
+            body = f"""Hi {guest_name},
 
 {custom_message}
 
-We are excited to have you as a guest on our podcast! Your application has been accepted, and we look forward to sharing your story with our audience.
+We are delighted to let you know that your application to join Mirror Talk Podcast has been accepted.
 
-Next Steps:
-• Be our guest on the show: https://mirrortalkpodcast.com/be-our-next-guest/
-• Kindly select a suitable time for recording
-• Donation is optional but appreciated: https://mirrortalkpodcast.com/feed-the-children/
+Your story, perspective, and voice feel like a strong fit for the kind of soulful conversation we want to create for our listeners, and we would love to welcome you onto the show.
 
-Thank you for your interest in being part of our podcast family!
+Next steps:
+- Please choose a suitable time for recording here: https://mirrortalkpodcast.com/be-our-next-guest/
+- If helpful, you can also learn more about the podcast and our wider work on the site.
 
-Best regards,
-Your Favorite Podcast"""
+Thank you again for taking the time to share your story with us. We are looking forward to the conversation ahead.
+
+Warmly,
+Mirror Talk Podcast"""
         else:
-            body = f"""Dear {guest_name},
+            body = f"""Hi {guest_name},
 
-Congratulations! We are thrilled to inform you that your application to be a guest on our podcast has been accepted.
+We are delighted to let you know that your application to join Mirror Talk Podcast has been accepted.
 
-We were impressed by your background and story, and we believe our audience would greatly benefit from hearing your insights and experiences.
+We were moved by what you shared, and we believe your voice and lived experience would make for a meaningful conversation with our audience.
 
-Next Steps:
-• Be our guest on the show: https://mirrortalkpodcast.com/be-our-next-guest/
-• Kindly select a suitable time for recording
-• Donation is optional but appreciated: https://mirrortalkpodcast.com/feed-the-children/
+Next steps:
+- Please choose a suitable time for recording here: https://mirrortalkpodcast.com/be-our-next-guest/
+- Once your booking is in place, we will take it from there and prepare for the conversation with you.
 
-We are excited to work with you and share your story with our community!
+Thank you for trusting us with your story. We are genuinely looking forward to having you as a guest on Mirror Talk.
 
-Warm regards,
-Your Favorite Podcast"""
+Warmly,
+Mirror Talk Podcast"""
 
         return {"subject": subject, "body": body}
 
@@ -118,36 +118,38 @@ Your Favorite Podcast"""
         Returns:
             Dictionary with subject and body
         """
-        subject = "Thank You for Your Podcast Application"
+        subject = "Thank you for your Mirror Talk Podcast application"
 
         if custom_message:
-            body = f"""Dear {guest_name},
+            body = f"""Hi {guest_name},
 
 {custom_message}
 
-We appreciate you taking the time to apply to be a guest on our podcast.
+Thank you for taking the time to apply to be a guest on Mirror Talk Podcast and for sharing your story with us.
 
-While we won't be moving forward with your application at this time, we encourage you to continue pursuing your passions and sharing your story in other venues.
+After careful review, we will not be moving forward with your application at this time.
 
-We wish you all the best in your endeavors!
+Please know this decision is not a judgment on your value or the importance of your work. We receive many thoughtful submissions, and sometimes the decision simply comes down to fit, timing, and the direction of upcoming conversations.
 
-Best regards,
-Your Favorite Podcast"""
+We sincerely appreciate your interest in Mirror Talk, and we wish you the very best in all that lies ahead.
+
+Warmly,
+Mirror Talk Podcast"""
         else:
-            body = f"""Dear {guest_name},
+            body = f"""Hi {guest_name},
 
-Thank you for your interest in being a guest on our podcast. We appreciate the time you took to complete our application and share your story with us.
+Thank you for your interest in being a guest on Mirror Talk Podcast and for taking the time to complete the application so thoughtfully.
 
-After careful consideration, we have decided not to move forward with your application at this time. This decision was not easy, as we received many compelling applications from remarkable individuals.
+After careful consideration, we will not be moving forward with your application at this time.
 
-Please know that this decision does not reflect on your worth or the value of your story. We simply have limited slots and must make difficult choices based on various factors including content fit, scheduling, and current programming needs.
+This kind of decision is never a simple one. We receive many strong submissions, and our final choices often come down to fit, timing, and the shape of the conversations we are planning for the season ahead.
 
-We encourage you to continue sharing your story and pursuing opportunities that align with your goals and values.
+Please know this does not diminish the value of your story, your work, or your voice. We are grateful that you shared them with us.
 
-Thank you again for your interest, and we wish you all the best in your future endeavors.
+Thank you again for considering Mirror Talk, and we wish you every success in the journey ahead.
 
-Warm regards,
-Your Favorite Podcast"""
+Warmly,
+Mirror Talk Podcast"""
 
         return {"subject": subject, "body": body}
 

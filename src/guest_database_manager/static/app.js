@@ -6,6 +6,7 @@ const guestList = document.getElementById("guest-list");
 const template = document.getElementById("guest-card-template");
 const refreshButton = document.getElementById("refresh-button");
 const exportButton = document.getElementById("export-button");
+const decisionFilter = document.getElementById("decision-filter");
 
 const metrics = {
   total: document.getElementById("metric-total"),
@@ -19,6 +20,9 @@ const insights = {
   skipped: document.getElementById("insight-skipped"),
   acceptanceRate: document.getElementById("insight-acceptance-rate"),
 };
+
+let emailEnabled = false;
+let latestPayload = null;
 
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, {
@@ -61,6 +65,22 @@ function guestStatusLabel(guest) {
     return guest.email_status;
   }
   return guest.is_processed ? "processed" : "unprocessed";
+}
+
+function guestMatchesFilter(guest, filterValue) {
+  if (filterValue === "all") {
+    return true;
+  }
+
+  if (filterValue === "processed") {
+    return Boolean(guest.is_processed);
+  }
+
+  if (filterValue === "unprocessed") {
+    return !guest.is_processed;
+  }
+
+  return guestStatusLabel(guest) === filterValue;
 }
 
 function normalizeClipboardValue(value) {
@@ -142,6 +162,8 @@ async function copyGuestIntake(guest) {
 }
 
 function renderGuests(payload) {
+  latestPayload = payload;
+  emailEnabled = Boolean(payload.email_enabled);
   metrics.total.textContent = payload.stats.total ?? 0;
   metrics.processed.textContent = payload.stats.processed ?? 0;
   metrics.unprocessed.textContent = payload.stats.unprocessed ?? 0;
@@ -156,13 +178,20 @@ function renderGuests(payload) {
   insights.skipped.textContent = skipped;
   insights.acceptanceRate.textContent = decided ? `${Math.round((accepted / decided) * 100)}%` : "0%";
 
+  const activeFilter = decisionFilter.value;
+  const guests = payload.guests.filter((guest) => guestMatchesFilter(guest, activeFilter));
+
   guestList.innerHTML = "";
-  if (!payload.guests.length) {
+  if (!guests.length) {
+    if (payload.guests.length) {
+      guestList.innerHTML = "<p class='guest-summary'>No guests match the selected decision filter.</p>";
+    } else {
     guestList.innerHTML = "<p class='guest-summary'>No guests yet. Add the first one with the form.</p>";
+    }
     return;
   }
 
-  payload.guests.forEach((guest) => {
+  guests.forEach((guest) => {
     const node = template.content.cloneNode(true);
     const card = node.querySelector(".guest-card");
     const statusPill = node.querySelector(".status-pill");
@@ -174,6 +203,13 @@ function renderGuests(payload) {
 
     statusPill.textContent = guestStatusLabel(guest);
     statusPill.classList.add(guestStatusLabel(guest));
+
+    if (!emailEnabled) {
+      node.querySelectorAll("[data-action='accepted_email'], [data-action='rejected_email']").forEach((button) => {
+        button.disabled = true;
+        button.title = "Set the dashboard SMTP environment variables on Railway to enable email sending.";
+      });
+    }
 
     const details = [];
     if (guest.profession) details.push(`Profession: ${guest.profession}`);
@@ -190,6 +226,25 @@ function renderGuests(payload) {
           if (action === "copy") {
             await copyGuestIntake(guest);
             setMessage(`Copied ${guest.full_name}'s intake details.`, "success");
+          } else if (action === "accepted_email" || action === "rejected_email") {
+            const decision = action === "accepted_email" ? "accepted" : "rejected";
+            const customMessage =
+              window.prompt(
+                decision === "accepted"
+                  ? "Optional approval email message:"
+                  : "Optional decline email message:",
+              ) || "";
+
+            await fetchJSON(`/api/guests/${guest.id}/email-decision`, {
+              method: "POST",
+              body: JSON.stringify({ status: decision, custom_message: customMessage }),
+            });
+            setMessage(
+              decision === "accepted"
+                ? `Sent approval email to ${guest.full_name}.`
+                : `Sent decline email to ${guest.full_name}.`,
+              "success",
+            );
           } else if (action === "delete") {
             await fetchJSON(`/api/guests/${guest.id}`, { method: "DELETE" });
             setMessage(`Deleted ${guest.full_name}.`, "success");
@@ -275,6 +330,12 @@ refreshButton.addEventListener("click", async () => {
 
 exportButton.addEventListener("click", () => {
   window.location.href = "/api/export";
+});
+
+decisionFilter.addEventListener("change", () => {
+  if (latestPayload) {
+    renderGuests(latestPayload);
+  }
 });
 
 loadGuests();

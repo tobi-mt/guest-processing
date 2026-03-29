@@ -230,6 +230,22 @@ p {
   align-items: center;
 }
 
+.list-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-field {
+  min-width: 180px;
+}
+
+.filter-field span {
+  display: block;
+  margin-bottom: 6px;
+}
+
 .import-form {
   display: grid;
   grid-template-columns: 1fr;
@@ -304,6 +320,12 @@ button {
 
 button:hover {
   transform: translateY(-1px);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
 }
 
 .primary-button {
@@ -428,5 +450,9 @@ button:hover {
 
   .import-form {
     grid-template-columns: 1fr;
+  }
+
+  .list-toolbar {
+    align-items: stretch;
   }
 }

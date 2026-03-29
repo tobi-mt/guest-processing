@@ -9,6 +9,12 @@ import pandas as pd
 import pytest
 
 from guest_database_manager.web_interface import (
+    EMAIL_FROM_ENV_VAR,
+    EMAIL_FROM_NAME_ENV_VAR,
+    EMAIL_PASSWORD_ENV_VAR,
+    EMAIL_SMTP_PORT_ENV_VAR,
+    EMAIL_SMTP_SERVER_ENV_VAR,
+    EMAIL_USERNAME_ENV_VAR,
     FORM_SOURCE_NAME,
     INTAKE_SOURCE_NAME,
     GuestWebService,
@@ -141,6 +147,53 @@ def test_web_service_can_export_guests_to_csv(temp_db):
 
     assert "full_name,email,website" in exported_csv
     assert "Amina Hart,amina@example.com,https://amina.example.com" in exported_csv
+
+
+def test_web_service_can_send_acceptance_email(monkeypatch, temp_db):
+    """Hosted dashboard should be able to send an approval email and persist acceptance."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_smtp(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def send_acceptance_email(self, guest_name, to_email, custom_message=""):
+            assert guest_name == "Amina Hart"
+            assert to_email == "amina@example.com"
+            assert custom_message == "Welcome aboard"
+            return True
+
+        def send_rejection_email(self, guest_name, to_email, custom_message=""):
+            raise AssertionError("Rejection email should not be called")
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_SMTP_SERVER_ENV_VAR, "smtp.example.com")
+    monkeypatch.setenv(EMAIL_SMTP_PORT_ENV_VAR, "587")
+    monkeypatch.setenv(EMAIL_USERNAME_ENV_VAR, "mirror@example.com")
+    monkeypatch.setenv(EMAIL_PASSWORD_ENV_VAR, "top-secret")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "mirror@example.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Amina Hart", "email": "amina@example.com"})
+
+    updated_guest = service.send_guest_decision_email(guest["id"], "accepted", "Welcome aboard")
+
+    assert updated_guest["email_status"] == "accepted"
+
+
+def test_web_service_rejects_email_send_without_server_config(temp_db):
+    """Hosted dashboard should not pretend email works when SMTP env vars are missing."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Amina Hart", "email": "amina@example.com"})
+
+    with pytest.raises(WebInterfaceError):
+        service.send_guest_decision_email(guest["id"], "accepted", "")
 
 
 def test_validate_intake_payload_rejects_spam_keywords():
