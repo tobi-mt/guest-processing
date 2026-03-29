@@ -505,6 +505,7 @@ class GuestWebService:
         remote_description_tokens = set(cls._word_tokens(remote_episode.get("description")))
         overlap_bonus = cls._episode_title_overlap_score(episode, remote_episode)
         date_bonus = cls._episode_date_proximity_score(episode, remote_episode)
+        surname_token = guest_tokens[-1] if len(guest_tokens) > 1 else guest_tokens[0]
 
         if all(token in remote_title_tokens for token in guest_tokens):
             return 800 + overlap_bonus + date_bonus, "guest_title"
@@ -512,15 +513,10 @@ class GuestWebService:
             return 700 + overlap_bonus + date_bonus, "guest_description"
 
         title_hits = sum(token in remote_title_tokens for token in guest_tokens)
-        if len(guest_tokens) >= 2 and title_hits >= len(guest_tokens) - 1:
+        if len(guest_tokens) >= 2 and title_hits >= len(guest_tokens) - 1 and surname_token in remote_title_tokens:
             return 500 + overlap_bonus + date_bonus, "guest_partial"
 
-        primary_tokens = []
-        if guest_tokens:
-            primary_tokens.append(guest_tokens[0])
-        if len(guest_tokens) > 1:
-            primary_tokens.append(guest_tokens[-1])
-        primary_tokens = list(dict.fromkeys(primary_tokens))
+        primary_tokens = [surname_token] if len(guest_tokens) > 1 else [guest_tokens[0]]
 
         partial_title_hits = sum(token in remote_title_tokens for token in primary_tokens)
         partial_description_hits = sum(token in remote_description_tokens for token in primary_tokens)

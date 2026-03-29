@@ -706,6 +706,49 @@ def test_web_service_reports_ambiguous_ask_matches(monkeypatch, temp_db):
     assert all(candidate["method"] == "guest_title" for candidate in ambiguous["candidates"])
 
 
+def test_web_service_does_not_match_different_guest_on_shared_first_name(monkeypatch, temp_db):
+    """Shared first names alone should not let Ask sync overwrite the wrong episode."""
+
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def export_episodes(self, **kwargs):
+            return [
+                {
+                    "id": 91,
+                    "title": "John Patrick Morgan: Becoming The Champion of Your Life - Overcoming The Fear of Taking Risks, Anxiety And The Lack of Drive",
+                    "description": "A published Mirror Talk episode with John Patrick Morgan.",
+                    "published_at": "2026-03-20T17:00:00",
+                    "transcript_text": "John Patrick Morgan shares his story.",
+                }
+            ]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Patrick Kamba",
+            "guest_email": "patrick@example.com",
+            "episode_title": "A Different Unreleased Episode",
+            "topic": "Purpose and Drive",
+            "release_status": "unplanned",
+        }
+    )
+
+    result = service.sync_ask_mirror_talk_transcripts()
+    episode = service.list_planning()["episodes"][0]
+
+    assert result["matched"] == 0
+    assert result["updated"] == 0
+    assert episode["episode_title"] == "A Different Unreleased Episode"
+    assert not episode["transcript_text"]
+
+
 def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):
     """Flexible export should allow narrow CSV extracts for episode planning."""
     service = GuestWebService(temp_db.db_path)
