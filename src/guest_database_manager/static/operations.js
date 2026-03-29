@@ -1,11 +1,14 @@
 const interviewForm = document.getElementById("interview-form");
 const episodeForm = document.getElementById("episode-form");
+const episodeImportForm = document.getElementById("episode-import-form");
 const interviewMessage = document.getElementById("interview-message");
 const episodeMessage = document.getElementById("episode-message");
+const episodeImportMessage = document.getElementById("episode-import-message");
 const reminderMessage = document.getElementById("reminder-message");
 const reminderList = document.getElementById("reminder-list");
 const interviewList = document.getElementById("interview-list");
 const episodeList = document.getElementById("episode-list");
+const recommendationList = document.getElementById("recommendation-list");
 const refreshButton = document.getElementById("operations-refresh-button");
 const sendWeeklyRemindersButton = document.getElementById("send-weekly-reminders-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
@@ -25,6 +28,18 @@ async function fetchJSON(url, options = {}) {
     ...options,
   });
 
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Request failed");
+  }
+  return data;
+}
+
+async function postForm(url, formData) {
+  const response = await fetch(url, {
+    method: "POST",
+    body: formData,
+  });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error || "Request failed");
@@ -129,9 +144,39 @@ function renderEpisodes(episodes) {
         <span>Release: ${formatDateTime(episode.release_date)}</span>
         <span>Status: ${episode.release_status || "unplanned"} / ${episode.production_status || "idea"}</span>
         <span>Priority: ${episode.priority_score ?? 0}</span>
+        <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
     `;
     episodeList.appendChild(card);
+  });
+}
+
+function renderRecommendations(recommendations) {
+  recommendationList.innerHTML = "";
+
+  if (!recommendations.length) {
+    recommendationList.innerHTML = "<p class='guest-summary'>Import the yearly release CSVs and the Not Yet Released queue to generate recommendations.</p>";
+    return;
+  }
+
+  recommendations.forEach((episode, index) => {
+    const card = document.createElement("article");
+    card.className = "operations-card recommendation-card";
+    card.innerHTML = `
+      <h3>#${index + 1} ${episode.episode_title || episode.topic || "Untitled episode"}</h3>
+      <p>${episode.guest_name || "Guest not set"}</p>
+      <div class="operations-meta">
+        <span>Recommended Slot: ${formatDateTime(episode.recommended_release_date)}</span>
+        <span>Score: ${episode.priority_score ?? 0}</span>
+        <span>Category: ${episode.category || "Not set"}</span>
+        <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
+        <span>Production: ${episode.production_status || "idea"}</span>
+      </div>
+      <div class="operations-preview">
+        <p>${episode.recommendation_reason || "Good fit for the next release slot."}</p>
+      </div>
+    `;
+    recommendationList.appendChild(card);
   });
 }
 
@@ -207,6 +252,7 @@ async function loadOperations() {
   stats.remindersDue.textContent = payload.reminder_candidates?.length ?? 0;
   renderReminderCandidates(payload.reminder_candidates || []);
   renderInterviews(payload.interviews);
+  renderRecommendations(payload.recommendations || []);
   renderEpisodes(payload.episodes);
 }
 
@@ -247,6 +293,24 @@ episodeForm.addEventListener("submit", async (event) => {
     await loadOperations();
   } catch (error) {
     setMessage(episodeMessage, error.message, "error");
+  }
+});
+
+episodeImportForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(episodeImportForm);
+
+  try {
+    const result = await postForm("/api/episodes/import", formData);
+    episodeImportForm.reset();
+    setMessage(
+      episodeImportMessage,
+      `Episode import finished. New: ${result.imported}, Updated: ${result.updated}.`,
+      "success",
+    );
+    await loadOperations();
+  } catch (error) {
+    setMessage(episodeImportMessage, error.message, "error");
   }
 });
 

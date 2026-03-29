@@ -191,6 +191,35 @@ def test_web_service_can_import_uploaded_excel_with_timestamp_columns(temp_db, t
     assert imported_guest["email"] == "becomeseven808@gmail.com"
 
 
+def test_web_service_can_import_episode_history_and_queue_csvs(temp_db):
+    """Episode planning imports should normalize both released history and the unreleased queue."""
+    service = GuestWebService(temp_db.db_path)
+    released_csv = (
+        "Name,Email,Website,Topic,Category,Interview Date,Release Date,Episode Number\n"
+        "Amina Hart,amina@example.com,https://amina.example.com,Healing With Honesty,Personal Development,14/10/2025,07/01/2026,423\n"
+    ).encode("utf-8")
+    queue_csv = (
+        " Names,Email,Website,Topic,Category,Interview Date,Riverside FM Status\n"
+        "Jordan Rivers,jordan@example.com,https://jordan.example.com,Building Calm Under Pressure,Finance,11/03/2026,Processing\n"
+    ).encode("utf-8")
+
+    released_result = service.import_episode_file("MT Guest List - 2026.csv", released_csv)
+    queue_result = service.import_episode_file("MT Guest List - Not Yet Released.csv", queue_csv)
+
+    episodes = service.list_operations()["episodes"]
+
+    assert released_result["imported"] == 1
+    assert queue_result["imported"] == 1
+    assert len(episodes) == 2
+    released_episode = next(item for item in episodes if item["guest_name"] == "Amina Hart")
+    queue_episode = next(item for item in episodes if item["guest_name"] == "Jordan Rivers")
+    assert released_episode["release_status"] == "released"
+    assert released_episode["legacy_episode_number"] == "423"
+    assert queue_episode["source_type"] == "release_queue"
+    assert queue_episode["production_status"] == "editing"
+    assert queue_episode["website"] == "https://jordan.example.com"
+
+
 def test_web_service_can_export_guests_to_csv(temp_db):
     """Dashboard exports should return a CSV with the imported guest data."""
     service = GuestWebService(temp_db.db_path)
@@ -422,6 +451,67 @@ def test_web_service_can_create_interview_and_episode_records(temp_db):
     assert episode["episode_title"] == "Healing Through Hard Seasons"
     assert len(operations["interviews"]) == 1
     assert len(operations["episodes"]) == 1
+
+
+def test_episode_recommendations_prefer_variety_and_ready_queue(temp_db):
+    """Release recommendations should surface strong ready candidates for the next Tuesday slot."""
+    service = GuestWebService(temp_db.db_path)
+
+    service.create_episode(
+        {
+            "guest_name": "Released One",
+            "guest_email": "one@example.com",
+            "episode_title": "Personal Growth Story",
+            "topic": "Personal Growth Story",
+            "category": "Personal Development",
+            "interview_date": "2026-01-01",
+            "release_date": "2026-03-24",
+            "release_status": "released",
+            "production_status": "released",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Released Two",
+            "guest_email": "two@example.com",
+            "episode_title": "Confidence Reset",
+            "topic": "Confidence Reset",
+            "category": "Personal Development",
+            "interview_date": "2026-01-07",
+            "release_date": "2026-03-17",
+            "release_status": "released",
+            "production_status": "released",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Finance Guest",
+            "guest_email": "finance@example.com",
+            "episode_title": "Building Calm Under Pressure",
+            "topic": "Building Calm Under Pressure",
+            "category": "Finance",
+            "interview_date": "2025-12-01",
+            "production_status": "ready",
+            "release_status": "unplanned",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Another Personal Development Guest",
+            "guest_email": "pd@example.com",
+            "episode_title": "Finding Balance",
+            "topic": "Finding Balance",
+            "category": "Personal Development",
+            "interview_date": "2025-12-15",
+            "production_status": "ready",
+            "release_status": "unplanned",
+        }
+    )
+
+    operations = service.list_operations()
+
+    assert operations["recommendations"][0]["guest_name"] == "Finance Guest"
+    assert operations["recommendations"][0]["recommended_release_date"].endswith("17:00:00")
 
 
 def test_operations_are_sorted_by_nearest_upcoming_interview_first(temp_db):

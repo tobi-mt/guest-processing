@@ -8,12 +8,12 @@ import os
 import re
 import tempfile
 import webbrowser
-from datetime import datetime, timedelta
 from csv import DictWriter
 from base64 import b64decode
-from dataclasses import dataclass
 from email.parser import BytesParser
 from email.policy import default
+from datetime import datetime, timedelta
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.email_manager import EmailManager
+from guest_database_manager.episode_planner import build_release_recommendations, parse_episode_import_csv
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -180,11 +181,13 @@ class GuestWebService:
     def list_operations(self) -> Dict[str, Any]:
         """Return the current interview and episode operations data."""
         interviews = self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
+        episodes = self.database.list_episodes()
         reminder_candidates = [self._serialize_interview_reminder(candidate) for candidate in self.get_due_weekly_reminders()]
         return {
             "stats": self.database.get_operations_stats(),
             "interviews": interviews,
-            "episodes": self.database.list_episodes(),
+            "episodes": episodes,
+            "recommendations": build_release_recommendations(episodes, reference=datetime.now()),
             "reminder_candidates": reminder_candidates,
             "calendar_sync_enabled": self._build_google_calendar_client() is not None,
         }
@@ -403,6 +406,7 @@ class GuestWebService:
             "interview_id": payload.get("interview_id"),
             "guest_name": _normalize_text(payload.get("guest_name")),
             "guest_email": _normalize_text(payload.get("guest_email")),
+            "website": _normalize_text(payload.get("website")),
             "episode_title": _normalize_text(payload.get("episode_title")),
             "topic": _normalize_text(payload.get("topic")),
             "category": _normalize_text(payload.get("category")),
@@ -413,6 +417,10 @@ class GuestWebService:
             "production_status": _normalize_text(payload.get("production_status")) or "idea",
             "priority_score": payload.get("priority_score") or 0,
             "recommendation_reason": _normalize_text(payload.get("recommendation_reason")),
+            "legacy_episode_number": _normalize_text(payload.get("legacy_episode_number")),
+            "riverside_status": _normalize_text(payload.get("riverside_status")),
+            "source_file_name": _normalize_text(payload.get("source_file_name")),
+            "source_type": _normalize_text(payload.get("source_type")),
             "notes": _normalize_text(payload.get("notes")),
         }
 
@@ -426,6 +434,31 @@ class GuestWebService:
         if not episode:
             raise WebInterfaceError("Episode could not be saved.")
         return episode
+
+    def import_episode_file(self, filename: str, content: bytes) -> Dict[str, int]:
+        """Import released-history or not-yet-released episode CSV data."""
+        suffix = Path(filename).suffix.lower()
+        if suffix != ".csv":
+            raise WebInterfaceError("Please upload a CSV file for episode planning import.")
+
+        episodes = parse_episode_import_csv(content, filename)
+        if not episodes:
+            raise WebInterfaceError("No episode rows were found in that CSV file.")
+
+        imported = 0
+        updated = 0
+        for episode_data in episodes:
+            _, action = self.database.upsert_episode(episode_data)
+            if action == "created":
+                imported += 1
+            else:
+                updated += 1
+
+        return {
+            "imported": imported,
+            "updated": updated,
+            "total": imported + updated,
+        }
 
     def update_episode(self, episode_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Update an episode record."""
@@ -941,6 +974,28 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.CREATED, episode)
+            return
+
+        if self.path == "/api/episodes/import":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            try:
+                _, files = self._read_multipart_form_data()
+                uploaded_file = files.get("file")
+                if not uploaded_file:
+                    raise WebInterfaceError("Please choose an episode CSV file to import.")
+
+                result = self.service.import_episode_file(
+                    uploaded_file["filename"],
+                    uploaded_file["content"],
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, result)
             return
 
         if self.path == "/api/reminders/send-weekly":

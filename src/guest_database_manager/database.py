@@ -301,12 +301,33 @@ class GuestDatabase:
                     (interview_id,),
                 )
                 existing_row = cursor.fetchone()
+            elif episode_data.get("legacy_episode_number"):
+                cursor = conn.execute(
+                    "SELECT id FROM episodes WHERE legacy_episode_number = ? LIMIT 1",
+                    (episode_data.get("legacy_episode_number"),),
+                )
+                existing_row = cursor.fetchone()
+            elif episode_data.get("guest_name") and episode_data.get("topic") and episode_data.get("interview_date"):
+                cursor = conn.execute(
+                    """
+                    SELECT id FROM episodes
+                    WHERE guest_name = ? AND COALESCE(topic, '') = ? AND COALESCE(interview_date, '') = ?
+                    LIMIT 1
+                    """,
+                    (
+                        episode_data.get("guest_name"),
+                        episode_data.get("topic"),
+                        episode_data.get("interview_date"),
+                    ),
+                )
+                existing_row = cursor.fetchone()
 
             fields = (
                 episode_data.get("guest_id"),
                 interview_id,
                 episode_data.get("guest_name"),
                 episode_data.get("guest_email"),
+                episode_data.get("website"),
                 episode_data.get("episode_title"),
                 episode_data.get("topic"),
                 episode_data.get("category"),
@@ -317,6 +338,10 @@ class GuestDatabase:
                 episode_data.get("production_status", "idea"),
                 episode_data.get("priority_score", 0),
                 episode_data.get("recommendation_reason"),
+                episode_data.get("legacy_episode_number"),
+                episode_data.get("riverside_status"),
+                episode_data.get("source_file_name"),
+                episode_data.get("source_type"),
                 episode_data.get("notes"),
             )
 
@@ -324,9 +349,10 @@ class GuestDatabase:
                 conn.execute(
                     """
                     UPDATE episodes SET
-                        guest_id = ?, interview_id = ?, guest_name = ?, guest_email = ?, episode_title = ?,
+                        guest_id = ?, interview_id = ?, guest_name = ?, guest_email = ?, website = ?, episode_title = ?,
                         topic = ?, category = ?, interview_date = ?, recording_date = ?, release_date = ?,
                         release_status = ?, production_status = ?, priority_score = ?, recommendation_reason = ?,
+                        legacy_episode_number = ?, riverside_status = ?, source_file_name = ?, source_type = ?,
                         notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
@@ -338,10 +364,11 @@ class GuestDatabase:
             cursor = conn.execute(
                 """
                 INSERT INTO episodes (
-                    guest_id, interview_id, guest_name, guest_email, episode_title, topic, category,
+                    guest_id, interview_id, guest_name, guest_email, website, episode_title, topic, category,
                     interview_date, recording_date, release_date, release_status, production_status,
-                    priority_score, recommendation_reason, notes, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    priority_score, recommendation_reason, legacy_episode_number, riverside_status,
+                    source_file_name, source_type, notes, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 fields,
             )

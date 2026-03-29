@@ -93,6 +93,7 @@ class SchemaManager:
             interview_id INTEGER,
             guest_name TEXT NOT NULL,
             guest_email TEXT,
+            website TEXT,
             episode_title TEXT,
             topic TEXT,
             category TEXT,
@@ -103,6 +104,10 @@ class SchemaManager:
             production_status TEXT DEFAULT 'idea',
             priority_score REAL DEFAULT 0,
             recommendation_reason TEXT,
+            legacy_episode_number TEXT,
+            riverside_status TEXT,
+            source_file_name TEXT,
+            source_type TEXT,
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -146,6 +151,14 @@ class SchemaManager:
         ("event_updated_at", "TIMESTAMP"),
         ("last_synced_at", "TIMESTAMP"),
     ]
+
+    EPISODE_OPTIONAL_COLUMNS: List[Tuple[str, str]] = [
+        ("website", "TEXT"),
+        ("legacy_episode_number", "TEXT"),
+        ("riverside_status", "TEXT"),
+        ("source_file_name", "TEXT"),
+        ("source_type", "TEXT"),
+    ]
     
     @staticmethod
     def create_tables(db_path: str) -> None:
@@ -183,6 +196,13 @@ class SchemaManager:
             try:
                 conn.execute(f"ALTER TABLE interviews ADD COLUMN {column_name} {column_type}")
                 logger.info(f"Added interview column: {column_name}")
+            except sqlite3.OperationalError:
+                pass
+
+        for column_name, column_type in SchemaManager.EPISODE_OPTIONAL_COLUMNS:
+            try:
+                conn.execute(f"ALTER TABLE episodes ADD COLUMN {column_name} {column_type}")
+                logger.info(f"Added episode column: {column_name}")
             except sqlite3.OperationalError:
                 pass
     

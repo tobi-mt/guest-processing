@@ -129,6 +129,10 @@
               Guest Email
               <input name="guest_email" type="email" />
             </label>
+            <label>
+              Website
+              <input name="website" type="url" />
+            </label>
             <label class="full-width">
               Episode Title
               <input name="episode_title" type="text" required />
@@ -175,6 +179,14 @@
               Priority Score
               <input name="priority_score" type="number" min="0" max="10" step="0.5" value="0" />
             </label>
+            <label>
+              Legacy Episode Number
+              <input name="legacy_episode_number" type="text" />
+            </label>
+            <label>
+              Riverside Status
+              <input name="riverside_status" type="text" placeholder="Processing / Restoring / blank" />
+            </label>
             <label class="full-width">
               Recommendation Reason
               <textarea name="recommendation_reason" rows="2"></textarea>
@@ -189,6 +201,23 @@
           </form>
 
           <p id="episode-message" class="message" aria-live="polite"></p>
+
+          <div class="section-heading">
+            <p class="eyebrow">Legacy Episode Files</p>
+            <h2>Import Release History Or Queue CSV</h2>
+          </div>
+
+          <form id="episode-import-form" class="upload-form" enctype="multipart/form-data">
+            <label>
+              Episode CSV
+              <input name="file" type="file" accept=".csv,text/csv" required />
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="secondary-button">Import Episode CSV</button>
+            </div>
+          </form>
+
+          <p id="episode-import-message" class="message" aria-live="polite"></p>
         </section>
 
         <section class="panel list-panel">
@@ -215,6 +244,15 @@
           </div>
 
           <div id="interview-list" class="guest-list"></div>
+
+          <div class="section-heading top-spaced">
+            <div>
+              <p class="eyebrow">Scheduling Intelligence</p>
+              <h2>Recommended Next Releases</h2>
+            </div>
+          </div>
+
+          <div id="recommendation-list" class="guest-list"></div>
 
           <div class="section-heading top-spaced">
             <div>
