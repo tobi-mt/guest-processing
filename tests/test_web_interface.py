@@ -547,6 +547,23 @@ def test_web_service_can_sync_google_calendar_interviews(monkeypatch, temp_db):
     assert service.list_operations()["interviews"][0]["calendar_source"] == "google_calendar"
 
 
+def test_google_calendar_sync_recognizes_soulful_podcast_event_markers():
+    """Calendar sync should recognize Mirror Talk interview invites from the event body, not only the title."""
+    from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
+
+    event = {
+        "summary": "Soulful Podcast Conversation",
+        "location": "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db",
+        "description": (
+            "Thank you so much for accepting the invitation to be a guest on our beloved podcast. "
+            "Please support us by following us on Spotify and Apple Podcasts. "
+            "For more information, visit https://mirrortalkpodcast.com/join-our-family/"
+        ),
+    }
+
+    assert GoogleCalendarSyncClient._looks_like_podcast_event(event, query="Mirror Talk") is True
+
+
 def test_validate_intake_payload_rejects_spam_keywords():
     """Spammy submissions should be rejected before insertion."""
     with pytest.raises(WebInterfaceError):

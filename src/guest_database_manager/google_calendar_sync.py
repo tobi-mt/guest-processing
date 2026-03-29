@@ -15,6 +15,14 @@ class GoogleCalendarSyncError(Exception):
 
 
 RIVERSIDE_URL_RE = re.compile(r"https://riverside\.fm/\S+", re.IGNORECASE)
+PODCAST_EVENT_MARKERS = (
+    "mirror talk",
+    "soulful podcast conversation",
+    "soulful-conversations",
+    "riverside.fm/studio/soulful-conversations",
+    "mirrortalkpodcast.com/join-our-family",
+    "forms.office.com/r/tcvdr6kkzu",
+)
 
 
 @dataclass
@@ -98,7 +106,11 @@ class GoogleCalendarSyncClient:
 
         payload = response.json()
         items = payload.get("items", [])
-        return [item for item in items if item.get("start", {}).get("dateTime")]
+        return [
+            item
+            for item in items
+            if item.get("start", {}).get("dateTime") and self._looks_like_podcast_event(item, query=query)
+        ]
 
     def normalize_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a Google Calendar event payload into an interview record shape."""
@@ -191,6 +203,19 @@ class GoogleCalendarSyncClient:
             return match.group(0)
 
         return ""
+
+    @staticmethod
+    def _looks_like_podcast_event(event: Dict[str, Any], *, query: str = "") -> bool:
+        """Decide whether a calendar event looks like a Mirror Talk interview."""
+        summary = (event.get("summary") or "").strip().lower()
+        description = (event.get("description") or "").strip().lower()
+        location = (event.get("location") or "").strip().lower()
+        haystack = "\n".join([summary, description, location])
+
+        if query.strip() and query.strip().lower() in haystack:
+            return True
+
+        return any(marker in haystack for marker in PODCAST_EVENT_MARKERS)
 
     @staticmethod
     def _build_notes(event: Dict[str, Any]) -> str:
