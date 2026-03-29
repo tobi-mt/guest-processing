@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mirror Talk Episode Planning</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/operations.css" />
+  </head>
+  <body>
+    <div class="page-shell operations-shell">
+      <header class="hero operations-hero">
+        <div>
+          <div class="brand-lockup">
+            <img class="brand-logo" src="/static/mirror-talk-logo.png" alt="Mirror Talk Podcast logo" />
+            <div class="brand-copy">
+              <p class="brand-name">Mirror Talk</p>
+              <p class="brand-subtitle">Podcast</p>
+            </div>
+          </div>
+          <p class="eyebrow">Episode Planning</p>
+          <h1>Release intelligence, queue management, and editorial timing.</h1>
+          <p class="hero-copy">
+            This workspace is where unreleased episodes live after recording. Use it to track readiness, import your legacy release lists, and decide what should go out next.
+          </p>
+        </div>
+        <div class="hero-card">
+          <div class="metric-grid">
+            <div class="metric">
+              <span>Total Episodes</span>
+              <strong id="plan-episodes-total">0</strong>
+            </div>
+            <div class="metric">
+              <span>Released</span>
+              <strong id="plan-episodes-released">0</strong>
+            </div>
+            <div class="metric">
+              <span>Scheduled</span>
+              <strong id="plan-episodes-scheduled">0</strong>
+            </div>
+            <div class="metric">
+              <span>Not Yet Released</span>
+              <strong id="plan-episodes-unreleased">0</strong>
+            </div>
+            <div class="metric">
+              <span>Promo Ready</span>
+              <strong id="plan-episodes-promo-ready">0</strong>
+            </div>
+            <div class="metric">
+              <span>Need Assets</span>
+              <strong id="plan-episodes-need-assets">0</strong>
+            </div>
+          </div>
+          <a class="dashboard-link" href="/operations">Open Interview Operations</a>
+          <a class="dashboard-link" href="/dashboard">Open Guest Dashboard</a>
+        </div>
+      </header>
+
+      <main class="main-grid operations-grid">
+        <section class="panel operations-form-panel">
+          <div class="operations-section">
+            <div class="section-heading">
+              <p class="eyebrow">Episode Pipeline</p>
+              <h2>Add Or Update Episode</h2>
+              <p class="hero-copy section-copy">
+                Use this right after recording so the planner can weigh readiness, promo assets, category balance, and timing.
+              </p>
+            </div>
+
+            <form id="episode-form" class="guest-form">
+              <label>
+                Guest Name
+                <input name="guest_name" type="text" required />
+              </label>
+              <label>
+                Guest Email
+                <input name="guest_email" type="email" />
+              </label>
+              <label>
+                Website
+                <input name="website" type="url" />
+              </label>
+              <label class="full-width">
+                Episode Title
+                <input name="episode_title" type="text" required />
+              </label>
+              <label>
+                Topic
+                <input name="topic" type="text" />
+              </label>
+              <label>
+                Category
+                <input name="category" type="text" list="episode-category-options" />
+                <small class="field-hint">Choose an existing Mirror Talk category or type a new one.</small>
+              </label>
+              <datalist id="episode-category-options"></datalist>
+              <label>
+                Interview Date
+                <input name="interview_date" type="date" />
+              </label>
+              <label>
+                Recording Date
+                <input name="recording_date" type="date" />
+              </label>
+              <label>
+                Release Date
+                <input name="release_date" type="datetime-local" />
+              </label>
+              <label>
+                Release Status
+                <select name="release_status">
+                  <option value="unplanned">Unplanned</option>
+                  <option value="scheduled">Scheduled</option>
+                  <option value="released">Released</option>
+                </select>
+              </label>
+              <label>
+                Production Status
+                <select name="production_status">
+                  <option value="idea">Idea</option>
+                  <option value="recorded">Recorded</option>
+                  <option value="editing">Editing</option>
+                  <option value="ready">Ready</option>
+                  <option value="released">Released</option>
+                </select>
+              </label>
+              <label>
+                Promotion Status
+                <select name="promotion_status">
+                  <option value="unknown">Unknown</option>
+                  <option value="needs_assets">Needs Assets</option>
+                  <option value="ready">Ready</option>
+                  <option value="released">Released</option>
+                </select>
+              </label>
+              <label>
+                Priority Score
+                <input name="priority_score" type="number" min="0" max="10" step="0.5" value="0" />
+              </label>
+              <label>
+                Legacy Episode Number
+                <input name="legacy_episode_number" type="text" />
+              </label>
+              <label>
+                Riverside Status
+                <input name="riverside_status" type="text" placeholder="Processing / Restoring / blank" />
+              </label>
+              <label class="full-width">
+                Recommendation Reason
+                <textarea name="recommendation_reason" rows="2"></textarea>
+              </label>
+              <label class="full-width">
+                Notes
+                <textarea name="notes" rows="3"></textarea>
+              </label>
+              <div class="form-actions full-width">
+                <button type="submit" class="primary-button">Save Episode</button>
+              </div>
+            </form>
+
+            <p id="episode-message" class="message" aria-live="polite"></p>
+          </div>
+
+          <details class="operations-tool">
+            <summary>
+              <div>
+                <p class="eyebrow">Legacy Episode Files</p>
+                <h2>Import Release History Or Queue CSV</h2>
+                <p class="tool-copy">Use this to backfill the yearly release sheets and the Not Yet Released queue into the planner.</p>
+              </div>
+            </summary>
+
+            <div class="operations-tool-body">
+              <form id="episode-import-form" class="upload-form" enctype="multipart/form-data">
+                <label>
+                  Episode CSV
+                  <input name="file" type="file" accept=".csv,text/csv" required />
+                </label>
+                <div class="form-actions">
+                  <button type="submit" class="secondary-button">Import Episode CSV</button>
+                </div>
+              </form>
+
+              <p id="episode-import-message" class="message" aria-live="polite"></p>
+            </div>
+          </details>
+
+          <details class="operations-tool">
+            <summary>
+              <div>
+                <p class="eyebrow">Flexible Export</p>
+                <h2>Export Lists As CSV Or Excel</h2>
+                <p class="tool-copy">Export exactly the fields you need, from a full episode sheet to a simple name-and-email list.</p>
+              </div>
+            </summary>
+
+            <div class="operations-tool-body">
+              <form id="planning-export-form" class="guest-form">
+                <label>
+                  List To Export
+                  <select id="export-list-name" name="list_name">
+                    <option value="episodes">Episodes</option>
+                    <option value="recommendations">Recommendations</option>
+                    <option value="interviews">Interviews</option>
+                    <option value="guests">Guests</option>
+                  </select>
+                </label>
+                <label>
+                  Format
+                  <select name="format">
+                    <option value="csv">CSV</option>
+                    <option value="xlsx">Excel (.xlsx)</option>
+                  </select>
+                </label>
+                <fieldset class="full-width export-fieldset">
+                  <legend>Fields</legend>
+                  <div id="export-fields" class="export-field-grid"></div>
+                </fieldset>
+                <div class="form-actions full-width">
+                  <button type="submit" class="secondary-button">Export Selected Fields</button>
+                </div>
+              </form>
+
+              <p id="planning-export-message" class="message" aria-live="polite"></p>
+            </div>
+          </details>
+        </section>
+
+        <section class="panel list-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Scheduling Intelligence</p>
+              <h2>Recommended Next Releases</h2>
+            </div>
+          </div>
+
+          <div id="recommendation-list" class="guest-list"></div>
+
+          <div class="section-heading top-spaced section-heading-inline">
+            <div>
+              <p class="eyebrow">Release Planning</p>
+              <h2>Episodes</h2>
+            </div>
+            <button id="planning-refresh-button" class="secondary-button" type="button">Refresh</button>
+          </div>
+
+          <div id="episode-list" class="guest-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/planning.js" defer></script>
+  </body>
+</html>

@@ -241,16 +241,22 @@ class GuestWebService:
     def list_operations(self) -> Dict[str, Any]:
         """Return the current interview and episode operations data."""
         interviews = self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
-        episodes = self.database.list_episodes()
         reminder_candidates = [self._serialize_interview_reminder(candidate) for candidate in self.get_due_weekly_reminders()]
         return {
             "stats": self.database.get_operations_stats(),
             "interviews": interviews,
+            "reminder_candidates": reminder_candidates,
+            "calendar_sync_enabled": self._build_google_calendar_client() is not None,
+        }
+
+    def list_planning(self) -> Dict[str, Any]:
+        """Return episode planning data separate from interview operations."""
+        episodes = self.database.list_episodes()
+        return {
+            "stats": self._build_episode_stats(episodes),
             "episodes": episodes,
             "recommendations": build_release_recommendations(episodes, reference=datetime.now()),
             "available_categories": self.database.list_episode_categories(),
-            "reminder_candidates": reminder_candidates,
-            "calendar_sync_enabled": self._build_google_calendar_client() is not None,
         }
 
     def export_guests_csv(self) -> str:
@@ -334,6 +340,38 @@ class GuestWebService:
             episodes = self.database.list_episodes()
             return build_release_recommendations(episodes, reference=datetime.now())
         raise WebInterfaceError("That list cannot be exported.")
+
+    @staticmethod
+    def _build_episode_stats(episodes: list[Dict[str, Any]]) -> Dict[str, int]:
+        """Build lightweight planning stats from episode records."""
+        released = 0
+        scheduled = 0
+        unreleased = 0
+        promo_ready = 0
+        needs_assets = 0
+
+        for episode in episodes:
+            release_status = _normalize_text(episode.get("release_status")).lower()
+            promo_status = _normalize_text(episode.get("promotion_status")).lower()
+            if release_status == "released":
+                released += 1
+            else:
+                unreleased += 1
+            if release_status == "scheduled":
+                scheduled += 1
+            if promo_status in {"ready", "released"}:
+                promo_ready += 1
+            elif promo_status == "needs_assets":
+                needs_assets += 1
+
+        return {
+            "episodes_total": len(episodes),
+            "episodes_released": released,
+            "episodes_scheduled": scheduled,
+            "episodes_unreleased": unreleased,
+            "episodes_promo_ready": promo_ready,
+            "episodes_need_assets": needs_assets,
+        }
 
     @staticmethod
     def _records_to_csv(records: list[Dict[str, Any]], fields: list[str]) -> str:
@@ -952,6 +990,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._serve_static("operations.html")
             return
 
+        if self.path in {"/planning", "/planning.html"}:
+            if not self._is_authorized_dashboard_request():
+                self._send_basic_auth_challenge()
+                return
+            self._serve_static("planning.html")
+            return
+
         if self.path.startswith("/static/"):
             relative_path = self.path.removeprefix("/static/")
             self._serve_static(relative_path)
@@ -984,6 +1029,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.list_operations())
+            return
+
+        if self.path == "/api/planning":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.list_planning())
             return
 
         if self.path == "/api/google-calendar/sync":

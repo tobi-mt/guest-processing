@@ -208,7 +208,7 @@ def test_web_service_can_import_episode_history_and_queue_csvs(temp_db):
     released_result = service.import_episode_file("MT Guest List - 2026.csv", released_csv)
     queue_result = service.import_episode_file("MT Guest List - Not Yet Released.csv", queue_csv)
 
-    episodes = service.list_operations()["episodes"]
+    episodes = service.list_planning()["episodes"]
 
     assert released_result["imported"] == 1
     assert queue_result["imported"] == 1
@@ -509,11 +509,12 @@ def test_web_service_can_create_interview_and_episode_records(temp_db):
     )
 
     operations = service.list_operations()
+    planning = service.list_planning()
 
     assert interview["calendar_event_id"] == "event_ops_1"
     assert episode["episode_title"] == "Healing Through Hard Seasons"
     assert len(operations["interviews"]) == 1
-    assert len(operations["episodes"]) == 1
+    assert len(planning["episodes"]) == 1
 
 
 def test_operations_expose_known_episode_categories_for_guided_input(temp_db):
@@ -550,7 +551,60 @@ def test_operations_expose_known_episode_categories_for_guided_input(temp_db):
 
     operations = service.list_operations()
 
-    assert operations["available_categories"][:2] == ["Personal Development", "Finance"]
+    planning = service.list_planning()
+
+    assert planning["available_categories"][:2] == ["Personal Development", "Finance"]
+
+
+def test_planning_stats_separate_release_overview_from_interview_ops(temp_db):
+    """Planning payload should expose episode-specific overview stats on its own page."""
+    service = GuestWebService(temp_db.db_path)
+
+    service.create_episode(
+        {
+            "guest_name": "Released Guest",
+            "guest_email": "released@example.com",
+            "episode_title": "Released Episode",
+            "topic": "Released Episode",
+            "category": "Personal Development",
+            "release_status": "released",
+            "production_status": "released",
+            "promotion_status": "released",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Scheduled Guest",
+            "guest_email": "scheduled@example.com",
+            "episode_title": "Scheduled Episode",
+            "topic": "Scheduled Episode",
+            "category": "Finance",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Needs Assets Guest",
+            "guest_email": "assets@example.com",
+            "episode_title": "Needs Assets Episode",
+            "topic": "Needs Assets Episode",
+            "category": "Health",
+            "release_status": "unplanned",
+            "production_status": "recorded",
+            "promotion_status": "needs_assets",
+        }
+    )
+
+    planning = service.list_planning()
+
+    assert planning["stats"]["episodes_total"] == 3
+    assert planning["stats"]["episodes_released"] == 1
+    assert planning["stats"]["episodes_scheduled"] == 1
+    assert planning["stats"]["episodes_unreleased"] == 2
+    assert planning["stats"]["episodes_promo_ready"] == 2
+    assert planning["stats"]["episodes_need_assets"] == 1
 
 
 def test_episode_recommendations_prefer_variety_and_ready_queue(temp_db):
@@ -608,10 +662,10 @@ def test_episode_recommendations_prefer_variety_and_ready_queue(temp_db):
         }
     )
 
-    operations = service.list_operations()
+    planning = service.list_planning()
 
-    assert operations["recommendations"][0]["guest_name"] == "Finance Guest"
-    assert operations["recommendations"][0]["recommended_release_date"].endswith("17:00:00")
+    assert planning["recommendations"][0]["guest_name"] == "Finance Guest"
+    assert planning["recommendations"][0]["recommended_release_date"].endswith("17:00:00")
 
 
 def test_episode_recommendations_factor_seasonality_promo_readiness_and_guest_diversity(temp_db):
@@ -671,8 +725,8 @@ def test_episode_recommendations_factor_seasonality_promo_readiness_and_guest_di
         }
     )
 
-    operations = service.list_operations()
-    top_recommendation = operations["recommendations"][0]
+    planning = service.list_planning()
+    top_recommendation = planning["recommendations"][0]
 
     assert top_recommendation["guest_name"] == "Jordan Rivers"
     assert "seasonal" in top_recommendation["recommendation_reason"] or "March" in top_recommendation["recommendation_reason"]
