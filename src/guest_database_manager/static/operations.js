@@ -25,6 +25,7 @@ let activeReminderPreset = "all";
 let activeInterviewPreset = "all";
 let activeInterviewEditorId = null;
 let activeInterviewFeedback = { id: null, text: "", tone: "" };
+let activeInterviewActionFeedback = { id: null, text: "", tone: "" };
 let visibleReminderCount = 8;
 let visibleInterviewCount = 10;
 
@@ -119,6 +120,13 @@ function createFieldMarkup(label, inputMarkup, fullWidth = false) {
       ${inputMarkup}
     </label>
   `;
+}
+
+function actionFeedbackMarkup(feedback) {
+  if (!feedback?.text) {
+    return "";
+  }
+  return `<p class="composer-feedback ${feedback.tone || ""}">${feedback.text}</p>`;
 }
 
 function populateInterviewYearOptions(interviews) {
@@ -415,6 +423,7 @@ function renderInterviews(interviews, totalCount) {
         ${calendarButton}
         <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
       </div>
+      <div class="card-action-feedback">${activeInterviewActionFeedback.id === interview.id ? actionFeedbackMarkup(activeInterviewActionFeedback) : ""}</div>
       <div class="inline-editor hidden" data-interview-editor></div>
       <div class="operations-preview hidden" data-interview-reminder-preview></div>
     `;
@@ -427,6 +436,7 @@ function renderInterviews(interviews, totalCount) {
     const deleteButton = card.querySelector("[data-interview-action='delete']");
     const editorNode = card.querySelector("[data-interview-editor]");
     const reminderPreviewNode = card.querySelector("[data-interview-reminder-preview]");
+    const actionFeedbackNode = card.querySelector(".card-action-feedback");
 
     editButton.addEventListener("click", () => {
       activeInterviewEditorId = activeInterviewEditorId === interview.id ? null : interview.id;
@@ -452,6 +462,8 @@ function renderInterviews(interviews, totalCount) {
 
         previewReminderButton.disabled = true;
         previewReminderButton.textContent = "Loading...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Loading reminder preview for ${interview.guest_name || "guest"}...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         try {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/reminder-template`);
           reminderPreviewNode.classList.remove("hidden");
@@ -460,7 +472,11 @@ function renderInterviews(interviews, totalCount) {
             <p>To: ${interview.guest_email}</p>
             <pre>${preview.body}</pre>
           `;
+          activeInterviewActionFeedback = { id: interview.id, text: `Reminder preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
           setMessage(interviewMessage, error.message, "error");
         } finally {
           previewReminderButton.disabled = false;
@@ -478,6 +494,8 @@ function renderInterviews(interviews, totalCount) {
 
         sendReminderButton.disabled = true;
         sendReminderButton.textContent = "Sending...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Sending reminder to ${interview.guest_name || interview.guest_email}...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         try {
           await fetchJSON(`/api/interviews/${interview.id}/send-reminder`, {
             method: "POST",
@@ -485,9 +503,12 @@ function renderInterviews(interviews, totalCount) {
           });
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Reminder sent to ${interview.guest_name || interview.guest_email}.</p>`;
+          activeInterviewActionFeedback = { id: interview.id, text: `Reminder sent to ${interview.guest_name || interview.guest_email}.`, tone: "success" };
           setMessage(interviewMessage, `Reminder sent to ${interview.guest_name || interview.guest_email}.`, "success");
           await loadOperations();
         } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          renderOperations();
           setMessage(interviewMessage, error.message, "error");
           sendReminderButton.disabled = false;
           sendReminderButton.textContent = "Send Reminder";
@@ -499,14 +520,19 @@ function renderInterviews(interviews, totalCount) {
       calendarPushButton.addEventListener("click", async () => {
         calendarPushButton.disabled = true;
         calendarPushButton.textContent = "Updating...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Updating Google Calendar for ${interview.guest_name || "guest"}...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         try {
           await fetchJSON(`/api/interviews/${interview.id}/push-to-calendar`, {
             method: "POST",
             body: JSON.stringify({}),
           });
+          activeInterviewActionFeedback = { id: interview.id, text: `Google Calendar updated for ${interview.guest_name || "guest"}.`, tone: "success" };
           setMessage(interviewMessage, `Updated Google Calendar for ${interview.guest_name}.`, "success");
           await loadOperations();
         } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
           setMessage(interviewMessage, error.message, "error");
           calendarPushButton.disabled = false;
           calendarPushButton.textContent = "Update Google Calendar Event";
@@ -522,11 +548,16 @@ function renderInterviews(interviews, totalCount) {
 
       deleteButton.disabled = true;
       deleteButton.textContent = "Deleting...";
+      activeInterviewActionFeedback = { id: interview.id, text: `Deleting ${label}...`, tone: "pending" };
+      actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
       try {
         await fetchJSON(`/api/interviews/${interview.id}`, { method: "DELETE" });
+        activeInterviewActionFeedback = { id: interview.id, text: `${label} deleted.`, tone: "success" };
         setMessage(interviewMessage, `Deleted ${label}.`, "success");
         await loadOperations();
       } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         setMessage(interviewMessage, error.message, "error");
         deleteButton.disabled = false;
         deleteButton.textContent = "Delete";

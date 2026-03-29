@@ -38,6 +38,7 @@ let activeRecommendationPreset = "all";
 let activeEpisodePreset = "all";
 let activeEpisodeEditorId = null;
 let activeEpisodeFeedback = { id: null, text: "", tone: "" };
+let activeEpisodeActionFeedback = { id: null, text: "", tone: "" };
 let visibleRecommendationCount = 6;
 let visibleEpisodeCount = 10;
 
@@ -244,6 +245,13 @@ function createFieldMarkup(label, inputMarkup, fullWidth = false) {
       ${inputMarkup}
     </label>
   `;
+}
+
+function actionFeedbackMarkup(feedback) {
+  if (!feedback?.text) {
+    return "";
+  }
+  return `<p class="composer-feedback ${feedback.tone || ""}">${feedback.text}</p>`;
 }
 
 function deriveRecommendationSignals(episode) {
@@ -699,6 +707,7 @@ function renderEpisodes(episodes, totalCount) {
         <button type="button" class="ghost-button" data-episode-action="form">Open In Form</button>
         <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
       </div>
+      <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
       <div class="inline-editor hidden" data-episode-editor></div>
     `;
 
@@ -706,6 +715,7 @@ function renderEpisodes(episodes, totalCount) {
     const formButton = card.querySelector("[data-episode-action='form']");
     const deleteButton = card.querySelector("[data-episode-action='delete']");
     const editorNode = card.querySelector("[data-episode-editor]");
+    const actionFeedbackNode = card.querySelector(".card-action-feedback");
     editButton.addEventListener("click", () => {
       activeEpisodeEditorId = activeEpisodeEditorId === episode.id ? null : episode.id;
       renderPlanning();
@@ -726,11 +736,16 @@ function renderEpisodes(episodes, totalCount) {
 
       deleteButton.disabled = true;
       deleteButton.textContent = "Deleting...";
+      activeEpisodeActionFeedback = { id: episode.id, text: `Deleting ${label}...`, tone: "pending" };
+      actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
       try {
         await fetchJSON(`/api/episodes/${episode.id}`, { method: "DELETE" });
+        activeEpisodeActionFeedback = { id: episode.id, text: `${label} deleted.`, tone: "success" };
         setMessage(episodeMessage, `Deleted ${label}.`, "success");
         await loadPlanning();
       } catch (error) {
+        activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
         setMessage(episodeMessage, error.message, "error");
         deleteButton.disabled = false;
         deleteButton.textContent = "Delete";
@@ -795,10 +810,20 @@ function renderRecommendations(recommendations, totalCount) {
         <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
         <button type="button" class="secondary-button" data-recommendation-action="edit">Review In Form</button>
       </div>
+      <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
     `;
     const scheduleButton = card.querySelector("[data-recommendation-action='schedule']");
     const editButton = card.querySelector("[data-recommendation-action='edit']");
+    const actionFeedbackNode = card.querySelector(".card-action-feedback");
     scheduleButton.addEventListener("click", async () => {
+      scheduleButton.disabled = true;
+      scheduleButton.textContent = "Scheduling...";
+      activeEpisodeActionFeedback = {
+        id: episode.id,
+        text: `Scheduling ${episode.episode_title || episode.guest_name || "episode"}...`,
+        tone: "pending",
+      };
+      actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
       try {
         const payload = {
           ...episode,
@@ -809,6 +834,11 @@ function renderRecommendations(recommendations, totalCount) {
           method: "POST",
           body: JSON.stringify(payload),
         });
+        activeEpisodeActionFeedback = {
+          id: episode.id,
+          text: `Scheduled for ${formatDateTime(episode.recommended_release_date)}.`,
+          tone: "success",
+        };
         setMessage(
           episodeMessage,
           `Scheduled ${episode.episode_title || episode.guest_name || "episode"} for ${formatDateTime(episode.recommended_release_date)}.`,
@@ -816,7 +846,11 @@ function renderRecommendations(recommendations, totalCount) {
         );
         await loadPlanning();
       } catch (error) {
+        activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
         setMessage(episodeMessage, error.message, "error");
+        scheduleButton.disabled = false;
+        scheduleButton.textContent = "Use Recommended Slot";
       }
     });
     editButton.addEventListener("click", () => {

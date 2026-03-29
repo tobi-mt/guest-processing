@@ -638,6 +638,10 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.card-action-feedback {
+  margin-top: 12px;
+}
+
 @media (max-width: 900px) {
   .hero,
   .main-grid {

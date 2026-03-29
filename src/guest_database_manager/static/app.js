@@ -33,6 +33,7 @@ let latestPayload = null;
 let activeEmailComposer = null;
 let activeGuestEditor = null;
 let activeGuestPreset = "all";
+let activeGuestActionFeedback = null;
 let visibleGuestCount = GUEST_PAGE_SIZE;
 
 function buildGuestScopedLink(path, guest) {
@@ -49,6 +50,14 @@ function composerFeedbackMarkup(feedback) {
 }
 
 function editorFeedbackMarkup(feedback) {
+  if (!feedback?.text) {
+    return "";
+  }
+
+  return `<p class="composer-feedback ${feedback.tone || ""}">${escapeHtml(feedback.text)}</p>`;
+}
+
+function actionFeedbackMarkup(feedback) {
   if (!feedback?.text) {
     return "";
   }
@@ -427,6 +436,7 @@ function renderGuests(payload) {
     const statusPill = node.querySelector(".status-pill");
     const composer = node.querySelector(".email-composer");
     const editor = node.querySelector(".inline-editor");
+    const actionFeedbackNode = node.querySelector(".card-action-feedback");
 
     node.querySelector(".guest-name").textContent = guest.full_name || "Unnamed Guest";
     node.querySelector(".guest-meta").textContent = guest.email || "No email provided";
@@ -444,6 +454,8 @@ function renderGuests(payload) {
     }
 
     renderInlineEditor(editor, guest);
+    actionFeedbackNode.innerHTML =
+      activeGuestActionFeedback?.guestId === guest.id ? actionFeedbackMarkup(activeGuestActionFeedback) : "";
 
     if (
       activeEmailComposer &&
@@ -573,7 +585,11 @@ function renderGuests(payload) {
             };
             renderGuests(latestPayload);
           } else if (action === "copy") {
+            activeGuestActionFeedback = { guestId: guest.id, text: `Copying ${guest.full_name || "guest"}...`, tone: "pending" };
+            renderGuests(latestPayload);
             await copyGuestIntake(guest);
+            activeGuestActionFeedback = { guestId: guest.id, text: `Copied ${guest.full_name}'s intake details.`, tone: "success" };
+            renderGuests(latestPayload);
             setMessage(`Copied ${guest.full_name}'s intake details.`, "success");
           } else if (action === "accepted_email" || action === "rejected_email") {
             activeGuestEditor = null;
@@ -589,25 +605,36 @@ function renderGuests(payload) {
             };
             renderGuests(latestPayload);
           } else if (action === "delete") {
+            activeGuestActionFeedback = { guestId: guest.id, text: `Deleting ${guest.full_name || "guest"}...`, tone: "pending" };
+            renderGuests(latestPayload);
             await fetchJSON(`/api/guests/${guest.id}`, { method: "DELETE" });
+            activeGuestActionFeedback = null;
             setMessage(`Deleted ${guest.full_name}.`, "success");
           } else if (action === "skipped") {
             const skipReason = window.prompt("Optional skip reason:") || "";
+            activeGuestActionFeedback = { guestId: guest.id, text: `Skipping ${guest.full_name || "guest"}...`, tone: "pending" };
+            renderGuests(latestPayload);
             await fetchJSON(`/api/guests/${guest.id}/status`, {
               method: "POST",
               body: JSON.stringify({ status: action, skip_reason: skipReason }),
             });
+            activeGuestActionFeedback = { guestId: guest.id, text: `${guest.full_name || "Guest"} marked skipped.`, tone: "success" };
             setMessage(`Updated ${guest.full_name} to skipped.`, "success");
           } else {
+            activeGuestActionFeedback = { guestId: guest.id, text: `Updating ${guest.full_name || "guest"}...`, tone: "pending" };
+            renderGuests(latestPayload);
             await fetchJSON(`/api/guests/${guest.id}/status`, {
               method: "POST",
               body: JSON.stringify({ status: action }),
             });
+            activeGuestActionFeedback = { guestId: guest.id, text: `${guest.full_name || "Guest"} updated to ${action}.`, tone: "success" };
             setMessage(`Updated ${guest.full_name} to ${action}.`, "success");
           }
 
           await loadGuests();
         } catch (error) {
+          activeGuestActionFeedback = { guestId: guest.id, text: error.message, tone: "error" };
+          renderGuests(latestPayload);
           setMessage(error.message, "error");
         }
       });
