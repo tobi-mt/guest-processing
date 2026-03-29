@@ -629,6 +629,34 @@ class GuestWebService:
             "interviews": synced,
         }
 
+    def push_interview_to_google_calendar(self, interview_id: int) -> Dict[str, Any]:
+        """Push a linked interview record back to its Google Calendar event."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+        if not _normalize_text(interview.get("calendar_event_id")):
+            raise WebInterfaceError("This interview is not linked to a Google Calendar event.")
+
+        client = self._build_google_calendar_client()
+        if client is None:
+            raise WebInterfaceError("Google Calendar sync is not configured on the server.")
+
+        try:
+            updated_event = client.update_event_from_interview(interview)
+        except GoogleCalendarSyncError as exc:
+            raise WebInterfaceError(str(exc)) from exc
+
+        updates = {
+            "event_updated_at": updated_event.get("updated", interview.get("event_updated_at")),
+            "last_synced_at": datetime.now().astimezone().isoformat(),
+            "calendar_source": interview.get("calendar_source") or "google_calendar",
+        }
+        self.database.update_interview(interview_id, updates)
+        refreshed = self.database.get_interview_by_id(interview_id)
+        if not refreshed:
+            raise WebInterfaceError("Interview not found after Google Calendar update.")
+        return self._serialize_interview_reminder(refreshed)
+
     @staticmethod
     def _parse_datetime(value: Any) -> Optional[datetime]:
         """Parse a stored interview datetime."""
@@ -1032,6 +1060,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/interviews/"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            if self.path.endswith("/push-to-calendar"):
+                interview_id = self._extract_record_id(self.path[: -len("/push-to-calendar")], "/api/interviews/")
+                if interview_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                    return
+
+                try:
+                    interview = self.service.push_interview_to_google_calendar(interview_id)
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, interview)
                 return
 
             if self.path.endswith("/send-reminder"):

@@ -68,6 +68,9 @@ function renderInterviews(interviews) {
   interviews.forEach((interview) => {
     const card = document.createElement("article");
     card.className = "operations-card";
+    const calendarButton = interview.calendar_event_id
+      ? `<button type="button" class="secondary-button" data-calendar-action="push">Update Google Calendar Event</button>`
+      : "";
     card.innerHTML = `
       <h3>${interview.guest_name || "Unnamed guest"}</h3>
       <p>${interview.title || "Mirror Talk interview"}</p>
@@ -77,7 +80,31 @@ function renderInterviews(interviews) {
         <span>Confirmation: ${interview.confirmation_status || "pending"}</span>
         <span>Reminder: ${interview.reminder_status || "not_scheduled"}</span>
       </div>
+      <div class="operations-actions">
+        ${calendarButton}
+      </div>
     `;
+
+    const calendarPushButton = card.querySelector("[data-calendar-action='push']");
+    if (calendarPushButton) {
+      calendarPushButton.addEventListener("click", async () => {
+        calendarPushButton.disabled = true;
+        calendarPushButton.textContent = "Updating...";
+        try {
+          await fetchJSON(`/api/interviews/${interview.id}/push-to-calendar`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          setMessage(interviewMessage, `Updated Google Calendar for ${interview.guest_name}.`, "success");
+          await loadOperations();
+        } catch (error) {
+          setMessage(interviewMessage, error.message, "error");
+          calendarPushButton.disabled = false;
+          calendarPushButton.textContent = "Update Google Calendar Event";
+        }
+      });
+    }
+
     interviewList.appendChild(card);
   });
 }

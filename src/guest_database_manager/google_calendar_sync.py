@@ -112,6 +112,82 @@ class GoogleCalendarSyncClient:
             if item.get("start", {}).get("dateTime") and self._looks_like_podcast_event(item, query=query)
         ]
 
+    def get_event(self, event_id: str) -> Dict[str, Any]:
+        """Fetch a single Google Calendar event."""
+        access_token = self._get_access_token()
+        url = self._event_url(event_id)
+
+        try:
+            response = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
+
+        if not response.ok:
+            raise GoogleCalendarSyncError(
+                f"Google Calendar event fetch failed: {response.text.strip() or response.status_code}"
+            )
+
+        return response.json()
+
+    def update_event_from_interview(self, interview: Dict[str, Any]) -> Dict[str, Any]:
+        """Push selected interview fields back to the linked Google Calendar event."""
+        event_id = (interview.get("calendar_event_id") or "").strip()
+        if not event_id:
+            raise GoogleCalendarSyncError("This interview is not linked to a Google Calendar event.")
+
+        existing_event = self.get_event(event_id)
+        existing_start = self._parse_event_datetime(existing_event.get("start", {}).get("dateTime", ""))
+        existing_end = self._parse_event_datetime(existing_event.get("end", {}).get("dateTime", ""))
+        new_start = self._parse_event_datetime(interview.get("scheduled_for", ""))
+        if not new_start:
+            raise GoogleCalendarSyncError("Interview date is missing or invalid.")
+
+        duration = timedelta(hours=1)
+        if existing_start and existing_end and existing_end > existing_start:
+            duration = existing_end - existing_start
+
+        timezone_name = (interview.get("timezone") or existing_event.get("start", {}).get("timeZone") or self.default_timezone).strip()
+        new_end = new_start + duration
+
+        payload: Dict[str, Any] = {
+            "summary": (interview.get("title") or existing_event.get("summary") or f"Mirror Talk conversation with {interview.get('guest_name', 'Guest')}").strip(),
+            "location": (interview.get("join_url") or existing_event.get("location") or "").strip(),
+            "start": {
+                "dateTime": new_start.isoformat(),
+                "timeZone": timezone_name,
+            },
+            "end": {
+                "dateTime": new_end.isoformat(),
+                "timeZone": timezone_name,
+            },
+        }
+
+        access_token = self._get_access_token()
+        url = self._event_url(event_id)
+        try:
+            response = requests.patch(
+                url,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
+
+        if not response.ok:
+            raise GoogleCalendarSyncError(
+                f"Google Calendar event update failed: {response.text.strip() or response.status_code}"
+            )
+
+        return response.json()
+
     def normalize_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a Google Calendar event payload into an interview record shape."""
         attendees = event.get("attendees") or []
@@ -144,6 +220,12 @@ class GoogleCalendarSyncClient:
             "reminder_status": "not_scheduled",
             "notes": self._build_notes(event),
         }
+
+    def _event_url(self, event_id: str) -> str:
+        """Build the Google Calendar event URL for a single event."""
+        base = self.EVENTS_URL_TEMPLATE.format(calendar_id=requests.utils.quote(self.calendar_id, safe=""))
+        encoded_event_id = requests.utils.quote(event_id, safe="")
+        return f"{base}/{encoded_event_id}"
 
     def _pick_guest_attendee(self, attendees: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Choose the attendee that most likely represents the guest."""
@@ -203,6 +285,21 @@ class GoogleCalendarSyncClient:
             return match.group(0)
 
         return ""
+
+    @staticmethod
+    def _parse_event_datetime(value: Any) -> Optional[datetime]:
+        """Parse Google/SQLite datetime strings into datetime objects."""
+        text = str(value or "").strip()
+        if not text:
+            return None
+
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                return datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return None
 
     @staticmethod
     def _looks_like_podcast_event(event: Dict[str, Any], *, query: str = "") -> bool:

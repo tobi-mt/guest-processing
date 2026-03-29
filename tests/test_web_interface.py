@@ -627,6 +627,43 @@ def test_web_service_can_sync_google_calendar_interviews(monkeypatch, temp_db):
     assert service.list_operations()["interviews"][0]["calendar_source"] == "google_calendar"
 
 
+def test_web_service_can_push_interview_updates_to_google_calendar(monkeypatch, temp_db):
+    """Operators should be able to explicitly push an interview back to its linked Google event."""
+
+    class StubCalendarClient:
+        def update_event_from_interview(self, interview):
+            assert interview["calendar_event_id"] == "google_event_1"
+            assert interview["title"] == "Updated Mirror Talk conversation"
+            assert interview["scheduled_for"] == "2026-03-31 18:30:00"
+            return {
+                "updated": "2026-03-30T12:00:00Z",
+            }
+
+    monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
+    monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
+    monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Updated Mirror Talk conversation",
+            "scheduled_for": "2026-03-31 18:30:00",
+            "timezone": "Europe/Berlin",
+            "calendar_event_id": "google_event_1",
+        }
+    )
+    monkeypatch.setattr(service, "_build_google_calendar_client", lambda: StubCalendarClient())
+
+    pushed = service.push_interview_to_google_calendar(interview["id"])
+
+    assert pushed["calendar_event_id"] == "google_event_1"
+    assert pushed["event_updated_at"] == "2026-03-30T12:00:00Z"
+    assert pushed["calendar_source"] == "google_calendar"
+
+
 def test_google_calendar_sync_recognizes_soulful_podcast_event_markers():
     """Calendar sync should recognize Mirror Talk interview invites from the event body, not only the title."""
     from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
