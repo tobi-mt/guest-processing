@@ -400,6 +400,44 @@ def _theme_keyword_set(episode: Dict[str, Any]) -> set[str]:
     return tokens
 
 
+def _archive_overlap_warning(episode: Dict[str, Any], released_history: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compare an episode with the released archive and classify the overlap."""
+    current_title = _clean_text(episode.get("episode_title"))
+    current_category = _clean_text(episode.get("category"))
+    current_keywords = _theme_keyword_set(episode)
+    if not current_keywords:
+        return {"status": "clear", "message": "", "matched_episode": ""}
+
+    best_match: Dict[str, Any] | None = None
+    best_overlap = 0
+
+    for released in released_history[:40]:
+        released_keywords = _theme_keyword_set(released)
+        overlap = len(current_keywords.intersection(released_keywords))
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_match = released
+
+    if not best_match or best_overlap < 2:
+        return {"status": "clear", "message": "", "matched_episode": ""}
+
+    matched_title = _clean_text(best_match.get("episode_title")) or _clean_text(best_match.get("topic")) or "a past episode"
+    matched_category = _clean_text(best_match.get("category"))
+    same_category = bool(current_category and matched_category and current_category == matched_category)
+
+    if best_overlap >= 4 and same_category:
+        return {
+            "status": "risky",
+            "message": f"very close to the released archive, especially {matched_title}",
+            "matched_episode": matched_title,
+        }
+    return {
+        "status": "revisit",
+        "message": f"touches a familiar theme from {matched_title}, but may still work as a fresh revisit",
+        "matched_episode": matched_title,
+    }
+
+
 def apply_sequence_warnings(recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Flag multi-week sequencing risks across the selected recommendation run."""
     category_counts: Dict[str, int] = {}
@@ -645,6 +683,13 @@ def build_release_recommendations(
             else:
                 watchouts.extend(readiness["blockers"][:2])
 
+            archive_overlap = _archive_overlap_warning(episode, released_history)
+            if archive_overlap["status"] == "risky":
+                score -= 10
+                watchouts.append(archive_overlap["message"])
+            elif archive_overlap["status"] == "revisit":
+                why_now.append(archive_overlap["message"])
+
             candidate = dict(episode)
             candidate["priority_score"] = round(score, 1)
             candidate["recommendation_reason"] = "; ".join(dict.fromkeys(reasons)) or "good fit for the next available slot"
@@ -654,6 +699,7 @@ def build_release_recommendations(
             candidate["promotion_readiness"] = readiness
             candidate["title_suggestions"] = build_episode_title_suggestions(episode)
             candidate["copy_assist"] = build_episode_copy_assist(episode)
+            candidate["archive_overlap"] = archive_overlap
             scored_candidates.append(candidate)
 
         scored_candidates.sort(

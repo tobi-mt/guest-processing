@@ -1049,6 +1049,44 @@ def test_episode_recommendations_include_multi_week_sequence_warnings(temp_db):
     assert any(item["sequence_warnings"] for item in finance_recommendations)
 
 
+def test_episode_recommendations_flag_archive_overlap_without_hard_blocking(temp_db):
+    """Recommendations should warn when a queued episode is too close to a released archive topic."""
+    service = GuestWebService(temp_db.db_path)
+
+    service.create_episode(
+        {
+            "guest_name": "Released Finance Guest",
+            "guest_email": "released-finance@example.com",
+            "episode_title": "Building Calm Under Pressure",
+            "topic": "Building Calm Under Pressure",
+            "category": "Finance",
+            "interview_date": "2025-10-01",
+            "release_date": "2026-03-10",
+            "release_status": "released",
+            "production_status": "released",
+            "promotion_status": "released",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Queued Finance Guest",
+            "guest_email": "queued-finance@example.com",
+            "episode_title": "Building Better Calm Under Pressure",
+            "topic": "Building Better Calm Under Pressure",
+            "category": "Finance",
+            "interview_date": "2025-12-01",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    planning = service.list_planning()
+    recommendation = planning["recommendations"][0]
+
+    assert recommendation["archive_overlap"]["status"] in {"risky", "revisit"}
+    assert recommendation["archive_overlap"]["message"]
+
+
 def test_operations_are_sorted_by_nearest_upcoming_interview_first(temp_db):
     """Operations should prioritize the closest upcoming interview and keep history below."""
     service = GuestWebService(temp_db.db_path)
