@@ -37,6 +37,7 @@ let latestPlanningPayload = {
 let activeRecommendationPreset = "all";
 let activeEpisodePreset = "all";
 let activeEpisodeEditorId = null;
+let activeEpisodeFeedback = { id: null, text: "", tone: "" };
 let visibleRecommendationCount = 6;
 let visibleEpisodeCount = 10;
 
@@ -421,20 +422,34 @@ function renderEpisodeInlineEditor(container, episode) {
   const messageNode = container.querySelector("[data-inline-episode-message]");
   const scheduleButton = container.querySelector("[data-inline-episode-schedule]");
   const cancelButton = container.querySelector("[data-inline-episode-cancel]");
+  const saveButton = form.querySelector("button[type='submit']");
+
+  if (activeEpisodeFeedback.id === episode.id && activeEpisodeFeedback.text) {
+    setMessage(messageNode, activeEpisodeFeedback.text, activeEpisodeFeedback.tone);
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(form).entries());
+    saveButton.disabled = true;
+    saveButton.textContent = "Saving...";
     try {
       await fetchJSON(`/api/episodes/${episode.id}`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      activeEpisodeFeedback = {
+        id: episode.id,
+        text: `Saved ${payload.episode_title || "episode"}.`,
+        tone: "success",
+      };
       setMessage(episodeMessage, `Updated ${payload.episode_title || "episode"}.`, "success");
       activeEpisodeEditorId = episode.id;
       await loadPlanning();
     } catch (error) {
       setMessage(messageNode, error.message, "error");
+      saveButton.disabled = false;
+      saveButton.textContent = "Save Changes";
     }
   });
 
@@ -448,12 +463,19 @@ function renderEpisodeInlineEditor(container, episode) {
     const payload = Object.fromEntries(new FormData(form).entries());
     payload.release_date = formatDateForDateTimeInput(recommendation.recommended_release_date);
     payload.release_status = "scheduled";
+    scheduleButton.disabled = true;
+    scheduleButton.textContent = "Scheduling...";
 
     try {
       await fetchJSON(`/api/episodes/${episode.id}`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      activeEpisodeFeedback = {
+        id: episode.id,
+        text: `Scheduled for ${formatDateTime(recommendation.recommended_release_date)}.`,
+        tone: "success",
+      };
       setMessage(
         episodeMessage,
         `Scheduled ${payload.episode_title || "episode"} for ${formatDateTime(recommendation.recommended_release_date)}.`,
@@ -463,11 +485,14 @@ function renderEpisodeInlineEditor(container, episode) {
       await loadPlanning();
     } catch (error) {
       setMessage(messageNode, error.message, "error");
+      scheduleButton.disabled = false;
+      scheduleButton.textContent = "Schedule Recommended Slot";
     }
   });
 
   cancelButton.addEventListener("click", () => {
     activeEpisodeEditorId = null;
+    activeEpisodeFeedback = { id: null, text: "", tone: "" };
     renderPlanning();
   });
 }

@@ -775,7 +775,7 @@ def test_planning_stats_separate_release_overview_from_interview_ops(temp_db):
     assert planning["stats"]["episodes_released"] == 1
     assert planning["stats"]["episodes_scheduled"] == 1
     assert planning["stats"]["episodes_unreleased"] == 2
-    assert planning["stats"]["episodes_promo_ready"] == 2
+    assert planning["stats"]["episodes_promo_ready"] == 1
     assert planning["stats"]["episodes_need_assets"] == 1
 
 

@@ -24,6 +24,7 @@ let latestOperationsPayload = { interviews: [], reminder_candidates: [], stats: 
 let activeReminderPreset = "all";
 let activeInterviewPreset = "all";
 let activeInterviewEditorId = null;
+let activeInterviewFeedback = { id: null, text: "", tone: "" };
 let visibleReminderCount = 8;
 let visibleInterviewCount = 10;
 
@@ -202,41 +203,65 @@ function renderInterviewInlineEditor(container, interview) {
   const messageNode = container.querySelector("[data-inline-interview-message]");
   const confirmButton = container.querySelector("[data-inline-interview-confirm]");
   const cancelButton = container.querySelector("[data-inline-interview-cancel]");
+  const saveButton = form.querySelector("button[type='submit']");
+
+  if (activeInterviewFeedback.id === interview.id && activeInterviewFeedback.text) {
+    setMessage(messageNode, activeInterviewFeedback.text, activeInterviewFeedback.tone);
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(form).entries());
+    saveButton.disabled = true;
+    saveButton.textContent = "Saving...";
     try {
       await fetchJSON(`/api/interviews/${interview.id}`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      activeInterviewFeedback = {
+        id: interview.id,
+        text: `Saved ${payload.guest_name || "interview"}.`,
+        tone: "success",
+      };
       setMessage(interviewMessage, `Updated ${payload.guest_name || "interview"}.`, "success");
       activeInterviewEditorId = interview.id;
       await loadOperations();
     } catch (error) {
       setMessage(messageNode, error.message, "error");
+      saveButton.disabled = false;
+      saveButton.textContent = "Save Changes";
     }
   });
 
   confirmButton.addEventListener("click", async () => {
     const payload = Object.fromEntries(new FormData(form).entries());
     payload.confirmation_status = "confirmed";
+    confirmButton.disabled = true;
+    confirmButton.textContent = "Confirming...";
     try {
       await fetchJSON(`/api/interviews/${interview.id}`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      activeInterviewFeedback = {
+        id: interview.id,
+        text: `${payload.guest_name || "Interview"} marked confirmed.`,
+        tone: "success",
+      };
       setMessage(interviewMessage, `Marked ${payload.guest_name || "interview"} as confirmed.`, "success");
       activeInterviewEditorId = interview.id;
       await loadOperations();
     } catch (error) {
       setMessage(messageNode, error.message, "error");
+      confirmButton.disabled = false;
+      confirmButton.textContent = "Mark Confirmed";
     }
   });
 
   cancelButton.addEventListener("click", () => {
     activeInterviewEditorId = null;
+    activeInterviewFeedback = { id: null, text: "", tone: "" };
     renderOperations();
   });
 }

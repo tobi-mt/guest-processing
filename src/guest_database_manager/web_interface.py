@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 from openpyxl import Workbook
 
@@ -361,8 +362,8 @@ class GuestWebService:
         released = 0
         scheduled = 0
         unreleased = 0
-        promo_ready = 0
-        needs_assets = 0
+        promo_ready_queue = 0
+        needs_assets_queue = 0
 
         for episode in episodes:
             release_status = _normalize_text(episode.get("release_status")).lower()
@@ -371,20 +372,20 @@ class GuestWebService:
                 released += 1
             else:
                 unreleased += 1
+                if promo_status == "ready":
+                    promo_ready_queue += 1
+                elif promo_status == "needs_assets":
+                    needs_assets_queue += 1
             if release_status == "scheduled":
                 scheduled += 1
-            if promo_status in {"ready", "released"}:
-                promo_ready += 1
-            elif promo_status == "needs_assets":
-                needs_assets += 1
 
         return {
             "episodes_total": len(episodes),
             "episodes_released": released,
             "episodes_scheduled": scheduled,
             "episodes_unreleased": unreleased,
-            "episodes_promo_ready": promo_ready,
-            "episodes_need_assets": needs_assets,
+            "episodes_promo_ready": promo_ready_queue,
+            "episodes_need_assets": needs_assets_queue,
         }
 
     @staticmethod
@@ -1075,44 +1076,46 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path in {"/", "/intake", "/intake.html"}:
+        request_path = urlsplit(self.path).path
+
+        if request_path in {"/", "/intake", "/intake.html"}:
             self._serve_static("intake.html")
             return
 
-        if self.path in {"/dashboard", "/index.html"}:
+        if request_path in {"/dashboard", "/index.html"}:
             if not self._is_authorized_dashboard_request():
                 self._send_basic_auth_challenge()
                 return
             self._serve_static("index.html")
             return
 
-        if self.path in {"/operations", "/operations.html"}:
+        if request_path in {"/operations", "/operations.html"}:
             if not self._is_authorized_dashboard_request():
                 self._send_basic_auth_challenge()
                 return
             self._serve_static("operations.html")
             return
 
-        if self.path in {"/planning", "/planning.html"}:
+        if request_path in {"/planning", "/planning.html"}:
             if not self._is_authorized_dashboard_request():
                 self._send_basic_auth_challenge()
                 return
             self._serve_static("planning.html")
             return
 
-        if self.path.startswith("/static/"):
-            relative_path = self.path.removeprefix("/static/")
+        if request_path.startswith("/static/"):
+            relative_path = request_path.removeprefix("/static/")
             self._serve_static(relative_path)
             return
 
-        if self.path == "/api/guests":
+        if request_path == "/api/guests":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.list_guests())
             return
 
-        if self.path == "/api/export":
+        if request_path == "/api/export":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
@@ -1123,25 +1126,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/exports":
+        if request_path == "/api/exports":
             self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "Use POST for flexible exports"})
             return
 
-        if self.path == "/api/operations":
+        if request_path == "/api/operations":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.list_operations())
             return
 
-        if self.path == "/api/planning":
+        if request_path == "/api/planning":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.list_planning())
             return
 
-        if self.path == "/api/google-calendar/sync":
+        if request_path == "/api/google-calendar/sync":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
@@ -1155,12 +1158,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, result)
             return
 
-        if self.path.startswith("/api/interviews/") and self.path.endswith("/reminder-template"):
+        if request_path.startswith("/api/interviews/") and request_path.endswith("/reminder-template"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
 
-            interview_id = self._extract_record_id(self.path[: -len("/reminder-template")], "/api/interviews/")
+            interview_id = self._extract_record_id(request_path[: -len("/reminder-template")], "/api/interviews/")
             if interview_id is None:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
                 return
