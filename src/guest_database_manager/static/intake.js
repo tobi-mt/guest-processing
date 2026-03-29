@@ -6,6 +6,11 @@ const backButton = document.getElementById("back-button");
 const submitButton = document.getElementById("submit-button");
 const stepCounter = document.getElementById("step-counter");
 const message = document.getElementById("intake-message");
+const progressFill = document.getElementById("progress-fill");
+const progressCaption = document.getElementById("progress-caption");
+const successPanel = document.getElementById("success-panel");
+
+const stepNames = ["Contact", "Story", "Fit"];
 
 let currentStep = 0;
 
@@ -37,6 +42,8 @@ function syncStepUI() {
   nextButton.classList.toggle("hidden", currentStep === steps.length - 1);
   submitButton.classList.toggle("hidden", currentStep !== steps.length - 1);
   stepCounter.textContent = `Step ${currentStep + 1} of ${steps.length}`;
+  progressFill.style.width = `${((currentStep + 1) / steps.length) * 100}%`;
+  progressCaption.textContent = `Currently on ${stepNames[currentStep]}`;
   window.requestAnimationFrame(notifyParentHeight);
 }
 
@@ -57,6 +64,16 @@ function validateCurrentStep() {
 function setMessage(text, tone = "") {
   message.textContent = text;
   message.className = `intake-message ${tone}`.trim();
+}
+
+function showSuccessState() {
+  form.classList.add("hidden");
+  successPanel.classList.remove("hidden");
+}
+
+function hideSuccessState() {
+  form.classList.remove("hidden");
+  successPanel.classList.add("hidden");
 }
 
 nextButton.addEventListener("click", () => {
@@ -96,9 +113,11 @@ form.addEventListener("submit", async (event) => {
     form.reset();
     currentStep = 0;
     syncStepUI();
+    showSuccessState();
     setMessage(data.message || "Thanks for applying.", "success");
     window.requestAnimationFrame(notifyParentHeight);
   } catch (error) {
+    hideSuccessState();
     setMessage(error.message, "error");
     window.requestAnimationFrame(notifyParentHeight);
   }

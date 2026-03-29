@@ -30,7 +30,7 @@ body {
 .intake-shell {
   width: min(1240px, calc(100vw - 28px));
   margin: 0 auto;
-  padding: 22px 0;
+  padding: 22px 0 30px;
   display: grid;
   grid-template-columns: minmax(280px, 360px) 1fr;
   gap: 18px;
@@ -53,6 +53,14 @@ body {
   background:
     linear-gradient(180deg, rgba(255, 251, 245, 0.92), rgba(244, 233, 214, 0.9)),
     linear-gradient(135deg, rgba(15, 93, 79, 0.04), transparent);
+}
+
+.sidebar-kicker {
+  margin: 0 0 14px;
+  color: var(--accent);
+  font-size: 1rem;
+  line-height: 1.5;
+  font-style: italic;
 }
 
 .intake-sidebar h1,
@@ -142,6 +150,17 @@ body {
   color: var(--muted);
 }
 
+.sidebar-quote {
+  margin: 6px 0 0;
+  padding: 18px 20px;
+  border-left: 3px solid rgba(189, 138, 46, 0.55);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.38);
+  color: #5e4934;
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
 .step-list {
   list-style: none;
   padding: 0;
@@ -155,12 +174,16 @@ body {
   border-radius: 18px;
   background: rgba(106, 87, 66, 0.08);
   color: var(--muted);
+  border: 1px solid transparent;
+  transition: background 180ms ease, transform 180ms ease, border-color 180ms ease;
 }
 
 .step-item.active {
   background: linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.85));
   color: var(--accent);
   font-weight: 700;
+  border-color: rgba(15, 93, 79, 0.12);
+  transform: translateX(4px);
 }
 
 .intake-panel {
@@ -182,6 +205,36 @@ body {
   line-height: 1.55;
 }
 
+.progress-strip {
+  margin: 18px 0 8px;
+  display: grid;
+  gap: 10px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(106, 87, 66, 0.12);
+}
+
+.progress-bar span {
+  display: block;
+  height: 100%;
+  width: 33.333%;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--accent), #15715f);
+  box-shadow: 0 8px 18px rgba(15, 93, 79, 0.18);
+  transition: width 220ms ease;
+}
+
+.progress-caption {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
 .admin-link {
   color: var(--accent);
   text-decoration: none;
@@ -196,8 +249,8 @@ body {
 .form-step {
   display: none;
   grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  padding: 12px 0 6px;
+  gap: 18px;
+  padding: 18px 0 10px;
   animation: fade-in 180ms ease;
 }
 
@@ -211,9 +264,15 @@ body {
 
 label {
   display: grid;
-  gap: 7px;
+  gap: 8px;
   font-weight: 600;
   font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+label small {
+  color: var(--muted);
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 input,
@@ -229,14 +288,14 @@ textarea {
   width: 100%;
   border: 1px solid rgba(71, 53, 34, 0.15);
   border-radius: 16px;
-  padding: 13px 14px;
+  padding: 14px 15px;
   background: #fffdf9;
   color: var(--text);
 }
 
 textarea {
   resize: vertical;
-  min-height: 120px;
+  min-height: 138px;
 }
 
 input:focus,
@@ -248,11 +307,13 @@ textarea:focus {
 }
 
 .step-footer {
-  margin-top: 8px;
+  margin-top: 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(71, 53, 34, 0.08);
 }
 
 .step-footer-right {
@@ -295,6 +356,32 @@ button {
   color: #932f1f;
 }
 
+.success-panel {
+  margin-top: 18px;
+  padding: 30px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top right, rgba(15, 93, 79, 0.09), transparent 26%),
+    linear-gradient(180deg, rgba(255, 251, 245, 0.98), rgba(243, 234, 220, 0.95));
+  border: 1px solid rgba(71, 53, 34, 0.10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.success-panel h3 {
+  margin-bottom: 12px;
+  font-size: 2rem;
+}
+
+.success-panel p {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.success-note {
+  margin-top: 14px;
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -309,6 +396,11 @@ button {
 @media (max-width: 920px) {
   .intake-shell {
     grid-template-columns: 1fr;
+  }
+
+  .intake-sidebar,
+  .intake-panel {
+    padding: 22px;
   }
 
   .brand-logo {
@@ -332,5 +424,31 @@ button {
 
   .step-footer-right {
     justify-content: space-between;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .intake-shell {
+    width: min(100vw - 16px, 1240px);
+    padding-top: 10px;
+  }
+
+  .intake-sidebar,
+  .intake-panel {
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .progress-strip {
+    margin-top: 14px;
+  }
+
+  .step-item.active {
+    transform: none;
+  }
+
+  .success-panel {
+    padding: 22px;
   }
 }

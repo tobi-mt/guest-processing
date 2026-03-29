@@ -18,27 +18,32 @@
             </div>
           </div>
           <p class="eyebrow">Mirror Talk Podcast</p>
+          <p class="sidebar-kicker">Where honest stories become meaningful conversations.</p>
           <h1>Share the story only you can tell.</h1>
           <p class="sidebar-copy">
-            Mirror Talk is built around soulful, human conversations. This short application helps us understand your lived experience, your perspective, and the kind of message you want to bring to our listeners.
+            Mirror Talk is built around soulful, human conversations. This guided application helps us understand your lived experience, your perspective, and the message you want to leave with listeners.
           </p>
         </div>
 
         <div class="sidebar-panel">
           <h2 class="sidebar-panel-title">What We Look For</h2>
           <ul class="sidebar-bullets">
-            <li>Thoughtful, personal, honest answers</li>
-            <li>A clear story or perspective worth sharing</li>
-            <li>Topics that create depth, reflection, and hope</li>
+            <li>Stories rooted in honesty, reflection, and lived experience</li>
+            <li>A perspective that can spark depth, clarity, or hope</li>
+            <li>Guests who are ready for a grounded, meaningful conversation</li>
           </ul>
         </div>
 
         <div class="sidebar-panel">
           <h2 class="sidebar-panel-title">What Happens Next</h2>
           <p class="sidebar-panel-copy">
-            Every application is reviewed carefully. If your story feels like a strong fit for an upcoming episode, our team will reach out by email.
+            Every application is reviewed carefully. If your story feels like a strong fit for an upcoming episode, our team will reach out by email with the next steps.
           </p>
         </div>
+
+        <blockquote class="sidebar-quote">
+          “The most powerful conversations begin with the courage to tell the truth.”
+        </blockquote>
 
         <ol class="step-list">
           <li class="step-item active" data-step-indicator="1">Contact</li>
@@ -57,34 +62,45 @@
                 <p class="brand-subtitle">Podcast</p>
               </div>
             </div>
-            <p class="eyebrow">Guest Intake Questionnaire</p>
-            <h2>Apply To Join Mirror Talk</h2>
+            <p class="eyebrow">Guest Application</p>
+            <h2>A Conversation Begins Here</h2>
             <p class="panel-intro">
-              Please answer with care and detail. Generic, promotional, or spam-like applications may be declined automatically.
+              Take your time and answer with care. We are not looking for polished performance. We are looking for honesty, depth, and a story that can truly meet people where they are.
             </p>
           </div>
+        </div>
+
+        <div class="progress-strip" aria-hidden="true">
+          <div class="progress-bar">
+            <span id="progress-fill"></span>
+          </div>
+          <p class="progress-caption" id="progress-caption">Currently on Contact</p>
         </div>
 
         <form id="intake-form" class="intake-form">
           <section class="form-step active" data-step="1">
             <h3>Let’s start with the essentials.</h3>
-            <p class="step-copy">Tell us who you are, where we can find your work, and how to contact you if your application is shortlisted.</p>
+            <p class="step-copy">Tell us who you are, where we can find your work, and how to reach you if your story feels like a fit.</p>
 
             <label>
               Full Name
               <input name="full_name" type="text" required />
+              <small>Use the name you would want us to use in future communication.</small>
             </label>
             <label>
               Email Address
               <input name="email" type="email" required />
+              <small>This is where we will contact you if we would like to continue.</small>
             </label>
             <label>
               Website
               <input name="website" type="url" />
+              <small>Optional, but helpful if you have a personal site or portfolio.</small>
             </label>
             <label>
               Social Media Handles
               <textarea name="social_handles" rows="4" placeholder="Instagram: @name&#10;LinkedIn: linkedin.com/in/name&#10;YouTube: youtube.com/@name" required></textarea>
+              <small>Share the channels that best reflect your voice or work.</small>
             </label>
           </section>
 
@@ -95,14 +111,17 @@
             <label class="full-width">
               A brief overview of your personal and professional background
               <textarea name="background" rows="5" required></textarea>
+              <small>Give us the shape of your story in a way that feels natural and true to you.</small>
             </label>
             <label class="full-width">
               What is your current profession, and what led you to this career path?
               <textarea name="profession" rows="4" required></textarea>
+              <small>We are especially interested in what shaped your direction, not just your current title.</small>
             </label>
             <label class="full-width">
               What topics or themes are you most passionate about discussing?
               <textarea name="passionate_topics" rows="4" required></textarea>
+              <small>Think about the conversations that feel alive, honest, and valuable for listeners.</small>
             </label>
           </section>
 
@@ -113,14 +132,17 @@
             <label class="full-width">
               What message or takeaway would you like to leave with our listeners?
               <textarea name="message" rows="4" required></textarea>
+              <small>If someone listened to your episode once, what would you hope stays with them?</small>
             </label>
             <label class="full-width">
               Have you been a guest on podcasts or spoken at events before?
               <textarea name="experience" rows="3"></textarea>
+              <small>Optional. Previous experience is helpful context, but not required.</small>
             </label>
             <label class="full-width">
               Is there anything else you'd like us to know about you?
               <textarea name="additional_info" rows="4"></textarea>
+              <small>Anything personal, practical, or important that would help us understand you better.</small>
             </label>
             <label class="full-width">
               Are you following us on podcast platforms and social media?
@@ -141,6 +163,18 @@
             </div>
           </div>
         </form>
+
+        <section id="success-panel" class="success-panel hidden" aria-live="polite">
+          <p class="eyebrow">Application Received</p>
+          <h3>Thank you for sharing your story.</h3>
+          <p>
+            We review every application carefully. If your story feels like a strong fit for an upcoming Mirror Talk conversation,
+            we will reach out by email with the next steps.
+          </p>
+          <p class="success-note">
+            We appreciate the care you took in completing this application.
+          </p>
+        </section>
 
         <div id="intake-message" class="intake-message" aria-live="polite"></div>
       </main>
