@@ -680,7 +680,11 @@ interviewForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const payload = Object.fromEntries(new FormData(interviewForm).entries());
   const interviewId = payload.id;
+  const submitButton = interviewForm.querySelector("button[type='submit']");
   delete payload.id;
+  submitButton.disabled = true;
+  submitButton.textContent = interviewId ? "Saving..." : "Creating...";
+  setMessage(interviewMessage, interviewId ? "Saving interview changes..." : "Saving interview...", "pending");
 
   try {
     await fetchJSON(interviewId ? `/api/interviews/${interviewId}` : "/api/interviews", {
@@ -692,6 +696,9 @@ interviewForm.addEventListener("submit", async (event) => {
     await loadOperations();
   } catch (error) {
     setMessage(interviewMessage, error.message, "error");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = interviewId ? "Update Interview" : "Save Interview";
   }
 });
 
@@ -701,14 +708,23 @@ interviewResetButton.addEventListener("click", () => {
 });
 
 refreshButton.addEventListener("click", async () => {
+  refreshButton.disabled = true;
+  refreshButton.textContent = "Refreshing...";
+  setMessage(interviewMessage, "Refreshing interview operations...", "pending");
   try {
     await loadOperations();
   } catch (error) {
     setMessage(interviewMessage, error.message, "error");
+  } finally {
+    refreshButton.disabled = false;
+    refreshButton.textContent = "Refresh";
   }
 });
 
 syncCalendarButton.addEventListener("click", async () => {
+  syncCalendarButton.disabled = true;
+  syncCalendarButton.textContent = "Syncing...";
+  setMessage(interviewMessage, "Syncing Google Calendar...", "pending");
   try {
     const result = await fetchJSON("/api/google-calendar/sync", {
       method: "POST",
@@ -724,6 +740,9 @@ syncCalendarButton.addEventListener("click", async () => {
     await loadOperations();
   } catch (error) {
     setMessage(interviewMessage, error.message, "error");
+  } finally {
+    syncCalendarButton.disabled = false;
+    syncCalendarButton.textContent = "Sync Google Calendar";
   }
 });
 
@@ -734,6 +753,9 @@ sendWeeklyRemindersButton.addEventListener("click", async () => {
     return;
   }
 
+  sendWeeklyRemindersButton.disabled = true;
+  sendWeeklyRemindersButton.textContent = "Sending...";
+  setMessage(reminderMessage, "Sending this week's reminders...", "pending");
   try {
     const result = await fetchJSON("/api/reminders/send-weekly", {
       method: "POST",
@@ -751,6 +773,9 @@ sendWeeklyRemindersButton.addEventListener("click", async () => {
     await loadOperations();
   } catch (error) {
     setMessage(reminderMessage, error.message, "error");
+  } finally {
+    sendWeeklyRemindersButton.disabled = false;
+    sendWeeklyRemindersButton.textContent = "Send All Reviewed Reminders";
   }
 });
 

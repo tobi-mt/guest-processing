@@ -693,6 +693,10 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(form);
   const payload = Object.fromEntries(formData.entries());
+  const submitButton = form.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  submitButton.textContent = "Saving...";
+  setMessage("Saving guest...", "pending");
 
   try {
     await fetchJSON("/api/guests", {
@@ -704,6 +708,9 @@ form.addEventListener("submit", async (event) => {
     await loadGuests();
   } catch (error) {
     setMessage(error.message, "error");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "Save Guest";
   }
 });
 
@@ -717,6 +724,10 @@ importForm.addEventListener("submit", async (event) => {
     return;
   }
 
+  const submitButton = importForm.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  submitButton.textContent = "Importing...";
+  setImportMessage("Importing guest file...", "pending");
   try {
     const result = await fetchUpload("/api/import", formData);
     importForm.reset();
@@ -727,6 +738,9 @@ importForm.addEventListener("submit", async (event) => {
     await loadGuests();
   } catch (error) {
     setImportMessage(error.message, "error");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "Import File";
   }
 });
 

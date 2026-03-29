@@ -1190,7 +1190,11 @@ episodeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const payload = Object.fromEntries(new FormData(episodeForm).entries());
   const episodeId = payload.id;
+  const submitButton = episodeSubmitButton;
   delete payload.id;
+  submitButton.disabled = true;
+  submitButton.textContent = episodeId ? "Saving..." : "Creating...";
+  setMessage(episodeMessage, episodeId ? "Saving episode changes..." : "Saving episode...", "pending");
   try {
     await fetchJSON(episodeId ? `/api/episodes/${episodeId}` : "/api/episodes", {
       method: "POST",
@@ -1201,6 +1205,9 @@ episodeForm.addEventListener("submit", async (event) => {
     await loadPlanning();
   } catch (error) {
     setMessage(episodeMessage, error.message, "error");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = episodeId ? "Update Episode" : "Save Episode";
   }
 });
 
@@ -1212,6 +1219,10 @@ episodeResetButton.addEventListener("click", () => {
 episodeImportForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(episodeImportForm);
+  const submitButton = episodeImportForm.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  submitButton.textContent = "Importing...";
+  setMessage(episodeImportMessage, "Importing episode CSV...", "pending");
   try {
     const result = await postForm("/api/episodes/import", formData);
     episodeImportForm.reset();
@@ -1223,6 +1234,9 @@ episodeImportForm.addEventListener("submit", async (event) => {
     await loadPlanning();
   } catch (error) {
     setMessage(episodeImportMessage, error.message, "error");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "Import Episode CSV";
   }
 });
 
@@ -1230,6 +1244,10 @@ askSyncForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const payload = Object.fromEntries(new FormData(askSyncForm).entries());
   payload.overwrite_existing = Boolean(askSyncForm.elements.overwrite_existing.checked);
+  const submitButton = askSyncForm.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  submitButton.textContent = "Syncing...";
+  setMessage(askSyncMessage, "Syncing Ask Mirror Talk transcripts...", "pending");
   try {
     const result = await fetchJSON("/api/ask-mirror-talk/sync", {
       method: "POST",
@@ -1246,6 +1264,9 @@ askSyncForm.addEventListener("submit", async (event) => {
   } catch (error) {
     setMessage(askSyncMessage, error.message, "error");
     renderAskSyncBreakdown(null);
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "Sync Matching Transcripts";
   }
 });
 
@@ -1255,6 +1276,10 @@ planningExportForm.addEventListener("submit", async (event) => {
     planningExportForm.querySelectorAll("input[name='fields']:checked"),
     (input) => input.value,
   );
+  const submitButton = planningExportForm.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  submitButton.textContent = "Preparing...";
+  setMessage(planningExportMessage, "Preparing export...", "pending");
   try {
     await downloadExport({
       list_name: exportListName.value,
@@ -1264,15 +1289,24 @@ planningExportForm.addEventListener("submit", async (event) => {
     setMessage(planningExportMessage, "Export is downloading.", "success");
   } catch (error) {
     setMessage(planningExportMessage, error.message, "error");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "Export Selected Fields";
   }
 });
 
 exportListName.addEventListener("change", renderExportFields);
 refreshButton.addEventListener("click", async () => {
+  refreshButton.disabled = true;
+  refreshButton.textContent = "Refreshing...";
+  setMessage(episodeMessage, "Refreshing planning data...", "pending");
   try {
     await loadPlanning();
   } catch (error) {
     setMessage(episodeMessage, error.message, "error");
+  } finally {
+    refreshButton.disabled = false;
+    refreshButton.textContent = "Refresh";
   }
 });
 
