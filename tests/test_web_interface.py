@@ -215,8 +215,10 @@ def test_web_service_can_import_episode_history_and_queue_csvs(temp_db):
     queue_episode = next(item for item in episodes if item["guest_name"] == "Jordan Rivers")
     assert released_episode["release_status"] == "released"
     assert released_episode["legacy_episode_number"] == "423"
+    assert released_episode["promotion_status"] == "released"
     assert queue_episode["source_type"] == "release_queue"
     assert queue_episode["production_status"] == "editing"
+    assert queue_episode["promotion_status"] == "needs_assets"
     assert queue_episode["website"] == "https://jordan.example.com"
 
 
@@ -512,6 +514,71 @@ def test_episode_recommendations_prefer_variety_and_ready_queue(temp_db):
 
     assert operations["recommendations"][0]["guest_name"] == "Finance Guest"
     assert operations["recommendations"][0]["recommended_release_date"].endswith("17:00:00")
+
+
+def test_episode_recommendations_factor_seasonality_promo_readiness_and_guest_diversity(temp_db):
+    """The smarter planner should consider seasonal fit, promo readiness, and recent guest/category fatigue."""
+    service = GuestWebService(temp_db.db_path)
+
+    for offset in range(4):
+        service.create_episode(
+            {
+                "guest_name": f"Recent Personal Development {offset}",
+                "guest_email": f"recent{offset}@example.com",
+                "episode_title": f"Personal Development Story {offset}",
+                "topic": f"Personal Development Story {offset}",
+                "category": "Personal Development",
+                "interview_date": "2025-12-01",
+                "release_date": f"2026-03-{24 - offset:02d}",
+                "release_status": "released",
+                "production_status": "released",
+                "promotion_status": "released",
+            }
+        )
+
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Anxiety and Renewal",
+            "topic": "Healing anxiety and renewal in spring",
+            "category": "Mental Health",
+            "interview_date": "2025-11-15",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Recent Personal Development 1",
+            "guest_email": "repeat@example.com",
+            "episode_title": "Career Momentum Reset",
+            "topic": "Career Momentum Reset",
+            "category": "Personal Development",
+            "interview_date": "2025-10-10",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Asset Missing Guest",
+            "guest_email": "assets@example.com",
+            "episode_title": "Spring Reset",
+            "topic": "Spring Reset",
+            "category": "Mental Health",
+            "interview_date": "2025-11-01",
+            "production_status": "ready",
+            "promotion_status": "needs_assets",
+        }
+    )
+
+    operations = service.list_operations()
+    top_recommendation = operations["recommendations"][0]
+
+    assert top_recommendation["guest_name"] == "Jordan Rivers"
+    assert "seasonal" in top_recommendation["recommendation_reason"] or "March" in top_recommendation["recommendation_reason"]
+    assert top_recommendation["promotion_status"] == "ready"
 
 
 def test_operations_are_sorted_by_nearest_upcoming_interview_first(temp_db):

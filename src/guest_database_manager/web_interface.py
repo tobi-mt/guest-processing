@@ -415,6 +415,7 @@ class GuestWebService:
             "release_date": _normalize_text(payload.get("release_date")),
             "release_status": _normalize_text(payload.get("release_status")) or "unplanned",
             "production_status": _normalize_text(payload.get("production_status")) or "idea",
+            "promotion_status": _normalize_text(payload.get("promotion_status")) or "unknown",
             "priority_score": payload.get("priority_score") or 0,
             "recommendation_reason": _normalize_text(payload.get("recommendation_reason")),
             "legacy_episode_number": _normalize_text(payload.get("legacy_episode_number")),

@@ -143,6 +143,7 @@ function renderEpisodes(episodes) {
         <span>Category: ${episode.category || "Not set"}</span>
         <span>Release: ${formatDateTime(episode.release_date)}</span>
         <span>Status: ${episode.release_status || "unplanned"} / ${episode.production_status || "idea"}</span>
+        <span>Promo: ${episode.promotion_status || "unknown"}</span>
         <span>Priority: ${episode.priority_score ?? 0}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
@@ -171,6 +172,7 @@ function renderRecommendations(recommendations) {
         <span>Category: ${episode.category || "Not set"}</span>
         <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
         <span>Production: ${episode.production_status || "idea"}</span>
+        <span>Promo: ${episode.promotion_status || "unknown"}</span>
       </div>
       <div class="operations-preview">
         <p>${episode.recommendation_reason || "Good fit for the next release slot."}</p>
@@ -288,6 +290,7 @@ episodeForm.addEventListener("submit", async (event) => {
     episodeForm.reset();
     episodeForm.elements.release_status.value = "unplanned";
     episodeForm.elements.production_status.value = "idea";
+    episodeForm.elements.promotion_status.value = "unknown";
     episodeForm.elements.priority_score.value = "0";
     setMessage(episodeMessage, "Episode saved.", "success");
     await loadOperations();

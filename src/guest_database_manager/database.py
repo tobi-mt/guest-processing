@@ -336,6 +336,7 @@ class GuestDatabase:
                 episode_data.get("release_date"),
                 episode_data.get("release_status", "unplanned"),
                 episode_data.get("production_status", "idea"),
+                episode_data.get("promotion_status", "unknown"),
                 episode_data.get("priority_score", 0),
                 episode_data.get("recommendation_reason"),
                 episode_data.get("legacy_episode_number"),
@@ -351,7 +352,7 @@ class GuestDatabase:
                     UPDATE episodes SET
                         guest_id = ?, interview_id = ?, guest_name = ?, guest_email = ?, website = ?, episode_title = ?,
                         topic = ?, category = ?, interview_date = ?, recording_date = ?, release_date = ?,
-                        release_status = ?, production_status = ?, priority_score = ?, recommendation_reason = ?,
+                        release_status = ?, production_status = ?, promotion_status = ?, priority_score = ?, recommendation_reason = ?,
                         legacy_episode_number = ?, riverside_status = ?, source_file_name = ?, source_type = ?,
                         notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
@@ -366,9 +367,9 @@ class GuestDatabase:
                 INSERT INTO episodes (
                     guest_id, interview_id, guest_name, guest_email, website, episode_title, topic, category,
                     interview_date, recording_date, release_date, release_status, production_status,
-                    priority_score, recommendation_reason, legacy_episode_number, riverside_status,
+                    promotion_status, priority_score, recommendation_reason, legacy_episode_number, riverside_status,
                     source_file_name, source_type, notes, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 fields,
             )

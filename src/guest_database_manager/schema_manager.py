@@ -102,6 +102,7 @@ class SchemaManager:
             release_date TIMESTAMP,
             release_status TEXT DEFAULT 'unplanned',
             production_status TEXT DEFAULT 'idea',
+            promotion_status TEXT DEFAULT 'unknown',
             priority_score REAL DEFAULT 0,
             recommendation_reason TEXT,
             legacy_episode_number TEXT,
@@ -154,6 +155,7 @@ class SchemaManager:
 
     EPISODE_OPTIONAL_COLUMNS: List[Tuple[str, str]] = [
         ("website", "TEXT"),
+        ("promotion_status", "TEXT"),
         ("legacy_episode_number", "TEXT"),
         ("riverside_status", "TEXT"),
         ("source_file_name", "TEXT"),
