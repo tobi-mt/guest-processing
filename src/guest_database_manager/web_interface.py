@@ -531,6 +531,36 @@ class GuestWebService:
 
         return 0, ""
 
+    @classmethod
+    def _summarize_ask_match_candidate(
+        cls,
+        episode: Dict[str, Any],
+        remote_episode: Dict[str, Any],
+        score: int,
+        method: str,
+    ) -> Dict[str, Any]:
+        """Return a compact candidate summary for ambiguous Ask matches."""
+        local_date = episode.get("release_date") or episode.get("interview_date")
+        remote_date = remote_episode.get("published_at")
+        return {
+            "id": remote_episode.get("id"),
+            "title": _normalize_text(remote_episode.get("title")),
+            "published_at": _normalize_text(remote_date),
+            "score": score,
+            "method": method,
+            "has_transcript": bool(_normalize_text(remote_episode.get("transcript_text"))),
+            "date_gap_days": cls._ask_candidate_date_gap_days(local_date, remote_date),
+        }
+
+    @classmethod
+    def _ask_candidate_date_gap_days(cls, local_value: Any, remote_value: Any) -> Optional[int]:
+        """Return the absolute day gap between local and remote dates when both are available."""
+        local_date = cls._parse_datetime_static(local_value)
+        remote_date = cls._parse_datetime_static(remote_value)
+        if not local_date or not remote_date:
+            return None
+        return abs((local_date.date() - remote_date.date()).days)
+
     @staticmethod
     def _records_to_csv(records: list[Dict[str, Any]], fields: list[str]) -> str:
         """Serialize records to CSV using the selected fields."""
@@ -872,6 +902,7 @@ class GuestWebService:
         updated_transcript = 0
         updated_title_only = 0
         updated_titles: list[str] = []
+        ambiguous_matches: list[Dict[str, Any]] = []
         used_remote_ids: set[Any] = set()
 
         for episode in local_episodes:
@@ -895,6 +926,21 @@ class GuestWebService:
             best_score, best_method, remote_episode = candidates[0]
             if len(candidates) > 1 and best_score < 1000 and (best_score - candidates[1][0]) < 100:
                 skipped_ambiguous += 1
+                ambiguous_matches.append(
+                    {
+                        "local_episode": {
+                            "id": episode.get("id"),
+                            "title": _normalize_text(episode.get("episode_title")),
+                            "guest_name": _normalize_text(episode.get("guest_name")),
+                            "release_date": _normalize_text(episode.get("release_date")),
+                            "interview_date": _normalize_text(episode.get("interview_date")),
+                        },
+                        "candidates": [
+                            self._summarize_ask_match_candidate(episode, candidate_remote, score, method)
+                            for score, method, candidate_remote in candidates[:2]
+                        ],
+                    }
+                )
                 continue
 
             matched += 1
@@ -953,6 +999,7 @@ class GuestWebService:
             "skipped_without_title": skipped_without_title,
             "unmatched_local": unmatched_local,
             "updated_titles": updated_titles[:10],
+            "ambiguous_matches": ambiguous_matches[:12],
         }
 
     def update_episode(self, episode_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:

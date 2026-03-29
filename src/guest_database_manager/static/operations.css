@@ -224,6 +224,44 @@
   color: var(--muted);
 }
 
+.stack-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.mini-card {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(91, 70, 47, 0.08);
+}
+
+.mini-card strong,
+.mini-card p,
+.mini-card li,
+.mini-card span {
+  overflow-wrap: anywhere;
+}
+
+.mini-card p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.mini-card ul {
+  margin-top: 10px;
+}
+
+.mini-card li + li {
+  margin-top: 8px;
+}
+
+.mini-card li span {
+  display: block;
+  margin-top: 2px;
+}
+
 .insight-stack {
   margin-top: 14px;
   padding-top: 12px;

@@ -11,6 +11,7 @@ const episodeMessage = document.getElementById("episode-message");
 const episodeImportMessage = document.getElementById("episode-import-message");
 const askSyncMessage = document.getElementById("ask-sync-message");
 const askSyncBreakdown = document.getElementById("ask-sync-breakdown");
+const askSyncAmbiguous = document.getElementById("ask-sync-ambiguous");
 const planningExportMessage = document.getElementById("planning-export-message");
 const episodeList = document.getElementById("episode-list");
 const recommendationList = document.getElementById("recommendation-list");
@@ -317,6 +318,8 @@ function renderAskSyncBreakdown(result) {
   if (!result) {
     askSyncBreakdown.classList.add("hidden");
     askSyncBreakdown.innerHTML = "";
+    askSyncAmbiguous.classList.add("hidden");
+    askSyncAmbiguous.innerHTML = "";
     return;
   }
   const items = [
@@ -330,6 +333,69 @@ function renderAskSyncBreakdown(result) {
   askSyncBreakdown.innerHTML = `
     <strong class="insight-label">Sync breakdown</strong>
     <ul>${items.map(([label, value]) => `<li>${label}: ${value}</li>`).join("")}</ul>
+  `;
+  renderAskSyncAmbiguous(result.ambiguous_matches || []);
+}
+
+function formatMatchMethod(method) {
+  const labels = {
+    title: "Exact title",
+    guest_title: "Guest name in title",
+    guest_description: "Guest name in description",
+    guest_partial: "Mostly matching guest name",
+    guest_name_fragment: "Partial guest-name fragment",
+  };
+  return labels[method] || "Match signal";
+}
+
+function renderAskSyncAmbiguous(items) {
+  if (!items.length) {
+    askSyncAmbiguous.classList.add("hidden");
+    askSyncAmbiguous.innerHTML = "";
+    return;
+  }
+
+  const cards = items
+    .map((item) => {
+      const local = item.local_episode || {};
+      const localDate = local.release_date || local.interview_date;
+      const candidates = (item.candidates || [])
+        .map((candidate) => {
+          const parts = [
+            `Score ${candidate.score ?? 0}`,
+            formatMatchMethod(candidate.method),
+          ];
+          if (candidate.published_at) {
+            parts.push(`Published ${formatDateTime(candidate.published_at)}`);
+          }
+          if (candidate.date_gap_days !== null && candidate.date_gap_days !== undefined) {
+            parts.push(`Date gap ${candidate.date_gap_days}d`);
+          }
+          parts.push(candidate.has_transcript ? "Transcript available" : "No transcript");
+          return `
+            <li>
+              <strong>${candidate.title || "Untitled Ask episode"}</strong>
+              <span>${parts.join(" · ")}</span>
+            </li>
+          `;
+        })
+        .join("");
+
+      return `
+        <article class="mini-card">
+          <strong>${local.title || "Untitled local episode"}</strong>
+          <p>${local.guest_name || "Unknown guest"}${localDate ? ` · ${formatDateTime(localDate)}` : ""}</p>
+          <ul>${candidates}</ul>
+        </article>
+      `;
+    })
+    .join("");
+
+  askSyncAmbiguous.classList.remove("hidden");
+  askSyncAmbiguous.innerHTML = `
+    <strong class="insight-label">Ambiguous matches needing review</strong>
+    <p>The sync found multiple plausible Ask Mirror Talk episodes for these records, so it skipped them rather than guessing.</p>
+    <div class="stack-list">${cards}</div>
   `;
 }
 

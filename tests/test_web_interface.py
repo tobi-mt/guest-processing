@@ -653,6 +653,59 @@ def test_web_service_can_match_by_first_or_last_name_with_date_anchor(monkeypatc
     assert updated_episode["episode_title"] == "Volk on Grief, Healing and Spiritual Solace"
 
 
+def test_web_service_reports_ambiguous_ask_matches(monkeypatch, temp_db):
+    """Ambiguous Ask transcript matches should be surfaced with the top candidate details."""
+
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def export_episodes(self, **kwargs):
+            return [
+                {
+                    "id": 81,
+                    "title": "Jordan Rivers on Building Calm",
+                    "description": "Jordan Rivers joins Mirror Talk for a calm conversation about resilience.",
+                    "published_at": "2026-04-01T03:00:00",
+                    "transcript_text": "Jordan discusses calm and resilience.",
+                },
+                {
+                    "id": 82,
+                    "title": "Jordan Rivers on Building Calm and Courage",
+                    "description": "Jordan Rivers joins Mirror Talk for a conversation about courage and calm.",
+                    "published_at": "2026-04-03T03:00:00",
+                    "transcript_text": "Jordan discusses courage and calm.",
+                },
+            ]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Internal Calm Working Title",
+            "topic": "Calm and Courage",
+            "release_date": "2026-04-02T17:00",
+        }
+    )
+
+    result = service.sync_ask_mirror_talk_transcripts()
+
+    assert result["matched"] == 0
+    assert result["skipped_ambiguous"] == 1
+    assert len(result["ambiguous_matches"]) == 1
+    ambiguous = result["ambiguous_matches"][0]
+    assert ambiguous["local_episode"]["guest_name"] == "Jordan Rivers"
+    assert len(ambiguous["candidates"]) == 2
+    assert {candidate["id"] for candidate in ambiguous["candidates"]} == {81, 82}
+    assert all(candidate["method"] == "guest_title" for candidate in ambiguous["candidates"])
+
+
 def test_web_service_can_export_selected_episode_fields_as_csv(temp_db):
     """Flexible export should allow narrow CSV extracts for episode planning."""
     service = GuestWebService(temp_db.db_path)
