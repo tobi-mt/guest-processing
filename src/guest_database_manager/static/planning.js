@@ -16,6 +16,8 @@ const recommendationSearchInput = document.getElementById("recommendation-search
 const recommendationCategoryFilter = document.getElementById("recommendation-category-filter");
 const recommendationSort = document.getElementById("recommendation-sort");
 const recommendationResultsMeta = document.getElementById("recommendation-results-meta");
+const recommendationLoadMoreButton = document.getElementById("recommendation-load-more");
+const recommendationPresetButtons = Array.from(document.querySelectorAll("[data-recommendation-preset]"));
 const episodeSearchInput = document.getElementById("episode-search");
 const episodeCategoryFilter = document.getElementById("episode-category-filter");
 const episodeYearFilter = document.getElementById("episode-year-filter");
@@ -23,6 +25,8 @@ const episodeReleaseFilter = document.getElementById("episode-release-filter");
 const episodeProductionFilter = document.getElementById("episode-production-filter");
 const episodeSort = document.getElementById("episode-sort");
 const episodeResultsMeta = document.getElementById("episode-results-meta");
+const episodeLoadMoreButton = document.getElementById("episode-load-more");
+const episodePresetButtons = Array.from(document.querySelectorAll("[data-episode-preset]"));
 
 let latestPlanningPayload = {
   stats: {},
@@ -30,6 +34,13 @@ let latestPlanningPayload = {
   recommendations: [],
   available_categories: [],
 };
+let activeRecommendationPreset = "all";
+let activeEpisodePreset = "all";
+let visibleRecommendationCount = 6;
+let visibleEpisodeCount = 10;
+
+const RECOMMENDATION_PAGE_SIZE = 6;
+const EPISODE_PAGE_SIZE = 10;
 
 const EXPORT_FIELD_CONFIG = {
   guests: [
@@ -214,6 +225,12 @@ function updateResultsMeta(node, shown, total, emptyMessage, filteredMessage) {
   node.textContent = `Showing ${shown} of ${total} item${total === 1 ? "" : "s"} after filtering. ${filteredMessage}`;
 }
 
+function updatePresetButtons(buttons, activeValue, dataName) {
+  buttons.forEach((button) => {
+    button.classList.toggle("active", button.dataset[dataName] === activeValue);
+  });
+}
+
 function populateSelect(selectNode, values, defaultLabel) {
   const currentValue = selectNode.value;
   selectNode.innerHTML = `<option value="">${defaultLabel}</option>`;
@@ -328,6 +345,20 @@ function filterEpisodes(episodes) {
     if (productionStatus && normalizeText(episode.production_status) !== productionStatus) {
       return false;
     }
+    if (activeEpisodePreset === "ready_to_schedule") {
+      if (!(normalizeText(episode.production_status) === "ready" && normalizeText(episode.release_status) !== "scheduled")) {
+        return false;
+      }
+    }
+    if (activeEpisodePreset === "scheduled" && normalizeText(episode.release_status) !== "scheduled") {
+      return false;
+    }
+    if (activeEpisodePreset === "needs_assets" && normalizeText(episode.promotion_status) !== "needs_assets") {
+      return false;
+    }
+    if (activeEpisodePreset === "released_archive" && normalizeText(episode.release_status) !== "released") {
+      return false;
+    }
     return true;
   });
 
@@ -381,6 +412,15 @@ function filterRecommendations(recommendations) {
     if (category && normalizeText(episode.category) !== normalizeText(category)) {
       return false;
     }
+    if (activeRecommendationPreset === "ready" && normalizeText(episode.promotion_status) !== "ready") {
+      return false;
+    }
+    if (activeRecommendationPreset === "needs_assets" && normalizeText(episode.promotion_status) !== "needs_assets") {
+      return false;
+    }
+    if (activeRecommendationPreset === "seasonal" && !normalizeText(episode.recommendation_reason).includes("season")) {
+      return false;
+    }
     return true;
   });
 
@@ -420,14 +460,16 @@ function renderEpisodes(episodes, totalCount) {
     "Use search, category, year, or status filters to focus the planning queue."
   );
 
+  const visibleEpisodes = episodes.slice(0, visibleEpisodeCount);
   if (!episodes.length) {
     episodeList.innerHTML = totalCount
       ? "<p class='guest-summary'>No episodes match the current planning controls.</p>"
       : "<p class='guest-summary'>No episodes tracked yet.</p>";
+    episodeLoadMoreButton.classList.add("hidden");
     return;
   }
 
-  episodes.forEach((episode) => {
+  visibleEpisodes.forEach((episode) => {
     const card = document.createElement("article");
     card.className = "operations-card";
     card.innerHTML = `
@@ -475,6 +517,11 @@ function renderEpisodes(episodes, totalCount) {
 
     episodeList.appendChild(card);
   });
+
+  episodeLoadMoreButton.classList.toggle("hidden", visibleEpisodes.length >= episodes.length);
+  if (!episodeLoadMoreButton.classList.contains("hidden")) {
+    episodeLoadMoreButton.textContent = `Load More Episodes (${episodes.length - visibleEpisodes.length} remaining)`;
+  }
 }
 
 function renderRecommendations(recommendations, totalCount) {
@@ -487,14 +534,16 @@ function renderRecommendations(recommendations, totalCount) {
     "Adjust search, category, or sort to inspect the strongest release candidates."
   );
 
+  const visibleRecommendations = recommendations.slice(0, visibleRecommendationCount);
   if (!recommendations.length) {
     recommendationList.innerHTML = totalCount
       ? "<p class='guest-summary'>No recommendations match the current controls.</p>"
       : "<p class='guest-summary'>Import the yearly release CSVs and the Not Yet Released queue to generate recommendations.</p>";
+    recommendationLoadMoreButton.classList.add("hidden");
     return;
   }
 
-  recommendations.forEach((episode, index) => {
+  visibleRecommendations.forEach((episode, index) => {
     const card = document.createElement("article");
     card.className = "operations-card recommendation-card";
     card.innerHTML = `
@@ -552,6 +601,11 @@ function renderRecommendations(recommendations, totalCount) {
     });
     recommendationList.appendChild(card);
   });
+
+  recommendationLoadMoreButton.classList.toggle("hidden", visibleRecommendations.length >= recommendations.length);
+  if (!recommendationLoadMoreButton.classList.contains("hidden")) {
+    recommendationLoadMoreButton.textContent = `Load More Recommendations (${recommendations.length - visibleRecommendations.length} remaining)`;
+  }
 }
 
 function renderPlanning() {
@@ -559,6 +613,8 @@ function renderPlanning() {
   const recommendations = latestPlanningPayload.recommendations || [];
   const categories = latestPlanningPayload.available_categories || [];
 
+  updatePresetButtons(recommendationPresetButtons, activeRecommendationPreset, "recommendationPreset");
+  updatePresetButtons(episodePresetButtons, activeEpisodePreset, "episodePreset");
   populatePlanningFilters(categories, episodes);
   renderCategoryOptions(categories);
   renderRecommendations(filterRecommendations(recommendations), recommendations.length);
@@ -655,8 +711,53 @@ refreshButton.addEventListener("click", async () => {
   episodeProductionFilter,
   episodeSort,
 ].forEach((node) => {
-  node.addEventListener("input", renderPlanning);
-  node.addEventListener("change", renderPlanning);
+  node.addEventListener("input", () => {
+    visibleRecommendationCount = RECOMMENDATION_PAGE_SIZE;
+    visibleEpisodeCount = EPISODE_PAGE_SIZE;
+    renderPlanning();
+  });
+  node.addEventListener("change", () => {
+    visibleRecommendationCount = RECOMMENDATION_PAGE_SIZE;
+    visibleEpisodeCount = EPISODE_PAGE_SIZE;
+    renderPlanning();
+  });
+});
+
+recommendationLoadMoreButton.addEventListener("click", () => {
+  visibleRecommendationCount += RECOMMENDATION_PAGE_SIZE;
+  renderPlanning();
+});
+
+episodeLoadMoreButton.addEventListener("click", () => {
+  visibleEpisodeCount += EPISODE_PAGE_SIZE;
+  renderPlanning();
+});
+
+recommendationPresetButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    activeRecommendationPreset = button.dataset.recommendationPreset || "all";
+    visibleRecommendationCount = RECOMMENDATION_PAGE_SIZE;
+    renderPlanning();
+  });
+});
+
+episodePresetButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    activeEpisodePreset = button.dataset.episodePreset || "all";
+    visibleEpisodeCount = EPISODE_PAGE_SIZE;
+    if (activeEpisodePreset === "scheduled") {
+      episodeReleaseFilter.value = "scheduled";
+    } else if (activeEpisodePreset === "released_archive") {
+      episodeReleaseFilter.value = "released";
+    } else if (activeEpisodePreset === "ready_to_schedule") {
+      episodeProductionFilter.value = "ready";
+      episodeReleaseFilter.value = "";
+    } else if (activeEpisodePreset === "all") {
+      episodeReleaseFilter.value = "";
+      episodeProductionFilter.value = "";
+    }
+    renderPlanning();
+  });
 });
 
 renderExportFields();

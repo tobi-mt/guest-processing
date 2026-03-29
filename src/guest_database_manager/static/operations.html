@@ -132,6 +132,11 @@
           <p class="hero-copy review-copy">
             Sync your calendar first, review the exact guest and schedule details below, then preview or send reminders individually. When everything looks right, you can send all reviewed reminders together.
           </p>
+          <div class="view-presets" id="reminder-presets">
+            <button type="button" class="preset-chip active" data-reminder-preset="all">All Due</button>
+            <button type="button" class="preset-chip" data-reminder-preset="pending">Pending Confirmation</button>
+            <button type="button" class="preset-chip" data-reminder-preset="missing_email">Missing Email</button>
+          </div>
           <div class="list-toolbar">
             <label class="toolbar-field toolbar-search">
               <span>Search Reminders</span>
@@ -141,6 +146,9 @@
           <p id="reminder-results-meta" class="results-meta"></p>
           <div id="reminder-message" class="message" aria-live="polite"></div>
           <div id="reminder-list" class="guest-list"></div>
+          <div class="list-footer">
+            <button id="reminder-load-more" class="secondary-button hidden" type="button">Load More Reminders</button>
+          </div>
 
           <div class="section-heading section-heading-inline">
             <div>
@@ -150,6 +158,12 @@
             <button id="operations-refresh-button" class="secondary-button" type="button">Refresh</button>
           </div>
 
+          <div class="view-presets" id="interview-presets">
+            <button type="button" class="preset-chip active" data-interview-preset="all">All Interviews</button>
+            <button type="button" class="preset-chip" data-interview-preset="this_week">This Week</button>
+            <button type="button" class="preset-chip" data-interview-preset="needs_confirmation">Needs Confirmation</button>
+            <button type="button" class="preset-chip" data-interview-preset="calendar_linked">Calendar Linked</button>
+          </div>
           <div class="list-toolbar">
             <label class="toolbar-field toolbar-search">
               <span>Search Interviews</span>
@@ -182,6 +196,9 @@
           </div>
           <p id="interview-results-meta" class="results-meta"></p>
           <div id="interview-list" class="guest-list"></div>
+          <div class="list-footer">
+            <button id="interview-load-more" class="secondary-button hidden" type="button">Load More Interviews</button>
+          </div>
         </section>
       </main>
     </div>

@@ -104,6 +104,33 @@ def test_web_service_create_guest_updates_existing_match(temp_db):
     assert guests[0]["profession"] == "Coach"
 
 
+def test_web_service_can_update_guest_details_without_resetting_status(temp_db):
+    """Dashboard edits should update guest details while preserving decision metadata."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "background": "First version",
+        }
+    )
+    service.update_guest_status(guest["id"], "accepted")
+
+    updated_guest = service.update_guest(
+        guest["id"],
+        {
+            "profession": "Coach",
+            "website": "https://jordan.example.com",
+            "background": "Updated version",
+        },
+    )
+
+    assert updated_guest["profession"] == "Coach"
+    assert updated_guest["website"] == "https://jordan.example.com"
+    assert updated_guest["background"] == "Updated version"
+    assert updated_guest["email_status"] == "accepted"
+
+
 def test_web_service_create_guest_preserves_existing_source_label(temp_db):
     """Dashboard writes should not replace an existing guest's original source label."""
     service = GuestWebService(temp_db.db_path)

@@ -10,6 +10,10 @@ const decisionFilter = document.getElementById("decision-filter");
 const guestSearch = document.getElementById("guest-search");
 const guestSort = document.getElementById("guest-sort");
 const guestResultsMeta = document.getElementById("guest-results-meta");
+const guestLoadMoreButton = document.getElementById("guest-load-more");
+const guestPresetButtons = Array.from(document.querySelectorAll("[data-guest-preset]"));
+
+const GUEST_PAGE_SIZE = 12;
 
 const metrics = {
   total: document.getElementById("metric-total"),
@@ -27,8 +31,19 @@ const insights = {
 let emailEnabled = false;
 let latestPayload = null;
 let activeEmailComposer = null;
+let activeGuestEditor = null;
+let activeGuestPreset = "all";
+let visibleGuestCount = GUEST_PAGE_SIZE;
 
 function composerFeedbackMarkup(feedback) {
+  if (!feedback?.text) {
+    return "";
+  }
+
+  return `<p class="composer-feedback ${feedback.tone || ""}">${escapeHtml(feedback.text)}</p>`;
+}
+
+function editorFeedbackMarkup(feedback) {
   if (!feedback?.text) {
     return "";
   }
@@ -86,6 +101,10 @@ function guestStatusLabel(guest) {
   return guest.is_processed ? "processed" : "unprocessed";
 }
 
+function normalizeText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function guestMatchesFilter(guest, filterValue) {
   if (filterValue === "all") {
     return true;
@@ -112,12 +131,29 @@ function guestMatchesSearch(guest, query) {
     return true;
   }
 
-  const haystack = [guest.full_name, guest.email, guest.website, guest.profession, guest.original_file_name]
+  const haystack = [
+    guest.full_name,
+    guest.email,
+    guest.website,
+    guest.profession,
+    guest.original_file_name,
+    guest.background,
+    guest.passionate_topics,
+  ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
 
   return haystack.includes(normalizedQuery);
+}
+
+function guestMatchesPreset(guest, preset) {
+  if (preset === "all") return true;
+  if (preset === "needs_review") return !guest.is_processed;
+  if (preset === "accepted") return guestStatusLabel(guest) === "accepted";
+  if (preset === "rejected") return guestStatusLabel(guest) === "rejected";
+  if (preset === "no_email") return !normalizeText(guest.email);
+  return true;
 }
 
 function guestSortRank(guest) {
@@ -150,16 +186,23 @@ function sortGuests(guests, sortMode) {
   return sorted;
 }
 
-function updateResultsMeta(shown, total) {
+function updateResultsMeta(shown, total, visible) {
   if (!total) {
     guestResultsMeta.textContent = "No guests in the pipeline yet.";
     return;
   }
-  if (shown === total) {
+  if (shown === total && visible === shown) {
     guestResultsMeta.textContent = `Showing all ${total} guest${total === 1 ? "" : "s"}.`;
     return;
   }
-  guestResultsMeta.textContent = `Showing ${shown} of ${total} guests after search and decision filtering.`;
+  const moreText = visible < shown ? ` Displaying ${visible} right now.` : "";
+  guestResultsMeta.textContent = `Showing ${shown} of ${total} guests after the current view controls.${moreText}`;
+}
+
+function updateGuestPresetButtons() {
+  guestPresetButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.guestPreset === activeGuestPreset);
+  });
 }
 
 function normalizeClipboardValue(value) {
@@ -240,6 +283,97 @@ async function copyGuestIntake(guest) {
   }
 }
 
+function renderInlineEditor(editorNode, guest) {
+  if (!activeGuestEditor || activeGuestEditor.guestId !== guest.id) {
+    editorNode.classList.add("hidden");
+    editorNode.innerHTML = "";
+    return;
+  }
+
+  editorNode.classList.remove("hidden");
+  editorNode.innerHTML = `
+    <div class="inline-editor-title">Edit Guest</div>
+    <form class="inline-editor-form">
+      <label>
+        Full Name
+        <input name="full_name" type="text" value="${escapeHtml(activeGuestEditor.full_name)}" required />
+      </label>
+      <label>
+        Email
+        <input name="email" type="email" value="${escapeHtml(activeGuestEditor.email)}" />
+      </label>
+      <label>
+        Website
+        <input name="website" type="url" value="${escapeHtml(activeGuestEditor.website)}" />
+      </label>
+      <label>
+        Profession
+        <input name="profession" type="text" value="${escapeHtml(activeGuestEditor.profession)}" />
+      </label>
+      <label class="full-width">
+        Social Handles
+        <input name="social_handles" type="text" value="${escapeHtml(activeGuestEditor.social_handles)}" />
+      </label>
+      <label class="full-width">
+        Background
+        <textarea name="background" rows="3">${escapeHtml(activeGuestEditor.background)}</textarea>
+      </label>
+      <label class="full-width">
+        Passionate Topics
+        <textarea name="passionate_topics" rows="3">${escapeHtml(activeGuestEditor.passionate_topics)}</textarea>
+      </label>
+      ${editorFeedbackMarkup(activeGuestEditor.feedback)}
+      <div class="inline-editor-actions full-width">
+        <button type="submit" class="primary-button small-button" ${activeGuestEditor.saving ? "disabled" : ""}>
+          ${activeGuestEditor.saving ? "Saving..." : "Save Changes"}
+        </button>
+        <button type="button" data-editor-action="cancel" class="ghost-button small-button" ${activeGuestEditor.saving ? "disabled" : ""}>Cancel</button>
+      </div>
+    </form>
+  `;
+
+  const formNode = editorNode.querySelector("form");
+  formNode.querySelectorAll("input, textarea").forEach((field) => {
+    field.addEventListener("input", (event) => {
+      activeGuestEditor[event.target.name] = event.target.value;
+    });
+  });
+
+  editorNode.querySelector("[data-editor-action='cancel']").addEventListener("click", () => {
+    activeGuestEditor = null;
+    renderGuests(latestPayload);
+  });
+
+  formNode.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    activeGuestEditor.saving = true;
+    activeGuestEditor.feedback = { text: `Saving ${guest.full_name || "guest"}...`, tone: "pending" };
+    renderGuests(latestPayload);
+    try {
+      await fetchJSON(`/api/guests/${guest.id}`, {
+        method: "POST",
+        body: JSON.stringify({
+          full_name: activeGuestEditor.full_name,
+          email: activeGuestEditor.email,
+          website: activeGuestEditor.website,
+          profession: activeGuestEditor.profession,
+          social_handles: activeGuestEditor.social_handles,
+          background: activeGuestEditor.background,
+          passionate_topics: activeGuestEditor.passionate_topics,
+        }),
+      });
+      activeGuestEditor = null;
+      setMessage(`Updated ${guest.full_name || "guest"}.`, "success");
+      await loadGuests();
+    } catch (error) {
+      activeGuestEditor.saving = false;
+      activeGuestEditor.feedback = { text: error.message, tone: "error" };
+      renderGuests(latestPayload);
+      setMessage(error.message, "error");
+    }
+  });
+}
+
 function renderGuests(payload) {
   latestPayload = payload;
   emailEnabled = Boolean(payload.email_enabled);
@@ -257,28 +391,37 @@ function renderGuests(payload) {
   insights.skipped.textContent = skipped;
   insights.acceptanceRate.textContent = decided ? `${Math.round((accepted / decided) * 100)}%` : "0%";
 
-  const activeFilter = decisionFilter.value;
-  const searchQuery = guestSearch.value;
-  const guests = sortGuests(payload.guests.filter(
-    (guest) => guestMatchesFilter(guest, activeFilter) && guestMatchesSearch(guest, searchQuery),
-  ), guestSort.value);
+  const filteredGuests = sortGuests(
+    payload.guests.filter((guest) => {
+      return (
+        guestMatchesPreset(guest, activeGuestPreset) &&
+        guestMatchesFilter(guest, decisionFilter.value) &&
+        guestMatchesSearch(guest, guestSearch.value)
+      );
+    }),
+    guestSort.value,
+  );
+  const visibleGuests = filteredGuests.slice(0, visibleGuestCount);
 
   guestList.innerHTML = "";
-  updateResultsMeta(guests.length, payload.guests.length);
-  if (!guests.length) {
+  updateGuestPresetButtons();
+  updateResultsMeta(filteredGuests.length, payload.guests.length, visibleGuests.length);
+
+  if (!filteredGuests.length) {
     if (payload.guests.length) {
-      guestList.innerHTML = "<p class='guest-summary'>No guests match the current search and decision filter.</p>";
+      guestList.innerHTML = "<p class='guest-summary'>No guests match the current dashboard view. Try a different preset, search, or decision filter.</p>";
     } else {
-    guestList.innerHTML = "<p class='guest-summary'>No guests yet. Add the first one with the form.</p>";
+      guestList.innerHTML = "<p class='guest-summary'>No guests yet. Add the first one with the form.</p>";
     }
+    guestLoadMoreButton.classList.add("hidden");
     return;
   }
 
-  guests.forEach((guest) => {
+  visibleGuests.forEach((guest) => {
     const node = template.content.cloneNode(true);
-    const card = node.querySelector(".guest-card");
     const statusPill = node.querySelector(".status-pill");
     const composer = node.querySelector(".email-composer");
+    const editor = node.querySelector(".inline-editor");
 
     node.querySelector(".guest-name").textContent = guest.full_name || "Unnamed Guest";
     node.querySelector(".guest-meta").textContent = guest.email || "No email provided";
@@ -291,9 +434,11 @@ function renderGuests(payload) {
     if (!emailEnabled) {
       node.querySelectorAll("[data-action='accepted_email'], [data-action='rejected_email']").forEach((button) => {
         button.disabled = true;
-        button.title = "Set the dashboard SMTP environment variables on Railway to enable email sending.";
+        button.title = "Set the dashboard SMTP or Resend environment variables on Railway to enable email sending.";
       });
     }
+
+    renderInlineEditor(editor, guest);
 
     if (
       activeEmailComposer &&
@@ -389,6 +534,7 @@ function renderGuests(payload) {
     if (guest.profession) details.push(`Profession: ${guest.profession}`);
     if (guest.website) details.push(`Website: ${guest.website}`);
     if (guest.social_media_handles) details.push(`Social: ${guest.social_media_handles}`);
+    if (guest.passionate_topics) details.push(`Topics: ${guest.passionate_topics}`);
     if (guest.original_file_name) details.push(`Source: ${guest.original_file_name}`);
     node.querySelector(".guest-details").innerHTML = details.map((detail) => `<span>${detail}</span>`).join("");
 
@@ -397,10 +543,26 @@ function renderGuests(payload) {
         const action = button.dataset.action;
 
         try {
-          if (action === "copy") {
+          if (action === "edit") {
+            activeEmailComposer = null;
+            activeGuestEditor = {
+              guestId: guest.id,
+              full_name: guest.full_name || "",
+              email: guest.email || "",
+              website: guest.website || "",
+              profession: guest.profession || "",
+              social_handles: guest.social_media_handles || "",
+              background: guest.background || "",
+              passionate_topics: guest.passionate_topics || "",
+              saving: false,
+              feedback: null,
+            };
+            renderGuests(latestPayload);
+          } else if (action === "copy") {
             await copyGuestIntake(guest);
             setMessage(`Copied ${guest.full_name}'s intake details.`, "success");
           } else if (action === "accepted_email" || action === "rejected_email") {
+            activeGuestEditor = null;
             const decision = action === "accepted_email" ? "accepted" : "rejected";
             const templateData = await fetchTemplate(`/api/guests/${guest.id}/email-template`, { status: decision });
             activeEmailComposer = {
@@ -437,8 +599,13 @@ function renderGuests(payload) {
       });
     });
 
-    guestList.appendChild(card);
+    guestList.appendChild(node);
   });
+
+  guestLoadMoreButton.classList.toggle("hidden", visibleGuests.length >= filteredGuests.length);
+  if (!guestLoadMoreButton.classList.contains("hidden")) {
+    guestLoadMoreButton.textContent = `Load More Guests (${filteredGuests.length - visibleGuests.length} remaining)`;
+  }
 }
 
 async function loadGuests() {
@@ -500,12 +667,14 @@ exportButton.addEventListener("click", () => {
 });
 
 decisionFilter.addEventListener("change", () => {
+  visibleGuestCount = GUEST_PAGE_SIZE;
   if (latestPayload) {
     renderGuests(latestPayload);
   }
 });
 
 guestSearch.addEventListener("input", () => {
+  visibleGuestCount = GUEST_PAGE_SIZE;
   if (latestPayload) {
     renderGuests(latestPayload);
   }
@@ -515,6 +684,30 @@ guestSort.addEventListener("change", () => {
   if (latestPayload) {
     renderGuests(latestPayload);
   }
+});
+
+guestLoadMoreButton.addEventListener("click", () => {
+  visibleGuestCount += GUEST_PAGE_SIZE;
+  if (latestPayload) {
+    renderGuests(latestPayload);
+  }
+});
+
+guestPresetButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    activeGuestPreset = button.dataset.guestPreset || "all";
+    visibleGuestCount = GUEST_PAGE_SIZE;
+    if (activeGuestPreset === "accepted" || activeGuestPreset === "rejected") {
+      decisionFilter.value = activeGuestPreset;
+    } else if (activeGuestPreset === "needs_review") {
+      decisionFilter.value = "unprocessed";
+    } else {
+      decisionFilter.value = "all";
+    }
+    if (latestPayload) {
+      renderGuests(latestPayload);
+    }
+  });
 });
 
 function escapeHtml(value) {

@@ -568,6 +568,46 @@ class GuestWebService:
         self.database.delete_guest(guest_id)
         return {"deleted": True, "id": guest_id}
 
+    def update_guest(self, guest_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Update core guest details without overwriting source/status metadata."""
+        current = self.database.get_guest_by_id(guest_id)
+        if not current:
+            raise WebInterfaceError("Guest not found.")
+
+        updated_guest = {
+            "full_name": _normalize_text(payload.get("full_name")) or _normalize_text(current.get("full_name") or current.get("name")),
+            "email": _normalize_text(payload.get("email")) or _normalize_text(current.get("email")),
+            "website": _normalize_text(payload.get("website")) or _normalize_text(current.get("website")),
+            "profession": _normalize_text(payload.get("profession")) or _normalize_text(current.get("profession")),
+            "social_handles": _normalize_text(payload.get("social_handles")) or _normalize_text(current.get("social_media_handles")),
+            "background": _normalize_text(payload.get("background")) or _normalize_text(current.get("background")),
+            "motivation": _normalize_text(payload.get("motivation")) or _normalize_text(current.get("motivation")),
+            "life_experiences": _normalize_text(payload.get("life_experiences")) or _normalize_text(current.get("life_experiences")),
+            "core_values": _normalize_text(payload.get("core_values")) or _normalize_text(current.get("core_values")),
+            "favorite_quote": _normalize_text(payload.get("favorite_quote")) or _normalize_text(current.get("favorite_quote")),
+            "passionate_topics": _normalize_text(payload.get("passionate_topics")) or _normalize_text(current.get("passionate_topics")),
+            "additional_info": _normalize_text(payload.get("additional_info")) or _normalize_text(current.get("additional_info")),
+            "has_social_media": _normalize_text(payload.get("has_social_media")) or _normalize_text(current.get("following_us")),
+            "is_processed": current.get("is_processed"),
+            "email_status": current.get("email_status"),
+            "email_sent_at": current.get("email_sent_at"),
+            "skip_reason": current.get("skip_reason"),
+            "original_file_name": current.get("original_file_name"),
+            "original_data": current.get("original_data"),
+        }
+
+        if not updated_guest["full_name"]:
+            raise WebInterfaceError("Full name is required.")
+
+        if updated_guest["email"] and "@" not in updated_guest["email"]:
+            raise WebInterfaceError("Email address must contain '@'.")
+
+        self.database.update_guest_by_id(guest_id, updated_guest)
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest could not be saved.")
+        return serialize_guest(guest)
+
     def delete_interview(self, interview_id: int) -> Dict[str, Any]:
         """Delete an interview and return a small confirmation payload."""
         interview = self.database.get_interview_by_id(interview_id)
@@ -1327,6 +1367,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     payload.get("status", ""),
                     payload.get("skip_reason", ""),
                 )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, guest)
+            return
+
+        if self.path.startswith("/api/guests/") and not self.path.endswith("/email-decision") and not self.path.endswith("/email-template"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            guest_id = self._extract_guest_id(self.path)
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                guest = self.service.update_guest(guest_id, payload)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return

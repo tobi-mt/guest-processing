@@ -205,8 +205,18 @@
             </div>
           </div>
 
+          <div class="view-presets" id="guest-presets">
+            <button type="button" class="preset-chip active" data-guest-preset="all">All Guests</button>
+            <button type="button" class="preset-chip" data-guest-preset="needs_review">Needs Review</button>
+            <button type="button" class="preset-chip" data-guest-preset="accepted">Accepted</button>
+            <button type="button" class="preset-chip" data-guest-preset="rejected">Declined</button>
+            <button type="button" class="preset-chip" data-guest-preset="no_email">Missing Email</button>
+          </div>
           <p id="guest-results-meta" class="results-meta"></p>
           <div id="guest-list" class="guest-list"></div>
+          <div class="list-footer">
+            <button id="guest-load-more" class="secondary-button hidden" type="button">Load More Guests</button>
+          </div>
         </section>
       </main>
     </div>
@@ -223,6 +233,7 @@
         <p class="guest-summary"></p>
         <div class="guest-details"></div>
         <div class="guest-actions">
+          <button data-action="edit" class="ghost-button small-button">Edit</button>
           <button data-action="copy" class="ghost-button small-button">Copy Intake</button>
           <button data-action="accepted_email" class="primary-button small-button">Approve + Email</button>
           <button data-action="accepted" class="primary-button small-button">Accept</button>
@@ -232,6 +243,7 @@
           <button data-action="unprocessed" class="ghost-button small-button">Reset</button>
           <button data-action="delete" class="danger-button small-button">Delete</button>
         </div>
+        <div class="inline-editor hidden"></div>
         <div class="email-composer hidden"></div>
       </article>
     </template>

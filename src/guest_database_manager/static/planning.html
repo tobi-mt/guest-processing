@@ -236,6 +236,12 @@
             </div>
           </div>
 
+          <div class="view-presets" id="recommendation-presets">
+            <button type="button" class="preset-chip active" data-recommendation-preset="all">All Recommendations</button>
+            <button type="button" class="preset-chip" data-recommendation-preset="ready">Promo Ready</button>
+            <button type="button" class="preset-chip" data-recommendation-preset="needs_assets">Needs Assets</button>
+            <button type="button" class="preset-chip" data-recommendation-preset="seasonal">Seasonal Fit</button>
+          </div>
           <div class="list-toolbar">
             <label class="toolbar-field toolbar-search">
               <span>Search Recommendations</span>
@@ -259,6 +265,9 @@
           </div>
           <p id="recommendation-results-meta" class="results-meta"></p>
           <div id="recommendation-list" class="guest-list"></div>
+          <div class="list-footer">
+            <button id="recommendation-load-more" class="secondary-button hidden" type="button">Load More Recommendations</button>
+          </div>
 
           <div class="section-heading top-spaced section-heading-inline">
             <div>
@@ -268,6 +277,13 @@
             <button id="planning-refresh-button" class="secondary-button" type="button">Refresh</button>
           </div>
 
+          <div class="view-presets" id="episode-presets">
+            <button type="button" class="preset-chip active" data-episode-preset="all">All Episodes</button>
+            <button type="button" class="preset-chip" data-episode-preset="ready_to_schedule">Ready To Schedule</button>
+            <button type="button" class="preset-chip" data-episode-preset="scheduled">Scheduled</button>
+            <button type="button" class="preset-chip" data-episode-preset="needs_assets">Needs Assets</button>
+            <button type="button" class="preset-chip" data-episode-preset="released_archive">Released Archive</button>
+          </div>
           <div class="list-toolbar">
             <label class="toolbar-field toolbar-search">
               <span>Search Episodes</span>
@@ -318,6 +334,9 @@
           </div>
           <p id="episode-results-meta" class="results-meta"></p>
           <div id="episode-list" class="guest-list"></div>
+          <div class="list-footer">
+            <button id="episode-load-more" class="secondary-button hidden" type="button">Load More Episodes</button>
+          </div>
         </section>
       </main>
     </div>
