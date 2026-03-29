@@ -386,6 +386,15 @@ function renderInterviews(interviews, totalCount) {
     const calendarButton = interview.calendar_event_id
       ? `<button type="button" class="secondary-button" data-calendar-action="push">Update Google Calendar Event</button>`
       : "";
+    const reminderButtons = interview.guest_email
+      ? `
+        <button type="button" class="ghost-button" data-interview-action="preview-reminder">Preview Reminder</button>
+        <button type="button" class="primary-button" data-interview-action="send-reminder">Send Reminder</button>
+      `
+      : `
+        <button type="button" class="ghost-button" data-interview-action="preview-reminder" disabled>Preview Reminder</button>
+        <button type="button" class="primary-button" data-interview-action="send-reminder" disabled>Send Reminder</button>
+      `;
     card.innerHTML = `
       <h3>${interview.guest_name || "Unnamed guest"}</h3>
       <p>${interview.title || "Mirror Talk interview"}</p>
@@ -402,17 +411,22 @@ function renderInterviews(interviews, totalCount) {
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-interview-action="edit">${activeInterviewEditorId === interview.id ? "Hide Quick Edit" : "Quick Edit"}</button>
         <button type="button" class="ghost-button" data-interview-action="form">Open In Form</button>
+        ${reminderButtons}
         ${calendarButton}
         <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
       </div>
       <div class="inline-editor hidden" data-interview-editor></div>
+      <div class="operations-preview hidden" data-interview-reminder-preview></div>
     `;
 
     const editButton = card.querySelector("[data-interview-action='edit']");
     const formButton = card.querySelector("[data-interview-action='form']");
+    const previewReminderButton = card.querySelector("[data-interview-action='preview-reminder']");
+    const sendReminderButton = card.querySelector("[data-interview-action='send-reminder']");
     const calendarPushButton = card.querySelector("[data-calendar-action='push']");
     const deleteButton = card.querySelector("[data-interview-action='delete']");
     const editorNode = card.querySelector("[data-interview-editor]");
+    const reminderPreviewNode = card.querySelector("[data-interview-reminder-preview]");
 
     editButton.addEventListener("click", () => {
       activeInterviewEditorId = activeInterviewEditorId === interview.id ? null : interview.id;
@@ -427,6 +441,58 @@ function renderInterviews(interviews, totalCount) {
     if (activeInterviewEditorId === interview.id) {
       editorNode.classList.remove("hidden");
       renderInterviewInlineEditor(editorNode, interview);
+    }
+
+    if (previewReminderButton) {
+      previewReminderButton.addEventListener("click", async () => {
+        if (!interview.guest_email) {
+          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+
+        previewReminderButton.disabled = true;
+        previewReminderButton.textContent = "Loading...";
+        try {
+          const preview = await fetchJSON(`/api/interviews/${interview.id}/reminder-template`);
+          reminderPreviewNode.classList.remove("hidden");
+          reminderPreviewNode.innerHTML = `
+            <h4>${preview.subject}</h4>
+            <p>To: ${interview.guest_email}</p>
+            <pre>${preview.body}</pre>
+          `;
+        } catch (error) {
+          setMessage(interviewMessage, error.message, "error");
+        } finally {
+          previewReminderButton.disabled = false;
+          previewReminderButton.textContent = "Preview Reminder";
+        }
+      });
+    }
+
+    if (sendReminderButton) {
+      sendReminderButton.addEventListener("click", async () => {
+        if (!interview.guest_email) {
+          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+
+        sendReminderButton.disabled = true;
+        sendReminderButton.textContent = "Sending...";
+        try {
+          await fetchJSON(`/api/interviews/${interview.id}/send-reminder`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          reminderPreviewNode.classList.remove("hidden");
+          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Reminder sent to ${interview.guest_name || interview.guest_email}.</p>`;
+          setMessage(interviewMessage, `Reminder sent to ${interview.guest_name || interview.guest_email}.`, "success");
+          await loadOperations();
+        } catch (error) {
+          setMessage(interviewMessage, error.message, "error");
+          sendReminderButton.disabled = false;
+          sendReminderButton.textContent = "Send Reminder";
+        }
+      });
     }
 
     if (calendarPushButton) {
