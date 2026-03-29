@@ -61,6 +61,7 @@
             </div>
 
             <form id="interview-form" class="guest-form">
+              <input name="id" type="hidden" />
               <label>
                 Guest Name
                 <input name="guest_name" type="text" required />
@@ -110,7 +111,8 @@
                 <textarea name="notes" rows="3"></textarea>
               </label>
               <div class="form-actions full-width">
-                <button type="submit" class="primary-button">Save Interview</button>
+                <button id="interview-submit-button" type="submit" class="primary-button">Save Interview</button>
+                <button id="interview-reset-button" type="button" class="secondary-button" hidden>Cancel Editing</button>
               </div>
             </form>
 
@@ -130,6 +132,13 @@
           <p class="hero-copy review-copy">
             Sync your calendar first, review the exact guest and schedule details below, then preview or send reminders individually. When everything looks right, you can send all reviewed reminders together.
           </p>
+          <div class="list-toolbar">
+            <label class="toolbar-field toolbar-search">
+              <span>Search Reminders</span>
+              <input id="reminder-search" type="search" placeholder="Search guest, title, or email" />
+            </label>
+          </div>
+          <p id="reminder-results-meta" class="results-meta"></p>
           <div id="reminder-message" class="message" aria-live="polite"></div>
           <div id="reminder-list" class="guest-list"></div>
 
@@ -141,6 +150,37 @@
             <button id="operations-refresh-button" class="secondary-button" type="button">Refresh</button>
           </div>
 
+          <div class="list-toolbar">
+            <label class="toolbar-field toolbar-search">
+              <span>Search Interviews</span>
+              <input id="interview-search" type="search" placeholder="Search guest, title, or email" />
+            </label>
+            <label class="toolbar-field">
+              <span>Year</span>
+              <select id="interview-year-filter">
+                <option value="">All Years</option>
+              </select>
+            </label>
+            <label class="toolbar-field">
+              <span>Confirmation</span>
+              <select id="interview-confirmation-filter">
+                <option value="">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="reschedule_requested">Reschedule Requested</option>
+              </select>
+            </label>
+            <label class="toolbar-field">
+              <span>Sort By</span>
+              <select id="interview-sort">
+                <option value="closest">Closest First</option>
+                <option value="farthest">Farthest First</option>
+                <option value="name">Guest Name</option>
+                <option value="recently_updated">Recently Added</option>
+              </select>
+            </label>
+          </div>
+          <p id="interview-results-meta" class="results-meta"></p>
           <div id="interview-list" class="guest-list"></div>
         </section>
       </main>

@@ -1,12 +1,22 @@
 const interviewForm = document.getElementById("interview-form");
+const interviewSubmitButton = document.getElementById("interview-submit-button");
+const interviewResetButton = document.getElementById("interview-reset-button");
 const interviewMessage = document.getElementById("interview-message");
 const reminderMessage = document.getElementById("reminder-message");
 const reminderList = document.getElementById("reminder-list");
 const interviewList = document.getElementById("interview-list");
+const reminderSearchInput = document.getElementById("reminder-search");
+const reminderResultsMeta = document.getElementById("reminder-results-meta");
+const interviewSearchInput = document.getElementById("interview-search");
+const interviewYearFilter = document.getElementById("interview-year-filter");
+const interviewConfirmationFilter = document.getElementById("interview-confirmation-filter");
+const interviewSort = document.getElementById("interview-sort");
+const interviewResultsMeta = document.getElementById("interview-results-meta");
 const refreshButton = document.getElementById("operations-refresh-button");
 const sendWeeklyRemindersButton = document.getElementById("send-weekly-reminders-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
-let latestReminderCandidates = [];
+
+let latestOperationsPayload = { interviews: [], reminder_candidates: [], stats: {} };
 
 const stats = {
   interviewsTotal: document.getElementById("ops-interviews-total"),
@@ -33,6 +43,10 @@ function setMessage(node, text, tone = "") {
   node.className = `message ${tone}`.trim();
 }
 
+function normalizeText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function formatDateTime(value) {
   if (!value) return "Not set";
   const normalized = String(value).replace(" ", "T");
@@ -47,11 +61,161 @@ function formatDateTime(value) {
   });
 }
 
-function renderInterviews(interviews) {
+function formatDateForDateTimeInput(value) {
+  if (!value) return "";
+  return String(value).replace(" ", "T").slice(0, 16);
+}
+
+function parseDate(value) {
+  if (!value) return null;
+  const date = new Date(String(value).replace(" ", "T"));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getYearValue(value) {
+  const date = parseDate(value);
+  return date ? String(date.getFullYear()) : "";
+}
+
+function updateResultsMeta(node, shown, total, emptyMessage, filteredMessage) {
+  if (!total) {
+    node.textContent = emptyMessage;
+    return;
+  }
+  if (shown === total) {
+    node.textContent = `Showing all ${total} item${total === 1 ? "" : "s"}.`;
+    return;
+  }
+  node.textContent = `Showing ${shown} of ${total} item${total === 1 ? "" : "s"} after filtering. ${filteredMessage}`;
+}
+
+function populateInterviewYearOptions(interviews) {
+  const years = Array.from(
+    new Set(interviews.map((interview) => getYearValue(interview.scheduled_for)).filter(Boolean)),
+  ).sort((a, b) => Number(b) - Number(a));
+
+  const currentValue = interviewYearFilter.value;
+  interviewYearFilter.innerHTML = '<option value="">All Years</option>';
+  years.forEach((year) => {
+    const option = document.createElement("option");
+    option.value = year;
+    option.textContent = year;
+    interviewYearFilter.appendChild(option);
+  });
+  interviewYearFilter.value = years.includes(currentValue) ? currentValue : "";
+}
+
+function resetInterviewForm() {
+  interviewForm.reset();
+  interviewForm.elements.id.value = "";
+  interviewForm.elements.timezone.value = "Europe/Berlin";
+  interviewForm.elements.confirmation_status.value = "pending";
+  interviewForm.elements.reminder_status.value = "not_scheduled";
+  interviewSubmitButton.textContent = "Save Interview";
+  interviewResetButton.hidden = true;
+}
+
+function loadInterviewIntoForm(interview) {
+  interviewForm.elements.id.value = interview.id || "";
+  interviewForm.elements.guest_name.value = interview.guest_name || "";
+  interviewForm.elements.guest_email.value = interview.guest_email || "";
+  interviewForm.elements.title.value = interview.title || "";
+  interviewForm.elements.scheduled_for.value = formatDateForDateTimeInput(interview.scheduled_for);
+  interviewForm.elements.timezone.value = interview.timezone || "Europe/Berlin";
+  interviewForm.elements.calendar_event_id.value = interview.calendar_event_id || "";
+  interviewForm.elements.join_url.value = interview.join_url || "";
+  interviewForm.elements.confirmation_status.value = interview.confirmation_status || "pending";
+  interviewForm.elements.reminder_status.value = interview.reminder_status || "not_scheduled";
+  interviewForm.elements.notes.value = interview.notes || "";
+  interviewSubmitButton.textContent = "Update Interview";
+  interviewResetButton.hidden = false;
+  interviewForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function filterAndSortInterviews(interviews) {
+  const searchTerm = normalizeText(interviewSearchInput.value);
+  const selectedYear = interviewYearFilter.value;
+  const confirmationStatus = interviewConfirmationFilter.value;
+  const sortMode = interviewSort.value || "closest";
+
+  const filtered = interviews.filter((interview) => {
+    const haystack = [
+      interview.guest_name,
+      interview.guest_email,
+      interview.title,
+      interview.confirmation_status,
+    ].map(normalizeText).join(" ");
+
+    if (searchTerm && !haystack.includes(searchTerm)) {
+      return false;
+    }
+    if (selectedYear && getYearValue(interview.scheduled_for) !== selectedYear) {
+      return false;
+    }
+    if (confirmationStatus && normalizeText(interview.confirmation_status) !== confirmationStatus) {
+      return false;
+    }
+    return true;
+  });
+
+  filtered.sort((left, right) => {
+    const leftDate = parseDate(left.scheduled_for);
+    const rightDate = parseDate(right.scheduled_for);
+
+    if (sortMode === "name") {
+      return normalizeText(left.guest_name).localeCompare(normalizeText(right.guest_name));
+    }
+
+    if (sortMode === "recently_updated") {
+      return Number(right.id || 0) - Number(left.id || 0);
+    }
+
+    if (sortMode === "farthest") {
+      if (!leftDate && !rightDate) return Number(right.id || 0) - Number(left.id || 0);
+      if (!leftDate) return 1;
+      if (!rightDate) return -1;
+      return rightDate - leftDate;
+    }
+
+    if (!leftDate && !rightDate) return Number(right.id || 0) - Number(left.id || 0);
+    if (!leftDate) return 1;
+    if (!rightDate) return -1;
+    return leftDate - rightDate;
+  });
+
+  return filtered;
+}
+
+function filterReminderCandidates(interviews) {
+  const searchTerm = normalizeText(reminderSearchInput.value);
+  if (!searchTerm) {
+    return interviews;
+  }
+  return interviews.filter((interview) => {
+    const haystack = [
+      interview.guest_name,
+      interview.guest_email,
+      interview.title,
+      interview.scheduled_for_display,
+    ].map(normalizeText).join(" ");
+    return haystack.includes(searchTerm);
+  });
+}
+
+function renderInterviews(interviews, totalCount) {
   interviewList.innerHTML = "";
+  updateResultsMeta(
+    interviewResultsMeta,
+    interviews.length,
+    totalCount,
+    "No interviews tracked yet.",
+    "Refine the search, year, or confirmation filters to narrow the calendar."
+  );
 
   if (!interviews.length) {
-    interviewList.innerHTML = "<p class='guest-summary'>No interviews tracked yet.</p>";
+    interviewList.innerHTML = totalCount
+      ? "<p class='guest-summary'>No interviews match the current controls.</p>"
+      : "<p class='guest-summary'>No interviews tracked yet.</p>";
     return;
   }
 
@@ -71,13 +235,21 @@ function renderInterviews(interviews) {
         <span>Reminder: ${interview.reminder_status || "not_scheduled"}</span>
       </div>
       <div class="operations-actions">
+        <button type="button" class="secondary-button" data-interview-action="edit">Edit</button>
         ${calendarButton}
         <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
       </div>
     `;
 
+    const editButton = card.querySelector("[data-interview-action='edit']");
     const calendarPushButton = card.querySelector("[data-calendar-action='push']");
     const deleteButton = card.querySelector("[data-interview-action='delete']");
+
+    editButton.addEventListener("click", () => {
+      loadInterviewIntoForm(interview);
+      setMessage(interviewMessage, `Editing ${interview.guest_name || "interview"}.`, "success");
+    });
+
     if (calendarPushButton) {
       calendarPushButton.addEventListener("click", async () => {
         calendarPushButton.disabled = true;
@@ -97,37 +269,43 @@ function renderInterviews(interviews) {
       });
     }
 
-    if (deleteButton) {
-      deleteButton.addEventListener("click", async () => {
-        const label = interview.guest_name || "this interview";
-        if (!window.confirm(`Delete ${label} from the database?`)) {
-          return;
-        }
+    deleteButton.addEventListener("click", async () => {
+      const label = interview.guest_name || "this interview";
+      if (!window.confirm(`Delete ${label} from the database?`)) {
+        return;
+      }
 
-        deleteButton.disabled = true;
-        deleteButton.textContent = "Deleting...";
-        try {
-          await fetchJSON(`/api/interviews/${interview.id}`, { method: "DELETE" });
-          setMessage(interviewMessage, `Deleted ${label}.`, "success");
-          await loadOperations();
-        } catch (error) {
-          setMessage(interviewMessage, error.message, "error");
-          deleteButton.disabled = false;
-          deleteButton.textContent = "Delete";
-        }
-      });
-    }
+      deleteButton.disabled = true;
+      deleteButton.textContent = "Deleting...";
+      try {
+        await fetchJSON(`/api/interviews/${interview.id}`, { method: "DELETE" });
+        setMessage(interviewMessage, `Deleted ${label}.`, "success");
+        await loadOperations();
+      } catch (error) {
+        setMessage(interviewMessage, error.message, "error");
+        deleteButton.disabled = false;
+        deleteButton.textContent = "Delete";
+      }
+    });
 
     interviewList.appendChild(card);
   });
 }
 
-function renderReminderCandidates(interviews) {
-  latestReminderCandidates = interviews;
+function renderReminderCandidates(interviews, totalCount) {
   reminderList.innerHTML = "";
+  updateResultsMeta(
+    reminderResultsMeta,
+    interviews.length,
+    totalCount,
+    "No reminder emails are due for this week.",
+    "Use search to focus on one guest or conversation."
+  );
 
   if (!interviews.length) {
-    reminderList.innerHTML = "<p class='guest-summary'>No reminder emails are due for this week.</p>";
+    reminderList.innerHTML = totalCount
+      ? "<p class='guest-summary'>No reminders match the current search.</p>"
+      : "<p class='guest-summary'>No reminder emails are due for this week.</p>";
     return;
   }
 
@@ -185,35 +363,48 @@ function renderReminderCandidates(interviews) {
   });
 }
 
+function renderOperations() {
+  const interviews = latestOperationsPayload.interviews || [];
+  const reminders = latestOperationsPayload.reminder_candidates || [];
+
+  populateInterviewYearOptions(interviews);
+  renderReminderCandidates(filterReminderCandidates(reminders), reminders.length);
+  renderInterviews(filterAndSortInterviews(interviews), interviews.length);
+}
+
 async function loadOperations() {
   const payload = await fetchJSON("/api/operations");
+  latestOperationsPayload = payload;
   const interviews = payload.interviews || [];
   stats.interviewsTotal.textContent = payload.stats.interviews_total ?? interviews.length ?? 0;
   stats.interviewsPending.textContent = payload.stats.interviews_pending_confirmation ?? 0;
   stats.interviewsConfirmed.textContent = interviews.filter((item) => item.confirmation_status === "confirmed").length;
   stats.remindersDue.textContent = payload.reminder_candidates?.length ?? 0;
-  renderReminderCandidates(payload.reminder_candidates || []);
-  renderInterviews(interviews);
+  renderOperations();
 }
 
 interviewForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const payload = Object.fromEntries(new FormData(interviewForm).entries());
+  const interviewId = payload.id;
+  delete payload.id;
 
   try {
-    await fetchJSON("/api/interviews", {
+    await fetchJSON(interviewId ? `/api/interviews/${interviewId}` : "/api/interviews", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    interviewForm.reset();
-    interviewForm.elements.timezone.value = "Europe/Berlin";
-    interviewForm.elements.confirmation_status.value = "pending";
-    interviewForm.elements.reminder_status.value = "not_scheduled";
-    setMessage(interviewMessage, "Interview saved.", "success");
+    resetInterviewForm();
+    setMessage(interviewMessage, interviewId ? "Interview updated." : "Interview saved.", "success");
     await loadOperations();
   } catch (error) {
     setMessage(interviewMessage, error.message, "error");
   }
+});
+
+interviewResetButton.addEventListener("click", () => {
+  resetInterviewForm();
+  setMessage(interviewMessage, "Back to creating a new interview.", "success");
 });
 
 refreshButton.addEventListener("click", async () => {
@@ -244,7 +435,8 @@ syncCalendarButton.addEventListener("click", async () => {
 });
 
 sendWeeklyRemindersButton.addEventListener("click", async () => {
-  if (!latestReminderCandidates.length) {
+  const visibleReminders = filterReminderCandidates(latestOperationsPayload.reminder_candidates || []);
+  if (!visibleReminders.length) {
     setMessage(reminderMessage, "There are no reviewed reminder candidates to send right now.", "error");
     return;
   }
@@ -269,6 +461,12 @@ sendWeeklyRemindersButton.addEventListener("click", async () => {
   }
 });
 
+[reminderSearchInput, interviewSearchInput, interviewYearFilter, interviewConfirmationFilter, interviewSort].forEach((node) => {
+  node.addEventListener("input", renderOperations);
+  node.addEventListener("change", renderOperations);
+});
+
+resetInterviewForm();
 loadOperations().catch((error) => {
   setMessage(interviewMessage, error.message, "error");
 });

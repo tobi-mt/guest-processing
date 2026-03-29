@@ -236,6 +236,28 @@
             </div>
           </div>
 
+          <div class="list-toolbar">
+            <label class="toolbar-field toolbar-search">
+              <span>Search Recommendations</span>
+              <input id="recommendation-search" type="search" placeholder="Search guest, topic, or category" />
+            </label>
+            <label class="toolbar-field">
+              <span>Category</span>
+              <select id="recommendation-category-filter">
+                <option value="">All Categories</option>
+              </select>
+            </label>
+            <label class="toolbar-field">
+              <span>Sort By</span>
+              <select id="recommendation-sort">
+                <option value="score">Best Score</option>
+                <option value="recommended_date">Recommended Slot</option>
+                <option value="interview_date">Interview Date</option>
+                <option value="guest_name">Guest Name</option>
+              </select>
+            </label>
+          </div>
+          <p id="recommendation-results-meta" class="results-meta"></p>
           <div id="recommendation-list" class="guest-list"></div>
 
           <div class="section-heading top-spaced section-heading-inline">
@@ -246,6 +268,55 @@
             <button id="planning-refresh-button" class="secondary-button" type="button">Refresh</button>
           </div>
 
+          <div class="list-toolbar">
+            <label class="toolbar-field toolbar-search">
+              <span>Search Episodes</span>
+              <input id="episode-search" type="search" placeholder="Search guest, title, topic, or email" />
+            </label>
+            <label class="toolbar-field">
+              <span>Category</span>
+              <select id="episode-category-filter">
+                <option value="">All Categories</option>
+              </select>
+            </label>
+            <label class="toolbar-field">
+              <span>Year</span>
+              <select id="episode-year-filter">
+                <option value="">All Years</option>
+              </select>
+            </label>
+            <label class="toolbar-field">
+              <span>Release</span>
+              <select id="episode-release-filter">
+                <option value="">All Release Statuses</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="unplanned">Unplanned</option>
+                <option value="released">Released</option>
+              </select>
+            </label>
+            <label class="toolbar-field">
+              <span>Production</span>
+              <select id="episode-production-filter">
+                <option value="">All Production Stages</option>
+                <option value="idea">Idea</option>
+                <option value="recorded">Recorded</option>
+                <option value="editing">Editing</option>
+                <option value="ready">Ready</option>
+                <option value="released">Released</option>
+              </select>
+            </label>
+            <label class="toolbar-field">
+              <span>Sort By</span>
+              <select id="episode-sort">
+                <option value="closest_release">Closest Release</option>
+                <option value="latest_interview">Latest Interview</option>
+                <option value="priority">Priority</option>
+                <option value="guest_name">Guest Name</option>
+                <option value="category">Category</option>
+              </select>
+            </label>
+          </div>
+          <p id="episode-results-meta" class="results-meta"></p>
           <div id="episode-list" class="guest-list"></div>
         </section>
       </main>

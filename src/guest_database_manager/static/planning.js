@@ -12,6 +12,24 @@ const planningExportMessage = document.getElementById("planning-export-message")
 const episodeList = document.getElementById("episode-list");
 const recommendationList = document.getElementById("recommendation-list");
 const refreshButton = document.getElementById("planning-refresh-button");
+const recommendationSearchInput = document.getElementById("recommendation-search");
+const recommendationCategoryFilter = document.getElementById("recommendation-category-filter");
+const recommendationSort = document.getElementById("recommendation-sort");
+const recommendationResultsMeta = document.getElementById("recommendation-results-meta");
+const episodeSearchInput = document.getElementById("episode-search");
+const episodeCategoryFilter = document.getElementById("episode-category-filter");
+const episodeYearFilter = document.getElementById("episode-year-filter");
+const episodeReleaseFilter = document.getElementById("episode-release-filter");
+const episodeProductionFilter = document.getElementById("episode-production-filter");
+const episodeSort = document.getElementById("episode-sort");
+const episodeResultsMeta = document.getElementById("episode-results-meta");
+
+let latestPlanningPayload = {
+  stats: {},
+  episodes: [],
+  recommendations: [],
+  available_categories: [],
+};
 
 const EXPORT_FIELD_CONFIG = {
   guests: [
@@ -133,11 +151,20 @@ function setMessage(node, text, tone = "") {
   node.className = `message ${tone}`.trim();
 }
 
+function normalizeText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function parseDate(value) {
+  if (!value) return null;
+  const date = new Date(String(value).replace(" ", "T"));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function formatDateTime(value) {
   if (!value) return "Not set";
-  const normalized = String(value).replace(" ", "T");
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) return value;
+  const date = parseDate(value);
+  if (!date) return value;
   return date.toLocaleString("en-GB", {
     year: "numeric",
     month: "short",
@@ -156,6 +183,50 @@ function formatDateForDateTimeInput(value) {
   if (!value) return "";
   const normalized = String(value).replace(" ", "T");
   return normalized.slice(0, 16);
+}
+
+function getEpisodeYear(episode) {
+  const releaseYear = parseDate(episode.release_date);
+  if (releaseYear) return String(releaseYear.getFullYear());
+  const interviewYear = parseDate(episode.interview_date);
+  return interviewYear ? String(interviewYear.getFullYear()) : "";
+}
+
+function updateResultsMeta(node, shown, total, emptyMessage, filteredMessage) {
+  if (!total) {
+    node.textContent = emptyMessage;
+    return;
+  }
+  if (shown === total) {
+    node.textContent = `Showing all ${total} item${total === 1 ? "" : "s"}.`;
+    return;
+  }
+  node.textContent = `Showing ${shown} of ${total} item${total === 1 ? "" : "s"} after filtering. ${filteredMessage}`;
+}
+
+function populateSelect(selectNode, values, defaultLabel) {
+  const currentValue = selectNode.value;
+  selectNode.innerHTML = `<option value="">${defaultLabel}</option>`;
+  values.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    selectNode.appendChild(option);
+  });
+  selectNode.value = values.includes(currentValue) ? currentValue : "";
+}
+
+function populatePlanningFilters(categories, episodes) {
+  const sortedCategories = [...new Set((categories || []).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  populateSelect(recommendationCategoryFilter, sortedCategories, "All Categories");
+  populateSelect(episodeCategoryFilter, sortedCategories, "All Categories");
+
+  const years = Array.from(new Set((episodes || []).map(getEpisodeYear).filter(Boolean))).sort(
+    (a, b) => Number(b) - Number(a),
+  );
+  populateSelect(episodeYearFilter, years, "All Years");
 }
 
 function resetEpisodeForm() {
@@ -216,12 +287,136 @@ function renderExportFields() {
   });
 }
 
-function renderEpisodes(episodes) {
+function filterEpisodes(episodes) {
+  const searchTerm = normalizeText(episodeSearchInput.value);
+  const category = episodeCategoryFilter.value;
+  const year = episodeYearFilter.value;
+  const releaseStatus = episodeReleaseFilter.value;
+  const productionStatus = episodeProductionFilter.value;
+  const sortMode = episodeSort.value || "closest_release";
+
+  const filtered = episodes.filter((episode) => {
+    const haystack = [
+      episode.guest_name,
+      episode.guest_email,
+      episode.episode_title,
+      episode.topic,
+      episode.category,
+    ].map(normalizeText).join(" ");
+    if (searchTerm && !haystack.includes(searchTerm)) {
+      return false;
+    }
+    if (category && normalizeText(episode.category) !== normalizeText(category)) {
+      return false;
+    }
+    if (year && getEpisodeYear(episode) !== year) {
+      return false;
+    }
+    if (releaseStatus && normalizeText(episode.release_status) !== releaseStatus) {
+      return false;
+    }
+    if (productionStatus && normalizeText(episode.production_status) !== productionStatus) {
+      return false;
+    }
+    return true;
+  });
+
+  filtered.sort((left, right) => {
+    if (sortMode === "guest_name") {
+      return normalizeText(left.guest_name).localeCompare(normalizeText(right.guest_name));
+    }
+    if (sortMode === "category") {
+      return normalizeText(left.category).localeCompare(normalizeText(right.category));
+    }
+    if (sortMode === "priority") {
+      return Number(right.priority_score || 0) - Number(left.priority_score || 0);
+    }
+    if (sortMode === "latest_interview") {
+      const leftDate = parseDate(left.interview_date);
+      const rightDate = parseDate(right.interview_date);
+      if (!leftDate && !rightDate) return Number(right.id || 0) - Number(left.id || 0);
+      if (!leftDate) return 1;
+      if (!rightDate) return -1;
+      return rightDate - leftDate;
+    }
+
+    const leftRelease = parseDate(left.release_date);
+    const rightRelease = parseDate(right.release_date);
+    if (!leftRelease && !rightRelease) return Number(right.priority_score || 0) - Number(left.priority_score || 0);
+    if (!leftRelease) return 1;
+    if (!rightRelease) return -1;
+    return leftRelease - rightRelease;
+  });
+
+  return filtered;
+}
+
+function filterRecommendations(recommendations) {
+  const searchTerm = normalizeText(recommendationSearchInput.value);
+  const category = recommendationCategoryFilter.value;
+  const sortMode = recommendationSort.value || "score";
+
+  const filtered = recommendations.filter((episode) => {
+    const haystack = [
+      episode.guest_name,
+      episode.guest_email,
+      episode.episode_title,
+      episode.topic,
+      episode.category,
+      episode.recommendation_reason,
+    ].map(normalizeText).join(" ");
+    if (searchTerm && !haystack.includes(searchTerm)) {
+      return false;
+    }
+    if (category && normalizeText(episode.category) !== normalizeText(category)) {
+      return false;
+    }
+    return true;
+  });
+
+  filtered.sort((left, right) => {
+    if (sortMode === "recommended_date") {
+      const leftDate = parseDate(left.recommended_release_date);
+      const rightDate = parseDate(right.recommended_release_date);
+      if (!leftDate && !rightDate) return 0;
+      if (!leftDate) return 1;
+      if (!rightDate) return -1;
+      return leftDate - rightDate;
+    }
+    if (sortMode === "interview_date") {
+      const leftDate = parseDate(left.interview_date);
+      const rightDate = parseDate(right.interview_date);
+      if (!leftDate && !rightDate) return 0;
+      if (!leftDate) return 1;
+      if (!rightDate) return -1;
+      return rightDate - leftDate;
+    }
+    if (sortMode === "guest_name") {
+      return normalizeText(left.guest_name).localeCompare(normalizeText(right.guest_name));
+    }
+    return Number(right.priority_score || 0) - Number(left.priority_score || 0);
+  });
+
+  return filtered;
+}
+
+function renderEpisodes(episodes, totalCount) {
   episodeList.innerHTML = "";
+  updateResultsMeta(
+    episodeResultsMeta,
+    episodes.length,
+    totalCount,
+    "No episodes tracked yet.",
+    "Use search, category, year, or status filters to focus the planning queue."
+  );
+
   if (!episodes.length) {
-    episodeList.innerHTML = "<p class='guest-summary'>No episodes tracked yet.</p>";
+    episodeList.innerHTML = totalCount
+      ? "<p class='guest-summary'>No episodes match the current planning controls.</p>"
+      : "<p class='guest-summary'>No episodes tracked yet.</p>";
     return;
   }
+
   episodes.forEach((episode) => {
     const card = document.createElement("article");
     card.className = "operations-card";
@@ -272,12 +467,23 @@ function renderEpisodes(episodes) {
   });
 }
 
-function renderRecommendations(recommendations) {
+function renderRecommendations(recommendations, totalCount) {
   recommendationList.innerHTML = "";
+  updateResultsMeta(
+    recommendationResultsMeta,
+    recommendations.length,
+    totalCount,
+    "Import the yearly release CSVs and the Not Yet Released queue to generate recommendations.",
+    "Adjust search, category, or sort to inspect the strongest release candidates."
+  );
+
   if (!recommendations.length) {
-    recommendationList.innerHTML = "<p class='guest-summary'>Import the yearly release CSVs and the Not Yet Released queue to generate recommendations.</p>";
+    recommendationList.innerHTML = totalCount
+      ? "<p class='guest-summary'>No recommendations match the current controls.</p>"
+      : "<p class='guest-summary'>Import the yearly release CSVs and the Not Yet Released queue to generate recommendations.</p>";
     return;
   }
+
   recommendations.forEach((episode, index) => {
     const card = document.createElement("article");
     card.className = "operations-card recommendation-card";
@@ -338,17 +544,27 @@ function renderRecommendations(recommendations) {
   });
 }
 
+function renderPlanning() {
+  const episodes = latestPlanningPayload.episodes || [];
+  const recommendations = latestPlanningPayload.recommendations || [];
+  const categories = latestPlanningPayload.available_categories || [];
+
+  populatePlanningFilters(categories, episodes);
+  renderCategoryOptions(categories);
+  renderRecommendations(filterRecommendations(recommendations), recommendations.length);
+  renderEpisodes(filterEpisodes(episodes), episodes.length);
+}
+
 async function loadPlanning() {
   const payload = await fetchJSON("/api/planning");
+  latestPlanningPayload = payload;
   stats.total.textContent = payload.stats.episodes_total ?? 0;
   stats.released.textContent = payload.stats.episodes_released ?? 0;
   stats.scheduled.textContent = payload.stats.episodes_scheduled ?? 0;
   stats.unreleased.textContent = payload.stats.episodes_unreleased ?? 0;
   stats.promoReady.textContent = payload.stats.episodes_promo_ready ?? 0;
   stats.needsAssets.textContent = payload.stats.episodes_need_assets ?? 0;
-  renderCategoryOptions(payload.available_categories || []);
-  renderRecommendations(payload.recommendations || []);
-  renderEpisodes(payload.episodes || []);
+  renderPlanning();
 }
 
 episodeForm.addEventListener("submit", async (event) => {
@@ -416,6 +632,21 @@ refreshButton.addEventListener("click", async () => {
   } catch (error) {
     setMessage(episodeMessage, error.message, "error");
   }
+});
+
+[
+  recommendationSearchInput,
+  recommendationCategoryFilter,
+  recommendationSort,
+  episodeSearchInput,
+  episodeCategoryFilter,
+  episodeYearFilter,
+  episodeReleaseFilter,
+  episodeProductionFilter,
+  episodeSort,
+].forEach((node) => {
+  node.addEventListener("input", renderPlanning);
+  node.addEventListener("change", renderPlanning);
 });
 
 renderExportFields();
