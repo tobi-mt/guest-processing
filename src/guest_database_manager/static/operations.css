@@ -202,6 +202,35 @@
   overflow-wrap: anywhere;
 }
 
+.operations-preview ul {
+  margin: 8px 0 0 18px;
+  padding: 0;
+  color: var(--muted);
+}
+
+.insight-stack {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(91, 70, 47, 0.08);
+}
+
+.insight-stack.caution {
+  color: var(--danger);
+}
+
+.insight-stack.caution ul {
+  color: var(--danger);
+}
+
+.insight-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--heading);
+}
+
 .operations-preview pre {
   margin: 0;
   white-space: pre-wrap;

@@ -36,6 +36,7 @@ let latestPlanningPayload = {
 };
 let activeRecommendationPreset = "all";
 let activeEpisodePreset = "all";
+let activeEpisodeEditorId = null;
 let visibleRecommendationCount = 6;
 let visibleEpisodeCount = 10;
 
@@ -235,6 +236,15 @@ function updatePresetButtons(buttons, activeValue, dataName) {
   });
 }
 
+function createFieldMarkup(label, inputMarkup, fullWidth = false) {
+  return `
+    <label class="${fullWidth ? "full-width" : ""}">
+      <span>${label}</span>
+      ${inputMarkup}
+    </label>
+  `;
+}
+
 function deriveRecommendationSignals(episode) {
   const text = normalizeText(episode.recommendation_reason);
   const signals = [];
@@ -254,6 +264,52 @@ function deriveRecommendationSignals(episode) {
     signals.push({ label: "Release Ready", tone: "good" });
   }
   return signals;
+}
+
+function splitRecommendationInsights(reason) {
+  const text = String(reason || "").trim();
+  if (!text) {
+    return {
+      strengths: [],
+      cautions: [],
+      summary: "Good fit for the next release slot.",
+    };
+  }
+
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const cautionPatterns = [
+    "needs promo assets",
+    "promotion readiness is still unclear",
+    "same guest appeared very recently",
+    "same guest has already been featured",
+    "already warm in the recent release mix",
+    "dominates",
+    "fatigue",
+    "risk",
+    "missing",
+    "however",
+    "but",
+  ];
+  const strengths = [];
+  const cautions = [];
+
+  sentences.forEach((sentence) => {
+    const normalized = normalizeText(sentence);
+    if (cautionPatterns.some((pattern) => normalized.includes(pattern))) {
+      cautions.push(sentence);
+    } else {
+      strengths.push(sentence);
+    }
+  });
+
+  return {
+    strengths: strengths.slice(0, 2),
+    cautions: cautions.slice(0, 2),
+    summary: sentences[0] || text,
+  };
 }
 
 function populateSelect(selectNode, values, defaultLabel) {
@@ -314,6 +370,106 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeSubmitButton.textContent = "Update Episode";
   episodeResetButton.hidden = false;
   episodeForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderEpisodeInlineEditor(container, episode) {
+  container.innerHTML = `
+    <div class="inline-editor-title">Quick Edit Episode</div>
+    <form class="inline-editor-form" data-inline-episode-form>
+      ${createFieldMarkup("Episode Title", `<input name="episode_title" type="text" value="${episode.episode_title || ""}" required />`, true)}
+      ${createFieldMarkup("Guest Name", `<input name="guest_name" type="text" value="${episode.guest_name || ""}" required />`)}
+      ${createFieldMarkup("Guest Email", `<input name="guest_email" type="email" value="${episode.guest_email || ""}" />`)}
+      ${createFieldMarkup("Category", `<input name="category" type="text" list="episode-category-options" value="${episode.category || ""}" />`)}
+      ${createFieldMarkup("Release Date", `<input name="release_date" type="datetime-local" value="${formatDateForDateTimeInput(episode.release_date)}" />`)}
+      ${createFieldMarkup("Release Status", `
+        <select name="release_status">
+          <option value="unplanned" ${normalizeText(episode.release_status) === "unplanned" ? "selected" : ""}>Unplanned</option>
+          <option value="scheduled" ${normalizeText(episode.release_status) === "scheduled" ? "selected" : ""}>Scheduled</option>
+          <option value="released" ${normalizeText(episode.release_status) === "released" ? "selected" : ""}>Released</option>
+        </select>
+      `)}
+      ${createFieldMarkup("Production", `
+        <select name="production_status">
+          <option value="idea" ${normalizeText(episode.production_status) === "idea" ? "selected" : ""}>Idea</option>
+          <option value="recorded" ${normalizeText(episode.production_status) === "recorded" ? "selected" : ""}>Recorded</option>
+          <option value="editing" ${normalizeText(episode.production_status) === "editing" ? "selected" : ""}>Editing</option>
+          <option value="ready" ${normalizeText(episode.production_status) === "ready" ? "selected" : ""}>Ready</option>
+          <option value="released" ${normalizeText(episode.production_status) === "released" ? "selected" : ""}>Released</option>
+        </select>
+      `)}
+      ${createFieldMarkup("Promotion", `
+        <select name="promotion_status">
+          <option value="unknown" ${normalizeText(episode.promotion_status) === "unknown" ? "selected" : ""}>Unknown</option>
+          <option value="needs_assets" ${normalizeText(episode.promotion_status) === "needs_assets" ? "selected" : ""}>Needs Assets</option>
+          <option value="ready" ${normalizeText(episode.promotion_status) === "ready" ? "selected" : ""}>Ready</option>
+          <option value="released" ${normalizeText(episode.promotion_status) === "released" ? "selected" : ""}>Released</option>
+        </select>
+      `)}
+      ${createFieldMarkup("Priority", `<input name="priority_score" type="number" min="0" max="10" step="0.5" value="${episode.priority_score ?? 0}" />`)}
+      ${createFieldMarkup("Topic", `<input name="topic" type="text" value="${episode.topic || ""}" />`, true)}
+      ${createFieldMarkup("Notes", `<textarea name="notes" rows="3">${episode.notes || ""}</textarea>`, true)}
+      <div class="inline-editor-actions full-width">
+        <button type="submit" class="primary-button">Save Changes</button>
+        <button type="button" class="secondary-button" data-inline-episode-schedule>Schedule Recommended Slot</button>
+        <button type="button" class="ghost-button" data-inline-episode-cancel>Close</button>
+      </div>
+      <p class="message" data-inline-episode-message aria-live="polite"></p>
+    </form>
+  `;
+
+  const form = container.querySelector("[data-inline-episode-form]");
+  const messageNode = container.querySelector("[data-inline-episode-message]");
+  const scheduleButton = container.querySelector("[data-inline-episode-schedule]");
+  const cancelButton = container.querySelector("[data-inline-episode-cancel]");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(form).entries());
+    try {
+      await fetchJSON(`/api/episodes/${episode.id}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setMessage(episodeMessage, `Updated ${payload.episode_title || "episode"}.`, "success");
+      activeEpisodeEditorId = episode.id;
+      await loadPlanning();
+    } catch (error) {
+      setMessage(messageNode, error.message, "error");
+    }
+  });
+
+  scheduleButton.addEventListener("click", async () => {
+    const recommendation = (latestPlanningPayload.recommendations || []).find((item) => Number(item.id) === Number(episode.id));
+    if (!recommendation?.recommended_release_date) {
+      setMessage(messageNode, "No recommended release slot is available for this episode yet.", "error");
+      return;
+    }
+
+    const payload = Object.fromEntries(new FormData(form).entries());
+    payload.release_date = formatDateForDateTimeInput(recommendation.recommended_release_date);
+    payload.release_status = "scheduled";
+
+    try {
+      await fetchJSON(`/api/episodes/${episode.id}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setMessage(
+        episodeMessage,
+        `Scheduled ${payload.episode_title || "episode"} for ${formatDateTime(recommendation.recommended_release_date)}.`,
+        "success",
+      );
+      activeEpisodeEditorId = episode.id;
+      await loadPlanning();
+    } catch (error) {
+      setMessage(messageNode, error.message, "error");
+    }
+  });
+
+  cancelButton.addEventListener("click", () => {
+    activeEpisodeEditorId = null;
+    renderPlanning();
+  });
 }
 
 function renderCategoryOptions(categories) {
@@ -514,17 +670,29 @@ function renderEpisodes(episodes, totalCount) {
         <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
       </div>
       <div class="operations-actions">
-        <button type="button" class="secondary-button" data-episode-action="edit">Edit / Schedule</button>
+        <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
+        <button type="button" class="ghost-button" data-episode-action="form">Open In Form</button>
         <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
       </div>
+      <div class="inline-editor hidden" data-episode-editor></div>
     `;
 
     const editButton = card.querySelector("[data-episode-action='edit']");
+    const formButton = card.querySelector("[data-episode-action='form']");
     const deleteButton = card.querySelector("[data-episode-action='delete']");
+    const editorNode = card.querySelector("[data-episode-editor]");
     editButton.addEventListener("click", () => {
-      loadEpisodeIntoForm(episode);
-      setMessage(episodeMessage, `Editing ${episode.episode_title || episode.guest_name || "episode"}.`, "success");
+      activeEpisodeEditorId = activeEpisodeEditorId === episode.id ? null : episode.id;
+      renderPlanning();
     });
+    formButton.addEventListener("click", () => {
+      loadEpisodeIntoForm(episode);
+      setMessage(episodeMessage, `Loaded ${episode.episode_title || episode.guest_name || "episode"} into the main form.`, "success");
+    });
+    if (activeEpisodeEditorId === episode.id) {
+      editorNode.classList.remove("hidden");
+      renderEpisodeInlineEditor(editorNode, episode);
+    }
     deleteButton.addEventListener("click", async () => {
       const label = episode.episode_title || episode.guest_name || "this episode";
       if (!window.confirm(`Delete ${label} from the database?`)) {
@@ -574,6 +742,7 @@ function renderRecommendations(recommendations, totalCount) {
 
   visibleRecommendations.forEach((episode, index) => {
     const signals = deriveRecommendationSignals(episode);
+    const insights = splitRecommendationInsights(episode.recommendation_reason);
     const card = document.createElement("article");
     card.className = "operations-card recommendation-card";
     card.innerHTML = `
@@ -589,7 +758,9 @@ function renderRecommendations(recommendations, totalCount) {
       </div>
       ${signals.length ? `<div class="signal-list">${signals.map((signal) => `<span class="signal-chip ${signal.tone}">${signal.label}</span>`).join("")}</div>` : ""}
       <div class="operations-preview">
-        <p>${episode.recommendation_reason || "Good fit for the next release slot."}</p>
+        <p>${insights.summary}</p>
+        ${insights.strengths.length ? `<div class="insight-stack"><strong class="insight-label">Why now</strong><ul>${insights.strengths.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
+        ${insights.cautions.length ? `<div class="insight-stack caution"><strong class="insight-label">Watchouts</strong><ul>${insights.cautions.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       </div>
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>

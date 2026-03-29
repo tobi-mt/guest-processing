@@ -23,6 +23,7 @@ const syncCalendarButton = document.getElementById("sync-calendar-button");
 let latestOperationsPayload = { interviews: [], reminder_candidates: [], stats: {} };
 let activeReminderPreset = "all";
 let activeInterviewPreset = "all";
+let activeInterviewEditorId = null;
 let visibleReminderCount = 8;
 let visibleInterviewCount = 10;
 
@@ -110,6 +111,15 @@ function updatePresetButtons(buttons, activeValue, dataName) {
   });
 }
 
+function createFieldMarkup(label, inputMarkup, fullWidth = false) {
+  return `
+    <label class="${fullWidth ? "full-width" : ""}">
+      <span>${label}</span>
+      ${inputMarkup}
+    </label>
+  `;
+}
+
 function populateInterviewYearOptions(interviews) {
   const years = Array.from(
     new Set(interviews.map((interview) => getYearValue(interview.scheduled_for)).filter(Boolean)),
@@ -151,6 +161,84 @@ function loadInterviewIntoForm(interview) {
   interviewSubmitButton.textContent = "Update Interview";
   interviewResetButton.hidden = false;
   interviewForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderInterviewInlineEditor(container, interview) {
+  container.innerHTML = `
+    <div class="inline-editor-title">Quick Edit Interview</div>
+    <form class="inline-editor-form" data-inline-interview-form>
+      ${createFieldMarkup("Guest Name", `<input name="guest_name" type="text" value="${interview.guest_name || ""}" required />`)}
+      ${createFieldMarkup("Guest Email", `<input name="guest_email" type="email" value="${interview.guest_email || ""}" />`)}
+      ${createFieldMarkup("Title", `<input name="title" type="text" value="${interview.title || ""}" />`, true)}
+      ${createFieldMarkup("Scheduled For", `<input name="scheduled_for" type="datetime-local" value="${formatDateForDateTimeInput(interview.scheduled_for)}" required />`)}
+      ${createFieldMarkup("Timezone", `<input name="timezone" type="text" value="${interview.timezone || "Europe/Berlin"}" />`)}
+      ${createFieldMarkup("Join URL", `<input name="join_url" type="url" value="${interview.join_url || ""}" />`, true)}
+      ${createFieldMarkup("Confirmation", `
+        <select name="confirmation_status">
+          <option value="pending" ${normalizeText(interview.confirmation_status) === "pending" ? "selected" : ""}>Pending</option>
+          <option value="confirmed" ${normalizeText(interview.confirmation_status) === "confirmed" ? "selected" : ""}>Confirmed</option>
+          <option value="reschedule_requested" ${normalizeText(interview.confirmation_status) === "reschedule_requested" ? "selected" : ""}>Reschedule Requested</option>
+        </select>
+      `)}
+      ${createFieldMarkup("Reminder", `
+        <select name="reminder_status">
+          <option value="not_scheduled" ${normalizeText(interview.reminder_status) === "not_scheduled" ? "selected" : ""}>Not Scheduled</option>
+          <option value="queued" ${normalizeText(interview.reminder_status) === "queued" ? "selected" : ""}>Queued</option>
+          <option value="sent" ${normalizeText(interview.reminder_status) === "sent" ? "selected" : ""}>Sent</option>
+        </select>
+      `)}
+      ${createFieldMarkup("Calendar Event ID", `<input name="calendar_event_id" type="text" value="${interview.calendar_event_id || ""}" />`, true)}
+      ${createFieldMarkup("Notes", `<textarea name="notes" rows="3">${interview.notes || ""}</textarea>`, true)}
+      <div class="inline-editor-actions full-width">
+        <button type="submit" class="primary-button">Save Changes</button>
+        <button type="button" class="secondary-button" data-inline-interview-confirm>Mark Confirmed</button>
+        <button type="button" class="ghost-button" data-inline-interview-cancel>Close</button>
+      </div>
+      <p class="message" data-inline-interview-message aria-live="polite"></p>
+    </form>
+  `;
+
+  const form = container.querySelector("[data-inline-interview-form]");
+  const messageNode = container.querySelector("[data-inline-interview-message]");
+  const confirmButton = container.querySelector("[data-inline-interview-confirm]");
+  const cancelButton = container.querySelector("[data-inline-interview-cancel]");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(form).entries());
+    try {
+      await fetchJSON(`/api/interviews/${interview.id}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setMessage(interviewMessage, `Updated ${payload.guest_name || "interview"}.`, "success");
+      activeInterviewEditorId = interview.id;
+      await loadOperations();
+    } catch (error) {
+      setMessage(messageNode, error.message, "error");
+    }
+  });
+
+  confirmButton.addEventListener("click", async () => {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    payload.confirmation_status = "confirmed";
+    try {
+      await fetchJSON(`/api/interviews/${interview.id}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setMessage(interviewMessage, `Marked ${payload.guest_name || "interview"} as confirmed.`, "success");
+      activeInterviewEditorId = interview.id;
+      await loadOperations();
+    } catch (error) {
+      setMessage(messageNode, error.message, "error");
+    }
+  });
+
+  cancelButton.addEventListener("click", () => {
+    activeInterviewEditorId = null;
+    renderOperations();
+  });
 }
 
 function filterAndSortInterviews(interviews) {
@@ -287,20 +375,34 @@ function renderInterviews(interviews, totalCount) {
         <a class="context-link" href="${buildScopedLink("/planning", interview.guest_name || interview.guest_email)}">View Planning</a>
       </div>
       <div class="operations-actions">
-        <button type="button" class="secondary-button" data-interview-action="edit">Edit</button>
+        <button type="button" class="secondary-button" data-interview-action="edit">${activeInterviewEditorId === interview.id ? "Hide Quick Edit" : "Quick Edit"}</button>
+        <button type="button" class="ghost-button" data-interview-action="form">Open In Form</button>
         ${calendarButton}
         <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
       </div>
+      <div class="inline-editor hidden" data-interview-editor></div>
     `;
 
     const editButton = card.querySelector("[data-interview-action='edit']");
+    const formButton = card.querySelector("[data-interview-action='form']");
     const calendarPushButton = card.querySelector("[data-calendar-action='push']");
     const deleteButton = card.querySelector("[data-interview-action='delete']");
+    const editorNode = card.querySelector("[data-interview-editor]");
 
     editButton.addEventListener("click", () => {
-      loadInterviewIntoForm(interview);
-      setMessage(interviewMessage, `Editing ${interview.guest_name || "interview"}.`, "success");
+      activeInterviewEditorId = activeInterviewEditorId === interview.id ? null : interview.id;
+      renderOperations();
     });
+
+    formButton.addEventListener("click", () => {
+      loadInterviewIntoForm(interview);
+      setMessage(interviewMessage, `Loaded ${interview.guest_name || "interview"} into the main form.`, "success");
+    });
+
+    if (activeInterviewEditorId === interview.id) {
+      editorNode.classList.remove("hidden");
+      renderInterviewInlineEditor(editorNode, interview);
+    }
 
     if (calendarPushButton) {
       calendarPushButton.addEventListener("click", async () => {
