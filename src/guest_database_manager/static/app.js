@@ -7,6 +7,7 @@ const template = document.getElementById("guest-card-template");
 const refreshButton = document.getElementById("refresh-button");
 const exportButton = document.getElementById("export-button");
 const decisionFilter = document.getElementById("decision-filter");
+const guestSearch = document.getElementById("guest-search");
 
 const metrics = {
   total: document.getElementById("metric-total"),
@@ -97,6 +98,24 @@ function guestMatchesFilter(guest, filterValue) {
   }
 
   return guestStatusLabel(guest) === filterValue;
+}
+
+function guestMatchesSearch(guest, query) {
+  if (!query) {
+    return true;
+  }
+
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  const haystack = [guest.full_name, guest.email]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return haystack.includes(normalizedQuery);
 }
 
 function normalizeClipboardValue(value) {
@@ -195,12 +214,15 @@ function renderGuests(payload) {
   insights.acceptanceRate.textContent = decided ? `${Math.round((accepted / decided) * 100)}%` : "0%";
 
   const activeFilter = decisionFilter.value;
-  const guests = payload.guests.filter((guest) => guestMatchesFilter(guest, activeFilter));
+  const searchQuery = guestSearch.value;
+  const guests = payload.guests.filter(
+    (guest) => guestMatchesFilter(guest, activeFilter) && guestMatchesSearch(guest, searchQuery),
+  );
 
   guestList.innerHTML = "";
   if (!guests.length) {
     if (payload.guests.length) {
-      guestList.innerHTML = "<p class='guest-summary'>No guests match the selected decision filter.</p>";
+      guestList.innerHTML = "<p class='guest-summary'>No guests match the current search and decision filter.</p>";
     } else {
     guestList.innerHTML = "<p class='guest-summary'>No guests yet. Add the first one with the form.</p>";
     }
@@ -433,6 +455,12 @@ exportButton.addEventListener("click", () => {
 });
 
 decisionFilter.addEventListener("change", () => {
+  if (latestPayload) {
+    renderGuests(latestPayload);
+  }
+});
+
+guestSearch.addEventListener("input", () => {
   if (latestPayload) {
     renderGuests(latestPayload);
   }

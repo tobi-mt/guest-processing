@@ -24,6 +24,7 @@ body {
   background:
     radial-gradient(circle at top left, rgba(255, 215, 164, 0.65), transparent 32%),
     linear-gradient(180deg, #f8f3eb 0%, #efe6d8 100%);
+  overflow-x: hidden;
 }
 
 .page-shell {
@@ -42,6 +43,7 @@ body {
   grid-template-columns: 2fr 1fr;
   align-items: stretch;
   margin-bottom: 20px;
+  min-width: 0;
 }
 
 .hero-card,
@@ -241,16 +243,20 @@ p {
 
 .main-grid {
   grid-template-columns: minmax(320px, 420px) 1fr;
+  min-width: 0;
 }
 
 .panel {
   padding: 24px;
+  min-width: 0;
 }
 
 .section-heading-inline {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .list-toolbar {
@@ -258,10 +264,16 @@ p {
   align-items: end;
   gap: 12px;
   flex-wrap: wrap;
+  min-width: min(100%, 420px);
+  justify-content: flex-end;
 }
 
 .filter-field {
   min-width: 180px;
+}
+
+.search-field {
+  flex: 1 1 240px;
 }
 
 .filter-field span {
@@ -386,6 +398,7 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 20px;
   background: var(--panel-strong);
+  min-width: 0;
 }
 
 .guest-card-head {
@@ -501,6 +514,17 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .page-shell {
+    width: min(100vw - 20px, 1180px);
+    padding: 20px 0 36px;
+  }
+
+  .hero > div:first-child,
+  .hero-card,
+  .panel {
+    padding: 20px;
+  }
+
   .brand-logo {
     width: 64px;
     height: 64px;
@@ -520,6 +544,18 @@ button:disabled {
 
   .list-toolbar {
     align-items: stretch;
+    min-width: 0;
+    justify-content: stretch;
+  }
+
+  .filter-field,
+  .search-field {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .list-toolbar button {
+    width: 100%;
   }
 
   .composer-header {
@@ -528,5 +564,9 @@ button:disabled {
 
   .composer-meta {
     text-align: left;
+  }
+
+  .guest-card-head {
+    flex-direction: column;
   }
 }
