@@ -177,6 +177,9 @@ def _normalize_episode_release_status(release_date: str, release_status: str) ->
     normalized_status = _normalize_text(release_status).lower()
     normalized_date = _normalize_text(release_date)
     if normalized_status == "released":
+        parsed_release = GuestWebService._parse_datetime_static(normalized_date)
+        if parsed_release and parsed_release > datetime.now():
+            return "scheduled"
         return "released"
     if normalized_date:
         return "scheduled"
@@ -262,7 +265,7 @@ class GuestWebService:
 
     def list_planning(self) -> Dict[str, Any]:
         """Return episode planning data separate from interview operations."""
-        episodes = self.database.list_episodes()
+        episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         return {
             "stats": self._build_episode_stats(episodes),
             "episodes": episodes,
@@ -383,6 +386,34 @@ class GuestWebService:
             "episodes_promo_ready": promo_ready,
             "episodes_need_assets": needs_assets,
         }
+
+    @staticmethod
+    def _parse_datetime_static(value: Any) -> Optional[datetime]:
+        """Parse simple date/datetime strings used in planning records."""
+        text = _normalize_text(value)
+        if not text:
+            return None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return None
+
+    def _normalize_episode_record(self, episode: Dict[str, Any]) -> Dict[str, Any]:
+        """Fix stale imported planning states based on current release dates."""
+        normalized = dict(episode)
+        normalized_status = _normalize_episode_release_status(
+            _normalize_text(episode.get("release_date")),
+            _normalize_text(episode.get("release_status")),
+        )
+        normalized["release_status"] = normalized_status
+        if normalized_status == "scheduled" and _normalize_text(normalized.get("production_status")).lower() == "released":
+            normalized["production_status"] = "ready"
+        return normalized
 
     @staticmethod
     def _records_to_csv(records: list[Dict[str, Any]], fields: list[str]) -> str:

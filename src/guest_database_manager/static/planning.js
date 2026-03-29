@@ -163,6 +163,16 @@ function parseDate(value) {
 
 function formatDateTime(value) {
   if (!value) return "Not set";
+  const rawValue = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
+    const parts = rawValue.split("-").map((part) => Number(part));
+    const date = new Date(parts[0], parts[1] - 1, parts[2]);
+    return date.toLocaleDateString("en-GB", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
   const date = parseDate(value);
   if (!date) return value;
   return date.toLocaleString("en-GB", {

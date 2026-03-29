@@ -256,6 +256,26 @@ def test_web_service_imports_future_release_dates_as_scheduled(temp_db):
     assert episode["production_status"] == "ready"
 
 
+def test_list_planning_normalizes_stale_future_release_states(temp_db):
+    """Episodes already stored with future release dates should not remain marked as released."""
+    service = GuestWebService(temp_db.db_path)
+    temp_db.upsert_episode(
+        {
+            "guest_name": "Future Guest",
+            "guest_email": "future@example.com",
+            "episode_title": "The Next Chapter",
+            "release_date": "2099-04-01",
+            "release_status": "released",
+            "production_status": "released",
+        }
+    )
+
+    episode = service.list_planning()["episodes"][0]
+
+    assert episode["release_status"] == "scheduled"
+    assert episode["production_status"] == "ready"
+
+
 def test_web_service_episode_import_ignores_blank_rows_and_headers(temp_db):
     """Episode planning imports should ignore empty rows and unnamed columns."""
     service = GuestWebService(temp_db.db_path)
