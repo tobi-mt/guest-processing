@@ -23,6 +23,11 @@ PODCAST_EVENT_MARKERS = (
     "mirrortalkpodcast.com/join-our-family",
     "forms.office.com/r/tcvdr6kkzu",
 )
+HOST_NAME_HINTS = (
+    "tobi ojekunle",
+    "mirror talk",
+    "podcast.mirrortalk",
+)
 
 
 @dataclass
@@ -194,7 +199,11 @@ class GoogleCalendarSyncClient:
         guest_attendee = self._pick_guest_attendee(attendees)
         guest_name = (
             (guest_attendee or {}).get("displayName")
-            or self._extract_name_from_summary(event.get("summary", ""))
+            or self._extract_name_from_summary(
+                event.get("summary", ""),
+                attendees=attendees,
+                organizer=event.get("organizer"),
+            )
             or "Guest"
         )
         guest_email = (guest_attendee or {}).get("email", "")
@@ -251,11 +260,43 @@ class GoogleCalendarSyncClient:
         return "pending"
 
     @staticmethod
-    def _extract_name_from_summary(summary: str) -> str:
+    def _extract_name_from_summary(
+        summary: str,
+        *,
+        attendees: Optional[List[Dict[str, Any]]] = None,
+        organizer: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Best-effort guest name extraction from an event title."""
         text = (summary or "").strip()
         if not text:
             return ""
+
+        host_hints = set(HOST_NAME_HINTS)
+        for attendee in attendees or []:
+            display_name = (attendee.get("displayName") or "").strip().lower()
+            email = (attendee.get("email") or "").strip().lower()
+            if attendee.get("self"):
+                if display_name:
+                    host_hints.add(display_name)
+                if email:
+                    host_hints.add(email)
+        organizer_name = ((organizer or {}).get("displayName") or "").strip().lower()
+        organizer_email = ((organizer or {}).get("email") or "").strip().lower()
+        if organizer_name:
+            host_hints.add(organizer_name)
+        if organizer_email:
+            host_hints.add(organizer_email)
+
+        if " and " in text.lower():
+            parts = [part.strip(" -,:") for part in re.split(r"\band\b", text, flags=re.IGNORECASE) if part.strip(" -,:")]
+            if len(parts) == 2:
+                left, right = parts
+                left_normalized = left.lower()
+                right_normalized = right.lower()
+                if any(hint in right_normalized for hint in host_hints):
+                    return left
+                if any(hint in left_normalized for hint in host_hints):
+                    return right
 
         patterns = [
             r"with\s+(.+)$",

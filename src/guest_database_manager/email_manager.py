@@ -223,29 +223,33 @@ Mirror Talk Podcast"""
         join_url: str,
     ) -> Dict[str, str]:
         """Build the weekly confirmation reminder template for an upcoming interview."""
-        subject = f"MIRROR TALK Podcast Conversation with {guest_name}"
+        subject = f"Please confirm our Mirror Talk conversation on {scheduled_for.strftime('%A %d %B')}"
         formatted_date = scheduled_for.strftime("%A %d %B, %Y")
         formatted_time = scheduled_for.strftime("%H:%M")
         join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
 
-        body = f"""Hello {guest_name},
+        body = f"""Hi {guest_name},
 
-How are you doing?
+I hope you are doing well.
 
-Our podcast conversation is scheduled for {formatted_date} at {formatted_time} {timezone_label}, and we look forward to it.
+I’m writing to gently confirm our upcoming Mirror Talk podcast conversation, scheduled for {formatted_date} at {formatted_time} {timezone_label}.
 
-Could you reply to this email to confirm our appointment?
+When you have a moment, please reply to this email to confirm that the time still works for you.
 
-We will be recording on Riverside FM. Here is a link for you to join the call: {join_line}
+We’ll be recording on Riverside FM, and you can join the session here:
+{join_line}
 
-Your 5-star ratings and subscription to our podcast on Apple and Spotify Podcasts help us a lot.
+I’m really looking forward to the conversation.
 
-Thanks and warm regards,
-Your Favourite Podcast Host
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast
 
-Please support us by following us on Spotify and Apple Podcasts. For more information, visit https://mirrortalkpodcast.com/join-our-family/
+If you’d like to stay connected with the show, you can find Mirror Talk here:
+https://mirrortalkpodcast.com/join-our-family/
 
-Ask a question. Receive insight grounded in real conversations. Try it now: https://mirrortalkpodcast.com/ask-mirror-talk/
+Ask Mirror Talk:
+https://mirrortalkpodcast.com/ask-mirror-talk/
 """
 
         return {"subject": subject, "body": body}

@@ -1162,6 +1162,34 @@ def test_google_calendar_sync_recognizes_soulful_podcast_event_markers():
     assert GoogleCalendarSyncClient._looks_like_podcast_event(event, query="Mirror Talk") is True
 
 
+def test_google_calendar_sync_extracts_guest_name_from_host_and_guest_title():
+    """Calendar titles like 'Guest and Tobi Ojekunle' should resolve to the guest only."""
+    from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
+
+    event = {
+        "summary": "Tim Rexius and Tobi Ojekunle",
+        "organizer": {"displayName": "Tobi Ojekunle", "email": "podcast.mirrortalk@gmail.com"},
+        "attendees": [
+            {"displayName": "Tobi Ojekunle", "email": "podcast.mirrortalk@gmail.com", "self": True},
+            {"email": "tim@example.com", "responseStatus": "accepted"},
+        ],
+        "start": {"dateTime": "2026-04-02T20:00:00+02:00", "timeZone": "Europe/Berlin"},
+        "description": "Location: https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db",
+    }
+
+    client = GoogleCalendarSyncClient(
+        client_id="client-id",
+        client_secret="client-secret",
+        refresh_token="refresh-token",
+        calendar_id="podcast.mirrortalk@gmail.com",
+    )
+
+    normalized = client.normalize_event(event)
+
+    assert normalized["guest_name"] == "Tim Rexius"
+    assert normalized["guest_email"] == "tim@example.com"
+
+
 def test_operations_list_reports_calendar_sync_enabled(monkeypatch, temp_db):
     """Operations payload should surface whether Google Calendar sync is configured."""
     monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
