@@ -705,17 +705,23 @@ function renderEpisodes(episodes, totalCount) {
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
         <button type="button" class="ghost-button" data-episode-action="form">Open In Form</button>
+        <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${episode.guest_email ? "" : "disabled"}>Preview Thank You</button>
+        <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${episode.guest_email ? "" : "disabled"}>Send Thank You</button>
         <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
       </div>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
+      <div class="operations-preview hidden" data-episode-appreciation-preview></div>
       <div class="inline-editor hidden" data-episode-editor></div>
     `;
 
     const editButton = card.querySelector("[data-episode-action='edit']");
     const formButton = card.querySelector("[data-episode-action='form']");
+    const previewAppreciationButton = card.querySelector("[data-episode-action='preview-appreciation']");
+    const sendAppreciationButton = card.querySelector("[data-episode-action='send-appreciation']");
     const deleteButton = card.querySelector("[data-episode-action='delete']");
     const editorNode = card.querySelector("[data-episode-editor]");
     const actionFeedbackNode = card.querySelector(".card-action-feedback");
+    const appreciationPreviewNode = card.querySelector("[data-episode-appreciation-preview]");
     editButton.addEventListener("click", () => {
       activeEpisodeEditorId = activeEpisodeEditorId === episode.id ? null : episode.id;
       renderPlanning();
@@ -727,6 +733,83 @@ function renderEpisodes(episodes, totalCount) {
     if (activeEpisodeEditorId === episode.id) {
       editorNode.classList.remove("hidden");
       renderEpisodeInlineEditor(editorNode, episode);
+    }
+    if (previewAppreciationButton) {
+      previewAppreciationButton.addEventListener("click", async () => {
+        if (!episode.guest_email) {
+          setMessage(episodeMessage, "This episode does not have a guest email yet.", "error");
+          return;
+        }
+
+        previewAppreciationButton.disabled = true;
+        previewAppreciationButton.textContent = "Loading...";
+        activeEpisodeActionFeedback = {
+          id: episode.id,
+          text: `Loading thank-you preview for ${episode.guest_name || "guest"}...`,
+          tone: "pending",
+        };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+        try {
+          const preview = await fetchJSON(`/api/episodes/${episode.id}/appreciation-template`);
+          appreciationPreviewNode.classList.remove("hidden");
+          appreciationPreviewNode.innerHTML = `
+            <h4>${preview.subject}</h4>
+            <p>To: ${episode.guest_email}</p>
+            <pre>${preview.body}</pre>
+          `;
+          activeEpisodeActionFeedback = {
+            id: episode.id,
+            text: `Thank-you preview ready for ${episode.guest_name || "guest"}.`,
+            tone: "success",
+          };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+        } catch (error) {
+          activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+          setMessage(episodeMessage, error.message, "error");
+        } finally {
+          previewAppreciationButton.disabled = false;
+          previewAppreciationButton.textContent = "Preview Thank You";
+        }
+      });
+    }
+    if (sendAppreciationButton) {
+      sendAppreciationButton.addEventListener("click", async () => {
+        if (!episode.guest_email) {
+          setMessage(episodeMessage, "This episode does not have a guest email yet.", "error");
+          return;
+        }
+
+        sendAppreciationButton.disabled = true;
+        sendAppreciationButton.textContent = "Sending...";
+        activeEpisodeActionFeedback = {
+          id: episode.id,
+          text: `Sending thank-you email to ${episode.guest_name || episode.guest_email}...`,
+          tone: "pending",
+        };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+        try {
+          await fetchJSON(`/api/episodes/${episode.id}/send-appreciation`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          appreciationPreviewNode.classList.remove("hidden");
+          appreciationPreviewNode.innerHTML = `<p class="composer-feedback success">Thank-you email sent to ${episode.guest_name || episode.guest_email}.</p>`;
+          activeEpisodeActionFeedback = {
+            id: episode.id,
+            text: `Thank-you email sent to ${episode.guest_name || episode.guest_email}.`,
+            tone: "success",
+          };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+          setMessage(episodeMessage, `Thank-you email sent to ${episode.guest_name || episode.guest_email}.`, "success");
+        } catch (error) {
+          activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+          setMessage(episodeMessage, error.message, "error");
+          sendAppreciationButton.disabled = false;
+          sendAppreciationButton.textContent = "Send Thank You";
+        }
+      });
     }
     deleteButton.addEventListener("click", async () => {
       const label = episode.episode_title || episode.guest_name || "this episode";

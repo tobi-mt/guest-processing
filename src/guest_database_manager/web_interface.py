@@ -945,6 +945,62 @@ class GuestWebService:
             raise WebInterfaceError("Interview not found after appreciation email send.")
         return self._serialize_interview_reminder(refreshed)
 
+    def preview_episode_appreciation(self, episode_id: int) -> Dict[str, Any]:
+        """Return the post-recording appreciation email template from an episode record."""
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode not found.")
+
+        guest_name = _normalize_text(episode.get("guest_name")) or "Guest"
+        email_manager = self._build_email_manager()
+        template = email_manager.get_post_interview_appreciation_template(guest_name=guest_name)
+        return {
+            "episode": self._normalize_episode_record(episode),
+            "subject": template["subject"],
+            "body": template["body"],
+        }
+
+    def send_episode_appreciation(self, episode_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+        """Send a thank-you email from an episode record after recording."""
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode not found.")
+
+        guest_email = _normalize_text(episode.get("guest_email"))
+        if not guest_email:
+            raise WebInterfaceError("This episode does not have a guest email.")
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            raise WebInterfaceError("Dashboard email is not configured on the server.")
+
+        preview = self.preview_episode_appreciation(episode_id)
+        resolved_subject = subject.strip() or preview["subject"]
+        resolved_body = body.strip() or preview["body"]
+
+        sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        if not sent:
+            error_detail = (email_manager.last_error or "").strip()
+            if error_detail:
+                raise WebInterfaceError(f"The appreciation email could not be sent: {error_detail}")
+            raise WebInterfaceError("The appreciation email could not be sent.")
+
+        provider = "resend" if email_manager.resend_api_key else "smtp"
+        linked_interview_id = episode.get("interview_id")
+        if linked_interview_id:
+            self.database.log_interview_email(
+                interview_id=int(linked_interview_id),
+                email_type="post_interview_appreciation",
+                sent_to=guest_email,
+                status="sent",
+                provider=provider,
+                notes=resolved_subject,
+            )
+        refreshed = self.database.get_episode_by_id(episode_id)
+        if not refreshed:
+            raise WebInterfaceError("Episode not found after appreciation email send.")
+        return self._normalize_episode_record(refreshed)
+
     def sync_google_calendar_interviews(
         self,
         *,
@@ -1243,6 +1299,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 payload = self.service.preview_interview_appreciation(interview_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if request_path.startswith("/api/episodes/") and request_path.endswith("/appreciation-template"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            episode_id = self._extract_record_id(request_path[: -len("/appreciation-template")], "/api/episodes/")
+            if episode_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                return
+
+            try:
+                payload = self.service.preview_episode_appreciation(episode_id)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -1593,6 +1668,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/episodes/"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            if self.path.endswith("/send-appreciation"):
+                episode_id = self._extract_record_id(self.path[: -len("/send-appreciation")], "/api/episodes/")
+                if episode_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                    return
+
+                payload = self._read_json_payload()
+                try:
+                    episode = self.service.send_episode_appreciation(
+                        episode_id,
+                        payload.get("subject", ""),
+                        payload.get("body", ""),
+                    )
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, episode)
                 return
 
             episode_id = self._extract_record_id(self.path, "/api/episodes/")
