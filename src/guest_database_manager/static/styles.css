@@ -429,6 +429,49 @@ button:disabled {
   color: var(--accent);
 }
 
+.email-composer {
+  margin-top: 14px;
+  padding: 18px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 250, 242, 0.98), rgba(247, 240, 228, 0.96));
+  border: 1px solid rgba(91, 70, 47, 0.12);
+}
+
+.composer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 14px;
+}
+
+.composer-eyebrow {
+  margin: 0 0 4px;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.composer-meta {
+  color: var(--muted);
+  text-align: right;
+}
+
+.composer-field {
+  margin-bottom: 12px;
+}
+
+.composer-field textarea {
+  min-height: 240px;
+}
+
+.composer-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 900px) {
   .hero,
   .main-grid {
@@ -454,5 +497,13 @@ button:disabled {
 
   .list-toolbar {
     align-items: stretch;
+  }
+
+  .composer-header {
+    flex-direction: column;
+  }
+
+  .composer-meta {
+    text-align: left;
   }
 }

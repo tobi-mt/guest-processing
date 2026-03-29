@@ -130,3 +130,61 @@ def test_accept_and_reject_without_email_set_status(temp_db, sample_csv_file):
     assert rejected_guest["is_processed"] == 1
     assert rejected_guest["email_status"] == "rejected"
     assert rejected_guest["email_sent_at"] is None
+
+
+def test_upsert_guest_avoids_duplicate_entries_by_email(temp_db):
+    """Manual and web flows should update an existing guest instead of inserting duplicates."""
+    first_id, first_action = temp_db.upsert_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "background": "Original background",
+            "is_processed": False,
+        }
+    )
+    second_id, second_action = temp_db.upsert_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "background": "Updated background",
+            "profession": "Coach",
+            "is_processed": False,
+        }
+    )
+
+    assert first_action == "created"
+    assert second_action == "updated"
+    assert first_id == second_id
+    assert temp_db.get_stats()["total"] == 1
+
+    guest = temp_db.get_guest_by_id(first_id)
+    assert guest["background"] == "Updated background"
+    assert guest["profession"] == "Coach"
+
+
+def test_upsert_guest_preserves_original_source_metadata(temp_db):
+    """Updating an existing guest should not replace their original source label."""
+    first_id, _ = temp_db.upsert_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "background": "Original background",
+            "original_file_name": "legacy-import.xlsx",
+            "original_data": '{"source":"legacy"}',
+            "is_processed": False,
+        }
+    )
+    temp_db.upsert_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "background": "Updated background",
+            "original_file_name": "Soulful Guest Questionnaire(1-45).xlsx",
+            "original_data": '{"source":"new"}',
+            "is_processed": False,
+        }
+    )
+
+    guest = temp_db.get_guest_by_id(first_id)
+    assert guest["original_file_name"] == "legacy-import.xlsx"
+    assert guest["original_data"] == '{"source":"legacy"}'

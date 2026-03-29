@@ -23,6 +23,7 @@ const insights = {
 
 let emailEnabled = false;
 let latestPayload = null;
+let activeEmailComposer = null;
 
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, {
@@ -48,6 +49,13 @@ async function fetchUpload(url, formData) {
     throw new Error(data.error || "Upload failed");
   }
   return data;
+}
+
+async function fetchTemplate(url, payload) {
+  return fetchJSON(url, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 function setMessage(text, tone = "") {
@@ -195,6 +203,7 @@ function renderGuests(payload) {
     const node = template.content.cloneNode(true);
     const card = node.querySelector(".guest-card");
     const statusPill = node.querySelector(".status-pill");
+    const composer = node.querySelector(".email-composer");
 
     node.querySelector(".guest-name").textContent = guest.full_name || "Unnamed Guest";
     node.querySelector(".guest-meta").textContent = guest.email || "No email provided";
@@ -208,6 +217,69 @@ function renderGuests(payload) {
       node.querySelectorAll("[data-action='accepted_email'], [data-action='rejected_email']").forEach((button) => {
         button.disabled = true;
         button.title = "Set the dashboard SMTP environment variables on Railway to enable email sending.";
+      });
+    }
+
+    if (
+      activeEmailComposer &&
+      activeEmailComposer.guestId === guest.id &&
+      (activeEmailComposer.status === "accepted" || activeEmailComposer.status === "rejected")
+    ) {
+      composer.classList.remove("hidden");
+      composer.innerHTML = `
+        <div class="composer-header">
+          <div>
+            <p class="composer-eyebrow">${activeEmailComposer.status === "accepted" ? "Approval Email" : "Decline Email"}</p>
+            <h4>${guest.full_name || "Guest"}</h4>
+          </div>
+          <p class="composer-meta">${guest.email || "No email address"}</p>
+        </div>
+        <label class="composer-field">
+          <span>Subject</span>
+          <input type="text" data-composer-field="subject" value="${escapeHtml(activeEmailComposer.subject)}" />
+        </label>
+        <label class="composer-field">
+          <span>Email Body</span>
+          <textarea rows="12" data-composer-field="body">${escapeHtml(activeEmailComposer.body)}</textarea>
+        </label>
+        <div class="composer-actions">
+          <button type="button" data-composer-action="send" class="primary-button small-button">Send Email</button>
+          <button type="button" data-composer-action="cancel" class="ghost-button small-button">Cancel</button>
+        </div>
+      `;
+
+      composer.querySelectorAll("[data-composer-field]").forEach((field) => {
+        field.addEventListener("input", (event) => {
+          activeEmailComposer[event.target.dataset.composerField] = event.target.value;
+        });
+      });
+
+      composer.querySelector("[data-composer-action='cancel']").addEventListener("click", () => {
+        activeEmailComposer = null;
+        renderGuests(latestPayload);
+      });
+
+      composer.querySelector("[data-composer-action='send']").addEventListener("click", async () => {
+        try {
+          await fetchJSON(`/api/guests/${guest.id}/email-decision`, {
+            method: "POST",
+            body: JSON.stringify({
+              status: activeEmailComposer.status,
+              subject: activeEmailComposer.subject,
+              body: activeEmailComposer.body,
+            }),
+          });
+          setMessage(
+            activeEmailComposer.status === "accepted"
+              ? `Sent approval email to ${guest.full_name}.`
+              : `Sent decline email to ${guest.full_name}.`,
+            "success",
+          );
+          activeEmailComposer = null;
+          await loadGuests();
+        } catch (error) {
+          setMessage(error.message, "error");
+        }
       });
     }
 
@@ -228,23 +300,14 @@ function renderGuests(payload) {
             setMessage(`Copied ${guest.full_name}'s intake details.`, "success");
           } else if (action === "accepted_email" || action === "rejected_email") {
             const decision = action === "accepted_email" ? "accepted" : "rejected";
-            const customMessage =
-              window.prompt(
-                decision === "accepted"
-                  ? "Optional approval email message:"
-                  : "Optional decline email message:",
-              ) || "";
-
-            await fetchJSON(`/api/guests/${guest.id}/email-decision`, {
-              method: "POST",
-              body: JSON.stringify({ status: decision, custom_message: customMessage }),
-            });
-            setMessage(
-              decision === "accepted"
-                ? `Sent approval email to ${guest.full_name}.`
-                : `Sent decline email to ${guest.full_name}.`,
-              "success",
-            );
+            const templateData = await fetchTemplate(`/api/guests/${guest.id}/email-template`, { status: decision });
+            activeEmailComposer = {
+              guestId: guest.id,
+              status: decision,
+              subject: templateData.subject || "",
+              body: templateData.body || "",
+            };
+            renderGuests(latestPayload);
           } else if (action === "delete") {
             await fetchJSON(`/api/guests/${guest.id}`, { method: "DELETE" });
             setMessage(`Deleted ${guest.full_name}.`, "success");
@@ -337,5 +400,13 @@ decisionFilter.addEventListener("change", () => {
     renderGuests(latestPayload);
   }
 });
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
 
 loadGuests();

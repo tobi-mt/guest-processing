@@ -20,6 +20,20 @@ except ImportError as exc:
 logger = logging.getLogger(__name__)
 
 
+def _normalized_identity(value: Optional[str]) -> str:
+    """Normalize names and emails for duplicate matching."""
+    if not value:
+        return ""
+    return str(value).strip().casefold()
+
+
+def _prefer_existing_metadata(existing_value: Optional[str], new_value: Optional[str]) -> Optional[str]:
+    """Keep the original source metadata when a guest is updated."""
+    if existing_value and str(existing_value).strip():
+        return existing_value
+    return new_value
+
+
 class GuestDatabase:
     """Manages the SQLite database for guest information with simplified interface."""
     
@@ -55,6 +69,74 @@ class GuestDatabase:
             ))
             conn.commit()
             return cursor.lastrowid
+
+    def find_existing_guest(self, guest_data: Dict[str, Any]) -> Optional[Dict]:
+        """Find an existing guest using the best available identity fields."""
+        full_name = _normalized_identity(guest_data.get("full_name"))
+        email = _normalized_identity(guest_data.get("email"))
+
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+
+            if email and email != "anonymous":
+                cursor = conn.execute(
+                    """
+                    SELECT * FROM guests
+                    WHERE LOWER(COALESCE(email, '')) = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (email,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+
+            if full_name:
+                cursor = conn.execute(
+                    """
+                    SELECT * FROM guests
+                    WHERE LOWER(COALESCE(full_name, name, '')) = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (full_name,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+
+        return None
+
+    def upsert_guest(self, guest_data: Dict[str, Any]) -> tuple[int, str]:
+        """Insert or update a guest to avoid duplicate entries."""
+        existing_guest = self.find_existing_guest(guest_data)
+
+        if existing_guest:
+            merged_guest = dict(existing_guest)
+            merged_guest.update(guest_data)
+            merged_guest["full_name"] = guest_data.get("full_name") or existing_guest.get("full_name") or existing_guest.get("name")
+            merged_guest["email"] = (
+                guest_data.get("email")
+                if self.mapper.should_update_email(existing_guest.get("email"), guest_data.get("email"))
+                else existing_guest.get("email")
+            )
+            merged_guest["is_processed"] = existing_guest.get("is_processed")
+            merged_guest["email_status"] = existing_guest.get("email_status")
+            merged_guest["email_sent_at"] = existing_guest.get("email_sent_at")
+            merged_guest["skip_reason"] = existing_guest.get("skip_reason")
+            merged_guest["original_file_name"] = _prefer_existing_metadata(
+                existing_guest.get("original_file_name"),
+                guest_data.get("original_file_name"),
+            )
+            merged_guest["original_data"] = _prefer_existing_metadata(
+                existing_guest.get("original_data"),
+                guest_data.get("original_data"),
+            )
+            self.update_guest_by_id(existing_guest["id"], merged_guest)
+            return existing_guest["id"], "updated"
+
+        return self.insert_guest(guest_data), "created"
     
     def update_guest_by_id(self, guest_id: int, guest_data: Dict[str, Any]) -> None:
         """Update an existing guest in the database by ID."""
@@ -276,7 +358,7 @@ class GuestDatabase:
                     continue
                 
                 # Check if guest exists
-                existing_guest = self.get_guest_by_name(guest_data['full_name'])
+                existing_guest = self.find_existing_guest(guest_data)
                 
                 if existing_guest:
                     # Update existing guest while preserving status
@@ -284,6 +366,14 @@ class GuestDatabase:
                     guest_data['email_status'] = existing_guest.get('email_status')
                     guest_data['email_sent_at'] = existing_guest.get('email_sent_at')
                     guest_data['skip_reason'] = existing_guest.get('skip_reason')
+                    guest_data['original_file_name'] = _prefer_existing_metadata(
+                        existing_guest.get('original_file_name'),
+                        guest_data.get('original_file_name'),
+                    )
+                    guest_data['original_data'] = _prefer_existing_metadata(
+                        existing_guest.get('original_data'),
+                        guest_data.get('original_data'),
+                    )
                     
                     # Update email if new one is better
                     if self.mapper.should_update_email(existing_guest['email'], guest_data['email']):
@@ -293,10 +383,13 @@ class GuestDatabase:
                     stats['updated'] += 1
                     logger.info("Row %d: Updated guest %s", index + 1, guest_data['full_name'])
                 else:
-                    # Insert new guest
-                    self.insert_guest(guest_data)
-                    stats['imported'] += 1
-                    logger.info("Row %d: Imported new guest %s", index + 1, guest_data['full_name'])
+                    guest_id, action = self.upsert_guest(guest_data)
+                    if action == "updated":
+                        stats['updated'] += 1
+                        logger.info("Row %d: Matched and updated guest %s (id=%s)", index + 1, guest_data['full_name'], guest_id)
+                    else:
+                        stats['imported'] += 1
+                        logger.info("Row %d: Imported new guest %s", index + 1, guest_data['full_name'])
                     
             except Exception as e:
                 logger.error("Row %d: Error processing row - %s", index + 1, e)

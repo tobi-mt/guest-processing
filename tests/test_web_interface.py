@@ -69,6 +69,60 @@ def test_web_service_can_create_and_update_guest(temp_db):
     assert listed_guests[0]["full_name"] == "Jordan Rivers"
 
 
+def test_web_service_create_guest_updates_existing_match(temp_db):
+    """Public and dashboard writes should not create duplicate guests."""
+    service = GuestWebService(temp_db.db_path)
+
+    first_guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "background": "First version",
+        }
+    )
+    second_guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "background": "Refined version",
+            "profession": "Coach",
+        }
+    )
+
+    assert first_guest["id"] == second_guest["id"]
+    guests = service.list_guests()["guests"]
+    assert len(guests) == 1
+    assert guests[0]["background"] == "Refined version"
+    assert guests[0]["profession"] == "Coach"
+
+
+def test_web_service_create_guest_preserves_existing_source_label(temp_db):
+    """Dashboard writes should not replace an existing guest's original source label."""
+    service = GuestWebService(temp_db.db_path)
+
+    first_guest_id, _ = temp_db.upsert_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "background": "First version",
+            "original_file_name": "legacy-import.xlsx",
+            "original_data": '{"source":"legacy"}',
+            "is_processed": False,
+        }
+    )
+    second_guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "background": "Refined version",
+        }
+    )
+
+    assert first_guest_id == second_guest["id"]
+    guest = service.list_guests()["guests"][0]
+    assert guest["original_file_name"] == "legacy-import.xlsx"
+
+
 def test_web_service_can_create_public_intake_submission(temp_db):
     """The public intake flow should write a guest with website-specific source metadata."""
     service = GuestWebService(temp_db.db_path)
@@ -183,6 +237,78 @@ def test_web_service_can_send_acceptance_email(monkeypatch, temp_db):
     guest = service.create_guest({"full_name": "Amina Hart", "email": "amina@example.com"})
 
     updated_guest = service.send_guest_decision_email(guest["id"], "accepted", "Welcome aboard")
+
+    assert updated_guest["email_status"] == "accepted"
+
+
+def test_web_service_can_return_email_template(monkeypatch, temp_db):
+    """Dashboard should be able to fetch editable approval/decline templates."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_smtp(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def get_acceptance_template(self, guest_name, custom_message=""):
+            assert guest_name == "Amina Hart"
+            return {"subject": "Accepted", "body": "Welcome to Mirror Talk"}
+
+        def get_rejection_template(self, guest_name, custom_message=""):
+            assert guest_name == "Amina Hart"
+            return {"subject": "Declined", "body": "Thank you for applying"}
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Amina Hart", "email": "amina@example.com"})
+
+    acceptance_template = service.get_guest_decision_email_template(guest["id"], "accepted")
+    rejection_template = service.get_guest_decision_email_template(guest["id"], "rejected")
+
+    assert acceptance_template["subject"] == "Accepted"
+    assert rejection_template["subject"] == "Declined"
+
+
+def test_web_service_can_send_custom_email_body(monkeypatch, temp_db):
+    """Dashboard should be able to send an edited email subject/body from the composer."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_smtp(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def send_email(self, to_email, subject, body):
+            assert to_email == "amina@example.com"
+            assert subject == "Custom Subject"
+            assert body == "Custom Body"
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_SMTP_SERVER_ENV_VAR, "smtp.example.com")
+    monkeypatch.setenv(EMAIL_SMTP_PORT_ENV_VAR, "587")
+    monkeypatch.setenv(EMAIL_USERNAME_ENV_VAR, "mirror@example.com")
+    monkeypatch.setenv(EMAIL_PASSWORD_ENV_VAR, "top-secret")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "mirror@example.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Amina Hart", "email": "amina@example.com"})
+
+    updated_guest = service.send_guest_decision_email_message(
+        guest["id"],
+        "accepted",
+        subject="Custom Subject",
+        body="Custom Body",
+    )
 
     assert updated_guest["email_status"] == "accepted"
 

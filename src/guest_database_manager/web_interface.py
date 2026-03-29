@@ -208,7 +208,7 @@ class GuestWebService:
     def create_guest(self, payload: Dict[str, Any], source_name: str = FORM_SOURCE_NAME) -> Dict[str, Any]:
         """Create a guest directly from the web form."""
         guest_data = build_guest_payload(payload, source_name=source_name)
-        guest_id = self.database.insert_guest(guest_data)
+        guest_id, _ = self.database.upsert_guest(guest_data)
         guest = self.database.get_guest_by_id(guest_id)
         return serialize_guest(guest) if guest else {"id": guest_id}
 
@@ -255,6 +255,35 @@ class GuestWebService:
 
     def send_guest_decision_email(self, guest_id: int, status: str, custom_message: str = "") -> Dict[str, Any]:
         """Send an approval/decline email and persist the resulting decision."""
+        return self.send_guest_decision_email_message(guest_id, status, subject="", body="", custom_message=custom_message)
+
+    def get_guest_decision_email_template(self, guest_id: int, status: str) -> Dict[str, str]:
+        """Return the default approval/decline email template for dashboard editing."""
+        normalized_status = status.strip().lower()
+        if normalized_status not in {"accepted", "rejected"}:
+            raise WebInterfaceError("Only accepted or rejected emails can be sent.")
+
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+
+        guest_name = (guest.get("full_name") or guest.get("name") or "Guest").strip()
+        email_manager = self._build_email_manager()
+
+        if normalized_status == "accepted":
+            return email_manager.get_acceptance_template(guest_name)
+
+        return email_manager.get_rejection_template(guest_name)
+
+    def send_guest_decision_email_message(
+        self,
+        guest_id: int,
+        status: str,
+        subject: str = "",
+        body: str = "",
+        custom_message: str = "",
+    ) -> Dict[str, Any]:
+        """Send an approval/decline email and persist the resulting decision."""
         normalized_status = status.strip().lower()
         if normalized_status not in {"accepted", "rejected"}:
             raise WebInterfaceError("Only accepted or rejected emails can be sent.")
@@ -273,17 +302,24 @@ class GuestWebService:
 
         guest_name = (guest.get("full_name") or guest.get("name") or "Guest").strip()
 
-        if normalized_status == "accepted":
-            sent = email_manager.send_acceptance_email(guest_name, guest_email, custom_message)
-            if sent:
-                self.database.accept_guest_with_email(guest_id, custom_message)
+        subject = subject.strip()
+        body = body.strip()
+
+        if subject and body:
+            sent = email_manager.send_email(guest_email, subject, body)
         else:
-            sent = email_manager.send_rejection_email(guest_name, guest_email, custom_message)
-            if sent:
-                self.database.reject_guest_with_email(guest_id, custom_message)
+            if normalized_status == "accepted":
+                sent = email_manager.send_acceptance_email(guest_name, guest_email, custom_message)
+            else:
+                sent = email_manager.send_rejection_email(guest_name, guest_email, custom_message)
 
         if not sent:
             raise WebInterfaceError("The email could not be sent. Please check the server email configuration.")
+
+        if normalized_status == "accepted":
+            self.database.accept_guest_with_email(guest_id, custom_message)
+        else:
+            self.database.reject_guest_with_email(guest_id, custom_message)
 
         updated_guest = self.database.get_guest_by_id(guest_id)
         if not updated_guest:
@@ -474,9 +510,11 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             payload = self._read_json_payload()
             try:
-                guest = self.service.send_guest_decision_email(
+                guest = self.service.send_guest_decision_email_message(
                     guest_id,
                     payload.get("status", ""),
+                    payload.get("subject", ""),
+                    payload.get("body", ""),
                     payload.get("custom_message", ""),
                 )
             except WebInterfaceError as exc:
@@ -484,6 +522,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.OK, guest)
+            return
+
+        if self.path.startswith("/api/guests/") and self.path.endswith("/email-template"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            guest_id = self._extract_guest_id(self.path, suffix="/email-template")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                template = self.service.get_guest_decision_email_template(guest_id, payload.get("status", ""))
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, template)
             return
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
