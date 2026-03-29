@@ -14,13 +14,19 @@
 .operations-form-panel {
   display: grid;
   gap: 22px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .operations-section {
   padding: 22px;
   border: 1px solid rgba(91, 70, 47, 0.1);
   border-radius: 22px;
-  background: linear-gradient(180deg, rgba(255, 252, 247, 0.92) 0%, rgba(255, 249, 242, 0.86) 100%);
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.95) 0%, rgba(255, 249, 242, 0.9) 100%);
+  box-shadow: var(--shadow);
 }
 
 .section-copy {
@@ -53,7 +59,8 @@
 .operations-tool {
   border: 1px solid rgba(91, 70, 47, 0.12);
   border-radius: 22px;
-  background: rgba(255, 253, 249, 0.82);
+  background: rgba(255, 253, 249, 0.92);
+  box-shadow: var(--shadow);
   overflow: hidden;
 }
 
