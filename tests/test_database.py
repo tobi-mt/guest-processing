@@ -188,3 +188,88 @@ def test_upsert_guest_preserves_original_source_metadata(temp_db):
     guest = temp_db.get_guest_by_id(first_id)
     assert guest["original_file_name"] == "legacy-import.xlsx"
     assert guest["original_data"] == '{"source":"legacy"}'
+
+
+def test_upsert_interview_uses_calendar_event_id(temp_db):
+    """Interviews should update in place when they come from the same calendar event."""
+    first_id, first_action = temp_db.upsert_interview(
+        {
+            "guest_name": "Amina Hart",
+            "guest_email": "amina@example.com",
+            "calendar_event_id": "event_123",
+            "title": "Mirror Talk Conversation",
+            "scheduled_for": "2026-04-07 17:00:00",
+            "timezone": "Europe/Berlin",
+        }
+    )
+    second_id, second_action = temp_db.upsert_interview(
+        {
+            "guest_name": "Amina Hart",
+            "guest_email": "amina@example.com",
+            "calendar_event_id": "event_123",
+            "title": "Updated Mirror Talk Conversation",
+            "scheduled_for": "2026-04-07 17:30:00",
+            "timezone": "Europe/Berlin",
+            "join_url": "https://riverside.fm/example",
+        }
+    )
+
+    assert first_action == "created"
+    assert second_action == "updated"
+    assert first_id == second_id
+
+    interview = temp_db.get_interview_by_id(first_id)
+    assert interview["title"] == "Updated Mirror Talk Conversation"
+    assert interview["join_url"] == "https://riverside.fm/example"
+
+
+def test_upsert_episode_and_log_reminder(temp_db):
+    """Episode planning and reminder logging should live outside guest intake records."""
+    interview_id, _ = temp_db.upsert_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "calendar_event_id": "event_episode",
+            "title": "Jordan Rivers Interview",
+            "scheduled_for": "2026-04-08 17:00:00",
+        }
+    )
+    episode_id, action = temp_db.upsert_episode(
+        {
+            "interview_id": interview_id,
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Healing Through Hard Seasons",
+            "topic": "Healing",
+            "category": "Personal Growth",
+            "interview_date": "2026-04-08",
+            "release_date": "2026-04-14 17:00:00",
+            "release_status": "scheduled",
+            "production_status": "recorded",
+            "priority_score": 8.5,
+        }
+    )
+
+    assert action == "created"
+    episode = temp_db.get_episode_by_id(episode_id)
+    assert episode["episode_title"] == "Healing Through Hard Seasons"
+    assert episode["release_status"] == "scheduled"
+
+    log_id = temp_db.log_reminder(
+        interview_id=interview_id,
+        reminder_type="weekly_confirmation",
+        sent_to="jordan@example.com",
+        status="sent",
+        provider="resend",
+    )
+
+    assert log_id > 0
+    reminder_log = temp_db.get_reminder_log(interview_id)
+    assert len(reminder_log) == 1
+    assert reminder_log[0]["provider"] == "resend"
+
+    stats = temp_db.get_operations_stats()
+    assert stats["interviews_total"] == 1
+    assert stats["episodes_total"] == 1
+    assert stats["episodes_scheduled"] == 1
+    assert stats["reminders_sent"] == 1

@@ -195,6 +195,231 @@ class GuestDatabase:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM guests ORDER BY date_added DESC")
             return [dict(row) for row in cursor.fetchall()]
+
+    # ==================== Podcast Operations ====================
+
+    def upsert_interview(self, interview_data: Dict[str, Any]) -> tuple[int, str]:
+        """Insert or update an interview using the calendar event id when available."""
+        calendar_event_id = interview_data.get("calendar_event_id")
+
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+
+            existing_row = None
+            if calendar_event_id:
+                cursor = conn.execute(
+                    "SELECT id FROM interviews WHERE calendar_event_id = ? LIMIT 1",
+                    (calendar_event_id,),
+                )
+                existing_row = cursor.fetchone()
+
+            fields = (
+                interview_data.get("guest_id"),
+                interview_data.get("guest_name"),
+                interview_data.get("guest_email"),
+                calendar_event_id,
+                interview_data.get("title"),
+                interview_data.get("scheduled_for"),
+                interview_data.get("timezone", "Europe/Berlin"),
+                interview_data.get("join_url"),
+                interview_data.get("status", "scheduled"),
+                interview_data.get("confirmation_status", "pending"),
+                interview_data.get("reminder_status", "not_scheduled"),
+                interview_data.get("reminder_sent_at"),
+                interview_data.get("notes"),
+            )
+
+            if existing_row:
+                conn.execute(
+                    """
+                    UPDATE interviews SET
+                        guest_id = ?, guest_name = ?, guest_email = ?, calendar_event_id = ?, title = ?,
+                        scheduled_for = ?, timezone = ?, join_url = ?, status = ?, confirmation_status = ?,
+                        reminder_status = ?, reminder_sent_at = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    fields + (existing_row["id"],),
+                )
+                conn.commit()
+                return existing_row["id"], "updated"
+
+            cursor = conn.execute(
+                """
+                INSERT INTO interviews (
+                    guest_id, guest_name, guest_email, calendar_event_id, title, scheduled_for, timezone,
+                    join_url, status, confirmation_status, reminder_status, reminder_sent_at, notes, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                fields,
+            )
+            conn.commit()
+            return cursor.lastrowid, "created"
+
+    def list_interviews(self) -> List[Dict]:
+        """Return all interviews, newest scheduled items first."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM interviews ORDER BY datetime(scheduled_for) DESC, id DESC"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_interview(self, interview_id: int, interview_data: Dict[str, Any]) -> None:
+        """Update an interview record."""
+        current = self.get_interview_by_id(interview_id)
+        if not current:
+            raise ValueError("Interview not found")
+
+        merged = dict(current)
+        merged.update(interview_data)
+        self.upsert_interview(merged)
+
+    def get_interview_by_id(self, interview_id: int) -> Optional[Dict]:
+        """Fetch a single interview by id."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def upsert_episode(self, episode_data: Dict[str, Any]) -> tuple[int, str]:
+        """Insert or update an episode using interview id when available."""
+        interview_id = episode_data.get("interview_id")
+
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+
+            existing_row = None
+            if interview_id:
+                cursor = conn.execute(
+                    "SELECT id FROM episodes WHERE interview_id = ? LIMIT 1",
+                    (interview_id,),
+                )
+                existing_row = cursor.fetchone()
+
+            fields = (
+                episode_data.get("guest_id"),
+                interview_id,
+                episode_data.get("guest_name"),
+                episode_data.get("guest_email"),
+                episode_data.get("episode_title"),
+                episode_data.get("topic"),
+                episode_data.get("category"),
+                episode_data.get("interview_date"),
+                episode_data.get("recording_date"),
+                episode_data.get("release_date"),
+                episode_data.get("release_status", "unplanned"),
+                episode_data.get("production_status", "idea"),
+                episode_data.get("priority_score", 0),
+                episode_data.get("recommendation_reason"),
+                episode_data.get("notes"),
+            )
+
+            if existing_row:
+                conn.execute(
+                    """
+                    UPDATE episodes SET
+                        guest_id = ?, interview_id = ?, guest_name = ?, guest_email = ?, episode_title = ?,
+                        topic = ?, category = ?, interview_date = ?, recording_date = ?, release_date = ?,
+                        release_status = ?, production_status = ?, priority_score = ?, recommendation_reason = ?,
+                        notes = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    fields + (existing_row["id"],),
+                )
+                conn.commit()
+                return existing_row["id"], "updated"
+
+            cursor = conn.execute(
+                """
+                INSERT INTO episodes (
+                    guest_id, interview_id, guest_name, guest_email, episode_title, topic, category,
+                    interview_date, recording_date, release_date, release_status, production_status,
+                    priority_score, recommendation_reason, notes, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                fields,
+            )
+            conn.commit()
+            return cursor.lastrowid, "created"
+
+    def list_episodes(self) -> List[Dict]:
+        """Return all episodes ordered by planned release date."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT * FROM episodes
+                ORDER BY
+                    CASE WHEN release_date IS NULL THEN 1 ELSE 0 END,
+                    datetime(release_date) ASC,
+                    id DESC
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_episode_by_id(self, episode_id: int) -> Optional[Dict]:
+        """Fetch a single episode by id."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def log_reminder(self, interview_id: int, reminder_type: str, sent_to: str, status: str, provider: str = "", notes: str = "") -> int:
+        """Record a reminder attempt for an interview."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO reminder_log (interview_id, reminder_type, sent_to, provider, status, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (interview_id, reminder_type, sent_to, provider, status, notes),
+            )
+            conn.execute(
+                """
+                UPDATE interviews
+                SET reminder_status = ?, reminder_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, interview_id),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_reminder_log(self, interview_id: Optional[int] = None) -> List[Dict]:
+        """Return reminder log entries, optionally for a single interview."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            if interview_id is None:
+                cursor = conn.execute("SELECT * FROM reminder_log ORDER BY sent_at DESC, id DESC")
+            else:
+                cursor = conn.execute(
+                    "SELECT * FROM reminder_log WHERE interview_id = ? ORDER BY sent_at DESC, id DESC",
+                    (interview_id,),
+                )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_operations_stats(self) -> Dict[str, int]:
+        """Return a small summary of podcast operations records."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            interviews_total = conn.execute("SELECT COUNT(*) FROM interviews").fetchone()[0]
+            interviews_pending_confirmation = conn.execute(
+                "SELECT COUNT(*) FROM interviews WHERE confirmation_status = 'pending'"
+            ).fetchone()[0]
+            episodes_total = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+            episodes_scheduled = conn.execute(
+                "SELECT COUNT(*) FROM episodes WHERE release_status = 'scheduled'"
+            ).fetchone()[0]
+            reminders_sent = conn.execute("SELECT COUNT(*) FROM reminder_log").fetchone()[0]
+
+        return {
+            "interviews_total": interviews_total,
+            "interviews_pending_confirmation": interviews_pending_confirmation,
+            "episodes_total": episodes_total,
+            "episodes_scheduled": episodes_scheduled,
+            "reminders_sent": reminders_sent,
+        }
     
     # ==================== Status Management ====================
     

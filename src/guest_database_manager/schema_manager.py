@@ -60,6 +60,67 @@ class SchemaManager:
             UNIQUE(name, email, full_name)
         )
     """
+
+    CREATE_INTERVIEWS_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS interviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guest_id INTEGER,
+            guest_name TEXT NOT NULL,
+            guest_email TEXT,
+            calendar_event_id TEXT UNIQUE,
+            title TEXT,
+            scheduled_for TIMESTAMP NOT NULL,
+            timezone TEXT DEFAULT 'Europe/Berlin',
+            join_url TEXT,
+            status TEXT DEFAULT 'scheduled',
+            confirmation_status TEXT DEFAULT 'pending',
+            reminder_status TEXT DEFAULT 'not_scheduled',
+            reminder_sent_at TIMESTAMP,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (guest_id) REFERENCES guests(id) ON DELETE SET NULL
+        )
+    """
+
+    CREATE_EPISODES_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS episodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guest_id INTEGER,
+            interview_id INTEGER,
+            guest_name TEXT NOT NULL,
+            guest_email TEXT,
+            episode_title TEXT,
+            topic TEXT,
+            category TEXT,
+            interview_date TIMESTAMP,
+            recording_date TIMESTAMP,
+            release_date TIMESTAMP,
+            release_status TEXT DEFAULT 'unplanned',
+            production_status TEXT DEFAULT 'idea',
+            priority_score REAL DEFAULT 0,
+            recommendation_reason TEXT,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (guest_id) REFERENCES guests(id) ON DELETE SET NULL,
+            FOREIGN KEY (interview_id) REFERENCES interviews(id) ON DELETE SET NULL
+        )
+    """
+
+    CREATE_REMINDER_LOG_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS reminder_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interview_id INTEGER NOT NULL,
+            reminder_type TEXT NOT NULL,
+            sent_to TEXT NOT NULL,
+            provider TEXT,
+            status TEXT NOT NULL,
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT,
+            FOREIGN KEY (interview_id) REFERENCES interviews(id) ON DELETE CASCADE
+        )
+    """
     
     # Columns that might need to be added to existing databases
     OPTIONAL_COLUMNS: List[Tuple[str, str]] = [
@@ -87,6 +148,9 @@ class SchemaManager:
         """
         with sqlite3.connect(db_path) as conn:
             conn.execute(SchemaManager.CREATE_TABLE_SQL)
+            conn.execute(SchemaManager.CREATE_INTERVIEWS_TABLE_SQL)
+            conn.execute(SchemaManager.CREATE_EPISODES_TABLE_SQL)
+            conn.execute(SchemaManager.CREATE_REMINDER_LOG_TABLE_SQL)
             SchemaManager._add_optional_columns(conn)
             conn.commit()
     
