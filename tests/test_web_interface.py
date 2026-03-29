@@ -14,6 +14,10 @@ from guest_database_manager.web_interface import (
     EMAIL_PASSWORD_ENV_VAR,
     EMAIL_CC_ENV_VAR,
     EMAIL_RESEND_API_KEY_ENV_VAR,
+    GOOGLE_CALENDAR_ID_ENV_VAR,
+    GOOGLE_CLIENT_ID_ENV_VAR,
+    GOOGLE_CLIENT_SECRET_ENV_VAR,
+    GOOGLE_REFRESH_TOKEN_ENV_VAR,
     EMAIL_SMTP_PORT_ENV_VAR,
     EMAIL_SMTP_SERVER_ENV_VAR,
     EMAIL_USERNAME_ENV_VAR,
@@ -483,6 +487,64 @@ def test_web_service_can_preview_and_send_weekly_interview_reminders(monkeypatch
 
     weekly_result = service.send_due_weekly_reminders(reference=__import__("datetime").datetime(2026, 3, 30), dry_run=True)
     assert weekly_result["count"] == 0
+
+
+def test_web_service_can_sync_google_calendar_interviews(monkeypatch, temp_db):
+    """Google Calendar events should sync into interview records through the service layer."""
+
+    class StubCalendarClient:
+        def list_upcoming_events(self, **kwargs):
+            return [
+                {
+                    "id": "google_event_1",
+                    "summary": "MIRROR TALK Podcast Conversation with Jordan Rivers",
+                    "updated": "2026-03-30T10:00:00Z",
+                    "status": "confirmed",
+                    "start": {
+                        "dateTime": "2026-03-31T17:00:00+01:00",
+                        "timeZone": "Europe/Berlin",
+                    },
+                    "attendees": [
+                        {
+                            "displayName": "Jordan Rivers",
+                            "email": "jordan@example.com",
+                            "responseStatus": "accepted",
+                        }
+                    ],
+                    "description": "Join here https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db",
+                }
+            ]
+
+        def normalize_event(self, event):
+            return {
+                "guest_name": "Jordan Rivers",
+                "guest_email": "jordan@example.com",
+                "calendar_event_id": event["id"],
+                "calendar_source": "google_calendar",
+                "event_updated_at": event["updated"],
+                "last_synced_at": "2026-03-30T11:00:00Z",
+                "title": event["summary"],
+                "scheduled_for": event["start"]["dateTime"],
+                "timezone": "Europe/Berlin",
+                "join_url": "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db",
+                "status": "scheduled",
+                "confirmation_status": "confirmed",
+                "reminder_status": "not_scheduled",
+                "notes": "Imported from Google Calendar",
+            }
+
+    monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
+    monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
+    monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+    service = GuestWebService(temp_db.db_path)
+    monkeypatch.setattr(service, "_build_google_calendar_client", lambda: StubCalendarClient())
+
+    result = service.sync_google_calendar_interviews()
+
+    assert result["count"] == 1
+    assert result["interviews"][0]["guest_name"] == "Jordan Rivers"
+    assert service.list_operations()["interviews"][0]["calendar_source"] == "google_calendar"
 
 
 def test_validate_intake_payload_rejects_spam_keywords():

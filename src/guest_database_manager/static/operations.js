@@ -8,6 +8,7 @@ const interviewList = document.getElementById("interview-list");
 const episodeList = document.getElementById("episode-list");
 const refreshButton = document.getElementById("operations-refresh-button");
 const sendWeeklyRemindersButton = document.getElementById("send-weekly-reminders-button");
+const syncCalendarButton = document.getElementById("sync-calendar-button");
 
 const stats = {
   interviewsTotal: document.getElementById("ops-interviews-total"),
@@ -184,6 +185,25 @@ episodeForm.addEventListener("submit", async (event) => {
 
 refreshButton.addEventListener("click", async () => {
   try {
+    await loadOperations();
+  } catch (error) {
+    setMessage(interviewMessage, error.message, "error");
+  }
+});
+
+syncCalendarButton.addEventListener("click", async () => {
+  try {
+    const result = await fetchJSON("/api/google-calendar/sync", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    setMessage(
+      interviewMessage,
+      result.count
+        ? `Google Calendar sync complete. ${result.count} interview event(s) synced.`
+        : "Google Calendar sync completed, but no matching interview events were found.",
+      "success",
+    );
     await loadOperations();
   } catch (error) {
     setMessage(interviewMessage, error.message, "error");

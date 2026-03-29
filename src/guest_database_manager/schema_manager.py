@@ -68,6 +68,9 @@ class SchemaManager:
             guest_name TEXT NOT NULL,
             guest_email TEXT,
             calendar_event_id TEXT UNIQUE,
+            calendar_source TEXT,
+            event_updated_at TIMESTAMP,
+            last_synced_at TIMESTAMP,
             title TEXT,
             scheduled_for TIMESTAMP NOT NULL,
             timezone TEXT DEFAULT 'Europe/Berlin',
@@ -137,6 +140,12 @@ class SchemaManager:
         ("original_file_name", "TEXT"),
         ("original_data", "TEXT"),
     ]
+
+    INTERVIEW_OPTIONAL_COLUMNS: List[Tuple[str, str]] = [
+        ("calendar_source", "TEXT"),
+        ("event_updated_at", "TIMESTAMP"),
+        ("last_synced_at", "TIMESTAMP"),
+    ]
     
     @staticmethod
     def create_tables(db_path: str) -> None:
@@ -168,6 +177,13 @@ class SchemaManager:
                 logger.info(f"Added column: {column_name}")
             except sqlite3.OperationalError:
                 # Column already exists
+                pass
+
+        for column_name, column_type in SchemaManager.INTERVIEW_OPTIONAL_COLUMNS:
+            try:
+                conn.execute(f"ALTER TABLE interviews ADD COLUMN {column_name} {column_type}")
+                logger.info(f"Added interview column: {column_name}")
+            except sqlite3.OperationalError:
                 pass
     
     @staticmethod

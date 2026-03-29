@@ -12,6 +12,7 @@ from pathlib import Path
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.web_interface import run_web_interface
+from guest_database_manager.web_interface import GuestWebService
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -83,6 +84,31 @@ def create_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Preview which reminders would be sent without sending emails",
+    )
+
+    calendar_sync_parser = subparsers.add_parser("calendar-sync", help="Sync Google Calendar interviews into podcast operations")
+    calendar_sync_parser.add_argument(
+        "--db",
+        type=Path,
+        default=Path(DEFAULT_DB_PATH),
+        help=f"Database file path (default: {DEFAULT_DB_PATH})",
+    )
+    calendar_sync_parser.add_argument(
+        "--days-ahead",
+        type=int,
+        default=30,
+        help="How many days ahead to pull interview events from Google Calendar",
+    )
+    calendar_sync_parser.add_argument(
+        "--query",
+        type=str,
+        default="",
+        help="Optional Google Calendar search query to narrow synced events",
+    )
+    calendar_sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview which calendar events would sync without writing interviews",
     )
 
     return parser
@@ -222,6 +248,26 @@ def send_weekly_reminders(db_path: Path, dry_run: bool = False) -> None:
         sys.exit(1)
 
 
+def sync_google_calendar(db_path: Path, days_ahead: int = 30, query: str = "", dry_run: bool = False) -> None:
+    """Sync Google Calendar interviews into the operations tracker."""
+    try:
+        service = GuestWebService(db_path)
+        result = service.sync_google_calendar_interviews(days_ahead=days_ahead, query=query, dry_run=dry_run)
+
+        if dry_run:
+            print(f"🗓️ Google Calendar sync preview: {result['count']} interview event(s) found")
+        else:
+            print(f"🔄 Google Calendar sync complete: {result['count']} interview event(s) synced")
+
+        for interview in result["interviews"]:
+            action = interview.get("sync_action", "previewed")
+            print(f" - {interview['guest_name']} | {interview['scheduled_for_display']} | {action}")
+
+    except (OSError, ValueError) as e:
+        print(f"❌ Error syncing Google Calendar: {e}")
+        sys.exit(1)
+
+
 def main() -> None:
     """Main CLI entry point."""
     parser = create_parser()
@@ -244,6 +290,8 @@ def main() -> None:
         clean_database(args.db)
     elif args.command == "reminders":
         send_weekly_reminders(args.db, args.dry_run)
+    elif args.command == "calendar-sync":
+        sync_google_calendar(args.db, args.days_ahead, args.query, args.dry_run)
     else:
         parser.print_help()
 

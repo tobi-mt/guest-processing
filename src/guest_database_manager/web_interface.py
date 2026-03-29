@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.email_manager import EmailManager
+from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
 
 STATIC_DIR = Path(__file__).parent / "static"
 FORM_SOURCE_NAME = "Direct Web Entry"
@@ -44,6 +45,12 @@ EMAIL_RESEND_API_KEY_ENV_VAR = "MIRROR_TALK_RESEND_API_KEY"
 EMAIL_FROM_ENV_VAR = "MIRROR_TALK_FROM_EMAIL"
 EMAIL_FROM_NAME_ENV_VAR = "MIRROR_TALK_FROM_NAME"
 EMAIL_CC_ENV_VAR = "MIRROR_TALK_CC_EMAIL"
+GOOGLE_CLIENT_ID_ENV_VAR = "MIRROR_TALK_GOOGLE_CLIENT_ID"
+GOOGLE_CLIENT_SECRET_ENV_VAR = "MIRROR_TALK_GOOGLE_CLIENT_SECRET"
+GOOGLE_REFRESH_TOKEN_ENV_VAR = "MIRROR_TALK_GOOGLE_REFRESH_TOKEN"
+GOOGLE_CALENDAR_ID_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_ID"
+GOOGLE_CALENDAR_QUERY_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_QUERY"
+GOOGLE_CALENDAR_TIMEZONE_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_TIMEZONE"
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -178,6 +185,7 @@ class GuestWebService:
             "interviews": self.database.list_interviews(),
             "episodes": self.database.list_episodes(),
             "reminder_candidates": reminder_candidates,
+            "calendar_sync_enabled": self._build_google_calendar_client() is not None,
         }
 
     def export_guests_csv(self) -> str:
@@ -432,15 +440,21 @@ class GuestWebService:
     def get_due_weekly_reminders(self, *, reference: Optional[datetime] = None) -> list[Dict[str, Any]]:
         """Return interviews due for a weekly confirmation reminder."""
         reference = reference or datetime.now()
-        week_start = reference - timedelta(days=reference.weekday())
-        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
-        week_end = week_start + timedelta(days=7)
 
         candidates: list[Dict[str, Any]] = []
         for interview in self.database.list_interviews():
             scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
             if not scheduled_for:
                 continue
+            comparison_reference = reference
+            if scheduled_for.tzinfo is not None and comparison_reference.tzinfo is None:
+                comparison_reference = comparison_reference.replace(tzinfo=scheduled_for.tzinfo)
+            elif scheduled_for.tzinfo is None and comparison_reference.tzinfo is not None:
+                comparison_reference = comparison_reference.astimezone(timezone.utc).replace(tzinfo=None)
+
+            week_start = comparison_reference - timedelta(days=comparison_reference.weekday())
+            week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            week_end = week_start + timedelta(days=7)
             if not (week_start <= scheduled_for < week_end):
                 continue
             if (interview.get("reminder_status") or "").strip().lower() == "sent":
@@ -544,6 +558,49 @@ class GuestWebService:
             "count": len(sent),
         }
 
+    def sync_google_calendar_interviews(
+        self,
+        *,
+        days_ahead: int = 30,
+        reference: Optional[datetime] = None,
+        query: str = "",
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Sync upcoming Google Calendar interview events into the interview tracker."""
+        client = self._build_google_calendar_client()
+        if client is None:
+            raise WebInterfaceError("Google Calendar sync is not configured on the server.")
+
+        effective_query = query.strip() or os.environ.get(GOOGLE_CALENDAR_QUERY_ENV_VAR, "").strip()
+
+        try:
+            events = client.list_upcoming_events(days_ahead=days_ahead, reference=reference, query=effective_query)
+        except GoogleCalendarSyncError as exc:
+            raise WebInterfaceError(str(exc)) from exc
+
+        normalized = [client.normalize_event(event) for event in events]
+        if dry_run:
+            return {
+                "dry_run": True,
+                "count": len(normalized),
+                "interviews": [self._serialize_interview_reminder(item) for item in normalized],
+            }
+
+        synced = []
+        for event_data in normalized:
+            interview_id, action = self.database.upsert_interview(event_data)
+            interview = self.database.get_interview_by_id(interview_id)
+            if interview:
+                serialized = self._serialize_interview_reminder(interview)
+                serialized["sync_action"] = action
+                synced.append(serialized)
+
+        return {
+            "dry_run": False,
+            "count": len(synced),
+            "interviews": synced,
+        }
+
     @staticmethod
     def _parse_datetime(value: Any) -> Optional[datetime]:
         """Parse a stored interview datetime."""
@@ -567,6 +624,25 @@ class GuestWebService:
             scheduled_for.strftime("%A %d %B %Y at %H:%M") if scheduled_for else _normalize_text(interview.get("scheduled_for"))
         )
         return serialized
+
+    def _build_google_calendar_client(self) -> Optional[GoogleCalendarSyncClient]:
+        """Build the Google Calendar client from environment configuration."""
+        client_id = os.environ.get(GOOGLE_CLIENT_ID_ENV_VAR, "").strip()
+        client_secret = os.environ.get(GOOGLE_CLIENT_SECRET_ENV_VAR, "").strip()
+        refresh_token = os.environ.get(GOOGLE_REFRESH_TOKEN_ENV_VAR, "").strip()
+        calendar_id = os.environ.get(GOOGLE_CALENDAR_ID_ENV_VAR, "").strip()
+        timezone_name = os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin"
+
+        if not all([client_id, client_secret, refresh_token, calendar_id]):
+            return None
+
+        return GoogleCalendarSyncClient(
+            client_id=client_id,
+            client_secret=client_secret,
+            refresh_token=refresh_token,
+            calendar_id=calendar_id,
+            default_timezone=timezone_name,
+        )
 
     def _build_email_manager(self) -> EmailManager:
         """Build an email manager from environment configuration for the hosted dashboard."""
@@ -676,6 +752,20 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.list_operations())
+            return
+
+        if self.path == "/api/google-calendar/sync":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            try:
+                result = self.service.sync_google_calendar_interviews(dry_run=True)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, result)
             return
 
         if self.path.startswith("/api/interviews/") and self.path.endswith("/reminder-template"):
@@ -800,6 +890,32 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 result = self.service.send_due_weekly_reminders(reference=reference, dry_run=dry_run)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path == "/api/google-calendar/sync":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            payload = self._read_json_payload()
+            reference_value = _normalize_text(payload.get("reference"))
+            reference = self.service._parse_datetime(reference_value) if reference_value else None
+            days_ahead = int(payload.get("days_ahead", 30) or 30)
+            query = _normalize_text(payload.get("query"))
+            dry_run = bool(payload.get("dry_run"))
+
+            try:
+                result = self.service.sync_google_calendar_interviews(
+                    days_ahead=days_ahead,
+                    reference=reference,
+                    query=query,
+                    dry_run=dry_run,
+                )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return

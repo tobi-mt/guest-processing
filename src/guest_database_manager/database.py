@@ -218,6 +218,9 @@ class GuestDatabase:
                 interview_data.get("guest_name"),
                 interview_data.get("guest_email"),
                 calendar_event_id,
+                interview_data.get("calendar_source"),
+                interview_data.get("event_updated_at"),
+                interview_data.get("last_synced_at"),
                 interview_data.get("title"),
                 interview_data.get("scheduled_for"),
                 interview_data.get("timezone", "Europe/Berlin"),
@@ -233,9 +236,10 @@ class GuestDatabase:
                 conn.execute(
                     """
                     UPDATE interviews SET
-                        guest_id = ?, guest_name = ?, guest_email = ?, calendar_event_id = ?, title = ?,
-                        scheduled_for = ?, timezone = ?, join_url = ?, status = ?, confirmation_status = ?,
-                        reminder_status = ?, reminder_sent_at = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                        guest_id = ?, guest_name = ?, guest_email = ?, calendar_event_id = ?, calendar_source = ?,
+                        event_updated_at = ?, last_synced_at = ?, title = ?, scheduled_for = ?, timezone = ?,
+                        join_url = ?, status = ?, confirmation_status = ?, reminder_status = ?,
+                        reminder_sent_at = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     fields + (existing_row["id"],),
@@ -246,9 +250,10 @@ class GuestDatabase:
             cursor = conn.execute(
                 """
                 INSERT INTO interviews (
-                    guest_id, guest_name, guest_email, calendar_event_id, title, scheduled_for, timezone,
-                    join_url, status, confirmation_status, reminder_status, reminder_sent_at, notes, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    guest_id, guest_name, guest_email, calendar_event_id, calendar_source, event_updated_at,
+                    last_synced_at, title, scheduled_for, timezone, join_url, status, confirmation_status,
+                    reminder_status, reminder_sent_at, notes, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 fields,
             )
