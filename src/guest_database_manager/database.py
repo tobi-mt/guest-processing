@@ -482,6 +482,19 @@ class GuestDatabase:
             conn.commit()
             return cursor.lastrowid
 
+    def log_interview_email(self, interview_id: int, email_type: str, sent_to: str, status: str, provider: str = "", notes: str = "") -> int:
+        """Record a non-reminder interview email without mutating reminder status."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO reminder_log (interview_id, reminder_type, sent_to, provider, status, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (interview_id, email_type, sent_to, provider, status, notes),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
     def get_reminder_log(self, interview_id: Optional[int] = None) -> List[Dict]:
         """Return reminder log entries, optionally for a single interview."""
         with sqlite3.connect(str(self.db_path)) as conn:

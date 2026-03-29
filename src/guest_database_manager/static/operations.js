@@ -398,10 +398,14 @@ function renderInterviews(interviews, totalCount) {
       ? `
         <button type="button" class="ghost-button" data-interview-action="preview-reminder">Preview Reminder</button>
         <button type="button" class="primary-button" data-interview-action="send-reminder">Send Reminder</button>
+        <button type="button" class="ghost-button" data-interview-action="preview-appreciation">Preview Thank You</button>
+        <button type="button" class="secondary-button" data-interview-action="send-appreciation">Send Thank You</button>
       `
       : `
         <button type="button" class="ghost-button" data-interview-action="preview-reminder" disabled>Preview Reminder</button>
         <button type="button" class="primary-button" data-interview-action="send-reminder" disabled>Send Reminder</button>
+        <button type="button" class="ghost-button" data-interview-action="preview-appreciation" disabled>Preview Thank You</button>
+        <button type="button" class="secondary-button" data-interview-action="send-appreciation" disabled>Send Thank You</button>
       `;
     card.innerHTML = `
       <h3>${interview.guest_name || "Unnamed guest"}</h3>
@@ -432,6 +436,8 @@ function renderInterviews(interviews, totalCount) {
     const formButton = card.querySelector("[data-interview-action='form']");
     const previewReminderButton = card.querySelector("[data-interview-action='preview-reminder']");
     const sendReminderButton = card.querySelector("[data-interview-action='send-reminder']");
+    const previewAppreciationButton = card.querySelector("[data-interview-action='preview-appreciation']");
+    const sendAppreciationButton = card.querySelector("[data-interview-action='send-appreciation']");
     const calendarPushButton = card.querySelector("[data-calendar-action='push']");
     const deleteButton = card.querySelector("[data-interview-action='delete']");
     const editorNode = card.querySelector("[data-interview-editor]");
@@ -512,6 +518,69 @@ function renderInterviews(interviews, totalCount) {
           setMessage(interviewMessage, error.message, "error");
           sendReminderButton.disabled = false;
           sendReminderButton.textContent = "Send Reminder";
+        }
+      });
+    }
+
+    if (previewAppreciationButton) {
+      previewAppreciationButton.addEventListener("click", async () => {
+        if (!interview.guest_email) {
+          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+
+        previewAppreciationButton.disabled = true;
+        previewAppreciationButton.textContent = "Loading...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Loading thank-you preview for ${interview.guest_name || "guest"}...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        try {
+          const preview = await fetchJSON(`/api/interviews/${interview.id}/appreciation-template`);
+          reminderPreviewNode.classList.remove("hidden");
+          reminderPreviewNode.innerHTML = `
+            <h4>${preview.subject}</h4>
+            <p>To: ${interview.guest_email}</p>
+            <pre>${preview.body}</pre>
+          `;
+          activeInterviewActionFeedback = { id: interview.id, text: `Thank-you preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+          setMessage(interviewMessage, error.message, "error");
+        } finally {
+          previewAppreciationButton.disabled = false;
+          previewAppreciationButton.textContent = "Preview Thank You";
+        }
+      });
+    }
+
+    if (sendAppreciationButton) {
+      sendAppreciationButton.addEventListener("click", async () => {
+        if (!interview.guest_email) {
+          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+
+        sendAppreciationButton.disabled = true;
+        sendAppreciationButton.textContent = "Sending...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Sending thank-you email to ${interview.guest_name || interview.guest_email}...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        try {
+          await fetchJSON(`/api/interviews/${interview.id}/send-appreciation`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          reminderPreviewNode.classList.remove("hidden");
+          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Thank-you email sent to ${interview.guest_name || interview.guest_email}.</p>`;
+          activeInterviewActionFeedback = { id: interview.id, text: `Thank-you email sent to ${interview.guest_name || interview.guest_email}.`, tone: "success" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+          setMessage(interviewMessage, `Thank-you email sent to ${interview.guest_name || interview.guest_email}.`, "success");
+        } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+          setMessage(interviewMessage, error.message, "error");
+          sendAppreciationButton.disabled = false;
+          sendAppreciationButton.textContent = "Send Thank You";
         }
       });
     }

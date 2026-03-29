@@ -254,6 +254,35 @@ https://mirrortalkpodcast.com/ask-mirror-talk/
 
         return {"subject": subject, "body": body}
 
+    def get_post_interview_appreciation_template(self, guest_name: str) -> Dict[str, str]:
+        """Build a refined thank-you email for guests after recording."""
+        subject = "Thank you for your Mirror Talk conversation"
+
+        body = f"""Hi {guest_name},
+
+Thank you again for joining me on Mirror Talk.
+
+It was a real pleasure to share that conversation with you. I’m genuinely grateful for your openness, your time, and the perspective you brought to the episode.
+
+Conversations like this are at the heart of what we hope to create with Mirror Talk, and I truly appreciate the care you brought into it.
+
+If you’d like to support the podcast in a simple but meaningful way, here are three lovely ways to do that:
+- subscribe to Mirror Talk on Spotify or Apple Podcasts
+- share the show or your episode with someone who would genuinely enjoy it
+- explore our new AI experience, Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
+
+You can also stay connected with the wider Mirror Talk community here:
+https://mirrortalkpodcast.com/join-our-family/
+
+Thank you once again. I’m really glad we had this conversation.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast
+"""
+
+        return {"subject": subject, "body": body}
+
     def _resend_from_address(self) -> str:
         """Format the Resend sender address."""
         if self.from_name:
