@@ -158,6 +158,29 @@ body {
   background: rgba(112, 91, 69, 0.09);
 }
 
+.composer-feedback {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.composer-feedback.pending {
+  background: rgba(20, 90, 74, 0.08);
+  color: var(--accent);
+}
+
+.composer-feedback.success {
+  background: rgba(20, 90, 74, 0.12);
+  color: var(--accent);
+}
+
+.composer-feedback.error {
+  background: rgba(143, 45, 31, 0.1);
+  color: var(--danger);
+}
+
 .eyebrow {
   margin: 0 0 8px;
   text-transform: uppercase;

@@ -25,6 +25,14 @@ let emailEnabled = false;
 let latestPayload = null;
 let activeEmailComposer = null;
 
+function composerFeedbackMarkup(feedback) {
+  if (!feedback?.text) {
+    return "";
+  }
+
+  return `<p class="composer-feedback ${feedback.tone || ""}">${escapeHtml(feedback.text)}</p>`;
+}
+
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -242,9 +250,12 @@ function renderGuests(payload) {
           <span>Email Body</span>
           <textarea rows="12" data-composer-field="body">${escapeHtml(activeEmailComposer.body)}</textarea>
         </label>
+        ${composerFeedbackMarkup(activeEmailComposer.feedback)}
         <div class="composer-actions">
-          <button type="button" data-composer-action="send" class="primary-button small-button">Send Email</button>
-          <button type="button" data-composer-action="cancel" class="ghost-button small-button">Cancel</button>
+          <button type="button" data-composer-action="send" class="primary-button small-button" ${activeEmailComposer.sending ? "disabled" : ""}>
+            ${activeEmailComposer.sending ? "Sending..." : "Send Email"}
+          </button>
+          <button type="button" data-composer-action="cancel" class="ghost-button small-button" ${activeEmailComposer.sending ? "disabled" : ""}>Cancel</button>
         </div>
       `;
 
@@ -260,6 +271,15 @@ function renderGuests(payload) {
       });
 
       composer.querySelector("[data-composer-action='send']").addEventListener("click", async () => {
+        activeEmailComposer.sending = true;
+        activeEmailComposer.feedback = {
+          text: activeEmailComposer.status === "accepted"
+            ? `Sending approval email to ${guest.full_name || "guest"}...`
+            : `Sending decline email to ${guest.full_name || "guest"}...`,
+          tone: "pending",
+        };
+        renderGuests(latestPayload);
+
         try {
           await fetchJSON(`/api/guests/${guest.id}/email-decision`, {
             method: "POST",
@@ -275,9 +295,24 @@ function renderGuests(payload) {
               : `Sent decline email to ${guest.full_name}.`,
             "success",
           );
+          activeEmailComposer.feedback = {
+            text: activeEmailComposer.status === "accepted"
+              ? `Approval email sent to ${guest.full_name || "guest"}.`
+              : `Decline email sent to ${guest.full_name || "guest"}.`,
+            tone: "success",
+          };
+          activeEmailComposer.sending = false;
+          renderGuests(latestPayload);
+          await new Promise((resolve) => window.setTimeout(resolve, 900));
           activeEmailComposer = null;
           await loadGuests();
         } catch (error) {
+          activeEmailComposer.sending = false;
+          activeEmailComposer.feedback = {
+            text: error.message,
+            tone: "error",
+          };
+          renderGuests(latestPayload);
           setMessage(error.message, "error");
         }
       });
@@ -306,6 +341,8 @@ function renderGuests(payload) {
               status: decision,
               subject: templateData.subject || "",
               body: templateData.body || "",
+              sending: false,
+              feedback: null,
             };
             renderGuests(latestPayload);
           } else if (action === "delete") {
