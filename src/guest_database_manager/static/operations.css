@@ -19,6 +19,11 @@
   border: 0;
   box-shadow: none;
   backdrop-filter: none;
+  position: sticky;
+  top: 20px;
+  align-self: start;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
 }
 
 .operations-section {
@@ -220,6 +225,12 @@
   .operations-tool-body {
     padding-left: 18px;
     padding-right: 18px;
+  }
+
+  .operations-form-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
   }
 
   .export-field-grid {
