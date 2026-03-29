@@ -1148,6 +1148,61 @@ def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp
     assert sent_episode["guest_email"] == "jordan@example.com"
 
 
+def test_web_service_can_preview_and_send_released_episode_email(monkeypatch, temp_db):
+    """Released episodes should support a polished live-episode follow-up with links."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+            self.last_error = ""
+            self.resend_api_key = "re_test"
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def get_released_episode_template(self, guest_name, show_notes_url, files_url):
+            assert guest_name == "Jordan Rivers"
+            assert show_notes_url == "https://mirrortalkpodcast.com/episode/jordan-rivers"
+            assert files_url == "https://downloads.mirrortalkpodcast.com/jordan-rivers"
+            return {"subject": "Your Mirror Talk episode is now live", "body": "Show notes and files are ready."}
+
+        def send_email(self, to_email, subject, body):
+            assert to_email == "jordan@example.com"
+            assert subject == "Your Mirror Talk episode is now live"
+            assert "files" in body.lower()
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "A Meaningful Conversation",
+            "topic": "Purpose",
+            "release_status": "released",
+            "show_notes_url": "https://mirrortalkpodcast.com/episode/jordan-rivers",
+            "release_files_url": "https://downloads.mirrortalkpodcast.com/jordan-rivers",
+        }
+    )
+
+    assert episode["show_notes_url"] == "https://mirrortalkpodcast.com/episode/jordan-rivers"
+    assert episode["release_files_url"] == "https://downloads.mirrortalkpodcast.com/jordan-rivers"
+
+    preview = service.preview_episode_release_email(episode["id"])
+    assert preview["subject"] == "Your Mirror Talk episode is now live"
+
+    sent_episode = service.send_episode_release_email(episode["id"])
+    assert sent_episode["guest_email"] == "jordan@example.com"
+
+
 def test_web_service_can_sync_google_calendar_interviews(monkeypatch, temp_db):
     """Google Calendar events should sync into interview records through the service layer."""
 

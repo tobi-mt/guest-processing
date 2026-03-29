@@ -133,6 +133,8 @@ EXPORTABLE_FIELDS: Dict[str, list[str]] = {
         "priority_score",
         "legacy_episode_number",
         "riverside_status",
+        "show_notes_url",
+        "release_files_url",
         "source_file_name",
         "recommendation_reason",
     ],
@@ -685,6 +687,8 @@ class GuestWebService:
             "riverside_status": _normalize_text(payload.get("riverside_status")),
             "source_file_name": _normalize_text(payload.get("source_file_name")),
             "source_type": _normalize_text(payload.get("source_type")),
+            "show_notes_url": _normalize_text(payload.get("show_notes_url")),
+            "release_files_url": _normalize_text(payload.get("release_files_url")),
             "notes": _normalize_text(payload.get("notes")),
         }
 
@@ -999,6 +1003,72 @@ class GuestWebService:
         refreshed = self.database.get_episode_by_id(episode_id)
         if not refreshed:
             raise WebInterfaceError("Episode not found after appreciation email send.")
+        return self._normalize_episode_record(refreshed)
+
+    def preview_episode_release_email(self, episode_id: int) -> Dict[str, Any]:
+        """Return the released-episode follow-up email template from an episode record."""
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode not found.")
+
+        guest_name = _normalize_text(episode.get("guest_name")) or "Guest"
+        show_notes_url = _normalize_text(episode.get("show_notes_url")) or "[Add show notes link]"
+        files_url = _normalize_text(episode.get("release_files_url")) or "[Add files link]"
+        email_manager = self._build_email_manager()
+        template = email_manager.get_released_episode_template(
+            guest_name=guest_name,
+            show_notes_url=show_notes_url,
+            files_url=files_url,
+        )
+        return {
+            "episode": self._normalize_episode_record(episode),
+            "subject": template["subject"],
+            "body": template["body"],
+        }
+
+    def send_episode_release_email(self, episode_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+        """Send the released-episode follow-up email from an episode record."""
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode not found.")
+
+        guest_email = _normalize_text(episode.get("guest_email"))
+        if not guest_email:
+            raise WebInterfaceError("This episode does not have a guest email.")
+        if not _normalize_text(episode.get("show_notes_url")):
+            raise WebInterfaceError("Add the show notes link before sending the release email.")
+        if not _normalize_text(episode.get("release_files_url")):
+            raise WebInterfaceError("Add the files link before sending the release email.")
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            raise WebInterfaceError("Dashboard email is not configured on the server.")
+
+        preview = self.preview_episode_release_email(episode_id)
+        resolved_subject = subject.strip() or preview["subject"]
+        resolved_body = body.strip() or preview["body"]
+
+        sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        if not sent:
+            error_detail = (email_manager.last_error or "").strip()
+            if error_detail:
+                raise WebInterfaceError(f"The release email could not be sent: {error_detail}")
+            raise WebInterfaceError("The release email could not be sent.")
+
+        provider = "resend" if email_manager.resend_api_key else "smtp"
+        linked_interview_id = episode.get("interview_id")
+        if linked_interview_id:
+            self.database.log_interview_email(
+                interview_id=int(linked_interview_id),
+                email_type="released_episode_follow_up",
+                sent_to=guest_email,
+                status="sent",
+                provider=provider,
+                notes=resolved_subject,
+            )
+        refreshed = self.database.get_episode_by_id(episode_id)
+        if not refreshed:
+            raise WebInterfaceError("Episode not found after release email send.")
         return self._normalize_episode_record(refreshed)
 
     def sync_google_calendar_interviews(
@@ -1318,6 +1388,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 payload = self.service.preview_episode_appreciation(episode_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if request_path.startswith("/api/episodes/") and request_path.endswith("/release-email-template"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            episode_id = self._extract_record_id(request_path[: -len("/release-email-template")], "/api/episodes/")
+            if episode_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                return
+
+            try:
+                payload = self.service.preview_episode_release_email(episode_id)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -1668,6 +1757,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/episodes/"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            if self.path.endswith("/send-release-email"):
+                episode_id = self._extract_record_id(self.path[: -len("/send-release-email")], "/api/episodes/")
+                if episode_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                    return
+
+                payload = self._read_json_payload()
+                try:
+                    episode = self.service.send_episode_release_email(
+                        episode_id,
+                        payload.get("subject", ""),
+                        payload.get("body", ""),
+                    )
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, episode)
                 return
 
             if self.path.endswith("/send-appreciation"):

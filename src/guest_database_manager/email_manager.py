@@ -283,6 +283,39 @@ Mirror Talk Podcast
 
         return {"subject": subject, "body": body}
 
+    def get_released_episode_template(self, guest_name: str, show_notes_url: str, files_url: str) -> Dict[str, str]:
+        """Build a polished release-notification email for a guest."""
+        subject = "Your Mirror Talk episode is now live"
+
+        body = f"""Hi {guest_name},
+
+I hope you are doing well.
+
+I’m happy to let you know that your Mirror Talk episode is now live, and I want to thank you again for being part of it.
+
+Here are the links for you:
+- Show notes: {show_notes_url}
+- Files (download link expires in 2 days): {files_url}
+
+When you have a moment, I’d genuinely love to hear what you and your loved ones think of the episode.
+
+If you’d like to support the conversation further, here are three meaningful ways to help:
+- subscribe to Mirror Talk on Spotify, Apple Podcasts, or YouTube
+- share the episode with people who would truly appreciate it
+- try Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
+
+You can also stay connected here:
+https://lnkfi.re/mirrortalk
+
+Thank you again for your presence, your voice, and your contribution to Mirror Talk.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast
+"""
+
+        return {"subject": subject, "body": body}
+
     def _resend_from_address(self) -> str:
         """Format the Resend sender address."""
         if self.from_name:

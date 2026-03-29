@@ -160,6 +160,8 @@ class SchemaManager:
         ("riverside_status", "TEXT"),
         ("source_file_name", "TEXT"),
         ("source_type", "TEXT"),
+        ("show_notes_url", "TEXT"),
+        ("release_files_url", "TEXT"),
     ]
     
     @staticmethod

@@ -85,6 +85,8 @@ const EXPORT_FIELD_CONFIG = {
     ["priority_score", "Priority Score"],
     ["legacy_episode_number", "Episode Number"],
     ["riverside_status", "Riverside Status"],
+    ["show_notes_url", "Show Notes URL"],
+    ["release_files_url", "Files URL"],
     ["source_file_name", "Source File"],
     ["recommendation_reason", "Recommendation Reason"],
   ],
@@ -374,6 +376,8 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeForm.elements.priority_score.value = episode.priority_score ?? 0;
   episodeForm.elements.legacy_episode_number.value = episode.legacy_episode_number || "";
   episodeForm.elements.riverside_status.value = episode.riverside_status || "";
+  episodeForm.elements.show_notes_url.value = episode.show_notes_url || "";
+  episodeForm.elements.release_files_url.value = episode.release_files_url || "";
   episodeForm.elements.recommendation_reason.value = episode.recommendation_reason || "";
   episodeForm.elements.notes.value = episode.notes || "";
   episodeSubmitButton.textContent = "Update Episode";
@@ -416,6 +420,8 @@ function renderEpisodeInlineEditor(container, episode) {
       `)}
       ${createFieldMarkup("Priority", `<input name="priority_score" type="number" min="0" max="10" step="0.5" value="${episode.priority_score ?? 0}" />`)}
       ${createFieldMarkup("Topic", `<input name="topic" type="text" value="${episode.topic || ""}" />`, true)}
+      ${createFieldMarkup("Show Note / Blogpost URL", `<input name="show_notes_url" type="url" value="${episode.show_notes_url || ""}" />`, true)}
+      ${createFieldMarkup("Files URL", `<input name="release_files_url" type="url" value="${episode.release_files_url || ""}" />`, true)}
       ${createFieldMarkup("Notes", `<textarea name="notes" rows="3">${episode.notes || ""}</textarea>`, true)}
       <div class="inline-editor-actions full-width">
         <button type="submit" class="primary-button">Save Changes</button>
@@ -684,6 +690,8 @@ function renderEpisodes(episodes, totalCount) {
   }
 
   visibleEpisodes.forEach((episode) => {
+    const isReleased = normalizeText(episode.release_status) === "released";
+    const hasEmail = Boolean(episode.guest_email);
     const card = document.createElement("article");
     card.className = "operations-card";
     card.innerHTML = `
@@ -696,6 +704,8 @@ function renderEpisodes(episodes, totalCount) {
         <span>Status: ${episode.release_status || "unplanned"} / ${episode.production_status || "idea"}</span>
         <span>Promo: ${episode.promotion_status || "unknown"}</span>
         <span>Priority: ${episode.priority_score ?? 0}</span>
+        <span>Show Notes: ${episode.show_notes_url ? "Ready" : "Missing"}</span>
+        <span>Files: ${episode.release_files_url ? "Ready" : "Missing"}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
       <div class="context-links">
@@ -705,12 +715,15 @@ function renderEpisodes(episodes, totalCount) {
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
         <button type="button" class="ghost-button" data-episode-action="form">Open In Form</button>
-        <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${episode.guest_email ? "" : "disabled"}>Preview Thank You</button>
-        <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${episode.guest_email ? "" : "disabled"}>Send Thank You</button>
+        <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${hasEmail ? "" : "disabled"}>Preview Thank You</button>
+        <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${hasEmail ? "" : "disabled"}>Send Thank You</button>
+        <button type="button" class="ghost-button" data-episode-action="preview-release-email" ${hasEmail ? "" : "disabled"}>Preview Release Email</button>
+        <button type="button" class="secondary-button" data-episode-action="send-release-email" ${hasEmail && isReleased ? "" : "disabled"}>Send Release Email</button>
         <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
       </div>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
       <div class="operations-preview hidden" data-episode-appreciation-preview></div>
+      <div class="operations-preview hidden" data-episode-release-preview></div>
       <div class="inline-editor hidden" data-episode-editor></div>
     `;
 
@@ -718,10 +731,13 @@ function renderEpisodes(episodes, totalCount) {
     const formButton = card.querySelector("[data-episode-action='form']");
     const previewAppreciationButton = card.querySelector("[data-episode-action='preview-appreciation']");
     const sendAppreciationButton = card.querySelector("[data-episode-action='send-appreciation']");
+    const previewReleaseButton = card.querySelector("[data-episode-action='preview-release-email']");
+    const sendReleaseButton = card.querySelector("[data-episode-action='send-release-email']");
     const deleteButton = card.querySelector("[data-episode-action='delete']");
     const editorNode = card.querySelector("[data-episode-editor]");
     const actionFeedbackNode = card.querySelector(".card-action-feedback");
     const appreciationPreviewNode = card.querySelector("[data-episode-appreciation-preview]");
+    const releasePreviewNode = card.querySelector("[data-episode-release-preview]");
     editButton.addEventListener("click", () => {
       activeEpisodeEditorId = activeEpisodeEditorId === episode.id ? null : episode.id;
       renderPlanning();
@@ -757,6 +773,8 @@ function renderEpisodes(episodes, totalCount) {
             <p>To: ${episode.guest_email}</p>
             <pre>${preview.body}</pre>
           `;
+          releasePreviewNode.classList.add("hidden");
+          releasePreviewNode.innerHTML = "";
           activeEpisodeActionFeedback = {
             id: episode.id,
             text: `Thank-you preview ready for ${episode.guest_name || "guest"}.`,
@@ -795,6 +813,8 @@ function renderEpisodes(episodes, totalCount) {
           });
           appreciationPreviewNode.classList.remove("hidden");
           appreciationPreviewNode.innerHTML = `<p class="composer-feedback success">Thank-you email sent to ${episode.guest_name || episode.guest_email}.</p>`;
+          releasePreviewNode.classList.add("hidden");
+          releasePreviewNode.innerHTML = "";
           activeEpisodeActionFeedback = {
             id: episode.id,
             text: `Thank-you email sent to ${episode.guest_name || episode.guest_email}.`,
@@ -808,6 +828,87 @@ function renderEpisodes(episodes, totalCount) {
           setMessage(episodeMessage, error.message, "error");
           sendAppreciationButton.disabled = false;
           sendAppreciationButton.textContent = "Send Thank You";
+        }
+      });
+    }
+    if (previewReleaseButton) {
+      previewReleaseButton.addEventListener("click", async () => {
+        if (!episode.guest_email) {
+          setMessage(episodeMessage, "This episode does not have a guest email yet.", "error");
+          return;
+        }
+
+        previewReleaseButton.disabled = true;
+        previewReleaseButton.textContent = "Loading...";
+        activeEpisodeActionFeedback = {
+          id: episode.id,
+          text: `Loading release email preview for ${episode.guest_name || "guest"}...`,
+          tone: "pending",
+        };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+        try {
+          const preview = await fetchJSON(`/api/episodes/${episode.id}/release-email-template`);
+          releasePreviewNode.classList.remove("hidden");
+          releasePreviewNode.innerHTML = `
+            <h4>${preview.subject}</h4>
+            <p>To: ${episode.guest_email}</p>
+            <pre>${preview.body}</pre>
+          `;
+          appreciationPreviewNode.classList.add("hidden");
+          appreciationPreviewNode.innerHTML = "";
+          activeEpisodeActionFeedback = {
+            id: episode.id,
+            text: `Release email preview ready for ${episode.guest_name || "guest"}.`,
+            tone: "success",
+          };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+        } catch (error) {
+          activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+          setMessage(episodeMessage, error.message, "error");
+        } finally {
+          previewReleaseButton.disabled = false;
+          previewReleaseButton.textContent = "Preview Release Email";
+        }
+      });
+    }
+    if (sendReleaseButton) {
+      sendReleaseButton.addEventListener("click", async () => {
+        if (!episode.guest_email) {
+          setMessage(episodeMessage, "This episode does not have a guest email yet.", "error");
+          return;
+        }
+
+        sendReleaseButton.disabled = true;
+        sendReleaseButton.textContent = "Sending...";
+        activeEpisodeActionFeedback = {
+          id: episode.id,
+          text: `Sending release email to ${episode.guest_name || episode.guest_email}...`,
+          tone: "pending",
+        };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+        try {
+          await fetchJSON(`/api/episodes/${episode.id}/send-release-email`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          releasePreviewNode.classList.remove("hidden");
+          releasePreviewNode.innerHTML = `<p class="composer-feedback success">Release email sent to ${episode.guest_name || episode.guest_email}.</p>`;
+          appreciationPreviewNode.classList.add("hidden");
+          appreciationPreviewNode.innerHTML = "";
+          activeEpisodeActionFeedback = {
+            id: episode.id,
+            text: `Release email sent to ${episode.guest_name || episode.guest_email}.`,
+            tone: "success",
+          };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+          setMessage(episodeMessage, `Release email sent to ${episode.guest_name || episode.guest_email}.`, "success");
+        } catch (error) {
+          activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+          setMessage(episodeMessage, error.message, "error");
+          sendReleaseButton.disabled = false;
+          sendReleaseButton.textContent = "Send Release Email";
         }
       });
     }
