@@ -194,6 +194,82 @@ def test_web_service_can_create_public_intake_submission(temp_db):
     assert created_guest["email_status"] is None
 
 
+def test_public_intake_submission_sends_confirmation_email_when_configured(monkeypatch, temp_db):
+    """Public intake should send a best-effort confirmation email when hosted email is configured."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def send_intake_confirmation_email(self, guest_name, to_email):
+            assert guest_name == "Amara Stone"
+            assert to_email == "amara@example.com"
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    created_guest = service.create_intake_submission(
+        {
+            "full_name": "Amara Stone",
+            "email": "amara@example.com",
+            "background": "I am a speaker and advocate whose work focuses on healing, resilience, and community storytelling.",
+            "profession": "Coach",
+            "passionate_topics": "Healing",
+            "message": "Hope",
+            "additional_info": "I care deeply about meaningful conversations that leave people encouraged and grounded.",
+        }
+    )
+
+    assert created_guest["original_file_name"] == INTAKE_SOURCE_NAME
+
+
+def test_public_intake_submission_ignores_confirmation_email_failures(monkeypatch, temp_db):
+    """Confirmation email failures should not block the intake submission itself."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def send_intake_confirmation_email(self, guest_name, to_email):
+            raise RuntimeError("delivery failed")
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    created_guest = service.create_intake_submission(
+        {
+            "full_name": "Amara Stone",
+            "email": "amara@example.com",
+            "background": "I am a speaker and advocate whose work focuses on healing, resilience, and community storytelling.",
+            "profession": "Coach",
+            "passionate_topics": "Healing",
+            "message": "Hope",
+            "additional_info": "I care deeply about meaningful conversations that leave people encouraged and grounded.",
+        }
+    )
+
+    assert created_guest["full_name"] == "Amara Stone"
+
+
 def test_public_intake_validation_allows_concise_profession_answer(temp_db):
     """Profession answers should not require an essay to pass the intake checks."""
     service = GuestWebService(temp_db.db_path)

@@ -16,9 +16,11 @@ const conditionalGroups = Array.from(document.querySelectorAll("[data-conditiona
 
 const stepNames = ["Contact", "Journey", "Perspective", "Conversation"];
 const DRAFT_STORAGE_KEY = "mirror-talk-intake-draft-v1";
+const DEFAULT_DRAFT_BANNER_TEXT = "Your progress is saved automatically in this browser, so you can come back later and continue where you left off.";
 
 let currentStep = 0;
 let isComplete = false;
+let draftBannerResetTimer = null;
 
 function buildConditionalAnswer(choiceName, detailName) {
   const choiceField = form.elements.namedItem(choiceName);
@@ -75,6 +77,7 @@ function saveDraft() {
 
   try {
     window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(payload));
+    showDraftSavedState();
   } catch (error) {
     return;
   }
@@ -116,6 +119,29 @@ function restoreDraft() {
 
   normalizeWebsiteValue(websiteField);
   updateConditionalGroups();
+}
+
+function setDraftBannerText(text, saved = false) {
+  if (!draftBanner) {
+    return;
+  }
+
+  draftBanner.textContent = text;
+  draftBanner.classList.toggle("saved", saved);
+}
+
+function showDraftSavedState() {
+  if (!draftBanner) {
+    return;
+  }
+
+  setDraftBannerText("Draft saved in this browser.", true);
+  if (draftBannerResetTimer) {
+    window.clearTimeout(draftBannerResetTimer);
+  }
+  draftBannerResetTimer = window.setTimeout(() => {
+    setDraftBannerText(DEFAULT_DRAFT_BANNER_TEXT, false);
+  }, 1600);
 }
 
 function normalizeWebsiteValue(field) {
@@ -342,6 +368,7 @@ form.addEventListener("submit", async (event) => {
     form.reset();
     clearDraft();
     currentStep = steps.length - 1;
+    setDraftBannerText(DEFAULT_DRAFT_BANNER_TEXT, false);
     if (successTitle) {
       successTitle.textContent = fullName
         ? `Thank you, ${fullName}, for sharing your story.`

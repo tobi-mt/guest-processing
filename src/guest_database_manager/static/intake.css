@@ -259,6 +259,13 @@ body {
   font-family: "Avenir Next", "Segoe UI", sans-serif;
   font-size: 0.94rem;
   line-height: 1.5;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.draft-banner.saved {
+  background: rgba(15, 93, 79, 0.12);
+  border-color: rgba(15, 93, 79, 0.18);
+  color: var(--accent);
 }
 
 .admin-link {

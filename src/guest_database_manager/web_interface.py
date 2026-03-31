@@ -620,7 +620,9 @@ class GuestWebService:
 
     def create_intake_submission(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create a guest submission from the public intake questionnaire."""
-        return self.create_guest(payload, source_name=INTAKE_SOURCE_NAME)
+        guest = self.create_guest(payload, source_name=INTAKE_SOURCE_NAME)
+        self._send_intake_confirmation_email(guest)
+        return guest
 
     def import_guest_file(self, filename: str, content: bytes, encoding: str = "utf-8") -> Dict[str, int]:
         """Import guests from an uploaded CSV or Excel file."""
@@ -1549,6 +1551,22 @@ class GuestWebService:
             )
 
         return email_manager
+
+    def _send_intake_confirmation_email(self, guest: Dict[str, Any]) -> None:
+        """Best-effort confirmation email for public intake submissions."""
+        guest_email = _normalize_text(guest.get("email"))
+        if not guest_email:
+            return
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            return
+
+        guest_name = _normalize_text(guest.get("full_name")) or "there"
+        try:
+            email_manager.send_intake_confirmation_email(guest_name, guest_email)
+        except Exception:
+            return
 
 
 class GuestWebRequestHandler(BaseHTTPRequestHandler):

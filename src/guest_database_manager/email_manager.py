@@ -283,6 +283,30 @@ Mirror Talk Podcast
 
         return {"subject": subject, "body": body}
 
+    def get_intake_confirmation_template(self, guest_name: str) -> Dict[str, str]:
+        """Build a polished confirmation email after a guest submits the intake form."""
+        subject = "We received your Mirror Talk guest application"
+
+        body = f"""Hi {guest_name},
+
+Thank you for taking the time to apply to be a guest on Mirror Talk.
+
+We’ve received your application successfully and will review it with care. If your story feels like a strong fit for an upcoming soulful conversation, we will reach out by email with the next steps.
+
+In the meantime, you are warmly invited to stay connected with Mirror Talk here:
+- Website: https://mirrortalkpodcast.com/
+- Podcast platforms and social links: https://lnkfi.re/mirrortalk
+- Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
+
+Thank you again for sharing your story with us.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast
+"""
+
+        return {"subject": subject, "body": body}
+
     def get_released_episode_template(self, guest_name: str, show_notes_url: str, files_url: str) -> Dict[str, str]:
         """Build a polished release-notification email for a guest."""
         subject = "Your Mirror Talk episode is now live"
@@ -468,6 +492,11 @@ Mirror Talk Podcast
             True if email sent successfully, False otherwise
         """
         template = self.get_rejection_template(guest_name, custom_message)
+        return self.send_email(to_email, template["subject"], template["body"])
+
+    def send_intake_confirmation_email(self, guest_name: str, to_email: str) -> bool:
+        """Send a submission-confirmation email to an intake applicant."""
+        template = self.get_intake_confirmation_template(guest_name)
         return self.send_email(to_email, template["subject"], template["body"])
 
     def load_saved_config(self) -> bool:
