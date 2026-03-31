@@ -11,11 +11,29 @@ const progressCaption = document.getElementById("progress-caption");
 const successPanel = document.getElementById("success-panel");
 const draftBanner = document.getElementById("draft-banner");
 const websiteField = form.querySelector('input[name="website"]');
+const conditionalGroups = Array.from(document.querySelectorAll("[data-conditional-source]"));
 
 const stepNames = ["Contact", "Journey", "Perspective", "Conversation"];
 const DRAFT_STORAGE_KEY = "mirror-talk-intake-draft-v1";
 
 let currentStep = 0;
+
+function buildConditionalAnswer(choiceName, detailName) {
+  const choiceField = form.elements.namedItem(choiceName);
+  const detailField = form.elements.namedItem(detailName);
+  const choice = typeof choiceField?.value === "string" ? choiceField.value.trim() : "";
+  const detail = typeof detailField?.value === "string" ? detailField.value.trim() : "";
+
+  if (!choice) {
+    return "";
+  }
+
+  if (choice === "Yes") {
+    return detail ? `Yes — ${detail}` : "Yes";
+  }
+
+  return choice;
+}
 
 function supportsLocalStorage() {
   try {
@@ -95,6 +113,7 @@ function restoreDraft() {
   }
 
   normalizeWebsiteValue(websiteField);
+  updateConditionalGroups();
 }
 
 function normalizeWebsiteValue(field) {
@@ -106,6 +125,18 @@ function normalizeWebsiteValue(field) {
   if (value && !/^[a-z]+:\/\//i.test(value)) {
     field.value = `https://${value}`;
   }
+}
+
+function updateConditionalGroups() {
+  conditionalGroups.forEach((group) => {
+    const sourceName = group.dataset.conditionalSource;
+    const expectedValue = group.dataset.conditionalValue || "Yes";
+    const sourceField = form.elements.namedItem(sourceName);
+    const shouldShow = Boolean(sourceField) && sourceField.value === expectedValue;
+    group.classList.toggle("hidden", !shouldShow);
+  });
+
+  window.requestAnimationFrame(notifyParentHeight);
 }
 
 function notifyParentHeight() {
@@ -143,9 +174,21 @@ function syncStepUI() {
 
 function validateFields(fields) {
   for (const field of fields) {
-    const trimmedValue = typeof field.value === "string" ? field.value.trim() : field.value;
+    if (field.closest(".hidden")) {
+      continue;
+    }
 
-    if (field.hasAttribute("required") && !trimmedValue) {
+    const trimmedValue = typeof field.value === "string" ? field.value.trim() : field.value;
+    const conditionalRule = field.dataset.conditionalRequired;
+    let isConditionallyRequired = false;
+
+    if (conditionalRule) {
+      const [sourceName, expectedValue] = conditionalRule.split(":");
+      const sourceField = form.elements.namedItem(sourceName);
+      isConditionallyRequired = Boolean(sourceField) && sourceField.value === expectedValue;
+    }
+
+    if ((field.hasAttribute("required") || isConditionallyRequired) && !trimmedValue) {
       field.reportValidity();
       return false;
     }
@@ -195,6 +238,7 @@ function hideSuccessState() {
 
 nextButton.addEventListener("click", () => {
   normalizeWebsiteValue(websiteField);
+  updateConditionalGroups();
   if (!validateCurrentStep()) {
     return;
   }
@@ -213,12 +257,17 @@ backButton.addEventListener("click", () => {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   normalizeWebsiteValue(websiteField);
+  updateConditionalGroups();
   if (!validateEntireForm()) {
     setMessage("Please complete the highlighted field before submitting.", "error");
     return;
   }
 
   const payload = Object.fromEntries(new FormData(form).entries());
+  payload.faith = buildConditionalAnswer("faith_choice", "faith_detail");
+  payload.alignment = buildConditionalAnswer("alignment_choice", "alignment_detail");
+  payload.favorite_quote = buildConditionalAnswer("favorite_quote_choice", "favorite_quote_detail");
+  payload.experience = buildConditionalAnswer("experience_choice", "experience_detail");
   submitButton.disabled = true;
   submitButton.textContent = "Submitting...";
   setMessage("Submitting your application...", "pending");
@@ -253,10 +302,12 @@ form.addEventListener("submit", async (event) => {
 });
 
 form.addEventListener("input", () => {
+  updateConditionalGroups();
   saveDraft();
 });
 
 form.addEventListener("change", () => {
+  updateConditionalGroups();
   saveDraft();
 });
 
@@ -265,4 +316,5 @@ window.addEventListener("resize", notifyParentHeight);
 websiteField?.addEventListener("blur", () => normalizeWebsiteValue(websiteField));
 
 restoreDraft();
+updateConditionalGroups();
 syncStepUI();

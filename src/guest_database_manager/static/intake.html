@@ -146,19 +146,52 @@
             </label>
             <label class="full-width">
               Do you follow a specific faith, spiritual practice, or philosophical tradition?
-              <textarea name="faith" rows="4"></textarea>
-              <small>This is optional, but helpful if it shapes your worldview or daily life.</small>
+              <select name="faith_choice">
+                <option value="">Select one</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+              <small>Answer yes if this meaningfully shapes your worldview or daily life.</small>
             </label>
+            <div class="conditional-followup hidden" data-conditional-source="faith_choice" data-conditional-value="Yes">
+              <label class="full-width">
+                Tell us a little more about that practice or tradition
+                <textarea name="faith_detail" rows="4" data-conditional-required="faith_choice:Yes"></textarea>
+                <small>Share only what feels relevant to your story and perspective.</small>
+              </label>
+            </div>
             <label class="full-width">
               Do you believe your beliefs and values align with the themes of soulful conversations?
-              <textarea name="alignment" rows="4" required></textarea>
-              <small>Help us understand how your perspective could contribute meaningfully to Mirror Talk’s mission.</small>
+              <select name="alignment_choice" required>
+                <option value="">Select one</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+              <small>We use this to understand whether your perspective naturally fits the tone and mission of Mirror Talk.</small>
             </label>
+            <div class="conditional-followup hidden" data-conditional-source="alignment_choice" data-conditional-value="Yes">
+              <label class="full-width">
+                If yes, how do you think your perspective could contribute meaningfully?
+                <textarea name="alignment_detail" rows="4" data-conditional-required="alignment_choice:Yes"></textarea>
+                <small>Tell us what feels resonant between your story and soulful conversations.</small>
+              </label>
+            </div>
             <label class="full-width">
               Do you have a favourite quote or philosophy that guides your life?
-              <textarea name="favorite_quote" rows="3"></textarea>
-              <small>If yes, share why it resonates with you.</small>
+              <select name="favorite_quote_choice">
+                <option value="">Select one</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+              <small>If yes, we would love to hear it.</small>
             </label>
+            <div class="conditional-followup hidden" data-conditional-source="favorite_quote_choice" data-conditional-value="Yes">
+              <label class="full-width">
+                Share the quote or philosophy and why it resonates with you
+                <textarea name="favorite_quote_detail" rows="3" data-conditional-required="favorite_quote_choice:Yes"></textarea>
+                <small>This can be a short quote, a life motto, or a philosophy you return to often.</small>
+              </label>
+            </div>
           </section>
 
           <section class="form-step" data-step="4">
@@ -177,9 +210,20 @@
             </label>
             <label class="full-width">
               Have you been a guest on podcasts or spoken at events before?
-              <textarea name="experience" rows="3"></textarea>
-              <small>Optional. If yes, feel free to include links to past appearances or notable speaking engagements.</small>
+              <select name="experience_choice">
+                <option value="">Select one</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+              <small>Previous experience is helpful context, but it is not required to be a strong fit.</small>
             </label>
+            <div class="conditional-followup hidden" data-conditional-source="experience_choice" data-conditional-value="Yes">
+              <label class="full-width">
+                If yes, please share links or a little context
+                <textarea name="experience_detail" rows="3" data-conditional-required="experience_choice:Yes"></textarea>
+                <small>You can include past podcast appearances, talks, panels, or other speaking engagements.</small>
+              </label>
+            </div>
             <label class="full-width">
               Is there anything else you'd like us to know about you?
               <textarea name="additional_info" rows="4"></textarea>

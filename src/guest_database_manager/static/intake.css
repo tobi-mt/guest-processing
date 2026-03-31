@@ -281,6 +281,11 @@ body {
   grid-column: 1 / -1;
 }
 
+.conditional-followup {
+  grid-column: 1 / -1;
+  margin-top: -6px;
+}
+
 label {
   display: grid;
   gap: 8px;
