@@ -97,7 +97,7 @@ LONG_TEXT_FIELDS = [
 ]
 MIN_WORDS_BY_FIELD = {
     "background": 8,
-    "profession": 4,
+    "profession": 2,
     "passionate_topics": 6,
     "message": 6,
     "experience": 4,
