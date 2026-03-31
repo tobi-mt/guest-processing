@@ -95,6 +95,14 @@ LONG_TEXT_FIELDS = [
     "experience",
     "additional_info",
 ]
+MIN_WORDS_BY_FIELD = {
+    "background": 8,
+    "profession": 4,
+    "passionate_topics": 6,
+    "message": 6,
+    "experience": 4,
+    "additional_info": 4,
+}
 SPAM_KEYWORDS = {
     "seo",
     "casino",
@@ -189,6 +197,14 @@ def _normalize_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _normalize_website(value: Any) -> str:
+    """Accept common website input patterns like www.example.com."""
+    website = _normalize_text(value)
+    if website and not re.match(r"^[a-z]+://", website, flags=re.IGNORECASE):
+        website = f"https://{website}"
+    return website
+
+
 def _normalize_episode_release_status(release_date: str, release_status: str) -> str:
     """Treat dated future episodes as scheduled unless explicitly released."""
     normalized_status = _normalize_text(release_status).lower()
@@ -217,7 +233,7 @@ def validate_intake_payload(payload: Dict[str, str]) -> None:
         value = str(payload.get(field, "")).strip()
         if not value:
             continue
-        if _word_count(value) < 8:
+        if _word_count(value) < MIN_WORDS_BY_FIELD.get(field, 8):
             field_label = field.replace("_", " ")
             raise WebInterfaceError(f"Please provide a more complete answer for: {field_label}")
 
@@ -226,6 +242,7 @@ def build_guest_payload(payload: Dict[str, Any], source_name: str = FORM_SOURCE_
     """Convert a web form payload into the database shape."""
     guest_data = {field: _normalize_text(payload.get(field)) for field in FORM_FIELDS}
     guest_data["full_name"] = guest_data["full_name"] or _normalize_text(payload.get("name"))
+    guest_data["website"] = _normalize_website(payload.get("website"))
     guest_data["is_processed"] = False
     guest_data["original_file_name"] = source_name
     guest_data["original_data"] = json.dumps(payload, ensure_ascii=False)

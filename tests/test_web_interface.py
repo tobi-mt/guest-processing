@@ -61,6 +61,16 @@ def test_build_guest_payload_accepts_custom_source_name():
     assert payload["original_file_name"] == INTAKE_SOURCE_NAME
 
 
+def test_build_guest_payload_normalizes_website_without_scheme():
+    """Website values starting with www should be normalized into valid URLs."""
+    payload = build_guest_payload(
+        {"full_name": "Jane Doe", "email": "jane@example.com", "website": "www.example.com"},
+        source_name=INTAKE_SOURCE_NAME,
+    )
+
+    assert payload["website"] == "https://www.example.com"
+
+
 def test_web_service_can_create_and_update_guest(temp_db):
     """The service layer should write and update guests through the shared database."""
     service = GuestWebService(temp_db.db_path)
@@ -182,6 +192,27 @@ def test_web_service_can_create_public_intake_submission(temp_db):
 
     assert created_guest["original_file_name"] == INTAKE_SOURCE_NAME
     assert created_guest["email_status"] is None
+
+
+def test_public_intake_validation_allows_concise_profession_answer(temp_db):
+    """Profession answers should not require an essay to pass the intake checks."""
+    service = GuestWebService(temp_db.db_path)
+
+    created_guest = service.create_intake_submission(
+        {
+            "full_name": "Amara Stone",
+            "email": "amara@example.com",
+            "website": "www.amarastone.com",
+            "background": "I am a speaker and advocate whose work focuses on healing, resilience, and community storytelling.",
+            "profession": "Trauma-informed coach and speaker.",
+            "passionate_topics": "I love discussing healing, resilience, faith, emotional honesty, and what it takes to rebuild after hard seasons.",
+            "message": "I want listeners to remember that healing is possible, honesty is powerful, and small consistent steps can change a life.",
+            "experience": "I have spoken on podcasts and community panels about resilience, leadership, and emotional healing.",
+            "additional_info": "I care deeply about meaningful conversations that leave people encouraged and grounded.",
+        }
+    )
+
+    assert created_guest["website"] == "https://www.amarastone.com"
 
 
 def test_public_intake_request_accepts_configured_token():

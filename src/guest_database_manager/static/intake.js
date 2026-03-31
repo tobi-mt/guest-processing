@@ -9,10 +9,22 @@ const message = document.getElementById("intake-message");
 const progressFill = document.getElementById("progress-fill");
 const progressCaption = document.getElementById("progress-caption");
 const successPanel = document.getElementById("success-panel");
+const websiteField = form.querySelector('input[name="website"]');
 
 const stepNames = ["Contact", "Journey", "Perspective", "Conversation"];
 
 let currentStep = 0;
+
+function normalizeWebsiteValue(field) {
+  if (!field) {
+    return;
+  }
+
+  const value = field.value.trim();
+  if (value && !/^[a-z]+:\/\//i.test(value)) {
+    field.value = `https://${value}`;
+  }
+}
 
 function notifyParentHeight() {
   if (window.parent === window) {
@@ -100,6 +112,7 @@ function hideSuccessState() {
 }
 
 nextButton.addEventListener("click", () => {
+  normalizeWebsiteValue(websiteField);
   if (!validateCurrentStep()) {
     return;
   }
@@ -115,6 +128,7 @@ backButton.addEventListener("click", () => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  normalizeWebsiteValue(websiteField);
   if (!validateEntireForm()) {
     setMessage("Please complete the highlighted field before submitting.", "error");
     return;
@@ -155,5 +169,6 @@ form.addEventListener("submit", async (event) => {
 
 window.addEventListener("load", notifyParentHeight);
 window.addEventListener("resize", notifyParentHeight);
+websiteField?.addEventListener("blur", () => normalizeWebsiteValue(websiteField));
 
 syncStepUI();
