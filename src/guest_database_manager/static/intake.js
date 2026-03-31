@@ -290,10 +290,21 @@ function validateCurrentStep() {
     return false;
   }
 
-  if (activeStep.contains(socialHandlesField) && !String(socialHandlesField.value || "").trim()) {
+  if (activeStep.contains(socialHandlesField)) {
     const hasWebsite = Boolean(String(websiteField?.value || "").trim());
-    if (!hasWebsite) {
-      setMessage("Website and social media are optional. If you have either one, sharing it helps us understand your public voice more quickly.", "pending");
+    const hasSocial = Boolean(String(socialHandlesField.value || "").trim());
+
+    if (!hasWebsite && !hasSocial) {
+      setMessage("Please share at least a website or one social/public profile so we can verify and understand your public voice.", "error");
+      const focusTarget = websiteField || socialPlatformFields[0] || socialOtherField;
+      focusTarget?.classList.add("field-error");
+      focusTarget?.focus({ preventScroll: true });
+      focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return false;
+    }
+
+    if (!hasWebsite || !hasSocial) {
+      setMessage("You can submit with either a website or social presence. Sharing both simply helps us review your application more quickly.", "pending");
     }
   }
 
@@ -310,10 +321,23 @@ function validateEntireForm() {
       return false;
     }
 
-    if (steps[index].contains(socialHandlesField) && !String(socialHandlesField.value || "").trim()) {
+    if (steps[index].contains(socialHandlesField)) {
       const hasWebsite = Boolean(String(websiteField?.value || "").trim());
-      if (!hasWebsite) {
-        setMessage("Website and social media are optional. If you have either one, sharing it helps us review your application more quickly.", "pending");
+      const hasSocial = Boolean(String(socialHandlesField.value || "").trim());
+
+      if (!hasWebsite && !hasSocial) {
+        currentStep = index;
+        syncStepUI();
+        setMessage("Please share at least a website or one social/public profile so we can verify and understand your public voice.", "error");
+        const focusTarget = websiteField || socialPlatformFields[0] || socialOtherField;
+        focusTarget?.classList.add("field-error");
+        focusTarget?.focus({ preventScroll: true });
+        focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return false;
+      }
+
+      if (!hasWebsite || !hasSocial) {
+        setMessage("You can submit with either a website or social presence. Sharing both simply helps us review your application more quickly.", "pending");
       }
     }
   }
