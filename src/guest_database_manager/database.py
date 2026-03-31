@@ -713,6 +713,14 @@ class GuestDatabase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def get_episode_by_interview_id(self, interview_id: int) -> Optional[Dict]:
+        """Fetch the episode linked to an interview, if one exists."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM episodes WHERE interview_id = ? LIMIT 1", (interview_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def delete_episode(self, episode_id: int) -> None:
         """Delete an episode from the database."""
         with sqlite3.connect(str(self.db_path)) as conn:

@@ -625,6 +625,46 @@ def test_web_service_can_delete_interview_and_episode(temp_db):
     assert service.list_operations()["interviews"] == []
 
 
+def test_web_service_can_move_completed_interview_into_planning(temp_db):
+    """A completed interview should hand off into planning without creating duplicates."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Jordan Rivers and Tobi Ojekunle",
+            "scheduled_for": "2026-04-08T17:00",
+        }
+    )
+
+    created_episode = service.create_episode_from_interview(interview["id"])
+
+    assert created_episode["interview_id"] == interview["id"]
+    assert created_episode["guest_name"] == "Jordan Rivers"
+    assert created_episode["guest_email"] == "jordan@example.com"
+    assert created_episode["website"] == "https://jordan.example.com"
+    assert created_episode["production_status"] == "recorded"
+    assert created_episode["promotion_status"] == "needs_assets"
+    assert created_episode["interview_date"] == "2026-04-08"
+    assert created_episode["recording_date"] == "2026-04-08"
+
+    refreshed_episode = service.create_episode_from_interview(interview["id"])
+
+    planning = service.list_planning()
+    operations = service.list_operations()
+
+    assert refreshed_episode["id"] == created_episode["id"]
+    assert len(planning["episodes"]) == 1
+    assert operations["interviews"][0]["planning_episode_id"] == created_episode["id"]
+
+
 def test_release_recommendations_skip_already_scheduled_episodes(temp_db):
     """Scheduled episodes should not be re-recommended for the next open slot."""
     service = GuestWebService(temp_db.db_path)

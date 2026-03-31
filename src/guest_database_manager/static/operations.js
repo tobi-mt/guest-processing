@@ -450,6 +450,7 @@ function renderInterviews(interviews, totalCount) {
   visibleInterviews.forEach((interview) => {
     const card = document.createElement("article");
     card.className = "operations-card";
+    const planningButtonLabel = interview.planning_episode_id ? "Update Planning Episode" : "Move To Planning";
     const calendarButton = interview.calendar_event_id
       ? `<button type="button" class="secondary-button" data-calendar-action="push">Update Google Calendar Event</button>`
       : "";
@@ -479,6 +480,7 @@ function renderInterviews(interviews, totalCount) {
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-interview-action="edit">${activeInterviewEditorId === interview.id ? "Hide Quick Edit" : "Quick Edit"}</button>
         <button type="button" class="ghost-button" data-interview-action="form">Open In Form</button>
+        <button type="button" class="ghost-button" data-interview-action="move-to-planning">${planningButtonLabel}</button>
         <button type="button" class="ghost-button" data-interview-action="mark-confirmed">Mark Confirmed</button>
         <button type="button" class="ghost-button" data-interview-action="mark-pending">Mark Pending</button>
         ${reminderButtons}
@@ -493,6 +495,7 @@ function renderInterviews(interviews, totalCount) {
 
     const editButton = card.querySelector("[data-interview-action='edit']");
     const formButton = card.querySelector("[data-interview-action='form']");
+    const moveToPlanningButton = card.querySelector("[data-interview-action='move-to-planning']");
     const markConfirmedButton = card.querySelector("[data-interview-action='mark-confirmed']");
     const markPendingButton = card.querySelector("[data-interview-action='mark-pending']");
     const previewReminderButton = card.querySelector("[data-interview-action='preview-reminder']");
@@ -512,6 +515,37 @@ function renderInterviews(interviews, totalCount) {
     formButton.addEventListener("click", () => {
       loadInterviewIntoForm(interview);
       setMessage(interviewMessage, `Loaded ${interview.guest_name || "interview"} into the main form.`, "success");
+    });
+
+    moveToPlanningButton.addEventListener("click", async () => {
+      const guestLabel = interview.guest_name || "guest";
+      moveToPlanningButton.disabled = true;
+      moveToPlanningButton.textContent = interview.planning_episode_id ? "Updating..." : "Moving...";
+      activeInterviewActionFeedback = {
+        id: interview.id,
+        text: `${interview.planning_episode_id ? "Refreshing" : "Creating"} the planning episode for ${guestLabel}...`,
+        tone: "pending",
+      };
+      actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+      try {
+        const episode = await fetchJSON(`/api/interviews/${interview.id}/move-to-planning`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        const successText = interview.planning_episode_id
+          ? `Updated the planning episode for ${guestLabel}.`
+          : `${guestLabel} is now in episode planning as "${episode.episode_title || guestLabel}".`;
+        activeInterviewActionFeedback = { id: interview.id, text: successText, tone: "success" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        setMessage(interviewMessage, successText, "success");
+        await loadOperations();
+      } catch (error) {
+        activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        setMessage(interviewMessage, error.message, "error");
+        moveToPlanningButton.disabled = false;
+        moveToPlanningButton.textContent = planningButtonLabel;
+      }
     });
 
     if (activeInterviewEditorId === interview.id) {

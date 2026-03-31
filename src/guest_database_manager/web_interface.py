@@ -302,7 +302,10 @@ class GuestWebService:
 
     def list_operations(self) -> Dict[str, Any]:
         """Return the current interview and episode operations data."""
-        interviews = self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
+        interviews = [
+            self._serialize_interview_reminder(interview)
+            for interview in self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
+        ]
         reminder_candidates = [self._serialize_interview_reminder(candidate) for candidate in self.get_due_weekly_reminders()]
         return {
             "stats": self.database.get_operations_stats(),
@@ -875,6 +878,65 @@ class GuestWebService:
         if not episode:
             raise WebInterfaceError("Episode could not be saved.")
         return episode
+
+    def create_episode_from_interview(self, interview_id: int) -> Dict[str, Any]:
+        """Create or refresh a planning episode from a completed interview."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+
+        guest_name = _normalize_text(interview.get("guest_name"))
+        if not guest_name:
+            raise WebInterfaceError("This interview does not have a guest name yet.")
+
+        linked_episode = self.database.get_episode_by_interview_id(interview_id)
+        linked_guest = None
+        guest_id = interview.get("guest_id")
+        if guest_id:
+            linked_guest = self.database.get_guest_by_id(int(guest_id))
+        if not linked_guest:
+            linked_guest = self.database.get_guest_by_name(guest_name)
+
+        scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+        scheduled_date = scheduled_for.date().isoformat() if scheduled_for else ""
+        preserved_title = _normalize_text(linked_episode.get("episode_title")) if linked_episode else ""
+        interview_title = _normalize_text(interview.get("title"))
+
+        episode_payload = {
+            "id": linked_episode.get("id") if linked_episode else None,
+            "guest_id": (linked_guest or {}).get("id") or interview.get("guest_id"),
+            "interview_id": interview_id,
+            "guest_name": guest_name,
+            "guest_email": _normalize_text(interview.get("guest_email"))
+            or _normalize_text((linked_episode or {}).get("guest_email"))
+            or _normalize_text((linked_guest or {}).get("email")),
+            "website": _normalize_text((linked_episode or {}).get("website"))
+            or _normalize_text((linked_guest or {}).get("website")),
+            "episode_title": preserved_title or interview_title or guest_name,
+            "topic": _normalize_text((linked_episode or {}).get("topic")),
+            "category": _normalize_text((linked_episode or {}).get("category")),
+            "interview_date": _normalize_text((linked_episode or {}).get("interview_date")) or scheduled_date,
+            "recording_date": _normalize_text((linked_episode or {}).get("recording_date")) or scheduled_date,
+            "release_date": _normalize_text((linked_episode or {}).get("release_date")),
+            "release_status": _normalize_text((linked_episode or {}).get("release_status")) or "unplanned",
+            "production_status": _normalize_text((linked_episode or {}).get("production_status")) or "recorded",
+            "promotion_status": _normalize_text((linked_episode or {}).get("promotion_status")) or "needs_assets",
+            "priority_score": (linked_episode or {}).get("priority_score") or 0,
+            "recommendation_reason": _normalize_text((linked_episode or {}).get("recommendation_reason")),
+            "legacy_episode_number": _normalize_text((linked_episode or {}).get("legacy_episode_number")),
+            "riverside_status": _normalize_text((linked_episode or {}).get("riverside_status")),
+            "source_file_name": _normalize_text((linked_episode or {}).get("source_file_name")),
+            "source_type": _normalize_text((linked_episode or {}).get("source_type")) or "operations_handoff",
+            "show_notes_url": _normalize_text((linked_episode or {}).get("show_notes_url")),
+            "release_files_url": _normalize_text((linked_episode or {}).get("release_files_url")),
+            "transcript_text": _normalize_text((linked_episode or {}).get("transcript_text")),
+            "notes": _normalize_text((linked_episode or {}).get("notes")) or _normalize_text(interview.get("notes")),
+        }
+
+        episode = self.create_episode(episode_payload)
+        if not episode:
+            raise WebInterfaceError("Planning episode could not be created.")
+        return self._normalize_episode_record(episode)
 
     def import_episode_file(self, filename: str, content: bytes) -> Dict[str, int]:
         """Import released-history or not-yet-released episode CSV data."""
@@ -1466,6 +1528,12 @@ class GuestWebService:
         serialized["scheduled_for_display"] = (
             scheduled_for.strftime("%A %d %B %Y at %H:%M") if scheduled_for else _normalize_text(interview.get("scheduled_for"))
         )
+        linked_episode = None
+        interview_id = interview.get("id")
+        if interview_id:
+            linked_episode = self.database.get_episode_by_interview_id(int(interview_id))
+        serialized["planning_episode_id"] = linked_episode.get("id") if linked_episode else None
+        serialized["planning_episode_title"] = linked_episode.get("episode_title") if linked_episode else ""
         return serialized
 
     @staticmethod
@@ -2029,6 +2097,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/interviews/"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            if self.path.endswith("/move-to-planning"):
+                interview_id = self._extract_record_id(self.path[: -len("/move-to-planning")], "/api/interviews/")
+                if interview_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                    return
+
+                try:
+                    episode = self.service.create_episode_from_interview(interview_id)
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, episode)
                 return
 
             if self.path.endswith("/push-to-calendar"):

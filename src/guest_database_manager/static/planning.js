@@ -535,6 +535,7 @@ function populatePlanningFilters(categories, episodes) {
 function resetEpisodeForm() {
   episodeForm.reset();
   episodeForm.elements.id.value = "";
+  episodeForm.elements.interview_id.value = "";
   episodeForm.elements.release_status.value = "unplanned";
   episodeForm.elements.production_status.value = "idea";
   episodeForm.elements.promotion_status.value = "unknown";
@@ -545,6 +546,7 @@ function resetEpisodeForm() {
 
 function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } = {}) {
   episodeForm.elements.id.value = episode.id || "";
+  episodeForm.elements.interview_id.value = episode.interview_id || "";
   episodeForm.elements.guest_name.value = episode.guest_name || "";
   episodeForm.elements.guest_email.value = episode.guest_email || "";
   episodeForm.elements.website.value = episode.website || "";
