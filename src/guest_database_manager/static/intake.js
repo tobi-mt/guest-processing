@@ -13,6 +13,9 @@ const successTitle = document.getElementById("success-title");
 const draftBanner = document.getElementById("draft-banner");
 const websiteField = form.querySelector('input[name="website"]');
 const conditionalGroups = Array.from(document.querySelectorAll("[data-conditional-source]"));
+const socialPlatformFields = Array.from(document.querySelectorAll("[data-social-platform]"));
+const socialOtherField = form.elements.namedItem("social_other");
+const socialHandlesField = form.elements.namedItem("social_handles");
 
 const stepNames = ["Contact", "Journey", "Perspective", "Conversation"];
 const DRAFT_STORAGE_KEY = "mirror-talk-intake-draft-v1";
@@ -37,6 +40,40 @@ function buildConditionalAnswer(choiceName, detailName) {
   }
 
   return choice;
+}
+
+function buildSocialHandlesValue() {
+  const entries = [];
+
+  socialPlatformFields.forEach((field) => {
+    const value = typeof field.value === "string" ? field.value.trim() : "";
+    if (!value) {
+      return;
+    }
+    entries.push(`${field.dataset.socialPlatform}: ${value}`);
+  });
+
+  const otherValue = typeof socialOtherField?.value === "string" ? socialOtherField.value.trim() : "";
+  if (otherValue) {
+    entries.push(otherValue);
+  }
+
+  return entries.join("\n");
+}
+
+function syncSocialHandlesField() {
+  if (!socialHandlesField) {
+    return;
+  }
+
+  socialHandlesField.value = buildSocialHandlesValue();
+}
+
+function hasStructuredSocialValue() {
+  if (socialPlatformFields.some((field) => String(field.value || "").trim())) {
+    return true;
+  }
+  return Boolean(String(socialOtherField?.value || "").trim());
 }
 
 function supportsLocalStorage() {
@@ -117,7 +154,12 @@ function restoreDraft() {
     draftBanner.textContent = "We restored your saved progress in this browser, so you can continue where you left off.";
   }
 
+  if (!hasStructuredSocialValue() && socialHandlesField?.value) {
+    socialOtherField.value = socialHandlesField.value;
+  }
+
   normalizeWebsiteValue(websiteField);
+  syncSocialHandlesField();
   updateConditionalGroups();
 }
 
@@ -209,6 +251,9 @@ function syncStepUI() {
 
 function validateFields(fields) {
   for (const field of fields) {
+    if (field.type === "hidden") {
+      continue;
+    }
     if (field.closest(".hidden")) {
       continue;
     }
@@ -239,16 +284,42 @@ function validateFields(fields) {
 
 function validateCurrentStep() {
   const activeStep = steps[currentStep];
+  syncSocialHandlesField();
   const fields = activeStep.querySelectorAll("input, select, textarea");
-  return validateFields(fields);
+  if (!validateFields(fields)) {
+    return false;
+  }
+
+  if (activeStep.contains(socialHandlesField) && !String(socialHandlesField.value || "").trim()) {
+    setMessage("Please share at least one social handle or public profile.", "error");
+    const focusTarget = socialPlatformFields[0] || socialOtherField;
+    focusTarget?.classList.add("field-error");
+    focusTarget?.focus({ preventScroll: true });
+    focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
+    return false;
+  }
+
+  return true;
 }
 
 function validateEntireForm() {
   for (let index = 0; index < steps.length; index += 1) {
+    syncSocialHandlesField();
     const fields = steps[index].querySelectorAll("input, select, textarea");
     if (!validateFields(fields)) {
       currentStep = index;
       syncStepUI();
+      return false;
+    }
+
+    if (steps[index].contains(socialHandlesField) && !String(socialHandlesField.value || "").trim()) {
+      currentStep = index;
+      syncStepUI();
+      setMessage("Please share at least one social handle or public profile.", "error");
+      const focusTarget = socialPlatformFields[0] || socialOtherField;
+      focusTarget?.classList.add("field-error");
+      focusTarget?.focus({ preventScroll: true });
+      focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
       return false;
     }
   }
@@ -315,6 +386,7 @@ nextButton.addEventListener("click", () => {
   clearFieldHighlights();
   isComplete = false;
   normalizeWebsiteValue(websiteField);
+  syncSocialHandlesField();
   updateConditionalGroups();
   if (!validateCurrentStep()) {
     return;
@@ -337,6 +409,7 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearFieldHighlights();
   normalizeWebsiteValue(websiteField);
+  syncSocialHandlesField();
   updateConditionalGroups();
   if (!validateEntireForm()) {
     setMessage("Please complete the highlighted field before submitting.", "error");
@@ -390,12 +463,14 @@ form.addEventListener("submit", async (event) => {
 
 form.addEventListener("input", () => {
   clearFieldHighlights();
+  syncSocialHandlesField();
   updateConditionalGroups();
   saveDraft();
 });
 
 form.addEventListener("change", () => {
   clearFieldHighlights();
+  syncSocialHandlesField();
   updateConditionalGroups();
   saveDraft();
 });

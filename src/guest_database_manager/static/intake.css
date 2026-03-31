@@ -300,6 +300,18 @@ body {
   margin-top: -6px;
 }
 
+.social-group-title {
+  margin-bottom: 10px;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-weight: 600;
+}
+
+.social-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 18px;
+}
+
 label {
   display: grid;
   gap: 8px;
@@ -525,6 +537,10 @@ button {
   }
 
   .form-step {
+    grid-template-columns: 1fr;
+  }
+
+  .social-grid {
     grid-template-columns: 1fr;
   }
 

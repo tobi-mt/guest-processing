@@ -102,11 +102,41 @@
               <input name="website" type="text" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://yourwebsite.com or www.yourwebsite.com" />
               <small>Optional. You can enter a full link or just start with `www.` and we will format it safely.</small>
             </label>
-            <label>
-              Social Media Handles
-              <textarea name="social_handles" rows="4" placeholder="Instagram: @name&#10;LinkedIn: linkedin.com/in/name&#10;YouTube: youtube.com/@name" required></textarea>
-              <small>Share the channels that best reflect your voice or work.</small>
-            </label>
+            <div class="full-width social-group">
+              <div class="social-group-title">Social Media Handles</div>
+              <div class="social-grid">
+                <label>
+                  Instagram
+                  <input name="social_instagram" type="text" data-social-platform="Instagram" placeholder="@name" />
+                </label>
+                <label>
+                  LinkedIn
+                  <input name="social_linkedin" type="text" data-social-platform="LinkedIn" placeholder="linkedin.com/in/name or Name" />
+                </label>
+                <label>
+                  YouTube
+                  <input name="social_youtube" type="text" data-social-platform="YouTube" placeholder="@channel or youtube.com/@channel" />
+                </label>
+                <label>
+                  X / Twitter
+                  <input name="social_twitter" type="text" data-social-platform="X/Twitter" placeholder="@name" />
+                </label>
+                <label>
+                  Facebook
+                  <input name="social_facebook" type="text" data-social-platform="Facebook" placeholder="facebook.com/name or Name" />
+                </label>
+                <label>
+                  TikTok
+                  <input name="social_tiktok" type="text" data-social-platform="TikTok" placeholder="@name" />
+                </label>
+              </div>
+              <label class="full-width">
+                Other social or media links
+                <textarea name="social_other" rows="3" placeholder="Podcast website, speaker page, press kit, podcast links, or any other relevant profiles"></textarea>
+                <small>Please share at least one social handle or relevant public profile so we can understand your voice and work better.</small>
+              </label>
+              <input name="social_handles" type="hidden" required />
+            </div>
             <label class="full-width">
               A brief overview of your personal and professional background
               <textarea name="background" rows="5" required></textarea>

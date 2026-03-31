@@ -296,6 +296,82 @@ function buildIntakeClipboardText(guest) {
     .join("\n\n");
 }
 
+function parseSocialHandleEntries(rawValue) {
+  const text = String(rawValue || "").trim();
+  if (!text) {
+    return [];
+  }
+
+  return text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const labeledMatch = line.match(/^([^:]+):\s*(.+)$/);
+      if (labeledMatch) {
+        return {
+          label: labeledMatch[1].trim(),
+          value: labeledMatch[2].trim(),
+        };
+      }
+
+      return {
+        label: "Unspecified",
+        value: line,
+      };
+    });
+}
+
+function socialValueToUrl(label, value) {
+  const trimmedValue = String(value || "").trim();
+  if (!trimmedValue) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(trimmedValue)) {
+    return trimmedValue;
+  }
+
+  const cleanedHandle = trimmedValue.replace(/^@/, "");
+  const normalizedLabel = String(label || "").trim().toLowerCase();
+
+  if (normalizedLabel === "instagram") return `https://www.instagram.com/${cleanedHandle}`;
+  if (normalizedLabel === "youtube") return cleanedHandle.startsWith("@") ? `https://www.youtube.com/${trimmedValue}` : `https://www.youtube.com/@${cleanedHandle}`;
+  if (normalizedLabel === "x/twitter") return `https://x.com/${cleanedHandle}`;
+  if (normalizedLabel === "facebook") return `https://www.facebook.com/${cleanedHandle}`;
+  if (normalizedLabel === "tiktok") return `https://www.tiktok.com/@${cleanedHandle}`;
+  if (normalizedLabel === "linkedin") {
+    if (/^linkedin\.com\//i.test(trimmedValue)) {
+      return `https://${trimmedValue}`;
+    }
+    return "";
+  }
+
+  return "";
+}
+
+function renderSocialHandlesMarkup(rawValue) {
+  const entries = parseSocialHandleEntries(rawValue);
+  if (!entries.length) {
+    return "";
+  }
+
+  return `
+    <div class="social-detail-list">
+      ${entries
+        .map((entry) => {
+          const url = socialValueToUrl(entry.label, entry.value);
+          const valueMarkup = url
+            ? `<a class="inline-link" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(entry.value)}</a>`
+            : escapeHtml(entry.value);
+          const toneClass = entry.label === "Unspecified" ? " ambiguous" : "";
+          return `<span class="social-chip${toneClass}"><strong>${escapeHtml(entry.label)}:</strong> ${valueMarkup}</span>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
 async function copyGuestIntake(guest) {
   const clipboardText = buildIntakeClipboardText(guest);
   if (!clipboardText) {
@@ -581,10 +657,16 @@ function renderGuests(payload) {
     const details = [];
     if (guest.profession) details.push(`Profession: ${guest.profession}`);
     if (guest.website) details.push(`Website: ${guest.website}`);
-    if (guest.social_media_handles) details.push(`Social: ${guest.social_media_handles}`);
+    const socialHandles = guest.social_media_handles;
+    if (socialHandles) {
+      details.push(`Social media available`);
+    }
     if (guest.passionate_topics) details.push(`Topics: ${guest.passionate_topics}`);
     if (guest.original_file_name) details.push(`Source: ${guest.original_file_name}`);
     node.querySelector(".guest-details").innerHTML = details.map((detail) => `<span>${linkifyText(detail)}</span>`).join("");
+    if (socialHandles) {
+      node.querySelector(".guest-details").insertAdjacentHTML("beforeend", renderSocialHandlesMarkup(socialHandles));
+    }
     node.querySelector(".guest-details").insertAdjacentHTML(
       "beforeend",
       `
