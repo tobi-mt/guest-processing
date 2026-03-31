@@ -9,11 +9,93 @@ const message = document.getElementById("intake-message");
 const progressFill = document.getElementById("progress-fill");
 const progressCaption = document.getElementById("progress-caption");
 const successPanel = document.getElementById("success-panel");
+const draftBanner = document.getElementById("draft-banner");
 const websiteField = form.querySelector('input[name="website"]');
 
 const stepNames = ["Contact", "Journey", "Perspective", "Conversation"];
+const DRAFT_STORAGE_KEY = "mirror-talk-intake-draft-v1";
 
 let currentStep = 0;
+
+function supportsLocalStorage() {
+  try {
+    return typeof window.localStorage !== "undefined";
+  } catch (error) {
+    return false;
+  }
+}
+
+function getDraftPayload() {
+  if (!supportsLocalStorage()) {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw);
+  } catch (error) {
+    return null;
+  }
+}
+
+function saveDraft() {
+  if (!supportsLocalStorage()) {
+    return;
+  }
+
+  const formValues = Object.fromEntries(new FormData(form).entries());
+  const payload = {
+    step: currentStep,
+    values: formValues,
+    savedAt: new Date().toISOString(),
+  };
+
+  try {
+    window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    return;
+  }
+}
+
+function clearDraft() {
+  if (!supportsLocalStorage()) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch (error) {
+    return;
+  }
+}
+
+function restoreDraft() {
+  const draft = getDraftPayload();
+  if (!draft || !draft.values) {
+    return;
+  }
+
+  for (const [name, value] of Object.entries(draft.values)) {
+    const field = form.elements.namedItem(name);
+    if (!field || typeof field.value === "undefined") {
+      continue;
+    }
+    field.value = value;
+  }
+
+  if (Number.isInteger(draft.step) && draft.step >= 0 && draft.step < steps.length) {
+    currentStep = draft.step;
+  }
+
+  if (draftBanner && draft.savedAt) {
+    draftBanner.textContent = "We restored your saved progress in this browser, so you can continue where you left off.";
+  }
+
+  normalizeWebsiteValue(websiteField);
+}
 
 function normalizeWebsiteValue(field) {
   if (!field) {
@@ -118,11 +200,13 @@ nextButton.addEventListener("click", () => {
   }
 
   currentStep += 1;
+  saveDraft();
   syncStepUI();
 });
 
 backButton.addEventListener("click", () => {
   currentStep = Math.max(0, currentStep - 1);
+  saveDraft();
   syncStepUI();
 });
 
@@ -152,6 +236,7 @@ form.addEventListener("submit", async (event) => {
     }
 
     form.reset();
+    clearDraft();
     currentStep = 0;
     syncStepUI();
     showSuccessState();
@@ -167,8 +252,17 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
+form.addEventListener("input", () => {
+  saveDraft();
+});
+
+form.addEventListener("change", () => {
+  saveDraft();
+});
+
 window.addEventListener("load", notifyParentHeight);
 window.addEventListener("resize", notifyParentHeight);
 websiteField?.addEventListener("blur", () => normalizeWebsiteValue(websiteField));
 
+restoreDraft();
 syncStepUI();

@@ -242,6 +242,18 @@ body {
   overflow-wrap: anywhere;
 }
 
+.draft-banner {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(15, 93, 79, 0.07);
+  border: 1px solid rgba(15, 93, 79, 0.10);
+  color: #4d5f56;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 0.94rem;
+  line-height: 1.5;
+}
+
 .admin-link {
   color: var(--accent);
   text-decoration: none;
