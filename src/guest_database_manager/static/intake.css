@@ -360,6 +360,10 @@ button {
   color: var(--accent);
 }
 
+.intake-message.pending {
+  color: #805a12;
+}
+
 .intake-message.error {
   color: #932f1f;
 }
@@ -373,6 +377,10 @@ button {
     linear-gradient(180deg, rgba(255, 251, 245, 0.98), rgba(243, 234, 220, 0.95));
   border: 1px solid rgba(71, 53, 34, 0.10);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.success-hero {
+  max-width: 64ch;
 }
 
 .success-panel h3 {
@@ -389,6 +397,63 @@ button {
 
 .success-note {
   margin-top: 14px;
+}
+
+.success-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.success-card {
+  padding: 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(71, 53, 34, 0.08);
+}
+
+.success-card h4 {
+  margin: 0 0 10px;
+  font-size: 1.2rem;
+}
+
+.success-card p {
+  margin: 0;
+}
+
+.success-card-featured {
+  background:
+    radial-gradient(circle at top right, rgba(15, 93, 79, 0.10), transparent 34%),
+    linear-gradient(180deg, rgba(255, 251, 245, 0.92), rgba(245, 236, 223, 0.92));
+}
+
+.success-link-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.success-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(15, 93, 79, 0.08);
+  color: var(--accent);
+  text-decoration: none;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 0.92rem;
+  font-weight: 600;
+  transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.success-link:hover,
+.success-link:focus-visible {
+  transform: translateY(-1px);
+  background: rgba(15, 93, 79, 0.14);
+  box-shadow: 0 10px 20px rgba(15, 93, 79, 0.10);
 }
 
 @keyframes fade-in {
@@ -498,5 +563,9 @@ button {
 
   .success-panel {
     padding: 22px;
+  }
+
+  .success-grid {
+    grid-template-columns: 1fr;
   }
 }

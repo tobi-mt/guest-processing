@@ -97,6 +97,9 @@ form.addEventListener("submit", async (event) => {
   }
 
   const payload = Object.fromEntries(new FormData(form).entries());
+  submitButton.disabled = true;
+  submitButton.textContent = "Submitting...";
+  setMessage("Submitting your application...", "pending");
 
   try {
     const response = await fetch("/api/intake", {
@@ -114,12 +117,15 @@ form.addEventListener("submit", async (event) => {
     currentStep = 0;
     syncStepUI();
     showSuccessState();
-    setMessage(data.message || "Thanks for applying.", "success");
+    setMessage(data.message || "Your application was submitted successfully.", "success");
     window.requestAnimationFrame(notifyParentHeight);
   } catch (error) {
     hideSuccessState();
     setMessage(error.message, "error");
     window.requestAnimationFrame(notifyParentHeight);
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "Submit Application";
   }
 });
 
