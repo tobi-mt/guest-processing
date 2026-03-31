@@ -191,6 +191,13 @@ body {
   transform: translateX(4px);
 }
 
+.step-item.completed {
+  background: linear-gradient(135deg, rgba(15, 93, 79, 0.12), rgba(255, 255, 255, 0.85));
+  color: var(--accent);
+  font-weight: 700;
+  border-color: rgba(15, 93, 79, 0.12);
+}
+
 .intake-panel {
   padding: 26px;
 }

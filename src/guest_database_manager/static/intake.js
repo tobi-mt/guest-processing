@@ -9,6 +9,7 @@ const message = document.getElementById("intake-message");
 const progressFill = document.getElementById("progress-fill");
 const progressCaption = document.getElementById("progress-caption");
 const successPanel = document.getElementById("success-panel");
+const successTitle = document.getElementById("success-title");
 const draftBanner = document.getElementById("draft-banner");
 const websiteField = form.querySelector('input[name="website"]');
 const conditionalGroups = Array.from(document.querySelectorAll("[data-conditional-source]"));
@@ -17,6 +18,7 @@ const stepNames = ["Contact", "Journey", "Perspective", "Conversation"];
 const DRAFT_STORAGE_KEY = "mirror-talk-intake-draft-v1";
 
 let currentStep = 0;
+let isComplete = false;
 
 function buildConditionalAnswer(choiceName, detailName) {
   const choiceField = form.elements.namedItem(choiceName);
@@ -160,15 +162,22 @@ function syncStepUI() {
   });
 
   indicators.forEach((indicator, index) => {
-    indicator.classList.toggle("active", index === currentStep);
+    indicator.classList.toggle("active", !isComplete && index === currentStep);
+    indicator.classList.toggle("completed", isComplete || index < currentStep);
   });
 
   backButton.disabled = currentStep === 0;
   nextButton.classList.toggle("hidden", currentStep === steps.length - 1);
   submitButton.classList.toggle("hidden", currentStep !== steps.length - 1);
-  stepCounter.textContent = `Step ${currentStep + 1} of ${steps.length}`;
-  progressFill.style.width = `${((currentStep + 1) / steps.length) * 100}%`;
-  progressCaption.textContent = `Currently on ${stepNames[currentStep]}`;
+  if (isComplete) {
+    stepCounter.textContent = "Finished";
+    progressFill.style.width = "100%";
+    progressCaption.textContent = "Application complete";
+  } else {
+    stepCounter.textContent = `Step ${currentStep + 1} of ${steps.length}`;
+    progressFill.style.width = `${((currentStep + 1) / steps.length) * 100}%`;
+    progressCaption.textContent = `Currently on ${stepNames[currentStep]}`;
+  }
   window.requestAnimationFrame(notifyParentHeight);
 }
 
@@ -266,15 +275,19 @@ function setMessage(text, tone = "") {
 function showSuccessState() {
   form.classList.add("hidden");
   successPanel.classList.remove("hidden");
+  isComplete = true;
+  syncStepUI();
 }
 
 function hideSuccessState() {
   form.classList.remove("hidden");
   successPanel.classList.add("hidden");
+  isComplete = false;
 }
 
 nextButton.addEventListener("click", () => {
   clearFieldHighlights();
+  isComplete = false;
   normalizeWebsiteValue(websiteField);
   updateConditionalGroups();
   if (!validateCurrentStep()) {
@@ -288,6 +301,7 @@ nextButton.addEventListener("click", () => {
 
 backButton.addEventListener("click", () => {
   clearFieldHighlights();
+  isComplete = false;
   currentStep = Math.max(0, currentStep - 1);
   saveDraft();
   syncStepUI();
@@ -324,10 +338,15 @@ form.addEventListener("submit", async (event) => {
       throw new Error(data.error || "Unable to submit your application.");
     }
 
+    const fullName = (payload.full_name || "").trim();
     form.reset();
     clearDraft();
-    currentStep = 0;
-    syncStepUI();
+    currentStep = steps.length - 1;
+    if (successTitle) {
+      successTitle.textContent = fullName
+        ? `Thank you, ${fullName}, for sharing your story.`
+        : "Thank you for sharing your story.";
+    }
     showSuccessState();
     setMessage(data.message || "Your application was submitted successfully.", "success");
     window.requestAnimationFrame(notifyParentHeight);
