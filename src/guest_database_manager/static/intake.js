@@ -221,6 +221,43 @@ function validateEntireForm() {
   return true;
 }
 
+function clearFieldHighlights() {
+  form.querySelectorAll(".field-error").forEach((field) => {
+    field.classList.remove("field-error");
+  });
+}
+
+function focusFieldByName(fieldName) {
+  const field = form.elements.namedItem(fieldName);
+  if (!field || typeof field.focus !== "function") {
+    return false;
+  }
+
+  const step = field.closest(".form-step");
+  if (step) {
+    const stepIndex = steps.indexOf(step);
+    if (stepIndex >= 0) {
+      currentStep = stepIndex;
+      syncStepUI();
+    }
+  }
+
+  field.classList.add("field-error");
+  field.focus({ preventScroll: true });
+  field.scrollIntoView({ behavior: "smooth", block: "center" });
+  return true;
+}
+
+function revealServerValidationTarget(errorMessage) {
+  const match = errorMessage.match(/Please provide a more complete answer for:\s*(.+)$/i);
+  if (!match) {
+    return false;
+  }
+
+  const normalizedFieldName = match[1].trim().toLowerCase().replace(/\s+/g, "_");
+  return focusFieldByName(normalizedFieldName);
+}
+
 function setMessage(text, tone = "") {
   message.textContent = text;
   message.className = `intake-message ${tone}`.trim();
@@ -237,6 +274,7 @@ function hideSuccessState() {
 }
 
 nextButton.addEventListener("click", () => {
+  clearFieldHighlights();
   normalizeWebsiteValue(websiteField);
   updateConditionalGroups();
   if (!validateCurrentStep()) {
@@ -249,6 +287,7 @@ nextButton.addEventListener("click", () => {
 });
 
 backButton.addEventListener("click", () => {
+  clearFieldHighlights();
   currentStep = Math.max(0, currentStep - 1);
   saveDraft();
   syncStepUI();
@@ -256,6 +295,7 @@ backButton.addEventListener("click", () => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  clearFieldHighlights();
   normalizeWebsiteValue(websiteField);
   updateConditionalGroups();
   if (!validateEntireForm()) {
@@ -293,6 +333,7 @@ form.addEventListener("submit", async (event) => {
     window.requestAnimationFrame(notifyParentHeight);
   } catch (error) {
     hideSuccessState();
+    revealServerValidationTarget(error.message);
     setMessage(error.message, "error");
     window.requestAnimationFrame(notifyParentHeight);
   } finally {
@@ -302,11 +343,13 @@ form.addEventListener("submit", async (event) => {
 });
 
 form.addEventListener("input", () => {
+  clearFieldHighlights();
   updateConditionalGroups();
   saveDraft();
 });
 
 form.addEventListener("change", () => {
+  clearFieldHighlights();
   updateConditionalGroups();
   saveDraft();
 });

@@ -234,6 +234,25 @@ def test_public_intake_validation_allows_one_word_profession_answer(temp_db):
     assert created_guest["profession"] == "Author"
 
 
+def test_public_intake_validation_allows_concise_passionate_topics_answer(temp_db):
+    """Short but real topic lists should not be rejected."""
+    service = GuestWebService(temp_db.db_path)
+
+    created_guest = service.create_intake_submission(
+        {
+            "full_name": "Amina Lane",
+            "email": "amina@example.com",
+            "background": "I am a coach and storyteller who helps people rebuild confidence after painful seasons of life.",
+            "profession": "Coach",
+            "passionate_topics": "Healing, faith, resilience.",
+            "message": "I want listeners to leave with more hope, honesty, and courage for their own journey.",
+            "additional_info": "I would love to contribute a grounded and meaningful conversation to Mirror Talk.",
+        }
+    )
+
+    assert created_guest["passionate_topics"] == "Healing, faith, resilience."
+
+
 def test_public_intake_request_accepts_configured_token():
     """Public intake should still accept explicit API-token requests."""
     handler = GuestWebRequestHandler.__new__(GuestWebRequestHandler)

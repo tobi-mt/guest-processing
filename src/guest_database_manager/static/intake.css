@@ -331,6 +331,13 @@ textarea:focus {
   box-shadow: 0 0 0 4px rgba(15, 93, 79, 0.10);
 }
 
+input.field-error,
+select.field-error,
+textarea.field-error {
+  border-color: #932f1f;
+  box-shadow: 0 0 0 4px rgba(147, 47, 31, 0.10);
+}
+
 .step-footer {
   margin-top: 16px;
   display: flex;
