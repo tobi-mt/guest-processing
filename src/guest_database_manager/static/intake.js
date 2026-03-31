@@ -47,13 +47,36 @@ function syncStepUI() {
   window.requestAnimationFrame(notifyParentHeight);
 }
 
+function validateFields(fields) {
+  for (const field of fields) {
+    const trimmedValue = typeof field.value === "string" ? field.value.trim() : field.value;
+
+    if (field.hasAttribute("required") && !trimmedValue) {
+      field.reportValidity();
+      return false;
+    }
+
+    if (trimmedValue && !field.checkValidity()) {
+      field.reportValidity();
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function validateCurrentStep() {
   const activeStep = steps[currentStep];
-  const requiredFields = activeStep.querySelectorAll("[required]");
+  const fields = activeStep.querySelectorAll("input, select, textarea");
+  return validateFields(fields);
+}
 
-  for (const field of requiredFields) {
-    if (!field.value.trim()) {
-      field.reportValidity();
+function validateEntireForm() {
+  for (let index = 0; index < steps.length; index += 1) {
+    const fields = steps[index].querySelectorAll("input, select, textarea");
+    if (!validateFields(fields)) {
+      currentStep = index;
+      syncStepUI();
       return false;
     }
   }
@@ -92,7 +115,8 @@ backButton.addEventListener("click", () => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!validateCurrentStep()) {
+  if (!validateEntireForm()) {
+    setMessage("Please complete the highlighted field before submitting.", "error");
     return;
   }
 
