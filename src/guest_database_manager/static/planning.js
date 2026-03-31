@@ -181,6 +181,28 @@ function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function renderLinkedValue(value, fallback = "Not set") {
+  const text = String(value || "").trim();
+  if (!text) {
+    return escapeHtml(fallback);
+  }
+  if (/^https?:\/\//i.test(text)) {
+    return `<a class="inline-link" href="${escapeHtml(text)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
+  }
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
+    return `<a class="inline-link" href="mailto:${escapeHtml(text)}">${escapeHtml(text)}</a>`;
+  }
+  return escapeHtml(text);
+}
+
 function parseDate(value) {
   if (!value) return null;
   const date = new Date(String(value).replace(" ", "T"));
@@ -872,13 +894,15 @@ function renderEpisodes(episodes, totalCount) {
       <div class="operations-meta">
         <span>Topic: ${episode.topic || "Not set"}</span>
         <span>Category: ${episode.category || "Not set"}</span>
+        <span>Email: ${renderLinkedValue(episode.guest_email)}</span>
+        <span>Website: ${renderLinkedValue(episode.website)}</span>
         <span>Release: ${formatDateTime(episode.release_date)}</span>
         <span>Status: ${episode.release_status || "unplanned"} / ${episode.production_status || "idea"}</span>
         <span>Promo: ${episode.promotion_status || "unknown"}</span>
         <span>Readiness: ${episode.promotion_readiness?.score ?? 0}/100</span>
         <span>Priority: ${episode.priority_score ?? 0}</span>
-        <span>Show Notes: ${episode.show_notes_url ? "Ready" : "Missing"}</span>
-        <span>Files: ${episode.release_files_url ? "Ready" : "Missing"}</span>
+        <span>Show Notes: ${renderLinkedValue(episode.show_notes_url, "Missing")}</span>
+        <span>Files: ${renderLinkedValue(episode.release_files_url, "Missing")}</span>
         <span>Transcript: ${transcriptStatusLabel(episode)}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
@@ -946,7 +970,7 @@ function renderEpisodes(episodes, totalCount) {
           appreciationPreviewNode.classList.remove("hidden");
           appreciationPreviewNode.innerHTML = `
             <h4>${preview.subject}</h4>
-            <p>To: ${episode.guest_email}</p>
+            <p>To: ${renderLinkedValue(episode.guest_email)}</p>
             <pre>${preview.body}</pre>
           `;
           releasePreviewNode.classList.add("hidden");
@@ -1027,7 +1051,7 @@ function renderEpisodes(episodes, totalCount) {
           releasePreviewNode.classList.remove("hidden");
           releasePreviewNode.innerHTML = `
             <h4>${preview.subject}</h4>
-            <p>To: ${episode.guest_email}</p>
+            <p>To: ${renderLinkedValue(episode.guest_email)}</p>
             <pre>${preview.body}</pre>
           `;
           appreciationPreviewNode.classList.add("hidden");

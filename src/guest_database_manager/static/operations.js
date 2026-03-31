@@ -64,6 +64,28 @@ function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function renderLinkedValue(value, fallback = "Not set") {
+  const text = String(value || "").trim();
+  if (!text) {
+    return escapeHtml(fallback);
+  }
+  if (/^https?:\/\//i.test(text)) {
+    return `<a class="inline-link" href="${escapeHtml(text)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
+  }
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
+    return `<a class="inline-link" href="mailto:${escapeHtml(text)}">${escapeHtml(text)}</a>`;
+  }
+  return escapeHtml(text);
+}
+
 function formatDateTime(value) {
   if (!value) return "Not set";
   const normalized = String(value).replace(" ", "T");
@@ -445,7 +467,8 @@ function renderInterviews(interviews, totalCount) {
       <p>${interview.title || "Mirror Talk interview"}</p>
       <div class="operations-meta">
         <span>Scheduled: ${formatDateTime(interview.scheduled_for)}</span>
-        <span>Email: ${interview.guest_email || "Not set"}</span>
+        <span>Email: ${renderLinkedValue(interview.guest_email)}</span>
+        <span>Join: ${renderLinkedValue(interview.join_url)}</span>
         <span>Confirmation: ${formatConfirmationStatus(interview.confirmation_status)}</span>
         <span>Reminder: ${formatReminderStatus(interview.reminder_status)}</span>
       </div>
@@ -556,7 +579,7 @@ function renderInterviews(interviews, totalCount) {
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `
             <h4>${preview.subject}</h4>
-            <p>To: ${interview.guest_email}</p>
+            <p>To: ${renderLinkedValue(interview.guest_email)}</p>
             <pre>${preview.body}</pre>
           `;
           activeInterviewActionFeedback = { id: interview.id, text: `Reminder preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
@@ -709,7 +732,7 @@ function renderReminderCandidates(interviews, totalCount) {
       <p>${interview.title || "Mirror Talk conversation"}</p>
       <div class="operations-meta">
         <span>Scheduled: ${interview.scheduled_for_display || formatDateTime(interview.scheduled_for)}</span>
-        <span>Email: ${interview.guest_email || "Not set"}</span>
+        <span>Email: ${renderLinkedValue(interview.guest_email)}</span>
         <span>Confirmation: ${formatConfirmationStatus(interview.confirmation_status)}</span>
       </div>
       <div class="context-links">
@@ -752,7 +775,7 @@ function renderReminderCandidates(interviews, totalCount) {
         previewPanel.classList.remove("hidden");
         previewPanel.innerHTML = `
           <h4>${preview.subject}</h4>
-          <p>To: ${interview.guest_email || "No email address"}</p>
+          <p>To: ${renderLinkedValue(interview.guest_email, "No email address")}</p>
           <pre>${preview.body}</pre>
         `;
       } catch (error) {

@@ -584,7 +584,7 @@ function renderGuests(payload) {
     if (guest.social_media_handles) details.push(`Social: ${guest.social_media_handles}`);
     if (guest.passionate_topics) details.push(`Topics: ${guest.passionate_topics}`);
     if (guest.original_file_name) details.push(`Source: ${guest.original_file_name}`);
-    node.querySelector(".guest-details").innerHTML = details.map((detail) => `<span>${detail}</span>`).join("");
+    node.querySelector(".guest-details").innerHTML = details.map((detail) => `<span>${linkifyText(detail)}</span>`).join("");
     node.querySelector(".guest-details").insertAdjacentHTML(
       "beforeend",
       `
@@ -815,6 +815,33 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function linkifyText(value) {
+  const text = String(value || "");
+  const urlPattern = /(https?:\/\/[^\s<]+)/gi;
+  let lastIndex = 0;
+  let output = "";
+
+  text.replace(urlPattern, (match, _url, offset) => {
+    const leadingText = text.slice(lastIndex, offset);
+    let url = match;
+    let trailingPunctuation = "";
+
+    while (/[),.;!?]$/.test(url)) {
+      trailingPunctuation = url.slice(-1) + trailingPunctuation;
+      url = url.slice(0, -1);
+    }
+
+    output += escapeHtml(leadingText);
+    output += `<a class="inline-link" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>`;
+    output += escapeHtml(trailingPunctuation);
+    lastIndex = offset + match.length;
+    return match;
+  });
+
+  output += escapeHtml(text.slice(lastIndex));
+  return output;
 }
 
 function renderGuestAiSummary(guest) {
