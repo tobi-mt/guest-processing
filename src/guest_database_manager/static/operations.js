@@ -713,7 +713,7 @@ function renderReminderCandidates(interviews, totalCount) {
         <span>Confirmation: ${formatConfirmationStatus(interview.confirmation_status)}</span>
       </div>
       <div class="context-links">
-        <a class="context-link" href="${buildScopedLink("/planning", interview.guest_name || interview.guest_email)}">Open Planning</a>
+        <a class="context-link" href="${buildScopedLink("/dashboard", interview.guest_name || interview.guest_email)}">View Guest</a>
       </div>
       <div class="operations-actions">
         <button type="button" class="ghost-button" data-reminder-action="mark-confirmed">Mark Confirmed</button>
