@@ -267,7 +267,10 @@ It was a real pleasure to share that conversation with you. I’m genuinely grat
 Conversations like this are at the heart of what we hope to create with Mirror Talk, and I truly appreciate the care you brought into it.
 
 If you’d like to support the podcast in a simple but meaningful way, here are three lovely ways to do that:
-- subscribe to Mirror Talk on Spotify or Apple Podcasts
+- subscribe to Mirror Talk on Spotify:
+  https://open.spotify.com/show/0trwqguYCic32smqh3Ny60
+- subscribe to Mirror Talk on Apple Podcasts:
+  https://podcasts.apple.com/podcast/mirror-talk/id1518394292
 - share the show or your episode with someone who would genuinely enjoy it
 - explore our new AI experience, Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
 
@@ -324,7 +327,12 @@ Here are the links for you:
 When you have a moment, I’d genuinely love to hear what you and your loved ones think of the episode.
 
 If you’d like to support the conversation further, here are three meaningful ways to help:
-- subscribe to Mirror Talk on Spotify, Apple Podcasts, or YouTube
+- subscribe to Mirror Talk on Spotify:
+  https://open.spotify.com/show/0trwqguYCic32smqh3Ny60
+- subscribe to Mirror Talk on Apple Podcasts:
+  https://podcasts.apple.com/podcast/mirror-talk/id1518394292
+- subscribe on YouTube:
+  https://www.youtube.com/@mirrortalkpodcast
 - share the episode with people who would truly appreciate it
 - try Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
 
