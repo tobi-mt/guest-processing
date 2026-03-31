@@ -2029,6 +2029,35 @@ def test_validate_intake_payload_rejects_spam_keywords():
         )
 
 
+def test_validate_intake_payload_allows_legitimate_profile_links():
+    """Real guest submissions should be able to include a website, socials, and past appearance links."""
+    validate_intake_payload(
+        {
+            "website": "https://example.com",
+            "social_handles": "https://instagram.com/example https://linkedin.com/in/example https://youtube.com/@example",
+            "background": "I am a speaker and writer focused on healing, resilience, and the long work of emotional honesty.",
+            "profession": "I work as a trauma-informed coach and public speaker.",
+            "passionate_topics": "I care about healing, faith, leadership, reflection, emotional courage, and meaningful conversations.",
+            "message": "I want listeners to leave with more hope, more honesty, and more compassion for their own journey.",
+            "experience": "https://podcast-one.example https://podcast-two.example",
+            "additional_info": "I would love to contribute a grounded and encouraging conversation to Mirror Talk.",
+        }
+    )
+
+
+def test_validate_intake_payload_rejects_excessive_editorial_link_stuffing():
+    """Too many links in the narrative answers should still be treated as spammy."""
+    with pytest.raises(WebInterfaceError):
+        validate_intake_payload(
+            {
+                "background": "Read more at https://a.example https://b.example https://c.example https://d.example https://e.example",
+                "profession": "I also share work at https://f.example",
+                "passionate_topics": "I discuss healing, faith, leadership, reflection, courage, and growth with heart.",
+                "message": "I want listeners to leave with more hope, more honesty, and more compassion for their own journey.",
+            }
+        )
+
+
 def test_validate_intake_payload_rejects_low_effort_answers():
     """Very short long-form answers should be rejected."""
     with pytest.raises(WebInterfaceError):
