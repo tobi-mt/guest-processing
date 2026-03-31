@@ -14,6 +14,7 @@ from guest_database_manager.web_interface import (
     ASK_MIRROR_TALK_BASE_URL_ENV_VAR,
     ASK_MIRROR_TALK_PASSWORD_ENV_VAR,
     ASK_MIRROR_TALK_USERNAME_ENV_VAR,
+    API_TOKEN_ENV_VAR,
     EMAIL_FROM_ENV_VAR,
     EMAIL_FROM_NAME_ENV_VAR,
     EMAIL_PASSWORD_ENV_VAR,
@@ -28,6 +29,7 @@ from guest_database_manager.web_interface import (
     EMAIL_USERNAME_ENV_VAR,
     FORM_SOURCE_NAME,
     INTAKE_SOURCE_NAME,
+    GuestWebRequestHandler,
     GuestWebService,
     WebInterfaceError,
     build_guest_payload,
@@ -180,6 +182,53 @@ def test_web_service_can_create_public_intake_submission(temp_db):
 
     assert created_guest["original_file_name"] == INTAKE_SOURCE_NAME
     assert created_guest["email_status"] is None
+
+
+def test_public_intake_request_accepts_configured_token():
+    """Public intake should still accept explicit API-token requests."""
+    handler = GuestWebRequestHandler.__new__(GuestWebRequestHandler)
+    handler.headers = {"X-Api-Token": "secret-token"}
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv(API_TOKEN_ENV_VAR, "secret-token")
+        assert handler._is_authorized_request() is True
+
+
+def test_public_intake_request_accepts_known_origin_without_token():
+    """Public intake should trust the approved website origin even when a token is configured."""
+    handler = GuestWebRequestHandler.__new__(GuestWebRequestHandler)
+    handler.headers = {"Origin": "https://mirrortalkpodcast.com"}
+    handler.server = type("Server", (), {"server_port": 8000})()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv(API_TOKEN_ENV_VAR, "secret-token")
+        assert handler._is_authorized_request() is True
+
+
+def test_public_intake_request_accepts_live_service_origin_without_token():
+    """Public intake should trust submissions that originate from the live intake service itself."""
+    handler = GuestWebRequestHandler.__new__(GuestWebRequestHandler)
+    handler.headers = {
+        "Origin": "https://guest-processing-production.up.railway.app",
+        "X-Forwarded-Proto": "https",
+        "Host": "guest-processing-production.up.railway.app",
+    }
+    handler.server = type("Server", (), {"server_port": 8000})()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv(API_TOKEN_ENV_VAR, "secret-token")
+        assert handler._is_authorized_request() is True
+
+
+def test_public_intake_request_rejects_unknown_origin_without_token():
+    """Public intake should still reject untrusted cross-site submissions when a token is configured."""
+    handler = GuestWebRequestHandler.__new__(GuestWebRequestHandler)
+    handler.headers = {"Origin": "https://example.com"}
+    handler.server = type("Server", (), {"server_port": 8000})()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv(API_TOKEN_ENV_VAR, "secret-token")
+        assert handler._is_authorized_request() is False
 
 
 def test_web_service_can_import_uploaded_csv(temp_db):

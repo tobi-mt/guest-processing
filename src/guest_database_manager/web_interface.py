@@ -2259,7 +2259,55 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             return True
 
         request_token = self.headers.get("X-Api-Token", "").strip()
-        return bool(request_token) and request_token == configured_token
+        if request_token and request_token == configured_token:
+            return True
+
+        return self._is_trusted_public_intake_request()
+
+    def _is_trusted_public_intake_request(self) -> bool:
+        """Allow public intake submissions from the known website and this live service origin."""
+        origin = (self.headers.get("Origin") or "").strip()
+        referer = (self.headers.get("Referer") or "").strip()
+
+        trusted_origins = set(ALLOWED_ORIGINS)
+        current_origin = self._current_service_origin()
+        if current_origin:
+            trusted_origins.add(current_origin)
+
+        if origin and origin in trusted_origins:
+            return True
+
+        if referer:
+            referer_origin = self._extract_origin(referer)
+            if referer_origin and referer_origin in trusted_origins:
+                return True
+
+        return False
+
+    def _current_service_origin(self) -> str:
+        """Infer the current public service origin from forwarded or host headers."""
+        forwarded_proto = (self.headers.get("X-Forwarded-Proto") or "").strip()
+        proto = forwarded_proto or ("https" if self.server.server_port == 443 else "http")
+
+        forwarded_host = (self.headers.get("X-Forwarded-Host") or "").strip()
+        host = forwarded_host or (self.headers.get("Host") or "").strip()
+        if not host:
+            return ""
+
+        return f"{proto}://{host}"
+
+    @staticmethod
+    def _extract_origin(url: str) -> str:
+        """Return a normalized origin string from a full URL."""
+        try:
+            parts = urlsplit(url)
+        except Exception:
+            return ""
+
+        if not parts.scheme or not parts.netloc:
+            return ""
+
+        return f"{parts.scheme}://{parts.netloc}"
 
     def _is_authorized_dashboard_request(self) -> bool:
         configured_username = os.environ.get(DASHBOARD_USERNAME_ENV_VAR, "").strip()
