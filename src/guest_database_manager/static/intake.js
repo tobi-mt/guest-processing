@@ -10,7 +10,7 @@ const progressFill = document.getElementById("progress-fill");
 const progressCaption = document.getElementById("progress-caption");
 const successPanel = document.getElementById("success-panel");
 
-const stepNames = ["Contact", "Story", "Fit"];
+const stepNames = ["Contact", "Journey", "Perspective", "Conversation"];
 
 let currentStep = 0;
 
