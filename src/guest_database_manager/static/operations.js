@@ -21,7 +21,7 @@ const syncCalendarButton = document.getElementById("sync-calendar-button");
 
 let latestOperationsPayload = { interviews: [], reminder_candidates: [], stats: {} };
 let activeReminderPreset = "all";
-let activeInterviewPreset = "all";
+let activeInterviewPreset = "upcoming";
 let activeInterviewEditorId = null;
 let activeInterviewFeedback = { id: null, text: "", tone: "" };
 let activeInterviewActionFeedback = { id: null, text: "", tone: "" };
@@ -318,6 +318,7 @@ function filterAndSortInterviews(interviews) {
   const selectedYear = interviewYearFilter.value;
   const confirmationStatus = interviewConfirmationFilter.value;
   const sortMode = interviewSort.value || "closest";
+  const now = new Date();
 
   const filtered = interviews.filter((interview) => {
     const haystack = [
@@ -336,10 +337,16 @@ function filterAndSortInterviews(interviews) {
     if (confirmationStatus && normalizeText(interview.confirmation_status) !== confirmationStatus) {
       return false;
     }
+    const date = parseDate(interview.scheduled_for);
+    const isPast = date ? date < now : false;
+    if (activeInterviewPreset === "upcoming" && isPast) {
+      return false;
+    }
+    if (activeInterviewPreset === "past" && !isPast) {
+      return false;
+    }
     if (activeInterviewPreset === "this_week") {
-      const date = parseDate(interview.scheduled_for);
       if (!date) return false;
-      const now = new Date();
       const weekStart = new Date(now);
       weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
       weekStart.setHours(0, 0, 0, 0);
@@ -967,11 +974,11 @@ reminderPresetButtons.forEach((button) => {
 
 interviewPresetButtons.forEach((button) => {
   button.addEventListener("click", () => {
-    activeInterviewPreset = button.dataset.interviewPreset || "all";
+    activeInterviewPreset = button.dataset.interviewPreset || "upcoming";
     visibleInterviewCount = INTERVIEW_PAGE_SIZE;
     if (activeInterviewPreset === "needs_confirmation") {
       interviewConfirmationFilter.value = "pending";
-    } else if (activeInterviewPreset === "all") {
+    } else if (activeInterviewPreset === "upcoming") {
       interviewConfirmationFilter.value = "";
     }
     renderOperations();
