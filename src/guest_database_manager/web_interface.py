@@ -118,6 +118,11 @@ SPAM_KEYWORDS = {
     "betting",
     "loan",
 }
+HOST_NAME_HINTS = (
+    "tobi ojekunle",
+    "mirror talk",
+    "podcast.mirrortalk",
+)
 
 EXPORTABLE_FIELDS: Dict[str, list[str]] = {
     "guests": [
@@ -492,6 +497,28 @@ class GuestWebService:
         """Split a guest name into meaningful person tokens."""
         stop_words = {"and", "with", "the", "podcast", "mirror", "talk"}
         return [part for part in cls._word_tokens(value) if part not in stop_words]
+
+    @staticmethod
+    def _extract_guest_name_from_interview_title(title: Any, fallback_name: Any) -> str:
+        """Prefer the real guest name when an interview title includes the host too."""
+        fallback = _normalize_text(fallback_name)
+        text = _normalize_text(title)
+        if not text:
+            return fallback
+
+        lowered = text.lower()
+        if " and " in lowered:
+            parts = [part.strip(" -,:") for part in re.split(r"\band\b", text, flags=re.IGNORECASE) if part.strip(" -,:")]
+            if len(parts) == 2:
+                left, right = parts
+                left_normalized = left.lower()
+                right_normalized = right.lower()
+                if any(hint in right_normalized for hint in HOST_NAME_HINTS):
+                    return left
+                if any(hint in left_normalized for hint in HOST_NAME_HINTS):
+                    return right
+
+        return fallback or text
 
     @classmethod
     def _episode_title_overlap_score(cls, episode: Dict[str, Any], remote_episode: Dict[str, Any]) -> int:
@@ -885,7 +912,10 @@ class GuestWebService:
         if not interview:
             raise WebInterfaceError("Interview not found.")
 
-        guest_name = _normalize_text(interview.get("guest_name"))
+        guest_name = self._extract_guest_name_from_interview_title(
+            interview.get("title"),
+            interview.get("guest_name"),
+        )
         if not guest_name:
             raise WebInterfaceError("This interview does not have a guest name yet.")
 
@@ -936,7 +966,9 @@ class GuestWebService:
         episode = self.create_episode(episode_payload)
         if not episode:
             raise WebInterfaceError("Planning episode could not be created.")
-        return self._normalize_episode_record(episode)
+        normalized_episode = self._normalize_episode_record(episode)
+        normalized_episode["handoff_ready_for_planning"] = True
+        return normalized_episode
 
     def import_episode_file(self, filename: str, content: bytes) -> Dict[str, int]:
         """Import released-history or not-yet-released episode CSV data."""

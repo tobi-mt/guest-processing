@@ -665,6 +665,23 @@ def test_web_service_can_move_completed_interview_into_planning(temp_db):
     assert operations["interviews"][0]["planning_episode_id"] == created_episode["id"]
 
 
+def test_interview_to_planning_handoff_strips_host_name_from_guest(temp_db):
+    """Interview handoff should keep only the guest name when the title includes the host."""
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Patrick Kamba and Tobi Ojekunle",
+            "guest_email": "patrick@example.com",
+            "title": "Patrick Kamba and Tobi Ojekunle",
+            "scheduled_for": "2026-04-08T17:00",
+        }
+    )
+
+    episode = service.create_episode_from_interview(interview["id"])
+
+    assert episode["guest_name"] == "Patrick Kamba"
+
+
 def test_release_recommendations_skip_already_scheduled_episodes(temp_db):
     """Scheduled episodes should not be re-recommended for the next open slot."""
     service = GuestWebService(temp_db.db_path)

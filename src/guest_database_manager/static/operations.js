@@ -538,7 +538,10 @@ function renderInterviews(interviews, totalCount) {
         activeInterviewActionFeedback = { id: interview.id, text: successText, tone: "success" };
         actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         setMessage(interviewMessage, successText, "success");
-        await loadOperations();
+        const planningTarget = `/planning?episode_id=${encodeURIComponent(episode.id)}&source=operations&q=${encodeURIComponent(
+          episode.guest_name || episode.guest_email || episode.episode_title || "",
+        )}`;
+        window.location.assign(planningTarget);
       } catch (error) {
         activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
         actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);

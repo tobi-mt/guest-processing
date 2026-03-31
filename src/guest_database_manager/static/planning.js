@@ -46,6 +46,8 @@ let activeEpisodeFeedback = { id: null, text: "", tone: "" };
 let activeEpisodeActionFeedback = { id: null, text: "", tone: "" };
 let visibleRecommendationCount = 6;
 let visibleEpisodeCount = 10;
+let pendingEpisodeIdFromUrl = null;
+let pendingPlanningSuccessMessage = "";
 
 const RECOMMENDATION_PAGE_SIZE = 6;
 const EPISODE_PAGE_SIZE = 10;
@@ -1279,6 +1281,24 @@ function renderPlanning() {
   renderEpisodes(filterEpisodes(episodes), episodes.length);
 }
 
+function applyEpisodeFocusFromUrl() {
+  if (!pendingEpisodeIdFromUrl) {
+    return;
+  }
+  const episode = (latestPlanningPayload.episodes || []).find(
+    (item) => String(item.id || "") === String(pendingEpisodeIdFromUrl),
+  );
+  if (!episode) {
+    return;
+  }
+  loadEpisodeIntoForm(episode);
+  if (pendingPlanningSuccessMessage) {
+    setMessage(episodeMessage, pendingPlanningSuccessMessage, "success");
+  }
+  pendingEpisodeIdFromUrl = null;
+  pendingPlanningSuccessMessage = "";
+}
+
 async function loadPlanning() {
   const payload = await fetchJSON("/api/planning");
   latestPlanningPayload = payload;
@@ -1289,6 +1309,7 @@ async function loadPlanning() {
   stats.promoReady.textContent = payload.stats.episodes_promo_ready ?? 0;
   stats.needsAssets.textContent = payload.stats.episodes_need_assets ?? 0;
   renderPlanning();
+  applyEpisodeFocusFromUrl();
 }
 
 episodeForm.addEventListener("submit", async (event) => {
@@ -1480,6 +1501,8 @@ function applyUrlState() {
   const params = new URLSearchParams(window.location.search);
   const query = params.get("q");
   const preset = params.get("preset");
+  const episodeId = params.get("episode_id");
+  const source = params.get("source");
 
   if (query) {
     episodeSearchInput.value = query;
@@ -1487,6 +1510,14 @@ function applyUrlState() {
   }
   if (preset && episodePresetButtons.some((button) => button.dataset.episodePreset === preset)) {
     activeEpisodePreset = preset;
+  }
+  if (episodeId) {
+    pendingEpisodeIdFromUrl = episodeId;
+    activeEpisodePreset = "all";
+    pendingPlanningSuccessMessage =
+      source === "operations"
+        ? "Interview moved into planning. You can finish the episode details here and send the thank-you email when ready."
+        : "";
   }
 }
 
