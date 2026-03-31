@@ -291,12 +291,10 @@ function validateCurrentStep() {
   }
 
   if (activeStep.contains(socialHandlesField) && !String(socialHandlesField.value || "").trim()) {
-    setMessage("Please share at least one social handle or public profile.", "error");
-    const focusTarget = socialPlatformFields[0] || socialOtherField;
-    focusTarget?.classList.add("field-error");
-    focusTarget?.focus({ preventScroll: true });
-    focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
-    return false;
+    const hasWebsite = Boolean(String(websiteField?.value || "").trim());
+    if (!hasWebsite) {
+      setMessage("Website and social media are optional. If you have either one, sharing it helps us understand your public voice more quickly.", "pending");
+    }
   }
 
   return true;
@@ -313,14 +311,10 @@ function validateEntireForm() {
     }
 
     if (steps[index].contains(socialHandlesField) && !String(socialHandlesField.value || "").trim()) {
-      currentStep = index;
-      syncStepUI();
-      setMessage("Please share at least one social handle or public profile.", "error");
-      const focusTarget = socialPlatformFields[0] || socialOtherField;
-      focusTarget?.classList.add("field-error");
-      focusTarget?.focus({ preventScroll: true });
-      focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return false;
+      const hasWebsite = Boolean(String(websiteField?.value || "").trim());
+      if (!hasWebsite) {
+        setMessage("Website and social media are optional. If you have either one, sharing it helps us review your application more quickly.", "pending");
+      }
     }
   }
 
