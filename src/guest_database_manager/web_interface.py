@@ -99,7 +99,7 @@ MIN_WORDS_BY_FIELD = {
     "background": 8,
     "profession": 1,
     "passionate_topics": 1,
-    "message": 6,
+    "message": 1,
     "experience": 4,
     "additional_info": 4,
 }

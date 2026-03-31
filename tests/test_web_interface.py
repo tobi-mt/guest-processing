@@ -253,6 +253,25 @@ def test_public_intake_validation_allows_one_word_passionate_topics_answer(temp_
     assert created_guest["passionate_topics"] == "God"
 
 
+def test_public_intake_validation_allows_one_word_message_answer(temp_db):
+    """One-word takeaways can still be meaningful and should not be rejected."""
+    service = GuestWebService(temp_db.db_path)
+
+    created_guest = service.create_intake_submission(
+        {
+            "full_name": "Amina Lane",
+            "email": "amina@example.com",
+            "background": "I am a coach and storyteller who helps people rebuild confidence after painful seasons of life.",
+            "profession": "Coach",
+            "passionate_topics": "Healing",
+            "message": "Hope",
+            "additional_info": "I would love to contribute a grounded and meaningful conversation to Mirror Talk.",
+        }
+    )
+
+    assert created_guest["message_takeaway"] == "Hope"
+
+
 def test_public_intake_request_accepts_configured_token():
     """Public intake should still accept explicit API-token requests."""
     handler = GuestWebRequestHandler.__new__(GuestWebRequestHandler)
