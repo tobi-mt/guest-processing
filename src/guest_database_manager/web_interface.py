@@ -500,25 +500,29 @@ class GuestWebService:
 
     @staticmethod
     def _extract_guest_name_from_interview_title(title: Any, fallback_name: Any) -> str:
-        """Prefer the real guest name when an interview title includes the host too."""
-        fallback = _normalize_text(fallback_name)
-        text = _normalize_text(title)
-        if not text:
-            return fallback
+        """Prefer the real guest participant list when an interview title includes the host too."""
 
-        lowered = text.lower()
-        if " and " in lowered:
-            parts = [part.strip(" -,:") for part in re.split(r"\band\b", text, flags=re.IGNORECASE) if part.strip(" -,:")]
-            if len(parts) == 2:
-                left, right = parts
-                left_normalized = left.lower()
-                right_normalized = right.lower()
-                if any(hint in right_normalized for hint in HOST_NAME_HINTS):
-                    return left
-                if any(hint in left_normalized for hint in HOST_NAME_HINTS):
-                    return right
+        def strip_host_participants(value: str) -> str:
+            if not value:
+                return ""
+            parts = [
+                part.strip(" -,:")
+                for part in re.split(r"\s*(?:,|&|\band\b)\s*", value, flags=re.IGNORECASE)
+                if part.strip(" -,:")
+            ]
+            if len(parts) < 2:
+                return value
 
-        return fallback or text
+            guest_parts = [part for part in parts if not any(hint in part.lower() for hint in HOST_NAME_HINTS)]
+            if not guest_parts or len(guest_parts) == len(parts):
+                return value
+            if len(guest_parts) == 1:
+                return guest_parts[0]
+            return " & ".join(guest_parts)
+
+        fallback = strip_host_participants(_normalize_text(fallback_name))
+        text = strip_host_participants(_normalize_text(title))
+        return text or fallback
 
     @classmethod
     def _episode_title_overlap_score(cls, episode: Dict[str, Any], remote_episode: Dict[str, Any]) -> int:

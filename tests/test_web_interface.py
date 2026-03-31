@@ -682,6 +682,23 @@ def test_interview_to_planning_handoff_strips_host_name_from_guest(temp_db):
     assert episode["guest_name"] == "Patrick Kamba"
 
 
+def test_interview_to_planning_handoff_keeps_multiple_guests_without_host(temp_db):
+    """Interview handoff should preserve multiple guests while dropping the host."""
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Alice Smith, Bob Jones and Tobi Ojekunle",
+            "guest_email": "alice@example.com",
+            "title": "Alice Smith, Bob Jones and Tobi Ojekunle",
+            "scheduled_for": "2026-04-08T17:00",
+        }
+    )
+
+    episode = service.create_episode_from_interview(interview["id"])
+
+    assert episode["guest_name"] == "Alice Smith & Bob Jones"
+
+
 def test_release_recommendations_skip_already_scheduled_episodes(temp_db):
     """Scheduled episodes should not be re-recommended for the next open slot."""
     service = GuestWebService(temp_db.db_path)
