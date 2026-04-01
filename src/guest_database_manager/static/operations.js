@@ -196,6 +196,14 @@ function renderWeeklyOutreachPanel() {
     .join("");
 
   operationsWeeklyOutreach.innerHTML = `
+    <div class="insight-stack">
+      <strong class="insight-label">How to use this panel</strong>
+      <ul>
+        <li>Use this as a weekly reference while you manage interviews and confirmations.</li>
+        <li>Do not try to complete outreach here. The actual episode checklist lives in Release Planning.</li>
+        <li>If the spotlight episode is already launching this week, let it guide what Tuesday to Friday promotion should happen around it.</li>
+      </ul>
+    </div>
     ${spotlight ? `
       <div class="insight-stack">
         <strong class="insight-label">Current release spotlight</strong>

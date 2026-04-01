@@ -271,6 +271,12 @@ p {
   overflow-wrap: anywhere;
 }
 
+.helper-copy {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
 .premium-badges {
   display: flex;
   flex-wrap: wrap;

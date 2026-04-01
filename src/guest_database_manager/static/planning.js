@@ -447,6 +447,14 @@ function renderWeeklySystemPanel(system) {
   const metrics = (system.metrics || []).map((item) => `<li>${item}</li>`).join("");
   planningWeeklySystem.innerHTML = `
     <div class="insight-stack">
+      <strong class="insight-label">What this tab is for</strong>
+      <ul>
+        <li>Use this as the operating model for a normal Mirror Talk release week.</li>
+        <li>The checklist in Release Planning is where you mark each real-world step as complete for a specific episode.</li>
+        <li>The recommendation cards use this rhythm to suggest what should happen next, but they do not complete anything automatically.</li>
+      </ul>
+    </div>
+    <div class="insight-stack">
       <strong class="insight-label">Weekly timetable</strong>
       <ul>${steps}</ul>
     </div>
@@ -567,11 +575,12 @@ function renderOutreachSummary(summary) {
   const pending = (summary.pending_labels || []).map((item) => `<li>${item}</li>`).join("");
   return `
     <div class="operations-preview">
-      <strong class="insight-label">Weekly launch cycle</strong>
+      <strong class="insight-label">Outreach status for this episode</strong>
       <p><strong>${summary.progress_label}</strong></p>
       <p>${summary.next_step || ""}</p>
+      <p class="helper-copy">Mark a step complete only after it has actually been published, sent, posted, or reviewed.</p>
       ${completed ? `<div class="insight-stack"><strong class="insight-label">Already done</strong><ul>${completed}</ul></div>` : ""}
-      ${pending ? `<div class="insight-stack"><strong class="insight-label">Still ahead</strong><ul>${pending}</ul></div>` : ""}
+      ${pending ? `<div class="insight-stack"><strong class="insight-label">Still ahead in this launch cycle</strong><ul>${pending}</ul></div>` : ""}
     </div>
   `;
 }
