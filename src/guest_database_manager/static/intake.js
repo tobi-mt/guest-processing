@@ -55,7 +55,7 @@ function buildSocialHandlesValue() {
 
   const otherValue = typeof socialOtherField?.value === "string" ? socialOtherField.value.trim() : "";
   if (otherValue) {
-    entries.push(otherValue);
+    entries.push(`Other: ${otherValue}`);
   }
 
   return entries.join("\n");

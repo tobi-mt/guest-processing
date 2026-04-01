@@ -315,8 +315,10 @@ function parseSocialHandleEntries(rawValue) {
         };
       }
 
+      const inferredLabel = /^https?:\/\//i.test(line) || /\s/.test(line) ? "Other" : "Unspecified";
+
       return {
-        label: "Unspecified",
+        label: inferredLabel,
         value: line,
       };
     });
