@@ -2252,6 +2252,31 @@ def test_validate_intake_payload_allows_legitimate_profile_links():
     )
 
 
+def test_validate_intake_payload_allows_profile_links_plus_podcast_link_in_additional_info():
+    """A genuine applicant should be able to share socials and one podcast link in the final answer."""
+    validate_intake_payload(
+        {
+            "website": "https://example.com",
+            "social_handles": "\n".join(
+                [
+                    "Instagram: https://instagram.com/example",
+                    "LinkedIn: https://linkedin.com/in/example",
+                    "YouTube: https://youtube.com/@example",
+                    "X/Twitter: https://x.com/example",
+                    "Facebook: https://facebook.com/example",
+                    "TikTok: https://tiktok.com/@example",
+                ]
+            ),
+            "background": "I am a speaker and writer focused on healing, resilience, and the long work of emotional honesty.",
+            "profession": "Author",
+            "passionate_topics": "Healing",
+            "message": "Hope",
+            "experience": "https://podcast-one.example https://podcast-two.example",
+            "additional_info": "You can also hear my podcast here: https://podcast.example/show",
+        }
+    )
+
+
 def test_validate_intake_payload_rejects_excessive_editorial_link_stuffing():
     """Too many links in the narrative answers should still be treated as spammy."""
     with pytest.raises(WebInterfaceError):

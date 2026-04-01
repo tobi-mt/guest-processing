@@ -107,6 +107,7 @@ PROFILE_LINK_FIELDS = {
     "website",
     "social_handles",
     "experience",
+    "additional_info",
 }
 SPAM_KEYWORDS = {
     "seo",
@@ -244,7 +245,7 @@ def validate_intake_payload(payload: Dict[str, str]) -> None:
     )
     editorial_links = _link_count(editorial_link_text)
 
-    if total_links > 12 or editorial_links > 4:
+    if total_links > 16 or editorial_links > 5:
         raise WebInterfaceError("Too many links in submission.")
 
     for field in LONG_TEXT_FIELDS:

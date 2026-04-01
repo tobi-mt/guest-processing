@@ -76,6 +76,13 @@ function hasStructuredSocialValue() {
   return Boolean(String(socialOtherField?.value || "").trim());
 }
 
+function getSocialPresenceFocusTarget() {
+  const firstFilledSocialField =
+    socialPlatformFields.find((field) => String(field.value || "").trim()) ||
+    (String(socialOtherField?.value || "").trim() ? socialOtherField : null);
+  return firstFilledSocialField || websiteField || socialPlatformFields[0] || socialOtherField;
+}
+
 function supportsLocalStorage() {
   try {
     return typeof window.localStorage !== "undefined";
@@ -296,7 +303,7 @@ function validateCurrentStep() {
 
     if (!hasWebsite && !hasSocial) {
       setMessage("Please share at least a website or one social/public profile so we can verify and understand your public voice.", "error");
-      const focusTarget = websiteField || socialPlatformFields[0] || socialOtherField;
+      const focusTarget = getSocialPresenceFocusTarget();
       focusTarget?.classList.add("field-error");
       focusTarget?.focus({ preventScroll: true });
       focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -329,7 +336,7 @@ function validateEntireForm() {
         currentStep = index;
         syncStepUI();
         setMessage("Please share at least a website or one social/public profile so we can verify and understand your public voice.", "error");
-        const focusTarget = websiteField || socialPlatformFields[0] || socialOtherField;
+        const focusTarget = getSocialPresenceFocusTarget();
         focusTarget?.classList.add("field-error");
         focusTarget?.focus({ preventScroll: true });
         focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
