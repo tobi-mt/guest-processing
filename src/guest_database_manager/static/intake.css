@@ -218,6 +218,14 @@ body {
   overflow-wrap: anywhere;
 }
 
+.intake-panel .premium-badges {
+  margin-top: 14px;
+}
+
+.intake-panel .workflow-note {
+  margin: 14px 0 18px;
+}
+
 .progress-strip {
   margin: 18px 0 8px;
   display: grid;

@@ -948,7 +948,11 @@ function renderEpisodes(episodes, totalCount) {
     });
     formButton.addEventListener("click", () => {
       loadEpisodeIntoForm(episode);
-      setMessage(episodeMessage, `Loaded ${episode.episode_title || episode.guest_name || "episode"} into the main form.`, "success");
+      setMessage(
+        episodeMessage,
+        `Loaded ${episode.episode_title || episode.guest_name || "episode"} into the main form. You can finish the details here or send the thank-you email when ready.`,
+        "success",
+      );
     });
     if (activeEpisodeEditorId === episode.id) {
       editorNode.classList.remove("hidden");
@@ -1025,7 +1029,11 @@ function renderEpisodes(episodes, totalCount) {
             tone: "success",
           };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
-          setMessage(episodeMessage, `Thank-you email sent to ${episode.guest_name || episode.guest_email}.`, "success");
+          setMessage(
+            episodeMessage,
+            `Thank-you email sent to ${episode.guest_name || episode.guest_email}. Next, you can keep shaping the release plan here whenever the episode is ready.`,
+            "success",
+          );
         } catch (error) {
           activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
@@ -1106,7 +1114,11 @@ function renderEpisodes(episodes, totalCount) {
             tone: "success",
           };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
-          setMessage(episodeMessage, `Release email sent to ${episode.guest_name || episode.guest_email}.`, "success");
+          setMessage(
+            episodeMessage,
+            `Release email sent to ${episode.guest_name || episode.guest_email}. The published follow-up is complete for this episode.`,
+            "success",
+          );
         } catch (error) {
           activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);

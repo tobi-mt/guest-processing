@@ -271,6 +271,29 @@ p {
   overflow-wrap: anywhere;
 }
 
+.premium-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.premium-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(20, 90, 74, 0.08);
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.premium-badge.warm {
+  background: rgba(188, 129, 31, 0.12);
+  color: #8a5a00;
+}
+
 .main-grid {
   grid-template-columns: minmax(320px, 420px) 1fr;
   min-width: 0;
@@ -279,6 +302,33 @@ p {
 .panel {
   padding: 24px;
   min-width: 0;
+}
+
+.workflow-note {
+  margin: 16px 0 18px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(20, 90, 74, 0.07), rgba(255, 255, 255, 0.82));
+  border: 1px solid rgba(20, 90, 74, 0.12);
+}
+
+.workflow-note strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.workflow-note p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.workflow-steps {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .form-panel {
@@ -686,6 +736,7 @@ button:disabled {
 .message {
   min-height: 1.4rem;
   margin-top: 12px;
+  padding: 0;
 }
 
 .message.error {
@@ -694,6 +745,10 @@ button:disabled {
 
 .message.success {
   color: var(--accent);
+}
+
+.message.pending {
+  color: var(--muted);
 }
 
 .email-composer {

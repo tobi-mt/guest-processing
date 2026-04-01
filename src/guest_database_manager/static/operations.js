@@ -521,7 +521,11 @@ function renderInterviews(interviews, totalCount) {
 
     formButton.addEventListener("click", () => {
       loadInterviewIntoForm(interview);
-      setMessage(interviewMessage, `Loaded ${interview.guest_name || "interview"} into the main form.`, "success");
+      setMessage(
+        interviewMessage,
+        `Loaded ${interview.guest_name || "interview"} into the main form. Keep the details accurate here, then move it to planning after the recording.`,
+        "success",
+      );
     });
 
     moveToPlanningButton.addEventListener("click", async () => {
