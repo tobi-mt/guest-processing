@@ -13,6 +13,8 @@ const askSyncMessage = document.getElementById("ask-sync-message");
 const askSyncBreakdown = document.getElementById("ask-sync-breakdown");
 const askSyncAmbiguous = document.getElementById("ask-sync-ambiguous");
 const planningExportMessage = document.getElementById("planning-export-message");
+const planningWeeklySystem = document.getElementById("planning-weekly-system");
+const outreachChecklist = document.getElementById("episode-outreach-checklist");
 const episodeList = document.getElementById("episode-list");
 const recommendationList = document.getElementById("recommendation-list");
 const refreshButton = document.getElementById("planning-refresh-button");
@@ -54,6 +56,17 @@ let activePlanningTab = "release_planning";
 
 const RECOMMENDATION_PAGE_SIZE = 6;
 const EPISODE_PAGE_SIZE = 10;
+const OUTREACH_STEPS = [
+  ["monday_preparation", "Monday · Preparation and positioning", "Titles, thumbnails, clips, blog, and email"],
+  ["tuesday_launch", "Tuesday 17:00 · Podcast and YouTube launch", "Publish the full episode and anchor the cycle"],
+  ["tuesday_distribution", "Tuesday evening · Clip, email, and social push", "Use the first-night momentum window"],
+  ["wednesday_momentum", "Wednesday · Momentum and engagement", "Second clip, community replies, and carousel"],
+  ["thursday_blog", "Thursday 11:00 · Website blog post", "Publish the SEO-focused long-form version"],
+  ["thursday_amplification", "Thursday afternoon · Blog promotion", "Third clip plus blog amplification"],
+  ["friday_newsletter", "Friday 15:00 · Substack newsletter", "Personal and reflective newsletter touchpoint"],
+  ["friday_reflection", "Friday afternoon · Reflection posts", "Relationship-building social posts and replies"],
+  ["weekend_review", "Weekend · Analytics and planning", "Review performance and prepare the next cycle"],
+];
 
 const EXPORT_FIELD_CONFIG = {
   guests: [
@@ -98,6 +111,7 @@ const EXPORT_FIELD_CONFIG = {
     ["show_notes_url", "Show Notes URL"],
     ["release_files_url", "Files URL"],
     ["transcript_text", "Transcript"],
+    ["outreach_plan", "Outreach Plan"],
     ["source_file_name", "Source File"],
     ["recommendation_reason", "Recommendation Reason"],
   ],
@@ -380,6 +394,73 @@ function renderCopyAssist(copyAssist) {
   `;
 }
 
+function normalizeOutreachPlan(value) {
+  const emptyPlan = Object.fromEntries(OUTREACH_STEPS.map(([key]) => [key, false]));
+  if (!value) {
+    return emptyPlan;
+  }
+  let parsed = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch (_error) {
+      parsed = {};
+    }
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return emptyPlan;
+  }
+  return Object.fromEntries(
+    OUTREACH_STEPS.map(([key]) => [key, Boolean(parsed[key])]),
+  );
+}
+
+function collectOutreachPlanFromForm() {
+  const plan = {};
+  outreachChecklist.querySelectorAll("input[data-outreach-key]").forEach((input) => {
+    plan[input.dataset.outreachKey] = Boolean(input.checked);
+  });
+  return plan;
+}
+
+function renderOutreachChecklist(planValue = null) {
+  const plan = normalizeOutreachPlan(planValue);
+  outreachChecklist.innerHTML = OUTREACH_STEPS.map(([key, label, description]) => `
+    <label class="checklist-item">
+      <input type="checkbox" data-outreach-key="${key}" ${plan[key] ? "checked" : ""} />
+      <span>
+        <strong>${label}</strong>
+        <small>${description}</small>
+      </span>
+    </label>
+  `).join("");
+}
+
+function renderWeeklySystemPanel(system) {
+  if (!planningWeeklySystem || !system) {
+    return;
+  }
+  const steps = (system.steps || [])
+    .map((step) => `<li><strong>${step.day}${step.time_label ? ` · ${step.time_label}` : ""}</strong>: ${step.title}. ${step.description}</li>`)
+    .join("");
+  const principles = (system.principles || []).map((item) => `<li>${item}</li>`).join("");
+  const metrics = (system.metrics || []).map((item) => `<li>${item}</li>`).join("");
+  planningWeeklySystem.innerHTML = `
+    <div class="insight-stack">
+      <strong class="insight-label">Weekly timetable</strong>
+      <ul>${steps}</ul>
+    </div>
+    <div class="insight-stack">
+      <strong class="insight-label">Core principles</strong>
+      <ul>${principles}</ul>
+    </div>
+    <div class="insight-stack">
+      <strong class="insight-label">Key metrics</strong>
+      <ul>${metrics}</ul>
+    </div>
+  `;
+}
+
 function renderAskSyncBreakdown(result) {
   if (!result) {
     askSyncBreakdown.classList.add("hidden");
@@ -478,6 +559,23 @@ function renderEpisodeBadges(episode) {
   return badges.length ? `<div class="signal-list">${badges.join("")}</div>` : "";
 }
 
+function renderOutreachSummary(summary) {
+  if (!summary) {
+    return "";
+  }
+  const completed = (summary.completed_labels || []).map((item) => `<li>${item}</li>`).join("");
+  const pending = (summary.pending_labels || []).map((item) => `<li>${item}</li>`).join("");
+  return `
+    <div class="operations-preview">
+      <strong class="insight-label">Weekly launch cycle</strong>
+      <p><strong>${summary.progress_label}</strong></p>
+      <p>${summary.next_step || ""}</p>
+      ${completed ? `<div class="insight-stack"><strong class="insight-label">Already done</strong><ul>${completed}</ul></div>` : ""}
+      ${pending ? `<div class="insight-stack"><strong class="insight-label">Still ahead</strong><ul>${pending}</ul></div>` : ""}
+    </div>
+  `;
+}
+
 function splitRecommendationInsights(reason) {
   const text = String(reason || "").trim();
   if (!text) {
@@ -553,12 +651,14 @@ function resetEpisodeForm() {
   episodeForm.reset();
   episodeForm.elements.id.value = "";
   episodeForm.elements.interview_id.value = "";
+  episodeForm.elements.outreach_plan.value = JSON.stringify(normalizeOutreachPlan(null));
   episodeForm.elements.release_status.value = "unplanned";
   episodeForm.elements.production_status.value = "idea";
   episodeForm.elements.promotion_status.value = "unknown";
   episodeForm.elements.priority_score.value = "0";
   episodeSubmitButton.textContent = "Save Episode";
   episodeResetButton.hidden = true;
+  renderOutreachChecklist(null);
 }
 
 function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } = {}) {
@@ -582,10 +682,12 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeForm.elements.show_notes_url.value = episode.show_notes_url || "";
   episodeForm.elements.release_files_url.value = episode.release_files_url || "";
   episodeForm.elements.transcript_text.value = episode.transcript_text || "";
+  episodeForm.elements.outreach_plan.value = JSON.stringify(normalizeOutreachPlan(episode.outreach_plan));
   episodeForm.elements.recommendation_reason.value = episode.recommendation_reason || "";
   episodeForm.elements.notes.value = episode.notes || "";
   episodeSubmitButton.textContent = "Update Episode";
   episodeResetButton.hidden = false;
+  renderOutreachChecklist(episode.outreach_plan);
   episodeForm.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -929,6 +1031,7 @@ function renderEpisodes(episodes, totalCount) {
         <span>Transcript: ${transcriptStatusLabel(episode)}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
+      ${renderOutreachSummary(episode.outreach_summary)}
       ${renderPromoReadiness(episode.promotion_readiness)}
       ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
@@ -1254,6 +1357,7 @@ function renderRecommendations(recommendations, totalCount) {
       ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${episode.archive_overlap.message}</p></div>` : ""}
       ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}
+      ${renderOutreachSummary(episode.outreach_summary)}
       ${renderPromoReadiness(episode.promotion_readiness)}
       ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
@@ -1336,6 +1440,7 @@ function renderPlanning() {
   updatePresetButtons(episodePresetButtons, activeEpisodePreset, "episodePreset");
   populatePlanningFilters(categories, episodes);
   renderCategoryOptions(categories);
+  renderWeeklySystemPanel(latestPlanningPayload.weekly_system);
   renderRecommendations(filterRecommendations(recommendations), recommendations.length);
   renderEpisodes(filterEpisodes(episodes), episodes.length);
 }
@@ -1377,6 +1482,7 @@ episodeForm.addEventListener("submit", async (event) => {
   const payload = Object.fromEntries(new FormData(episodeForm).entries());
   const episodeId = payload.id;
   const submitButton = episodeSubmitButton;
+  payload.outreach_plan = JSON.stringify(collectOutreachPlanFromForm());
   delete payload.id;
   submitButton.disabled = true;
   submitButton.textContent = episodeId ? "Saving..." : "Creating...";
@@ -1596,6 +1702,8 @@ planningTabButtons.forEach((button) => {
 renderExportFields();
 resetEpisodeForm();
 applyUrlState();
+renderOutreachChecklist(null);
+episodeForm.elements.outreach_plan.value = JSON.stringify(normalizeOutreachPlan(null));
 loadPlanning().catch((error) => {
   setMessage(episodeMessage, error.message, "error");
 });

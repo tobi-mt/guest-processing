@@ -109,6 +109,10 @@ class SchemaManager:
             riverside_status TEXT,
             source_file_name TEXT,
             source_type TEXT,
+            show_notes_url TEXT,
+            release_files_url TEXT,
+            transcript_text TEXT,
+            outreach_plan TEXT,
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -163,6 +167,7 @@ class SchemaManager:
         ("show_notes_url", "TEXT"),
         ("release_files_url", "TEXT"),
         ("transcript_text", "TEXT"),
+        ("outreach_plan", "TEXT"),
     ]
     
     @staticmethod

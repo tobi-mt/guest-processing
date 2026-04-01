@@ -331,6 +331,10 @@ p {
   line-height: 1.6;
 }
 
+.compact-heading {
+  margin-bottom: 12px;
+}
+
 .form-panel {
   position: sticky;
   top: 20px;
@@ -580,11 +584,19 @@ button:disabled {
   margin-top: 12px;
 }
 
+.guest-promotion-summary {
+  margin-top: 12px;
+}
+
 .guest-ai-card {
   padding: 14px 16px;
   border-radius: 18px;
   border: 1px solid rgba(91, 70, 47, 0.12);
   background: linear-gradient(180deg, rgba(255, 252, 247, 0.98), rgba(244, 237, 225, 0.95));
+}
+
+.guest-promotion-card {
+  background: linear-gradient(180deg, rgba(248, 252, 249, 0.98), rgba(239, 246, 242, 0.95));
 }
 
 .guest-ai-head {

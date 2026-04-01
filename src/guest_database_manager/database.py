@@ -1,6 +1,6 @@
 import logging
 import sqlite3
-from json import dumps
+from json import dumps, loads
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -66,6 +66,24 @@ def _is_blank_import_value(value: Any) -> bool:
     except Exception:
         pass
     return str(value).strip() == ""
+
+
+def _normalize_outreach_plan_storage(value: Any) -> str:
+    """Store outreach plan payloads consistently as JSON strings."""
+    if isinstance(value, dict):
+        return dumps(value, ensure_ascii=False, sort_keys=True)
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    try:
+        parsed = loads(text)
+    except Exception:
+        return text
+    if isinstance(parsed, dict):
+        return dumps(parsed, ensure_ascii=False, sort_keys=True)
+    return text
 
 
 def _clean_import_row_dict(row: Any) -> Dict[str, Any]:
@@ -420,6 +438,7 @@ class GuestDatabase:
                 episode_data.get("show_notes_url"),
                 episode_data.get("release_files_url"),
                 episode_data.get("transcript_text"),
+                _normalize_outreach_plan_storage(episode_data.get("outreach_plan")),
                 episode_data.get("notes"),
             )
 
@@ -431,7 +450,7 @@ class GuestDatabase:
                         topic = ?, category = ?, interview_date = ?, recording_date = ?, release_date = ?,
                         release_status = ?, production_status = ?, promotion_status = ?, priority_score = ?, recommendation_reason = ?,
                         legacy_episode_number = ?, riverside_status = ?, source_file_name = ?, source_type = ?,
-                        show_notes_url = ?, release_files_url = ?, transcript_text = ?,
+                        show_notes_url = ?, release_files_url = ?, transcript_text = ?, outreach_plan = ?,
                         notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
@@ -446,8 +465,8 @@ class GuestDatabase:
                     guest_id, interview_id, guest_name, guest_email, website, episode_title, topic, category,
                     interview_date, recording_date, release_date, release_status, production_status,
                     promotion_status, priority_score, recommendation_reason, legacy_episode_number, riverside_status,
-                    source_file_name, source_type, show_notes_url, release_files_url, transcript_text, notes, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    source_file_name, source_type, show_notes_url, release_files_url, transcript_text, outreach_plan, notes, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 fields,
             )
@@ -655,6 +674,7 @@ class GuestDatabase:
         canonical["show_notes_url"] = self._best_episode_text_value(rows, "show_notes_url")
         canonical["release_files_url"] = self._best_episode_text_value(rows, "release_files_url")
         canonical["transcript_text"] = self._best_episode_long_text_value(rows, "transcript_text")
+        canonical["outreach_plan"] = self._best_episode_long_text_value(rows, "outreach_plan")
         canonical["notes"] = self._best_episode_long_text_value(rows, "notes")
         canonical["recommendation_reason"] = self._best_episode_long_text_value(rows, "recommendation_reason")
         canonical["priority_score"] = max(float(row.get("priority_score") or 0) for row in rows)

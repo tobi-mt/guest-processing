@@ -177,6 +177,44 @@
   margin-top: 3px;
 }
 
+.checklist-panel {
+  padding: 16px;
+  border: 1px solid rgba(91, 70, 47, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.outreach-checklist {
+  display: grid;
+  gap: 10px;
+}
+
+.checklist-item {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(91, 70, 47, 0.08);
+}
+
+.checklist-item input {
+  margin-top: 3px;
+}
+
+.checklist-item strong,
+.checklist-item small {
+  display: block;
+}
+
+.checklist-item small {
+  margin-top: 4px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .operations-card h3,
 .operations-card p {
   overflow-wrap: anywhere;

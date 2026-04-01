@@ -374,6 +374,32 @@ function renderSocialHandlesMarkup(rawValue) {
   `;
 }
 
+function renderPromotionProfile(guest) {
+  const profile = guest.promotion_profile;
+  if (!profile) {
+    return "";
+  }
+  const strengths = (profile.strengths || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const gaps = (profile.gaps || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  return `
+    <div class="guest-ai-card guest-promotion-card">
+      <div class="guest-ai-head">
+        <div>
+          <div class="guest-ai-title-row">
+            <strong>Promotion Profile</strong>
+            <span class="guest-ai-badge ${profile.score >= 80 ? "good" : profile.score >= 55 ? "" : "warning"}">${escapeHtml(profile.label)}</span>
+          </div>
+          <p class="guest-ai-copy">Score: ${profile.score}/100</p>
+        </div>
+      </div>
+      <div class="guest-ai-grid">
+        ${strengths ? `<div class="guest-ai-block"><strong>Ready signals</strong><ul>${strengths}</ul></div>` : ""}
+        ${gaps ? `<div class="guest-ai-block caution"><strong>Outreach gaps</strong><ul>${gaps}</ul></div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
 async function copyGuestIntake(guest) {
   const clipboardText = buildIntakeClipboardText(guest);
   if (!clipboardText) {
@@ -545,12 +571,14 @@ function renderGuests(payload) {
     const editor = node.querySelector(".inline-editor");
     const actionFeedbackNode = node.querySelector(".card-action-feedback");
     const aiSummaryNode = node.querySelector(".guest-ai-summary");
+    const promotionSummaryNode = node.querySelector(".guest-promotion-summary");
 
     node.querySelector(".guest-name").textContent = guest.full_name || "Unnamed Guest";
     node.querySelector(".guest-meta").textContent = guest.email || "No email provided";
     node.querySelector(".guest-summary").textContent =
       guest.background || guest.additional_info || "No background added yet.";
     aiSummaryNode.innerHTML = renderGuestAiSummary(guest);
+    promotionSummaryNode.innerHTML = renderPromotionProfile(guest);
 
     statusPill.textContent = guestStatusLabel(guest);
     statusPill.classList.add(guestStatusLabel(guest));

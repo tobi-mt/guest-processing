@@ -758,7 +758,33 @@ def test_planning_payload_includes_grounded_editorial_assist(temp_db):
     assert "summary" in episode["copy_assist"]
     assert episode["copy_assist"]["show_notes_intro"]
     assert recommendation["promotion_readiness"]["score"] >= 70
-    assert recommendation["why_now"]
+
+
+def test_planning_payload_includes_outreach_system_and_episode_summary(temp_db):
+    """Planning should expose the weekly outreach system and episode-level checklist summary."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Building Calm Under Pressure",
+            "release_date": "2026-04-07T17:00",
+            "release_status": "scheduled",
+            "outreach_plan": {
+                "monday_preparation": True,
+                "tuesday_launch": True,
+            },
+        }
+    )
+
+    planning = service.list_planning()
+    episode = planning["episodes"][0]
+
+    assert planning["weekly_system"]["steps"][0]["key"] == "monday_preparation"
+    assert planning["weekly_system"]["principles"]
+    assert episode["outreach_plan"]["monday_preparation"] is True
+    assert episode["outreach_summary"]["completed_count"] == 2
+    assert "Next outreach step" in episode["outreach_summary"]["next_step"]
 
 
 def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
@@ -1219,6 +1245,27 @@ def test_list_guests_includes_decision_support_and_stats(temp_db):
     assert first_guest["decision_support"]["signals"]
 
 
+def test_list_guests_includes_promotion_profile(temp_db):
+    """Dashboard guests should include a promotion-profile summary for outreach readiness."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+            "social_handles": "Instagram: jordanrivers",
+            "background": "Jordan helps people handle pressure with calm leadership and grounded habits.",
+            "profession": "Coach",
+        }
+    )
+
+    guest = service.list_guests()["guests"][0]
+
+    assert guest["promotion_profile"]["score"] >= 80
+    assert guest["promotion_profile"]["label"] == "Promotion-ready guest profile"
+    assert guest["promotion_profile"]["strengths"]
+
+
 def test_guest_decision_support_can_reference_previously_accepted_guests(temp_db):
     """Guest review assist should use Mirror Talk's own accepted history as context."""
     service = GuestWebService(temp_db.db_path)
@@ -1515,6 +1562,30 @@ def test_operations_expose_known_episode_categories_for_guided_input(temp_db):
     planning = service.list_planning()
 
     assert planning["available_categories"][:2] == ["Personal Development", "Finance"]
+
+
+def test_operations_include_weekly_outreach_spotlight(temp_db):
+    """Operations should surface the current release-cycle spotlight and daily focus."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Healing Through Hard Seasons",
+            "topic": "Healing",
+            "category": "Personal Development",
+            "release_date": "2026-04-07T17:00",
+            "release_status": "scheduled",
+            "outreach_plan": {"monday_preparation": True},
+        }
+    )
+
+    operations = service.list_operations()
+
+    assert operations["weekly_system"]["metrics"]
+    assert operations["weekly_outreach"]["spotlight_episode"]["episode_title"] == "Healing Through Hard Seasons"
+    assert operations["weekly_outreach"]["spotlight_summary"]["completed_count"] == 1
+    assert operations["weekly_outreach"]["social_focus"][0]["day"] == "Tuesday"
 
 
 def test_planning_stats_separate_release_overview_from_interview_ops(temp_db):

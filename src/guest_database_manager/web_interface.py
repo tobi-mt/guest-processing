@@ -12,7 +12,7 @@ from csv import DictWriter
 from base64 import b64decode
 from email.parser import BytesParser
 from email.policy import default
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -124,6 +124,85 @@ HOST_NAME_HINTS = (
     "mirror talk",
     "podcast.mirrortalk",
 )
+OUTREACH_STEP_DEFINITIONS = [
+    {
+        "key": "monday_preparation",
+        "day": "Monday",
+        "time_label": "Anytime",
+        "title": "Preparation and positioning",
+        "description": "Finalize titles, thumbnails, clips, blog, and email.",
+    },
+    {
+        "key": "tuesday_launch",
+        "day": "Tuesday",
+        "time_label": "17:00",
+        "title": "Podcast and YouTube launch",
+        "description": "Launch the full episode where the weekly cycle begins.",
+    },
+    {
+        "key": "tuesday_distribution",
+        "day": "Tuesday",
+        "time_label": "18:30-21:00",
+        "title": "First clip, email, and social push",
+        "description": "Use the first-night momentum window while attention is highest.",
+    },
+    {
+        "key": "wednesday_momentum",
+        "day": "Wednesday",
+        "time_label": "12:00-15:00",
+        "title": "Momentum and engagement",
+        "description": "Publish the second clip, engage comments, and post a carousel.",
+    },
+    {
+        "key": "thursday_blog",
+        "day": "Thursday",
+        "time_label": "11:00",
+        "title": "Website blog post",
+        "description": "Publish the SEO-focused long-form version on the website.",
+    },
+    {
+        "key": "thursday_amplification",
+        "day": "Thursday",
+        "time_label": "14:00-17:00",
+        "title": "Clip #3 and blog promotion",
+        "description": "Use blog content to widen discovery and reinforce the episode.",
+    },
+    {
+        "key": "friday_newsletter",
+        "day": "Friday",
+        "time_label": "15:00",
+        "title": "Substack newsletter",
+        "description": "Build the reflective and personal relationship layer for the episode.",
+    },
+    {
+        "key": "friday_reflection",
+        "day": "Friday",
+        "time_label": "15:00-18:00",
+        "title": "Reflection posts and engagement",
+        "description": "Keep the conversation warm across social platforms before the weekend.",
+    },
+    {
+        "key": "weekend_review",
+        "day": "Weekend",
+        "time_label": "Flexible",
+        "title": "Analytics review and planning",
+        "description": "Review performance, note what worked, and plan the next launch cycle.",
+    },
+]
+OUTREACH_CORE_PRINCIPLES = [
+    "One episode equals one coordinated launch cycle.",
+    "Focus on the first 48 hours for maximum momentum.",
+    "Repurpose every episode into multiple assets.",
+    "Build audience relationship, not just content output.",
+    "Monetize consistently, not occasionally.",
+]
+OUTREACH_METRICS = [
+    "Downloads per episode (first 7 days)",
+    "YouTube views (first 48 hours)",
+    "Short-form performance",
+    "Email subscriber growth",
+    "Monthly revenue",
+]
 
 EXPORTABLE_FIELDS: Dict[str, list[str]] = {
     "guests": [
@@ -168,6 +247,7 @@ EXPORTABLE_FIELDS: Dict[str, list[str]] = {
         "show_notes_url",
         "release_files_url",
         "transcript_text",
+        "outreach_plan",
         "source_file_name",
         "recommendation_reason",
     ],
@@ -286,6 +366,33 @@ def serialize_guest(guest: Dict[str, Any]) -> Dict[str, Any]:
     return serialized
 
 
+def _empty_outreach_plan() -> Dict[str, bool]:
+    """Return the default outreach checklist state."""
+    return {step["key"]: False for step in OUTREACH_STEP_DEFINITIONS}
+
+
+def _normalize_outreach_plan(value: Any) -> Dict[str, bool]:
+    """Parse stored outreach JSON into a stable checklist payload."""
+    normalized = _empty_outreach_plan()
+    if isinstance(value, dict):
+        source = value
+    else:
+        text = _normalize_text(value)
+        if not text:
+            return normalized
+        try:
+            source = json.loads(text)
+        except (TypeError, ValueError):
+            return normalized
+
+    if not isinstance(source, dict):
+        return normalized
+
+    for step in OUTREACH_STEP_DEFINITIONS:
+        normalized[step["key"]] = bool(source.get(step["key"]))
+    return normalized
+
+
 @dataclass
 class GuestWebService:
     """Service layer for the direct web interface."""
@@ -298,6 +405,8 @@ class GuestWebService:
     def list_guests(self) -> Dict[str, Any]:
         """Return all guests for the frontend."""
         guests = [serialize_guest(guest) for guest in enrich_guests_with_recommendations(self.database.get_all_guests())]
+        for guest in guests:
+            guest["promotion_profile"] = self._build_guest_promotion_profile(guest)
         return {
             "guests": guests,
             "stats": self.database.get_stats(),
@@ -308,6 +417,7 @@ class GuestWebService:
 
     def list_operations(self) -> Dict[str, Any]:
         """Return the current interview and episode operations data."""
+        episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         interviews = [
             self._serialize_interview_reminder(interview)
             for interview in self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
@@ -318,6 +428,8 @@ class GuestWebService:
             "interviews": interviews,
             "reminder_candidates": reminder_candidates,
             "calendar_sync_enabled": self._build_google_calendar_client() is not None,
+            "weekly_outreach": self._build_weekly_outreach_focus(episodes),
+            "weekly_system": self._build_weekly_system_payload(),
         }
 
     def list_planning(self) -> Dict[str, Any]:
@@ -335,6 +447,7 @@ class GuestWebService:
             "recommendations": build_release_recommendations(enriched_episodes, reference=datetime.now()),
             "available_categories": self.database.list_episode_categories(),
             "ask_sync_enabled": self._build_ask_mirror_talk_client() is not None,
+            "weekly_system": self._build_weekly_system_payload(),
         }
 
     def export_guests_csv(self) -> str:
@@ -452,6 +565,124 @@ class GuestWebService:
         }
 
     @staticmethod
+    def _build_weekly_system_payload() -> Dict[str, Any]:
+        """Return the reusable Mirror Talk weekly outreach system."""
+        return {
+            "steps": OUTREACH_STEP_DEFINITIONS,
+            "principles": OUTREACH_CORE_PRINCIPLES,
+            "metrics": OUTREACH_METRICS,
+        }
+
+    @staticmethod
+    def _build_guest_promotion_profile(guest: Dict[str, Any]) -> Dict[str, Any]:
+        """Estimate how promotion-ready a guest profile is for outreach."""
+        strengths: list[str] = []
+        gaps: list[str] = []
+        score = 0
+
+        if _normalize_text(guest.get("website")):
+            score += 30
+            strengths.append("Website available for blog, show notes, and guest links.")
+        else:
+            gaps.append("Website missing, so blog and profile linking will take more manual work.")
+
+        if _normalize_text(guest.get("social_media_handles")):
+            score += 30
+            strengths.append("Social profile details are available for outreach tagging and promotion.")
+        else:
+            gaps.append("Social profile details are missing, which limits fast post-release promotion.")
+
+        if _normalize_text(guest.get("background")):
+            score += 20
+            strengths.append("Background is filled in, which helps with show notes and release copy.")
+        else:
+            gaps.append("Background is thin, so promo copy may need more manual shaping.")
+
+        if _normalize_text(guest.get("podcast_experience")) or _normalize_text(guest.get("additional_info")):
+            score += 10
+            strengths.append("There is enough supporting context to brief the guest and shape promotion.")
+
+        if _normalize_text(guest.get("email")):
+            score += 10
+            strengths.append("Email is available for thank-you and release follow-up.")
+        else:
+            gaps.append("Email is missing, which blocks the key follow-up emails.")
+
+        if score >= 80:
+            label = "Promotion-ready guest profile"
+        elif score >= 55:
+            label = "Good foundation"
+        else:
+            label = "Needs profile enrichment"
+
+        return {
+            "score": score,
+            "label": label,
+            "strengths": strengths[:3],
+            "gaps": gaps[:3],
+        }
+
+    def _build_episode_outreach_summary(self, episode: Dict[str, Any]) -> Dict[str, Any]:
+        """Summarize the outreach checklist and next activation step for an episode."""
+        plan = _normalize_outreach_plan(episode.get("outreach_plan"))
+        completed_steps = [step for step in OUTREACH_STEP_DEFINITIONS if plan.get(step["key"])]
+        pending_steps = [step for step in OUTREACH_STEP_DEFINITIONS if not plan.get(step["key"])]
+        completed_count = len(completed_steps)
+        total_count = len(OUTREACH_STEP_DEFINITIONS)
+        release_status = _normalize_text(episode.get("release_status")).lower()
+
+        if release_status == "released" and not pending_steps:
+            next_step = "Launch cycle complete. Use the weekend review to fold insights into the next episode."
+        elif pending_steps:
+            first_pending = pending_steps[0]
+            next_step = f"Next outreach step: {first_pending['day']} {first_pending['title'].lower()}."
+        else:
+            next_step = "No outreach tasks have been started yet."
+
+        return {
+            "plan": plan,
+            "completed_count": completed_count,
+            "total_count": total_count,
+            "progress_label": f"{completed_count}/{total_count} outreach steps complete",
+            "next_step": next_step,
+            "completed_labels": [step["title"] for step in completed_steps[:3]],
+            "pending_labels": [step["title"] for step in pending_steps[:3]],
+        }
+
+    def _build_weekly_outreach_focus(self, episodes: list[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build a weekly outreach spotlight for operations."""
+        reference = datetime.now()
+
+        def episode_rank(item: Dict[str, Any]) -> tuple[int, float]:
+            release_date = self._parse_datetime_static(item.get("release_date"))
+            if release_date:
+                delta_days = abs((release_date - reference).total_seconds())
+                return (0, delta_days)
+            interview_date = self._parse_datetime_static(item.get("interview_date"))
+            if interview_date:
+                delta_days = abs((interview_date - reference).total_seconds())
+                return (1, delta_days)
+            return (2, float(item.get("id") or 0) * -1)
+
+        eligible = [
+            item
+            for item in episodes
+            if _normalize_text(item.get("release_status")).lower() in {"scheduled", "released"}
+        ]
+        spotlight = min(eligible, key=episode_rank) if eligible else None
+
+        return {
+            "social_focus": [
+                {"day": "Tuesday", "theme": "Launch and attention spike"},
+                {"day": "Wednesday", "theme": "Momentum and engagement"},
+                {"day": "Thursday", "theme": "Discovery and SEO amplification"},
+                {"day": "Friday", "theme": "Connection and relationship building"},
+            ],
+            "spotlight_episode": spotlight,
+            "spotlight_summary": self._build_episode_outreach_summary(spotlight) if spotlight else None,
+        }
+
+    @staticmethod
     def _parse_datetime_static(value: Any) -> Optional[datetime]:
         """Parse simple date/datetime strings used in planning records."""
         text = _normalize_text(value)
@@ -477,6 +708,8 @@ class GuestWebService:
         normalized["release_status"] = normalized_status
         if normalized_status == "scheduled" and _normalize_text(normalized.get("production_status")).lower() == "released":
             normalized["production_status"] = "ready"
+        normalized["outreach_plan"] = _normalize_outreach_plan(normalized.get("outreach_plan"))
+        normalized["outreach_summary"] = self._build_episode_outreach_summary(normalized)
         return normalized
 
     @staticmethod
@@ -897,6 +1130,7 @@ class GuestWebService:
             "show_notes_url": _normalize_text(payload.get("show_notes_url")),
             "release_files_url": _normalize_text(payload.get("release_files_url")),
             "transcript_text": _normalize_text(payload.get("transcript_text")),
+            "outreach_plan": _normalize_outreach_plan(payload.get("outreach_plan")),
             "notes": _normalize_text(payload.get("notes")),
         }
 
@@ -965,6 +1199,7 @@ class GuestWebService:
             "show_notes_url": _normalize_text((linked_episode or {}).get("show_notes_url")),
             "release_files_url": _normalize_text((linked_episode or {}).get("release_files_url")),
             "transcript_text": _normalize_text((linked_episode or {}).get("transcript_text")),
+            "outreach_plan": _normalize_outreach_plan((linked_episode or {}).get("outreach_plan")),
             "notes": _normalize_text((linked_episode or {}).get("notes")) or _normalize_text(interview.get("notes")),
         }
 

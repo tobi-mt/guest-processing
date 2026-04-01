@@ -18,6 +18,7 @@ const interviewLoadMoreButton = document.getElementById("interview-load-more");
 const interviewPresetButtons = Array.from(document.querySelectorAll("[data-interview-preset]"));
 const refreshButton = document.getElementById("operations-refresh-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
+const operationsWeeklyOutreach = document.getElementById("operations-weekly-outreach");
 const operationsTabButtons = Array.from(document.querySelectorAll("[data-operations-tab]"));
 const operationsTabPanels = Array.from(document.querySelectorAll("[data-operations-panel]"));
 
@@ -181,6 +182,38 @@ function actionFeedbackMarkup(feedback) {
     return "";
   }
   return `<p class="composer-feedback ${feedback.tone || ""}">${feedback.text}</p>`;
+}
+
+function renderWeeklyOutreachPanel() {
+  if (!operationsWeeklyOutreach) {
+    return;
+  }
+  const weeklyOutreach = latestOperationsPayload.weekly_outreach || {};
+  const spotlight = weeklyOutreach.spotlight_episode;
+  const summary = weeklyOutreach.spotlight_summary;
+  const socialFocus = (weeklyOutreach.social_focus || [])
+    .map((item) => `<li><strong>${item.day}</strong>: ${item.theme}</li>`)
+    .join("");
+
+  operationsWeeklyOutreach.innerHTML = `
+    ${spotlight ? `
+      <div class="insight-stack">
+        <strong class="insight-label">Current release spotlight</strong>
+        <p><strong>${spotlight.episode_title || spotlight.topic || "Upcoming episode"}</strong> · ${spotlight.guest_name || "Guest not set"}</p>
+        <p>Release: ${formatDateTime(spotlight.release_date)}</p>
+        ${summary ? `<p><strong>${summary.progress_label}</strong><br />${summary.next_step || ""}</p>` : ""}
+      </div>
+    ` : `
+      <div class="insight-stack">
+        <strong class="insight-label">Current release spotlight</strong>
+        <p>No scheduled or newly released episode is active right now, so this week is best used for preparation, guest confirmations, and queue cleanup.</p>
+      </div>
+    `}
+    <div class="insight-stack">
+      <strong class="insight-label">Daily social focus</strong>
+      <ul>${socialFocus}</ul>
+    </div>
+  `;
 }
 
 function populateInterviewYearOptions(interviews) {
@@ -875,6 +908,7 @@ function renderOperations() {
   updatePresetButtons(reminderPresetButtons, activeReminderPreset, "reminderPreset");
   updatePresetButtons(interviewPresetButtons, activeInterviewPreset, "interviewPreset");
   populateInterviewYearOptions(interviews);
+  renderWeeklyOutreachPanel();
   renderReminderCandidates(filterReminderCandidates(reminders), reminders.length);
   renderInterviews(filterAndSortInterviews(interviews), interviews.length);
 }
