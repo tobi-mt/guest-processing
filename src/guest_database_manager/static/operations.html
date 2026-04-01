@@ -54,6 +54,15 @@
         </div>
       </header>
 
+      <div class="workspace-tabs" role="tablist" aria-label="Operations modes">
+        <button type="button" class="workspace-tab active" data-operations-tab="upcoming_interviews" role="tab" aria-selected="true">
+          Upcoming Interviews
+        </button>
+        <button type="button" class="workspace-tab" data-operations-tab="weekly_confirmations" role="tab" aria-selected="false">
+          Weekly Confirmations
+        </button>
+      </div>
+
       <main class="main-grid operations-grid">
         <section class="panel operations-form-panel">
           <div class="operations-section">
@@ -136,6 +145,7 @@
         </section>
 
         <section class="panel list-panel">
+          <div class="workspace-panel" data-operations-panel="weekly_confirmations">
           <div class="section-heading section-heading-inline">
             <div>
               <p class="eyebrow">Weekly Confirmations</p>
@@ -163,7 +173,9 @@
           <div class="list-footer">
             <button id="reminder-load-more" class="secondary-button hidden" type="button">Load More Reminders</button>
           </div>
+          </div>
 
+          <div class="workspace-panel active" data-operations-panel="upcoming_interviews">
           <div class="section-heading section-heading-inline">
             <div>
               <p class="eyebrow">Upcoming Interviews</p>
@@ -216,6 +228,7 @@
           <div id="interview-list" class="guest-list"></div>
           <div class="list-footer">
             <button id="interview-load-more" class="secondary-button hidden" type="button">Load More Interviews</button>
+          </div>
           </div>
         </section>
       </main>

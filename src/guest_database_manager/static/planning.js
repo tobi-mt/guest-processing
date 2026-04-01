@@ -32,6 +32,8 @@ const episodeSort = document.getElementById("episode-sort");
 const episodeResultsMeta = document.getElementById("episode-results-meta");
 const episodeLoadMoreButton = document.getElementById("episode-load-more");
 const episodePresetButtons = Array.from(document.querySelectorAll("[data-episode-preset]"));
+const planningTabButtons = Array.from(document.querySelectorAll("[data-planning-tab]"));
+const planningTabPanels = Array.from(document.querySelectorAll("[data-planning-panel]"));
 
 let latestPlanningPayload = {
   stats: {},
@@ -48,6 +50,7 @@ let visibleRecommendationCount = 6;
 let visibleEpisodeCount = 10;
 let pendingEpisodeIdFromUrl = null;
 let pendingPlanningSuccessMessage = "";
+let activePlanningTab = "release_planning";
 
 const RECOMMENDATION_PAGE_SIZE = 6;
 const EPISODE_PAGE_SIZE = 10;
@@ -124,6 +127,18 @@ const stats = {
 
 function buildScopedLink(path, value) {
   return `${path}?q=${encodeURIComponent(value || "")}`;
+}
+
+function setPlanningTab(tabName) {
+  activePlanningTab = tabName;
+  planningTabButtons.forEach((button) => {
+    const isActive = button.dataset.planningTab === tabName;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  planningTabPanels.forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.planningPanel === tabName);
+  });
 }
 
 async function fetchJSON(url, options = {}) {
@@ -1303,6 +1318,7 @@ function applyEpisodeFocusFromUrl() {
   if (!episode) {
     return;
   }
+  setPlanningTab("release_planning");
   loadEpisodeIntoForm(episode);
   if (pendingPlanningSuccessMessage) {
     setMessage(episodeMessage, pendingPlanningSuccessMessage, "success");
@@ -1515,6 +1531,7 @@ function applyUrlState() {
   const preset = params.get("preset");
   const episodeId = params.get("episode_id");
   const source = params.get("source");
+  const tab = params.get("tab");
 
   if (query) {
     episodeSearchInput.value = query;
@@ -1526,12 +1543,23 @@ function applyUrlState() {
   if (episodeId) {
     pendingEpisodeIdFromUrl = episodeId;
     activeEpisodePreset = "all";
+    activePlanningTab = "release_planning";
     pendingPlanningSuccessMessage =
       source === "operations"
         ? "Interview moved into planning. You can finish the episode details here and send the thank-you email when ready."
         : "";
   }
+  if (tab && planningTabButtons.some((button) => button.dataset.planningTab === tab)) {
+    activePlanningTab = tab;
+  }
+  setPlanningTab(activePlanningTab);
 }
+
+planningTabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setPlanningTab(button.dataset.planningTab || "release_planning");
+  });
+});
 
 renderExportFields();
 resetEpisodeForm();

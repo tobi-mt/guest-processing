@@ -18,6 +18,8 @@ const interviewLoadMoreButton = document.getElementById("interview-load-more");
 const interviewPresetButtons = Array.from(document.querySelectorAll("[data-interview-preset]"));
 const refreshButton = document.getElementById("operations-refresh-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
+const operationsTabButtons = Array.from(document.querySelectorAll("[data-operations-tab]"));
+const operationsTabPanels = Array.from(document.querySelectorAll("[data-operations-panel]"));
 
 let latestOperationsPayload = { interviews: [], reminder_candidates: [], stats: {} };
 let activeReminderPreset = "all";
@@ -27,6 +29,7 @@ let activeInterviewFeedback = { id: null, text: "", tone: "" };
 let activeInterviewActionFeedback = { id: null, text: "", tone: "" };
 let visibleReminderCount = 8;
 let visibleInterviewCount = 10;
+let activeOperationsTab = "upcoming_interviews";
 
 const REMINDER_PAGE_SIZE = 8;
 const INTERVIEW_PAGE_SIZE = 10;
@@ -40,6 +43,18 @@ const stats = {
 
 function buildScopedLink(path, value) {
   return `${path}?q=${encodeURIComponent(value || "")}`;
+}
+
+function setOperationsTab(tabName) {
+  activeOperationsTab = tabName;
+  operationsTabButtons.forEach((button) => {
+    const isActive = button.dataset.operationsTab === tabName;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  operationsTabPanels.forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.operationsPanel === tabName);
+  });
 }
 
 async function fetchJSON(url, options = {}) {
@@ -993,6 +1008,7 @@ function applyUrlState() {
   const params = new URLSearchParams(window.location.search);
   const query = params.get("q");
   const preset = params.get("preset");
+  const tab = params.get("tab");
 
   if (query) {
     interviewSearchInput.value = query;
@@ -1001,7 +1017,17 @@ function applyUrlState() {
   if (preset && interviewPresetButtons.some((button) => button.dataset.interviewPreset === preset)) {
     activeInterviewPreset = preset;
   }
+  if (tab && operationsTabButtons.some((button) => button.dataset.operationsTab === tab)) {
+    activeOperationsTab = tab;
+  }
+  setOperationsTab(activeOperationsTab);
 }
+
+operationsTabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setOperationsTab(button.dataset.operationsTab || "upcoming_interviews");
+  });
+});
 
 resetInterviewForm();
 applyUrlState();

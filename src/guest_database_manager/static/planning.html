@@ -61,8 +61,18 @@
         </div>
       </header>
 
+      <div class="workspace-tabs" role="tablist" aria-label="Planning modes">
+        <button type="button" class="workspace-tab active" data-planning-tab="release_planning" role="tab" aria-selected="true">
+          Release Planning
+        </button>
+        <button type="button" class="workspace-tab" data-planning-tab="scheduling_intelligence" role="tab" aria-selected="false">
+          Scheduling Intelligence
+        </button>
+      </div>
+
       <main class="main-grid operations-grid">
         <section class="panel operations-form-panel">
+          <div class="workspace-panel active" data-planning-panel="release_planning">
           <div class="operations-section">
             <div class="section-heading">
               <p class="eyebrow">Episode Pipeline</p>
@@ -191,7 +201,9 @@
 
             <p id="episode-message" class="message" aria-live="polite"></p>
           </div>
+          </div>
 
+          <div class="workspace-panel" data-planning-panel="scheduling_intelligence">
           <details class="operations-tool">
             <summary>
               <div>
@@ -286,9 +298,11 @@
               <p id="planning-export-message" class="message" aria-live="polite"></p>
             </div>
           </details>
+          </div>
         </section>
 
         <section class="panel list-panel">
+          <div class="workspace-panel active" data-planning-panel="scheduling_intelligence">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Scheduling Intelligence</p>
@@ -328,7 +342,9 @@
           <div class="list-footer">
             <button id="recommendation-load-more" class="secondary-button hidden" type="button">Load More Recommendations</button>
           </div>
+          </div>
 
+          <div class="workspace-panel" data-planning-panel="release_planning">
           <div class="section-heading top-spaced section-heading-inline">
             <div>
               <p class="eyebrow">Release Planning</p>
@@ -404,6 +420,7 @@
           <div id="episode-list" class="guest-list"></div>
           <div class="list-footer">
             <button id="episode-load-more" class="secondary-button hidden" type="button">Load More Episodes</button>
+          </div>
           </div>
         </section>
       </main>
