@@ -904,6 +904,10 @@ function renderEpisodes(episodes, totalCount) {
   visibleEpisodes.forEach((episode) => {
     const isReleased = normalizeText(episode.release_status) === "released";
     const hasEmail = Boolean(episode.guest_email);
+    const hasShowNotes = Boolean(normalizeText(episode.show_notes_url));
+    const hasFilesLink = Boolean(normalizeText(episode.release_files_url));
+    const releaseEmailReady = hasEmail && isReleased && hasShowNotes && hasFilesLink;
+    const releaseActionLabel = releaseEmailReady ? "Send Release Email" : "Prepare Release Email";
     const card = document.createElement("article");
     card.className = "operations-card";
     card.innerHTML = `
@@ -937,7 +941,7 @@ function renderEpisodes(episodes, totalCount) {
         <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${hasEmail ? "" : "disabled"}>Preview Thank You</button>
         <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${hasEmail ? "" : "disabled"}>Send Thank You</button>
         <button type="button" class="ghost-button" data-episode-action="preview-release-email" ${hasEmail ? "" : "disabled"}>Preview Release Email</button>
-        <button type="button" class="secondary-button" data-episode-action="send-release-email" ${hasEmail && isReleased ? "" : "disabled"}>Send Release Email</button>
+        <button type="button" class="secondary-button" data-episode-action="send-release-email" ${hasEmail ? "" : "disabled"}>${releaseActionLabel}</button>
         <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
       </div>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
@@ -1103,6 +1107,34 @@ function renderEpisodes(episodes, totalCount) {
       sendReleaseButton.addEventListener("click", async () => {
         if (!episode.guest_email) {
           setMessage(episodeMessage, "This episode does not have a guest email yet.", "error");
+          return;
+        }
+
+        if (!releaseEmailReady) {
+          setPlanningTab("release_planning");
+          loadEpisodeIntoForm(episode);
+          if (!isReleased) {
+            setMessage(
+              episodeMessage,
+              "Mark the episode as released first, then add the show notes link and files link before sending the release email.",
+              "pending",
+            );
+            episodeForm.elements.release_status.focus({ preventScroll: true });
+          } else if (!hasShowNotes) {
+            setMessage(
+              episodeMessage,
+              "Add the show notes or blogpost link first, then you can send the release email from here.",
+              "pending",
+            );
+            episodeForm.elements.show_notes_url.focus({ preventScroll: true });
+          } else {
+            setMessage(
+              episodeMessage,
+              "Add the files link first, then you can send the release email from here.",
+              "pending",
+            );
+            episodeForm.elements.release_files_url.focus({ preventScroll: true });
+          }
           return;
         }
 
