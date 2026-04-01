@@ -49,6 +49,30 @@ PROMOTIONAL_PHRASES = (
     "casino",
 )
 
+WORLDVIEW_CAUTION_PHRASES = (
+    "witchcraft",
+    "occult",
+    "tarot",
+    "manifestation",
+    "law of attraction",
+    "new age",
+    "crystal healing",
+    "channeling",
+    "mediumship",
+    "psychic",
+    "spell work",
+)
+
+VALUES_FRICTION_PHRASES = (
+    "anything goes",
+    "my truth only",
+    "no right or wrong",
+    "do whatever feels good",
+    "fame at all costs",
+    "success at any cost",
+    "controversy sells",
+)
+
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
@@ -141,6 +165,8 @@ def _build_signals(score: float, strengths: list[str], cautions: list[str], matc
         signals.append({"label": "Thin Answers", "tone": "warning"})
     if any("promotional" in reason or "spam" in reason for reason in cautions):
         signals.append({"label": "Promotional Risk", "tone": "warning"})
+    if any("worldview" in reason or "faith" in reason or "values" in reason for reason in cautions):
+        signals.append({"label": "Worldview Caution", "tone": "warning"})
     return signals[:4]
 
 
@@ -154,6 +180,8 @@ def score_guest(guest: Dict[str, Any], accepted_history: Iterable[Dict[str, Any]
     additional_info = _clean_text(guest.get("additional_info"))
     core_values = _clean_text(guest.get("core_values"))
     favorite_quote = _clean_text(guest.get("favorite_quote"))
+    faith = _clean_text(guest.get("faith") or guest.get("faith_practice"))
+    alignment = _clean_text(guest.get("alignment"))
     website = _clean_text(guest.get("website"))
     social_handles = _clean_text(guest.get("social_media_handles"))
     following_us = _normalize_text(guest.get("following_us"))
@@ -178,6 +206,8 @@ def score_guest(guest: Dict[str, Any], accepted_history: Iterable[Dict[str, Any]
             additional_info,
             core_values,
             favorite_quote,
+            faith,
+            alignment,
             podcast_experience,
         ]
         if block
@@ -236,6 +266,24 @@ def score_guest(guest: Dict[str, Any], accepted_history: Iterable[Dict[str, Any]
     if _contains_any(combined_profile, PROMOTIONAL_PHRASES):
         score -= 16
         cautions.append("language reads more promotional than conversational")
+
+    worldview_text = "\n".join(block for block in [passionate_topics, core_values, faith, alignment, additional_info, favorite_quote] if block)
+    worldview_cues = _keyword_matches(worldview_text, WORLDVIEW_CAUTION_PHRASES)
+    values_friction_cues = _keyword_matches(worldview_text, VALUES_FRICTION_PHRASES)
+    if worldview_cues:
+        score -= min(18, 8 + len(set(worldview_cues)) * 2)
+        cautions.append("worldview or spiritual framing may sit outside Mirror Talk's faith-sensitive tone")
+    if values_friction_cues:
+        score -= min(14, 6 + len(set(values_friction_cues)) * 2)
+        cautions.append("stated values may be out of step with the reflective, grounded tone you usually want")
+    normalized_alignment = _normalize_text(alignment)
+    if normalized_alignment.startswith("no"):
+        score -= 8
+        cautions.append("the guest does not currently see a clear fit with Mirror Talk's soulful conversation style")
+    normalized_faith = _normalize_text(faith)
+    if normalized_faith.startswith("yes"):
+        score += 3
+        strengths.append("has a clearly stated spiritual or faith practice")
 
     if _word_count(background) < 10 and _word_count(profession) < 10:
         score -= 8

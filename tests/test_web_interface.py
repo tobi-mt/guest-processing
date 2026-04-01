@@ -1250,6 +1250,56 @@ def test_guest_decision_support_can_reference_previously_accepted_guests(temp_db
     assert "Accepted Reference" in new_guest["decision_support"]["accepted_guest_matches"]
 
 
+def test_guest_decision_support_flags_worldview_fit_cautions(temp_db):
+    """AI review assist should flag possible worldview mismatch without auto-deciding for the user."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "Worldview Tension Guest",
+            "email": "worldview@example.com",
+            "background": "I help people find success through manifestation, spiritual energy, and intuitive guidance.",
+            "profession": "Coach and guide",
+            "passionate_topics": "Manifestation, tarot, psychic intuition, and energetic abundance.",
+            "message": "I want listeners to trust manifestation fully.",
+            "alignment": "No",
+            "faith": "Yes — I teach a new age spiritual path.",
+        }
+    )
+
+    payload = service.list_guests()
+    guest = next(item for item in payload["guests"] if item["full_name"] == "Worldview Tension Guest")
+
+    cautions = " ".join(guest["decision_support"]["cautions"]).lower()
+    signals = [signal["label"] for signal in guest["decision_support"]["signals"]]
+
+    assert "worldview" in cautions or "faith" in cautions
+    assert "Worldview Caution" in signals
+
+
+def test_guest_decision_support_does_not_penalize_grounded_faith_language(temp_db):
+    """Christian or faith-sensitive language should not be treated as a caution by itself."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "Faith Aligned Guest",
+            "email": "faith@example.com",
+            "background": "I speak about healing, Christian hope, honesty, and rebuilding life after difficult seasons.",
+            "profession": "Speaker and mentor",
+            "passionate_topics": "Faith, healing, resilience, purpose, and emotional honesty.",
+            "message": "I want listeners to leave with more hope.",
+            "alignment": "Yes — my perspective fits soulful conversations well.",
+            "faith": "Yes — I am a Christian and my faith shapes how I serve people.",
+        }
+    )
+
+    payload = service.list_guests()
+    guest = next(item for item in payload["guests"] if item["full_name"] == "Faith Aligned Guest")
+
+    cautions = " ".join(guest["decision_support"]["cautions"]).lower()
+
+    assert "worldview" not in cautions
+
+
 def test_web_service_prefers_resend_for_hosted_email(monkeypatch, temp_db):
     """Hosted dashboard should configure Resend when its API key is present."""
 
