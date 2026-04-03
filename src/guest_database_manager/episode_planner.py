@@ -236,7 +236,7 @@ SEASONAL_THEME_KEYWORDS: Dict[int, tuple[str, ...]] = {
 }
 
 
-def _month_theme_score(episode: Dict[str, Any], slot_date: datetime) -> tuple[float, str]:
+def _month_theme_score(episode: Dict[str, Any], slot_date: datetime) -> tuple[float, str, List[str]]:
     """Score how well an episode fits the seasonal mood of the month."""
     topic = _clean_text(episode.get("topic")).lower()
     title = _clean_text(episode.get("episode_title")).lower()
@@ -245,8 +245,8 @@ def _month_theme_score(episode: Dict[str, Any], slot_date: datetime) -> tuple[fl
     keywords = SEASONAL_THEME_KEYWORDS.get(slot_date.month, ())
     matched = [keyword for keyword in keywords if keyword in haystack]
     if not matched:
-        return 0.0, ""
-    return 8.0, f"fits the seasonal focus for {slot_date.strftime('%B')}"
+        return 0.0, "", []
+    return 8.0, f"fits the seasonal focus for {slot_date.strftime('%B')}", matched
 
 
 def _promotion_readiness_score(episode: Dict[str, Any]) -> tuple[float, str]:
@@ -739,7 +739,7 @@ def build_release_recommendations(
             why_now = list(reasons)
             watchouts: List[str] = []
 
-            season_score, season_reason = _month_theme_score(episode, slot)
+            season_score, season_reason, season_keywords = _month_theme_score(episode, slot)
             score += season_score
             if season_reason:
                 reasons.append(season_reason)
@@ -794,6 +794,15 @@ def build_release_recommendations(
             candidate["copy_assist"] = build_episode_copy_assist(episode)
             candidate["archive_overlap"] = archive_overlap
             candidate["topic_cluster_warning"] = topic_cluster
+            candidate["seasonal_fit"] = (
+                {
+                    "month": slot.strftime("%B"),
+                    "reason": season_reason,
+                    "matched_keywords": season_keywords,
+                }
+                if season_reason
+                else None
+            )
             scored_candidates.append(candidate)
 
         scored_candidates.sort(

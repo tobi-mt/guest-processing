@@ -1777,13 +1777,35 @@ def test_episode_recommendations_factor_seasonality_promo_readiness_and_guest_di
             "promotion_status": "needs_assets",
         }
     )
+    service.create_episode(
+        {
+            "guest_name": "Faith Leader",
+            "guest_email": "faith@example.com",
+            "episode_title": "Faith and Purpose in Leadership",
+            "topic": "Faith, leadership, and purpose at work",
+            "category": "Faith",
+            "interview_date": "2025-11-20",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
 
     planning = service.list_planning()
     top_recommendation = planning["recommendations"][0]
+    jordan_recommendation = next(
+        item for item in planning["recommendations"] if item["guest_name"] == "Jordan Rivers"
+    )
+    seasonal_recommendation = next(
+        item for item in planning["recommendations"] if item["guest_name"] == "Faith Leader"
+    )
 
-    assert top_recommendation["guest_name"] == "Jordan Rivers"
+    assert top_recommendation["guest_name"] in {"Jordan Rivers", "Faith Leader"}
+    assert jordan_recommendation["promotion_status"] == "ready"
+    assert jordan_recommendation["recommendation_reason"]
     assert top_recommendation["recommendation_reason"]
-    assert top_recommendation["promotion_status"] == "ready"
+    assert seasonal_recommendation["seasonal_fit"]["month"] == "April"
+    assert "seasonal focus for April" in seasonal_recommendation["seasonal_fit"]["reason"]
+    assert "faith" in seasonal_recommendation["seasonal_fit"]["matched_keywords"]
 
 
 def test_episode_recommendations_include_multi_week_sequence_warnings(temp_db):

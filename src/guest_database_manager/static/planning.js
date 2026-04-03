@@ -354,13 +354,28 @@ function deriveRecommendationSignals(episode) {
   if (text.includes("already warm in the recent release mix") || text.includes("dominates")) {
     signals.push({ label: "Category Fatigue", tone: "warning" });
   }
-  if (text.includes("seasonal focus")) {
+  if (episode.seasonal_fit?.reason || text.includes("seasonal focus")) {
     signals.push({ label: "Seasonal Fit", tone: "good" });
   }
   if (text.includes("ready to publish") || text.includes("promotion assets look ready")) {
     signals.push({ label: "Release Ready", tone: "good" });
   }
   return signals;
+}
+
+function renderSeasonalFit(seasonalFit) {
+  if (!seasonalFit?.reason) {
+    return "";
+  }
+  const matchedKeywords = (seasonalFit.matched_keywords || []).filter(Boolean);
+  return `
+    <div class="operations-preview">
+      <strong class="insight-label">Seasonal fit</strong>
+      <p>${escapeHtml(seasonalFit.reason)}</p>
+      <p><strong>Target month:</strong> ${escapeHtml(seasonalFit.month || "Unknown")}</p>
+      ${matchedKeywords.length ? `<p><strong>Proof from this episode:</strong> matched ${matchedKeywords.map((keyword) => `<code>${escapeHtml(keyword)}</code>`).join(", ")}</p>` : ""}
+    </div>
+  `;
 }
 
 function renderPromoReadiness(readiness) {
@@ -1427,6 +1442,7 @@ function renderRecommendations(recommendations, totalCount) {
       </div>
       ${episode.why_now?.length ? `<div class="operations-preview"><strong class="insight-label">Why this next</strong><ul>${episode.why_now.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
+      ${renderSeasonalFit(episode.seasonal_fit)}
       ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${episode.archive_overlap.message}</p></div>` : ""}
       ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}
