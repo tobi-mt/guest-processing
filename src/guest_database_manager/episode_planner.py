@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import StringIO
@@ -26,6 +27,20 @@ def _transcript_sentences(episode: Dict[str, Any], limit: int = 3) -> list[str]:
         return []
     sentences = [part.strip() for part in transcript.replace("\n", " ").split(".") if part.strip()]
     return [sentence for sentence in sentences if len(sentence.split()) >= 6][:limit]
+
+
+def _guest_research_payload(value: Any) -> Dict[str, Any]:
+    """Parse guest research JSON or dicts into a stable payload."""
+    if isinstance(value, dict):
+        return value
+    text = _clean_text(value)
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _topic_like_text(value: str, guest_name: str) -> str:
@@ -417,11 +432,19 @@ def build_episode_copy_assist(episode: Dict[str, Any]) -> Dict[str, str]:
     category = _clean_text(episode.get("category"))
     episode_title = _clean_text(episode.get("episode_title")) or topic or guest_name
     transcript_sentences = _transcript_sentences(episode, limit=2)
+    guest_research = _guest_research_payload(episode.get("guest_research"))
+    research_topics = [str(item).strip() for item in guest_research.get("likely_topics", []) if str(item).strip()]
+    research_summary = _clean_text(guest_research.get("summary"))
 
     if topic:
         summary = f"{guest_name} joins Mirror Talk for a conversation about {topic.lower()}."
         social_caption = f"New on Mirror Talk: {episode_title}. {guest_name} joins us to explore {topic.lower()}."
         newsletter_blurb = f"This week on Mirror Talk, {guest_name} joins us for {topic.lower()}."
+    elif research_topics:
+        topic_list = ", ".join(research_topics[:3]).lower()
+        summary = f"{guest_name} joins Mirror Talk for a conversation shaped by their public work in {topic_list}."
+        social_caption = f"New on Mirror Talk: {episode_title}. {guest_name} brings perspective on {topic_list}."
+        newsletter_blurb = f"This week on Mirror Talk, {guest_name} joins us with grounded perspective on {topic_list}."
     else:
         summary = f"{guest_name} joins Mirror Talk for a thoughtful conversation."
         social_caption = f"New on Mirror Talk: {episode_title}. {guest_name} joins us for a thoughtful conversation."
@@ -430,6 +453,8 @@ def build_episode_copy_assist(episode: Dict[str, Any]) -> Dict[str, str]:
         summary += f" The episode sits within our {category} conversations."
     if transcript_sentences:
         summary += f" In the conversation, {transcript_sentences[0][0].lower() + transcript_sentences[0][1:] if len(transcript_sentences[0]) > 1 else transcript_sentences[0].lower()}."
+    elif research_summary and research_summary.casefold() not in summary.casefold():
+        summary += f" Public profile research suggests: {research_summary}"
 
     show_notes_intro = transcript_sentences[0] if transcript_sentences else summary
     quote_pull = transcript_sentences[1] if len(transcript_sentences) > 1 else ""
@@ -768,6 +793,16 @@ def build_release_recommendations(
                 why_now.extend(readiness["strengths"][:2])
             else:
                 watchouts.extend(readiness["blockers"][:2])
+
+            guest_research = _guest_research_payload(episode.get("guest_research"))
+            research_topics = [str(item).strip() for item in guest_research.get("likely_topics", []) if str(item).strip()]
+            research_signals = [str(item).strip() for item in guest_research.get("timely_signals", []) if str(item).strip()]
+            if research_topics:
+                score += min(5.0, float(len(research_topics)))
+                why_now.append(f"public profile suggests useful audience hooks around {', '.join(research_topics[:3]).lower()}")
+            if research_signals:
+                score += min(4.0, float(len(research_signals)))
+                why_now.append(research_signals[0])
 
             archive_overlap = _archive_overlap_warning(episode, released_history)
             if archive_overlap["status"] == "risky":

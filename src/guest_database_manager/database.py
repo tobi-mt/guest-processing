@@ -131,8 +131,8 @@ class GuestDatabase:
                     background, profession, motivation, life_experiences, core_values, 
                     faith_practice, beliefs_align, favorite_quote, passionate_topics, message_takeaway,
                     podcast_experience, additional_info, following_us, is_processed,
-                    original_file_name, original_data, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    original_file_name, original_data, guest_research, guest_research_updated_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """, (
                 guest_data.get('full_name'), guest_data.get('full_name'), guest_data.get('email'), 
                 guest_data.get('website'), guest_data.get('social_handles'),
@@ -141,7 +141,8 @@ class GuestDatabase:
                 guest_data.get('alignment'), guest_data.get('favorite_quote'), guest_data.get('passionate_topics'), 
                 guest_data.get('message'), guest_data.get('experience'), guest_data.get('additional_info'), 
                 guest_data.get('has_social_media'), guest_data.get('is_processed', False),
-                guest_data.get('original_file_name'), guest_data.get('original_data')
+                guest_data.get('original_file_name'), guest_data.get('original_data'),
+                guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
             ))
             conn.commit()
             return cursor.lastrowid
@@ -209,6 +210,14 @@ class GuestDatabase:
                 existing_guest.get("original_data"),
                 guest_data.get("original_data"),
             )
+            merged_guest["guest_research"] = _prefer_existing_metadata(
+                existing_guest.get("guest_research"),
+                guest_data.get("guest_research"),
+            )
+            merged_guest["guest_research_updated_at"] = (
+                guest_data.get("guest_research_updated_at")
+                or existing_guest.get("guest_research_updated_at")
+            )
             self.update_guest_by_id(existing_guest["id"], merged_guest)
             return existing_guest["id"], "updated"
 
@@ -225,6 +234,7 @@ class GuestDatabase:
                     passionate_topics = ?, message_takeaway = ?, podcast_experience = ?, 
                     additional_info = ?, following_us = ?, is_processed = ?, email_status = ?,
                     email_sent_at = ?, skip_reason = ?, original_file_name = ?, original_data = ?,
+                    guest_research = ?, guest_research_updated_at = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (
@@ -236,7 +246,9 @@ class GuestDatabase:
                 guest_data.get('experience'), guest_data.get('additional_info'), guest_data.get('has_social_media'), 
                 guest_data.get('is_processed'), guest_data.get('email_status'),
                 guest_data.get('email_sent_at'), guest_data.get('skip_reason'),
-                guest_data.get('original_file_name'), guest_data.get('original_data'), guest_id
+                guest_data.get('original_file_name'), guest_data.get('original_data'),
+                guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
+                guest_id
             ))
             conn.commit()
     

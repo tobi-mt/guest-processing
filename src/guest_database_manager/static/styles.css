@@ -605,6 +605,10 @@ button:disabled {
   margin-top: 12px;
 }
 
+.guest-copilot-summary {
+  margin-top: 12px;
+}
+
 .guest-ai-card {
   padding: 14px 16px;
   border-radius: 18px;

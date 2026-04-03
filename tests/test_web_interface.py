@@ -147,6 +147,74 @@ def test_web_service_can_update_guest_details_without_resetting_status(temp_db):
     assert updated_guest["email_status"] == "accepted"
 
 
+def test_web_service_can_research_guest_and_store_public_profile_context(monkeypatch, temp_db):
+    """Dashboard research should save structured public-profile evidence on the guest."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+
+    monkeypatch.setattr(
+        "guest_database_manager.web_interface.research_guest_from_public_web",
+        lambda current: {
+            "summary": "Public profile research suggests strong conversation angles around healing and leadership.",
+            "likely_topics": ["Healing", "Leadership"],
+            "timely_signals": ["public profile emphasizes speaking experience"],
+            "sources": [{"url": "https://jordan.example.com", "host": "jordan.example.com", "title": "Jordan Rivers"}],
+            "updated_at": "2026-04-03T10:00:00Z",
+        },
+    )
+
+    researched_guest = service.research_guest(guest["id"])
+
+    assert researched_guest["guest_research"]["likely_topics"] == ["Healing", "Leadership"]
+    assert researched_guest["guest_research_updated_at"] == "2026-04-03T10:00:00Z"
+
+
+def test_planning_uses_guest_research_as_copilot_context(monkeypatch, temp_db):
+    """Planning should attach stored guest research and reuse it in copy suggestions."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+
+    monkeypatch.setattr(
+        "guest_database_manager.web_interface.research_guest_from_public_web",
+        lambda current: {
+            "summary": "Public profile research suggests strong conversation angles around healing and leadership.",
+            "likely_topics": ["Healing", "Leadership"],
+            "timely_signals": ["public profile emphasizes speaking experience"],
+            "sources": [{"url": "https://jordan.example.com", "host": "jordan.example.com", "title": "Jordan Rivers"}],
+            "updated_at": "2026-04-03T10:00:00Z",
+        },
+    )
+    service.research_guest(guest["id"])
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Jordan Rivers",
+            "category": "Leadership",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    planning = service.list_planning()
+    episode = next(item for item in planning["episodes"] if item["guest_email"] == "jordan@example.com")
+
+    assert episode["guest_research"]["likely_topics"] == ["Healing", "Leadership"]
+    assert "public work in healing, leadership" in episode["copy_assist"]["summary"].lower()
+
+
 def test_web_service_create_guest_preserves_existing_source_label(temp_db):
     """Dashboard writes should not replace an existing guest's original source label."""
     service = GuestWebService(temp_db.db_path)

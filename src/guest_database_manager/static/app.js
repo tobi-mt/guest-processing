@@ -400,6 +400,50 @@ function renderPromotionProfile(guest) {
   `;
 }
 
+function renderGuestCopilotSummary(guest) {
+  const research = guest.guest_research;
+  if (!research?.summary && !(research?.likely_topics || []).length) {
+    return "";
+  }
+
+  const topics = (research.likely_topics || []).slice(0, 4).map((item) => `<span class="signal-chip good">${escapeHtml(item)}</span>`).join("");
+  const signals = (research.timely_signals || []).slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const sources = (research.sources || [])
+    .slice(0, 3)
+    .map((source) => {
+      const label = source.title || source.host || source.url || "Public source";
+      const url = source.url || "";
+      const evidence = (source.evidence || []).slice(0, 1).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+      return `
+        <div class="guest-ai-block">
+          <strong>${url ? `<a class="inline-link" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>` : escapeHtml(label)}</strong>
+          ${evidence ? `<ul>${evidence}</ul>` : ""}
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="guest-ai-card">
+      <div class="guest-ai-head">
+        <div>
+          <p class="composer-eyebrow">Guest Copilot Research</p>
+          <div class="guest-ai-title-row">
+            <strong>Public profile evidence</strong>
+            <span class="guest-ai-badge">${escapeHtml(research.updated_at ? "Updated" : "Stored")}</span>
+          </div>
+          <p class="guest-ai-copy">${escapeHtml(research.summary || "Public profile context is available for planning and drafting.")}</p>
+        </div>
+      </div>
+      ${topics ? `<div class="signal-list guest-ai-signals">${topics}</div>` : ""}
+      <div class="guest-ai-grid">
+        ${signals ? `<div class="guest-ai-block"><strong>Useful planning angles</strong><ul>${signals}</ul></div>` : ""}
+        ${sources ? `<div class="guest-ai-block"><strong>Public sources checked</strong><div class="guest-ai-grid">${sources}</div></div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
 async function copyGuestIntake(guest) {
   const clipboardText = buildIntakeClipboardText(guest);
   if (!clipboardText) {
@@ -571,6 +615,7 @@ function renderGuests(payload) {
     const editor = node.querySelector(".inline-editor");
     const actionFeedbackNode = node.querySelector(".card-action-feedback");
     const aiSummaryNode = node.querySelector(".guest-ai-summary");
+    const copilotSummaryNode = node.querySelector(".guest-copilot-summary");
     const promotionSummaryNode = node.querySelector(".guest-promotion-summary");
 
     node.querySelector(".guest-name").textContent = guest.full_name || "Unnamed Guest";
@@ -578,10 +623,17 @@ function renderGuests(payload) {
     node.querySelector(".guest-summary").textContent =
       guest.background || guest.additional_info || "No background added yet.";
     aiSummaryNode.innerHTML = renderGuestAiSummary(guest);
+    copilotSummaryNode.innerHTML = renderGuestCopilotSummary(guest);
     promotionSummaryNode.innerHTML = renderPromotionProfile(guest);
 
     statusPill.textContent = guestStatusLabel(guest);
     statusPill.classList.add(guestStatusLabel(guest));
+
+    const researchButton = node.querySelector("[data-action='research']");
+    if (researchButton && !guest.website && !guest.social_media_handles) {
+      researchButton.disabled = true;
+      researchButton.title = "Add a website or labeled social profile first so copilot research has a public source to read.";
+    }
 
     if (!emailEnabled) {
       node.querySelectorAll("[data-action='accepted_email'], [data-action='rejected_email']").forEach((button) => {
@@ -734,6 +786,20 @@ function renderGuests(payload) {
             activeGuestActionFeedback = { guestId: guest.id, text: `Copied ${guest.full_name}'s intake details.`, tone: "success" };
             renderGuests(latestPayload);
             setMessage(`Copied ${guest.full_name}'s intake details.`, "success");
+          } else if (action === "research") {
+            activeGuestActionFeedback = { guestId: guest.id, text: `Researching public profile signals for ${guest.full_name || "guest"}...`, tone: "pending" };
+            renderGuests(latestPayload);
+            await fetchJSON(`/api/guests/${guest.id}/research`, {
+              method: "POST",
+              body: JSON.stringify({}),
+            });
+            activeGuestActionFeedback = {
+              guestId: guest.id,
+              text: `Public profile research saved for ${guest.full_name || "guest"}.`,
+              tone: "success",
+            };
+            renderGuests(latestPayload);
+            setMessage(`Saved public profile research for ${guest.full_name}. Planning can now use it as copilot context.`, "success");
           } else if (action === "accepted_email" || action === "rejected_email") {
             activeGuestEditor = null;
             const decision = action === "accepted_email" ? "accepted" : "rejected";

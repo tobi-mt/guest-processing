@@ -56,6 +56,8 @@ class SchemaManager:
             -- Metadata
             original_file_name TEXT,
             original_data TEXT,
+            guest_research TEXT,
+            guest_research_updated_at TIMESTAMP,
             
             UNIQUE(name, email, full_name)
         )
@@ -149,6 +151,8 @@ class SchemaManager:
         ("additional_info", "TEXT"),
         ("original_file_name", "TEXT"),
         ("original_data", "TEXT"),
+        ("guest_research", "TEXT"),
+        ("guest_research_updated_at", "TIMESTAMP"),
     ]
 
     INTERVIEW_OPTIONAL_COLUMNS: List[Tuple[str, str]] = [

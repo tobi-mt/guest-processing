@@ -393,6 +393,29 @@ function renderPromoReadiness(readiness) {
   `;
 }
 
+function renderGuestResearchCopilot(research) {
+  if (!research?.summary && !(research?.likely_topics || []).length) {
+    return "";
+  }
+  const topics = (research.likely_topics || []).slice(0, 4);
+  const timelySignals = (research.timely_signals || []).slice(0, 3);
+  const sources = (research.sources || []).slice(0, 3);
+  return `
+    <div class="operations-preview">
+      <strong class="insight-label">Guest copilot context</strong>
+      ${research.summary ? `<p>${escapeHtml(research.summary)}</p>` : ""}
+      ${topics.length ? `<p><strong>Likely themes:</strong> ${topics.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
+      ${timelySignals.length ? `<div class="insight-stack"><strong class="insight-label">Why this guest may be timely</strong><ul>${timelySignals.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+      ${sources.length ? `<p><strong>Sources checked:</strong> ${sources.map((source) => {
+        const label = source.title || source.host || source.url || "Public source";
+        return source.url
+          ? `<a class="inline-link" href="${escapeHtml(source.url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`
+          : escapeHtml(label);
+      }).join(", ")}</p>` : ""}
+    </div>
+  `;
+}
+
 function renderCopyAssist(copyAssist) {
   if (!copyAssist) {
     return "";
@@ -1123,6 +1146,7 @@ function renderEpisodes(episodes, totalCount) {
       </div>
       ${renderOutreachSummary(episode.outreach_summary)}
       ${renderPromoReadiness(episode.promotion_readiness)}
+      ${renderGuestResearchCopilot(episode.guest_research)}
       ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
@@ -1448,6 +1472,7 @@ function renderRecommendations(recommendations, totalCount) {
       ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}
       ${renderOutreachSummary(episode.outreach_summary)}
       ${renderPromoReadiness(episode.promotion_readiness)}
+      ${renderGuestResearchCopilot(episode.guest_research)}
       ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>

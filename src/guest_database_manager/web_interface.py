@@ -37,6 +37,7 @@ from guest_database_manager.guest_recommender import (
     build_guest_recommendation_stats,
     enrich_guests_with_recommendations,
 )
+from guest_database_manager.guest_research import research_guest_from_public_web
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -365,6 +366,14 @@ def serialize_guest(guest: Dict[str, Any]) -> Dict[str, Any]:
     """Convert database rows into frontend-friendly JSON."""
     serialized = dict(guest)
     serialized["is_processed"] = bool(serialized.get("is_processed"))
+    guest_research = serialized.get("guest_research")
+    if isinstance(guest_research, str) and guest_research.strip():
+        try:
+            serialized["guest_research"] = json.loads(guest_research)
+        except (TypeError, ValueError):
+            serialized["guest_research"] = None
+    elif not isinstance(guest_research, dict):
+        serialized["guest_research"] = None
     return serialized
 
 
@@ -439,9 +448,11 @@ class GuestWebService:
     def list_planning(self) -> Dict[str, Any]:
         """Return episode planning data separate from interview operations."""
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
+        guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
         enriched_episodes = []
         for episode in episodes:
             enriched = dict(episode)
+            enriched["guest_research"] = self._match_guest_research(enriched, guests)
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
@@ -625,6 +636,36 @@ class GuestWebService:
             "strengths": strengths[:3],
             "gaps": gaps[:3],
         }
+
+    @staticmethod
+    def _research_payload(value: Any) -> Optional[Dict[str, Any]]:
+        """Parse stored guest research JSON into a stable object."""
+        if isinstance(value, dict):
+            return value
+        text = _normalize_text(value)
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _match_guest_research(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Attach guest research to planning records by guest email first, then by name."""
+        email_key = _normalize_text(episode.get("guest_email")).casefold()
+        name_key = _normalize_text(episode.get("guest_name")).casefold()
+
+        for guest in guests:
+            if email_key and _normalize_text(guest.get("email")).casefold() == email_key:
+                return self._research_payload(guest.get("guest_research"))
+
+        for guest in guests:
+            guest_name = _normalize_text(guest.get("full_name") or guest.get("name")).casefold()
+            if name_key and guest_name == name_key:
+                return self._research_payload(guest.get("guest_research"))
+
+        return None
 
     def _build_episode_outreach_summary(self, episode: Dict[str, Any]) -> Dict[str, Any]:
         """Summarize the outreach checklist and next activation step for an episode."""
@@ -1102,6 +1143,8 @@ class GuestWebService:
             "skip_reason": current.get("skip_reason"),
             "original_file_name": current.get("original_file_name"),
             "original_data": current.get("original_data"),
+            "guest_research": current.get("guest_research"),
+            "guest_research_updated_at": current.get("guest_research_updated_at"),
         }
 
         if not updated_guest["full_name"]:
@@ -1114,6 +1157,27 @@ class GuestWebService:
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved.")
+        return serialize_guest(guest)
+
+    def research_guest(self, guest_id: int) -> Dict[str, Any]:
+        """Fetch public profile context for a guest and store it for copilot use."""
+        current = self.database.get_guest_by_id(guest_id)
+        if not current:
+            raise WebInterfaceError("Guest not found.")
+
+        try:
+            research = research_guest_from_public_web(current)
+        except ValueError as exc:
+            raise WebInterfaceError(str(exc))
+
+        updated_guest = dict(current)
+        updated_guest["guest_research"] = json.dumps(research, ensure_ascii=False)
+        updated_guest["guest_research_updated_at"] = research.get("updated_at")
+
+        self.database.update_guest_by_id(guest_id, updated_guest)
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest could not be saved after research.")
         return serialize_guest(guest)
 
     def delete_interview(self, interview_id: int) -> Dict[str, Any]:
@@ -2405,6 +2469,24 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     payload.get("status", ""),
                     payload.get("skip_reason", ""),
                 )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, guest)
+            return
+
+        if self.path.startswith("/api/guests/") and self.path.endswith("/research"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            guest_id = self._extract_guest_id(self.path, suffix="/research")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            try:
+                guest = self.service.research_guest(guest_id)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
