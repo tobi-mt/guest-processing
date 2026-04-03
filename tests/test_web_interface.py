@@ -323,9 +323,12 @@ def test_planning_can_attach_openai_scheduling_copilot(monkeypatch, temp_db):
     monkeypatch.setattr(service, "_build_openai_scheduling_copilot", lambda: StubCopilot())
 
     planning = service.list_planning()
-    recommendation = planning["recommendations"][0]
+    ai_planning = service.list_planning_ai_copilot()
+    recommendation = ai_planning["recommendations"][0]
 
     assert planning["ai_scheduling_enabled"] is True
+    assert "ai_copilot" not in planning["recommendations"][0]
+    assert ai_planning["ai_scheduling_enabled"] is True
     assert recommendation["ai_copilot"]["model"] == "gpt-5"
     assert recommendation["ai_copilot"]["alignment_score"] == 82
 

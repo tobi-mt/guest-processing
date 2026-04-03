@@ -461,27 +461,44 @@ class GuestWebService:
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
-        ai_scheduling_client = self._build_openai_scheduling_copilot()
-        if ai_scheduling_client is not None:
-            try:
-                recommendations = ai_scheduling_client.enrich_recommendations(
-                    recommendations,
-                    reference=datetime.now(),
-                    released_history=[
-                        item for item in enriched_episodes
-                        if _normalize_text(item.get("release_status")).lower() == "released"
-                    ],
-                )
-            except Exception:
-                pass
         return {
             "stats": self._build_episode_stats(enriched_episodes),
             "episodes": enriched_episodes,
             "recommendations": recommendations,
             "available_categories": self.database.list_episode_categories(),
             "ask_sync_enabled": self._build_ask_mirror_talk_client() is not None,
-            "ai_scheduling_enabled": ai_scheduling_client is not None,
+            "ai_scheduling_enabled": self._build_openai_scheduling_copilot() is not None,
             "weekly_system": self._build_weekly_system_payload(),
+        }
+
+    def list_planning_ai_copilot(self) -> Dict[str, Any]:
+        """Return AI-enriched recommendations without blocking the base planning page load."""
+        ai_scheduling_client = self._build_openai_scheduling_copilot()
+        if ai_scheduling_client is None:
+            return {"ai_scheduling_enabled": False, "recommendations": []}
+
+        episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
+        guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
+        enriched_episodes = []
+        for episode in episodes:
+            enriched = dict(episode)
+            enriched["guest_research"] = self._match_guest_research(enriched, guests)
+            enriched["promotion_readiness"] = build_promotion_readiness(enriched)
+            enriched["copy_assist"] = build_episode_copy_assist(enriched)
+            enriched_episodes.append(enriched)
+
+        recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
+        recommendations = ai_scheduling_client.enrich_recommendations(
+            recommendations,
+            reference=datetime.now(),
+            released_history=[
+                item for item in enriched_episodes
+                if _normalize_text(item.get("release_status")).lower() == "released"
+            ],
+        )
+        return {
+            "ai_scheduling_enabled": True,
+            "recommendations": recommendations,
         }
 
     def export_guests_csv(self) -> str:
@@ -2216,6 +2233,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.list_planning())
+            return
+
+        if request_path == "/api/planning/ai-copilot":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.list_planning_ai_copilot())
             return
 
         if request_path == "/api/google-calendar/sync":

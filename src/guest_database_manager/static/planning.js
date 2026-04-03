@@ -53,6 +53,7 @@ let visibleEpisodeCount = 10;
 let pendingEpisodeIdFromUrl = null;
 let pendingPlanningSuccessMessage = "";
 let activePlanningTab = "release_planning";
+let aiCopilotHydrationInFlight = false;
 
 const RECOMMENDATION_PAGE_SIZE = 6;
 const EPISODE_PAGE_SIZE = 10;
@@ -1607,6 +1608,24 @@ function renderPlanning() {
   renderEpisodes(filterEpisodes(episodes), episodes.length);
 }
 
+async function hydrateAiSchedulingCopilot() {
+  if (aiCopilotHydrationInFlight || !latestPlanningPayload.ai_scheduling_enabled) {
+    return;
+  }
+  aiCopilotHydrationInFlight = true;
+  try {
+    const payload = await fetchJSON("/api/planning/ai-copilot");
+    if (payload?.ai_scheduling_enabled && Array.isArray(payload.recommendations) && payload.recommendations.length) {
+      latestPlanningPayload.recommendations = payload.recommendations;
+      renderPlanning();
+    }
+  } catch (error) {
+    console.warn("AI scheduling copilot hydration failed:", error);
+  } finally {
+    aiCopilotHydrationInFlight = false;
+  }
+}
+
 function applyEpisodeFocusFromUrl() {
   if (!pendingEpisodeIdFromUrl) {
     return;
@@ -1637,6 +1656,9 @@ async function loadPlanning() {
   stats.needsAssets.textContent = payload.stats.episodes_need_assets ?? 0;
   renderPlanning();
   applyEpisodeFocusFromUrl();
+  queueMicrotask(() => {
+    hydrateAiSchedulingCopilot().catch(() => {});
+  });
 }
 
 episodeForm.addEventListener("submit", async (event) => {
