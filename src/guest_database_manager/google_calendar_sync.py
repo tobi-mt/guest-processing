@@ -43,6 +43,18 @@ class GoogleCalendarSyncClient:
     TOKEN_URL = "https://oauth2.googleapis.com/token"
     EVENTS_URL_TEMPLATE = "https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
 
+    @staticmethod
+    def _raise_calendar_api_error(action_label: str, response: requests.Response) -> None:
+        """Raise a friendlier Calendar API error when scopes are too narrow."""
+        response_text = response.text.strip()
+        if "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in response_text or "insufficientPermissions" in response_text:
+            raise GoogleCalendarSyncError(
+                f"Google Calendar is connected in read-only mode, so {action_label} is unavailable with the current token."
+            )
+        raise GoogleCalendarSyncError(
+            f"Google Calendar {action_label} failed: {response_text or response.status_code}"
+        )
+
     def _get_access_token(self) -> str:
         """Exchange the refresh token for an access token."""
         try:
@@ -187,9 +199,7 @@ class GoogleCalendarSyncClient:
             raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
 
         if not response.ok:
-            raise GoogleCalendarSyncError(
-                f"Google Calendar event update failed: {response.text.strip() or response.status_code}"
-            )
+            self._raise_calendar_api_error("event updates", response)
 
         return response.json()
 
@@ -210,9 +220,7 @@ class GoogleCalendarSyncClient:
             raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
 
         if response.status_code not in {200, 204}:
-            raise GoogleCalendarSyncError(
-                f"Google Calendar event delete failed: {response.text.strip() or response.status_code}"
-            )
+            self._raise_calendar_api_error("event removal", response)
 
     def normalize_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a Google Calendar event payload into an interview record shape."""

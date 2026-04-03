@@ -32,6 +32,7 @@ let activeInterviewActionFeedback = { id: null, text: "", tone: "" };
 let visibleReminderCount = 8;
 let visibleInterviewCount = 10;
 let activeOperationsTab = "upcoming_interviews";
+let calendarReadOnlyMode = false;
 
 const REMINDER_PAGE_SIZE = 8;
 const INTERVIEW_PAGE_SIZE = 10;
@@ -254,6 +255,12 @@ function renderOperationsAlerts() {
   }
 
   operationsAlerts.innerHTML = `
+    ${calendarReadOnlyMode ? `
+      <div class="insight-stack caution">
+        <strong class="insight-label">Google Calendar is read-only</strong>
+        <p>Your current Google token can sync interviews, but it cannot remove calendar events. The destructive cleanup buttons are disabled until the token is re-authorized with write permission.</p>
+      </div>
+    ` : ""}
     ${doubleBookings.length ? `
       <div class="insight-stack caution">
         <strong class="insight-label">Possible duplicate guest bookings</strong>
@@ -290,6 +297,11 @@ function renderOperationsAlerts() {
   `;
 
   operationsAlerts.querySelectorAll("[data-alert-action='remove-calendar']").forEach((button) => {
+    if (calendarReadOnlyMode) {
+      button.disabled = true;
+      button.title = "Google Calendar removal is unavailable with the current token permissions.";
+      return;
+    }
     button.addEventListener("click", async () => {
       const interviewId = button.dataset.interviewId;
       button.disabled = true;
@@ -664,7 +676,7 @@ function renderInterviews(interviews, totalCount) {
         ${reminderButtons}
         <button type="button" class="ghost-button" data-interview-action="mark-reminder-unsent">Reminder Not Sent</button>
         ${calendarButton}
-        ${interview.calendar_event_id ? `<button type="button" class="ghost-button danger-button" data-calendar-action="remove">Remove From Google Calendar</button>` : ""}
+        ${interview.calendar_event_id ? `<button type="button" class="ghost-button danger-button" data-calendar-action="remove" ${calendarReadOnlyMode ? "disabled title=\"Google Calendar removal is unavailable with the current token permissions.\"" : ""}>Remove From Google Calendar</button>` : ""}
         <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
       </div>
       <div class="card-action-feedback">${activeInterviewActionFeedback.id === interview.id ? actionFeedbackMarkup(activeInterviewActionFeedback) : ""}</div>
@@ -934,6 +946,12 @@ function renderInterviews(interviews, totalCount) {
           setMessage(interviewMessage, `${interview.guest_name || "Guest"} removed from Google Calendar.`, "success");
           await loadOperations();
         } catch (error) {
+          if (error.message.includes("read-only mode")) {
+            calendarReadOnlyMode = true;
+            await loadOperations();
+            setMessage(interviewMessage, error.message, "error");
+            return;
+          }
           activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
           setMessage(interviewMessage, error.message, "error");
