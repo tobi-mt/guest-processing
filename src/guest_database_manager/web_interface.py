@@ -418,9 +418,10 @@ class GuestWebService:
     def list_operations(self) -> Dict[str, Any]:
         """Return the current interview and episode operations data."""
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
+        raw_interviews = self.database.list_interviews()
         interviews = [
             self._serialize_interview_reminder(interview)
-            for interview in self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
+            for interview in self._sort_interviews_by_upcoming_priority(raw_interviews)
         ]
         reminder_candidates = [self._serialize_interview_reminder(candidate) for candidate in self.get_due_weekly_reminders()]
         return {
@@ -430,6 +431,7 @@ class GuestWebService:
             "calendar_sync_enabled": self._build_google_calendar_client() is not None,
             "weekly_outreach": self._build_weekly_outreach_focus(episodes),
             "weekly_system": self._build_weekly_system_payload(),
+            "booking_alerts": self._build_operations_alerts(raw_interviews),
         }
 
     def list_planning(self) -> Dict[str, Any]:
@@ -680,6 +682,66 @@ class GuestWebService:
             ],
             "spotlight_episode": spotlight,
             "spotlight_summary": self._build_episode_outreach_summary(spotlight) if spotlight else None,
+        }
+
+    def _build_operations_alerts(self, interviews: list[Dict[str, Any]]) -> Dict[str, Any]:
+        """Highlight duplicate future bookings and stale calendar holds."""
+        reference = datetime.now()
+        duplicate_groups: Dict[str, list[Dict[str, Any]]] = {}
+        cleanup_candidates: list[Dict[str, Any]] = []
+
+        for interview in interviews:
+            scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+            if not scheduled_for:
+                continue
+            comparison_reference = self._align_reference_datetime(reference, scheduled_for)
+            future_or_current = scheduled_for >= comparison_reference
+            status = _normalize_text(interview.get("status")).lower()
+            confirmation = _normalize_text(interview.get("confirmation_status")).lower()
+            guest_key = _normalize_text(interview.get("guest_email")) or _normalize_text(interview.get("guest_name"))
+
+            if future_or_current and status != "cancelled" and confirmation != "declined" and guest_key:
+                duplicate_groups.setdefault(guest_key, []).append(interview)
+
+            if _normalize_text(interview.get("calendar_event_id")) and (
+                status == "cancelled" or confirmation in {"declined", "reschedule_requested"}
+            ):
+                reason = "Cancelled interview still linked to Google Calendar." if status == "cancelled" else "Guest declined or asked to reschedule, but the calendar slot still exists."
+                cleanup_candidates.append(
+                    {
+                        "id": interview.get("id"),
+                        "guest_name": _normalize_text(interview.get("guest_name")),
+                        "title": _normalize_text(interview.get("title")),
+                        "scheduled_for": interview.get("scheduled_for"),
+                        "reason": reason,
+                    }
+                )
+
+        duplicate_alerts = []
+        for items in duplicate_groups.values():
+            if len(items) < 2:
+                continue
+            sorted_items = self._sort_interviews_by_upcoming_priority(items, reference=reference)
+            duplicate_alerts.append(
+                {
+                    "guest_name": _normalize_text(sorted_items[0].get("guest_name")) or "Guest",
+                    "count": len(sorted_items),
+                    "interviews": [
+                        {
+                            "id": item.get("id"),
+                            "title": _normalize_text(item.get("title")),
+                            "scheduled_for": item.get("scheduled_for"),
+                        }
+                        for item in sorted_items
+                    ],
+                }
+            )
+
+        duplicate_alerts.sort(key=lambda item: item["guest_name"].lower())
+        cleanup_candidates.sort(key=lambda item: _normalize_text(item.get("scheduled_for")))
+        return {
+            "double_bookings": duplicate_alerts,
+            "calendar_cleanup": cleanup_candidates,
         }
 
     @staticmethod
@@ -1408,6 +1470,10 @@ class GuestWebService:
             week_end = week_start + timedelta(days=7)
             if not (week_start <= scheduled_for < week_end):
                 continue
+            if _normalize_text(interview.get("status")).lower() == "cancelled":
+                continue
+            if _normalize_text(interview.get("confirmation_status")).lower() in {"declined", "reschedule_requested"}:
+                continue
             if (interview.get("reminder_status") or "").strip().lower() == "sent":
                 continue
             if not (interview.get("guest_email") or "").strip():
@@ -1776,6 +1842,43 @@ class GuestWebService:
         refreshed = self.database.get_interview_by_id(interview_id)
         if not refreshed:
             raise WebInterfaceError("Interview not found after Google Calendar update.")
+        return self._serialize_interview_reminder(refreshed)
+
+    def remove_interview_from_google_calendar(self, interview_id: int) -> Dict[str, Any]:
+        """Delete a linked Google Calendar event and mark the local interview as cancelled."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+        event_id = _normalize_text(interview.get("calendar_event_id"))
+        if not event_id:
+            raise WebInterfaceError("This interview is not linked to a Google Calendar event.")
+
+        client = self._build_google_calendar_client()
+        if client is None:
+            raise WebInterfaceError("Google Calendar sync is not configured on the server.")
+
+        try:
+            client.delete_event(event_id)
+        except GoogleCalendarSyncError as exc:
+            raise WebInterfaceError(str(exc)) from exc
+
+        updates = {
+            "status": "cancelled",
+            "confirmation_status": "declined" if _normalize_text(interview.get("confirmation_status")).lower() == "pending" else interview.get("confirmation_status"),
+            "last_synced_at": datetime.now().astimezone().isoformat(),
+            "notes": "\n".join(
+                part
+                for part in [
+                    _normalize_text(interview.get("notes")),
+                    "Removed from Google Calendar.",
+                ]
+                if part
+            ),
+        }
+        self.database.update_interview(interview_id, updates)
+        refreshed = self.database.get_interview_by_id(interview_id)
+        if not refreshed:
+            raise WebInterfaceError("Interview not found after Google Calendar removal.")
         return self._serialize_interview_reminder(refreshed)
 
     @staticmethod
@@ -2394,6 +2497,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
                 try:
                     interview = self.service.push_interview_to_google_calendar(interview_id)
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, interview)
+                return
+
+            if self.path.endswith("/remove-from-calendar"):
+                interview_id = self._extract_record_id(self.path[: -len("/remove-from-calendar")], "/api/interviews/")
+                if interview_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                    return
+
+                try:
+                    interview = self.service.remove_interview_from_google_calendar(interview_id)
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return

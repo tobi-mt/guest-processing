@@ -115,10 +115,19 @@
                 <input name="join_url" type="url" />
               </label>
               <label>
+                Status
+                <select name="status">
+                  <option value="scheduled">Scheduled</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </label>
+              <label>
                 Confirmation Status
                 <select name="confirmation_status">
                   <option value="pending">Pending</option>
                   <option value="confirmed">Confirmed</option>
+                  <option value="tentative">Tentative</option>
+                  <option value="declined">Declined</option>
                   <option value="reschedule_requested">Reschedule Requested</option>
                 </select>
               </label>
@@ -152,6 +161,17 @@
               </p>
             </div>
             <div id="operations-weekly-outreach" class="operations-preview"></div>
+          </div>
+
+          <div class="operations-section">
+            <div class="section-heading">
+              <p class="eyebrow">Booking Safety</p>
+              <h2>Calendar Alerts</h2>
+              <p class="hero-copy section-copy">
+                This is where the app should warn you early about duplicate guest bookings and cancelled slots that are still blocking your calendar.
+              </p>
+            </div>
+            <div id="operations-alerts" class="operations-preview"></div>
           </div>
         </section>
 
@@ -222,6 +242,8 @@
                 <option value="">All Statuses</option>
                 <option value="pending">Pending</option>
                 <option value="confirmed">Confirmed</option>
+                <option value="tentative">Tentative</option>
+                <option value="declined">Declined</option>
                 <option value="reschedule_requested">Reschedule Requested</option>
               </select>
             </label>

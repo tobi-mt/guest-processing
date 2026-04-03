@@ -19,6 +19,7 @@ const interviewPresetButtons = Array.from(document.querySelectorAll("[data-inter
 const refreshButton = document.getElementById("operations-refresh-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
 const operationsWeeklyOutreach = document.getElementById("operations-weekly-outreach");
+const operationsAlerts = document.getElementById("operations-alerts");
 const operationsTabButtons = Array.from(document.querySelectorAll("[data-operations-tab]"));
 const operationsTabPanels = Array.from(document.querySelectorAll("[data-operations-panel]"));
 
@@ -125,9 +126,19 @@ function formatConfirmationStatus(value) {
   const labels = {
     pending: "Pending reply",
     confirmed: "Confirmed",
+    tentative: "Tentative",
+    declined: "Declined",
     reschedule_requested: "Reschedule requested",
   };
   return labels[normalizeText(value)] || value || "Pending reply";
+}
+
+function formatInterviewStatus(value) {
+  const labels = {
+    scheduled: "Scheduled",
+    cancelled: "Cancelled",
+  };
+  return labels[normalizeText(value)] || value || "Scheduled";
 }
 
 function formatReminderStatus(value) {
@@ -224,6 +235,79 @@ function renderWeeklyOutreachPanel() {
   `;
 }
 
+function renderOperationsAlerts() {
+  if (!operationsAlerts) {
+    return;
+  }
+  const alerts = latestOperationsPayload.booking_alerts || {};
+  const doubleBookings = alerts.double_bookings || [];
+  const cleanup = alerts.calendar_cleanup || [];
+
+  if (!doubleBookings.length && !cleanup.length) {
+    operationsAlerts.innerHTML = `
+      <div class="insight-stack">
+        <strong class="insight-label">No urgent calendar risks</strong>
+        <p>No duplicate future guest bookings or stale cancelled calendar slots are showing right now.</p>
+      </div>
+    `;
+    return;
+  }
+
+  operationsAlerts.innerHTML = `
+    ${doubleBookings.length ? `
+      <div class="insight-stack caution">
+        <strong class="insight-label">Possible duplicate guest bookings</strong>
+        <div class="stack-list">
+          ${doubleBookings.map((alert) => `
+            <div class="mini-card">
+              <strong>${alert.guest_name}</strong>
+              <p>${alert.count} future bookings are holding space for the same guest.</p>
+              <ul>
+                ${alert.interviews.map((item) => `<li>${item.title || "Mirror Talk interview"} · ${formatDateTime(item.scheduled_for)}</li>`).join("")}
+              </ul>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    ` : ""}
+    ${cleanup.length ? `
+      <div class="insight-stack caution">
+        <strong class="insight-label">Calendar cleanup needed</strong>
+        <div class="stack-list">
+          ${cleanup.map((item) => `
+            <div class="mini-card">
+              <strong>${item.guest_name || "Guest"}</strong>
+              <p>${item.title || "Mirror Talk interview"} · ${formatDateTime(item.scheduled_for)}</p>
+              <p>${item.reason}</p>
+              <button type="button" class="ghost-button small-button" data-alert-action="remove-calendar" data-interview-id="${item.id}">Remove From Google Calendar</button>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    ` : ""}
+  `;
+
+  operationsAlerts.querySelectorAll("[data-alert-action='remove-calendar']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const interviewId = button.dataset.interviewId;
+      button.disabled = true;
+      button.textContent = "Removing...";
+      try {
+        await fetchJSON(`/api/interviews/${interviewId}/remove-from-calendar`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        setMessage(interviewMessage, "Removed the cancelled booking from Google Calendar.", "success");
+        await loadOperations();
+      } catch (error) {
+        setMessage(interviewMessage, error.message, "error");
+        button.disabled = false;
+        button.textContent = "Remove From Google Calendar";
+      }
+    });
+  });
+}
+
 function populateInterviewYearOptions(interviews) {
   const years = Array.from(
     new Set(interviews.map((interview) => getYearValue(interview.scheduled_for)).filter(Boolean)),
@@ -244,6 +328,7 @@ function resetInterviewForm() {
   interviewForm.reset();
   interviewForm.elements.id.value = "";
   interviewForm.elements.timezone.value = "Europe/Berlin";
+  interviewForm.elements.status.value = "scheduled";
   interviewForm.elements.confirmation_status.value = "pending";
   interviewForm.elements.reminder_status.value = "not_scheduled";
   interviewSubmitButton.textContent = "Save Interview";
@@ -259,6 +344,7 @@ function loadInterviewIntoForm(interview) {
   interviewForm.elements.timezone.value = interview.timezone || "Europe/Berlin";
   interviewForm.elements.calendar_event_id.value = interview.calendar_event_id || "";
   interviewForm.elements.join_url.value = interview.join_url || "";
+  interviewForm.elements.status.value = interview.status || "scheduled";
   interviewForm.elements.confirmation_status.value = interview.confirmation_status || "pending";
   interviewForm.elements.reminder_status.value = interview.reminder_status || "not_scheduled";
   interviewForm.elements.notes.value = interview.notes || "";
@@ -277,10 +363,18 @@ function renderInterviewInlineEditor(container, interview) {
       ${createFieldMarkup("Scheduled For", `<input name="scheduled_for" type="datetime-local" value="${formatDateForDateTimeInput(interview.scheduled_for)}" required />`)}
       ${createFieldMarkup("Timezone", `<input name="timezone" type="text" value="${interview.timezone || "Europe/Berlin"}" />`)}
       ${createFieldMarkup("Join URL", `<input name="join_url" type="url" value="${interview.join_url || ""}" />`, true)}
+      ${createFieldMarkup("Status", `
+        <select name="status">
+          <option value="scheduled" ${normalizeText(interview.status) === "scheduled" ? "selected" : ""}>Scheduled</option>
+          <option value="cancelled" ${normalizeText(interview.status) === "cancelled" ? "selected" : ""}>Cancelled</option>
+        </select>
+      `)}
       ${createFieldMarkup("Confirmation", `
         <select name="confirmation_status">
           <option value="pending" ${normalizeText(interview.confirmation_status) === "pending" ? "selected" : ""}>Pending</option>
           <option value="confirmed" ${normalizeText(interview.confirmation_status) === "confirmed" ? "selected" : ""}>Confirmed</option>
+          <option value="tentative" ${normalizeText(interview.confirmation_status) === "tentative" ? "selected" : ""}>Tentative</option>
+          <option value="declined" ${normalizeText(interview.confirmation_status) === "declined" ? "selected" : ""}>Declined</option>
           <option value="reschedule_requested" ${normalizeText(interview.confirmation_status) === "reschedule_requested" ? "selected" : ""}>Reschedule Requested</option>
         </select>
       `)}
@@ -398,6 +492,9 @@ function filterAndSortInterviews(interviews) {
     if (activeInterviewPreset === "upcoming" && isPast) {
       return false;
     }
+    if (activeInterviewPreset === "upcoming" && normalizeText(interview.status) === "cancelled") {
+      return false;
+    }
     if (activeInterviewPreset === "past" && !isPast) {
       return false;
     }
@@ -409,6 +506,9 @@ function filterAndSortInterviews(interviews) {
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekStart.getDate() + 7);
       if (!(date >= weekStart && date < weekEnd)) {
+        return false;
+      }
+      if (normalizeText(interview.status) === "cancelled") {
         return false;
       }
     }
@@ -531,6 +631,7 @@ function renderInterviews(interviews, totalCount) {
       <p>${interview.title || "Mirror Talk interview"}</p>
       <div class="operations-meta">
         <span>Scheduled: ${formatDateTime(interview.scheduled_for)}</span>
+        <span>Status: ${formatInterviewStatus(interview.status)}</span>
         <span>Email: ${renderLinkedValue(interview.guest_email)}</span>
         <span>Join: ${renderLinkedValue(interview.join_url)}</span>
         <span>Confirmation: ${formatConfirmationStatus(interview.confirmation_status)}</span>
@@ -546,9 +647,11 @@ function renderInterviews(interviews, totalCount) {
         <button type="button" class="ghost-button" data-interview-action="move-to-planning">${planningButtonLabel}</button>
         <button type="button" class="ghost-button" data-interview-action="mark-confirmed">Mark Confirmed</button>
         <button type="button" class="ghost-button" data-interview-action="mark-pending">Mark Pending</button>
+        <button type="button" class="ghost-button" data-interview-action="mark-cancelled">Mark Cancelled</button>
         ${reminderButtons}
         <button type="button" class="ghost-button" data-interview-action="mark-reminder-unsent">Reminder Not Sent</button>
         ${calendarButton}
+        ${interview.calendar_event_id ? `<button type="button" class="ghost-button danger-button" data-calendar-action="remove">Remove From Google Calendar</button>` : ""}
         <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
       </div>
       <div class="card-action-feedback">${activeInterviewActionFeedback.id === interview.id ? actionFeedbackMarkup(activeInterviewActionFeedback) : ""}</div>
@@ -564,7 +667,9 @@ function renderInterviews(interviews, totalCount) {
     const previewReminderButton = card.querySelector("[data-interview-action='preview-reminder']");
     const sendReminderButton = card.querySelector("[data-interview-action='send-reminder']");
     const markReminderUnsentButton = card.querySelector("[data-interview-action='mark-reminder-unsent']");
+    const markCancelledButton = card.querySelector("[data-interview-action='mark-cancelled']");
     const calendarPushButton = card.querySelector("[data-calendar-action='push']");
+    const calendarRemoveButton = card.querySelector("[data-calendar-action='remove']");
     const deleteButton = card.querySelector("[data-interview-action='delete']");
     const editorNode = card.querySelector("[data-interview-editor]");
     const reminderPreviewNode = card.querySelector("[data-interview-reminder-preview]");
@@ -664,6 +769,28 @@ function renderInterviews(interviews, totalCount) {
         setMessage(interviewMessage, error.message, "error");
         markPendingButton.disabled = false;
         markPendingButton.textContent = "Mark Pending";
+      }
+    });
+
+    markCancelledButton.addEventListener("click", async () => {
+      markCancelledButton.disabled = true;
+      markCancelledButton.textContent = "Cancelling...";
+      try {
+        await updateInterviewStatus(
+          interview,
+          { status: "cancelled", confirmation_status: normalizeText(interview.confirmation_status) === "confirmed" ? interview.confirmation_status : "declined" },
+          `Marking ${interview.guest_name || "guest"} as cancelled...`,
+          `${interview.guest_name || "Guest"} marked cancelled.`,
+          actionFeedbackNode,
+        );
+        setMessage(interviewMessage, `${interview.guest_name || "Guest"} marked cancelled.`, "success");
+        await loadOperations();
+      } catch (error) {
+        activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        setMessage(interviewMessage, error.message, "error");
+        markCancelledButton.disabled = false;
+        markCancelledButton.textContent = "Mark Cancelled";
       }
     });
 
@@ -772,6 +899,33 @@ function renderInterviews(interviews, totalCount) {
           setMessage(interviewMessage, error.message, "error");
           calendarPushButton.disabled = false;
           calendarPushButton.textContent = "Update Google Calendar Event";
+        }
+      });
+    }
+
+    if (calendarRemoveButton) {
+      calendarRemoveButton.addEventListener("click", async () => {
+        if (!window.confirm(`Remove ${interview.guest_name || "this guest"} from Google Calendar?`)) {
+          return;
+        }
+        calendarRemoveButton.disabled = true;
+        calendarRemoveButton.textContent = "Removing...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Removing ${interview.guest_name || "guest"} from Google Calendar...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        try {
+          await fetchJSON(`/api/interviews/${interview.id}/remove-from-calendar`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          activeInterviewActionFeedback = { id: interview.id, text: `${interview.guest_name || "Guest"} removed from Google Calendar.`, tone: "success" };
+          setMessage(interviewMessage, `${interview.guest_name || "Guest"} removed from Google Calendar.`, "success");
+          await loadOperations();
+        } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+          setMessage(interviewMessage, error.message, "error");
+          calendarRemoveButton.disabled = false;
+          calendarRemoveButton.textContent = "Remove From Google Calendar";
         }
       });
     }
@@ -917,6 +1071,7 @@ function renderOperations() {
   updatePresetButtons(interviewPresetButtons, activeInterviewPreset, "interviewPreset");
   populateInterviewYearOptions(interviews);
   renderWeeklyOutreachPanel();
+  renderOperationsAlerts();
   renderReminderCandidates(filterReminderCandidates(reminders), reminders.length);
   renderInterviews(filterAndSortInterviews(interviews), interviews.length);
 }

@@ -193,6 +193,27 @@ class GoogleCalendarSyncClient:
 
         return response.json()
 
+    def delete_event(self, event_id: str) -> None:
+        """Delete a Google Calendar event."""
+        if not (event_id or "").strip():
+            raise GoogleCalendarSyncError("This interview is not linked to a Google Calendar event.")
+
+        access_token = self._get_access_token()
+        url = self._event_url(event_id.strip())
+        try:
+            response = requests.delete(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
+
+        if response.status_code not in {200, 204}:
+            raise GoogleCalendarSyncError(
+                f"Google Calendar event delete failed: {response.text.strip() or response.status_code}"
+            )
+
     def normalize_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a Google Calendar event payload into an interview record shape."""
         attendees = event.get("attendees") or []

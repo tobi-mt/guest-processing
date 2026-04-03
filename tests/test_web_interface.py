@@ -2284,6 +2284,88 @@ def test_web_service_can_push_interview_updates_to_google_calendar(monkeypatch, 
     assert pushed["calendar_source"] == "google_calendar"
 
 
+def test_operations_flag_duplicate_future_guest_bookings(temp_db):
+    """Operations should warn when the same guest is holding multiple future dates."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Mirror Talk with Jordan Rivers",
+            "scheduled_for": "2099-03-31 17:00:00",
+            "calendar_event_id": "google_event_1",
+        }
+    )
+    service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Mirror Talk with Jordan Rivers follow-up",
+            "scheduled_for": "2099-04-03 17:00:00",
+            "calendar_event_id": "google_event_2",
+        }
+    )
+
+    operations = service.list_operations()
+
+    assert len(operations["booking_alerts"]["double_bookings"]) == 1
+    assert operations["booking_alerts"]["double_bookings"][0]["guest_name"] == "Jordan Rivers"
+    assert operations["booking_alerts"]["double_bookings"][0]["count"] == 2
+
+
+def test_operations_flag_calendar_cleanup_candidates(temp_db):
+    """Declined or cancelled linked interviews should appear in calendar cleanup alerts."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Mirror Talk with Jordan Rivers",
+            "scheduled_for": "2099-03-31 17:00:00",
+            "calendar_event_id": "google_event_1",
+            "confirmation_status": "declined",
+        }
+    )
+
+    operations = service.list_operations()
+
+    assert len(operations["booking_alerts"]["calendar_cleanup"]) == 1
+    assert "calendar slot still exists" in operations["booking_alerts"]["calendar_cleanup"][0]["reason"].lower()
+
+
+def test_web_service_can_remove_interview_from_google_calendar(monkeypatch, temp_db):
+    """Operators should be able to remove stale cancelled bookings from Google Calendar."""
+
+    class StubCalendarClient:
+        def delete_event(self, event_id):
+            assert event_id == "google_event_1"
+
+    monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
+    monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
+    monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Updated Mirror Talk conversation",
+            "scheduled_for": "2099-03-31 18:30:00",
+            "timezone": "Europe/Berlin",
+            "calendar_event_id": "google_event_1",
+            "confirmation_status": "pending",
+        }
+    )
+    monkeypatch.setattr(service, "_build_google_calendar_client", lambda: StubCalendarClient())
+
+    removed = service.remove_interview_from_google_calendar(interview["id"])
+
+    assert removed["status"] == "cancelled"
+    assert removed["confirmation_status"] == "declined"
+    assert "Removed from Google Calendar." in removed["notes"]
+
+
 def test_google_calendar_sync_recognizes_soulful_podcast_event_markers():
     """Calendar sync should recognize Mirror Talk interview invites from the event body, not only the title."""
     from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
