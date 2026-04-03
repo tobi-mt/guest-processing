@@ -1112,8 +1112,20 @@ class GuestWebService:
             raise WebInterfaceError("Guest not found after email send.")
         return serialize_guest(updated_guest)
 
-    def delete_guest(self, guest_id: int) -> Dict[str, Any]:
+    def delete_guest(self, guest_id: int, confirm_name: str = "") -> Dict[str, Any]:
         """Delete a guest and return a small confirmation payload."""
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+
+        guest_name = _normalize_text(guest.get("full_name") or guest.get("name"))
+        normalized_confirm_name = _normalize_text(confirm_name)
+        needs_strong_confirmation = bool(guest.get("is_processed")) or bool(_normalize_text(guest.get("email_status")))
+        if needs_strong_confirmation and guest_name and normalized_confirm_name != guest_name:
+            raise WebInterfaceError(
+                f'Type "{guest.get("full_name") or guest.get("name")}" to delete this processed guest.'
+            )
+
         self.database.delete_guest(guest_id)
         return {"deleted": True, "id": guest_id}
 
@@ -2736,7 +2748,14 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
                 return
 
-            self._send_json(HTTPStatus.OK, self.service.delete_guest(guest_id))
+            payload = self._read_json_payload()
+            try:
+                result = self.service.delete_guest(guest_id, payload.get("confirm_name", ""))
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, result)
             return
 
         if self.path.startswith("/api/interviews/"):

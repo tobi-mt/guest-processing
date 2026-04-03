@@ -147,6 +147,41 @@ def test_web_service_can_update_guest_details_without_resetting_status(temp_db):
     assert updated_guest["email_status"] == "accepted"
 
 
+def test_delete_processed_guest_requires_exact_name_confirmation(temp_db):
+    """Processed guests should need a typed full-name confirmation before deletion."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Luke Aulin",
+            "email": "luke@example.com",
+            "background": "Guest profile",
+        }
+    )
+    service.update_guest_status(guest["id"], "accepted")
+
+    with pytest.raises(WebInterfaceError, match='Type "Luke Aulin" to delete this processed guest.'):
+        service.delete_guest(guest["id"])
+
+    result = service.delete_guest(guest["id"], confirm_name="Luke Aulin")
+    assert result["deleted"] is True
+    assert service.database.get_guest_by_id(guest["id"]) is None
+
+
+def test_delete_unprocessed_guest_still_works_without_typed_confirmation(temp_db):
+    """Unprocessed guests can still be deleted without the stronger name gate."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Fresh Guest",
+            "email": "fresh@example.com",
+        }
+    )
+
+    result = service.delete_guest(guest["id"])
+    assert result["deleted"] is True
+    assert service.database.get_guest_by_id(guest["id"]) is None
+
+
 def test_web_service_can_research_guest_and_store_public_profile_context(monkeypatch, temp_db):
     """Dashboard research should save structured public-profile evidence on the guest."""
     service = GuestWebService(temp_db.db_path)

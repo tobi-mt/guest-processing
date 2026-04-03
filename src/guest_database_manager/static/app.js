@@ -814,11 +814,36 @@ function renderGuests(payload) {
             };
             renderGuests(latestPayload);
           } else if (action === "delete") {
-            activeGuestActionFeedback = { guestId: guest.id, text: `Deleting ${guest.full_name || "guest"}...`, tone: "pending" };
-            renderGuests(latestPayload);
-            await fetchJSON(`/api/guests/${guest.id}`, { method: "DELETE" });
+            const guestLabel = guest.full_name || "guest";
+            const needsTypedConfirmation = Boolean(guest.is_processed || guest.email_status);
+            if (needsTypedConfirmation) {
+              const typedName = window.prompt(`Type "${guestLabel}" to delete this processed guest.`);
+              if (typedName === null) {
+                return;
+              }
+              if (typedName.trim() !== guestLabel) {
+                setMessage(`Deletion cancelled. Type the full name exactly to remove ${guestLabel}.`, "error");
+                return;
+              }
+              activeGuestActionFeedback = { guestId: guest.id, text: `Deleting ${guestLabel}...`, tone: "pending" };
+              renderGuests(latestPayload);
+              await fetchJSON(`/api/guests/${guest.id}`, {
+                method: "DELETE",
+                body: JSON.stringify({ confirm_name: typedName.trim() }),
+              });
+            } else {
+              if (!window.confirm(`Delete ${guestLabel} from the dashboard?`)) {
+                return;
+              }
+              activeGuestActionFeedback = { guestId: guest.id, text: `Deleting ${guestLabel}...`, tone: "pending" };
+              renderGuests(latestPayload);
+              await fetchJSON(`/api/guests/${guest.id}`, {
+                method: "DELETE",
+                body: JSON.stringify({}),
+              });
+            }
             activeGuestActionFeedback = null;
-            setMessage(`Deleted ${guest.full_name}.`, "success");
+            setMessage(`Deleted ${guestLabel}.`, "success");
           } else if (action === "skipped") {
             const skipReason = window.prompt("Optional skip reason:") || "";
             activeGuestActionFeedback = { guestId: guest.id, text: `Skipping ${guest.full_name || "guest"}...`, tone: "pending" };
