@@ -419,6 +419,17 @@ p {
   color: #fff;
 }
 
+.preset-chip.warning-chip {
+  background: rgba(143, 45, 31, 0.1);
+  color: var(--danger);
+  border-color: rgba(143, 45, 31, 0.16);
+}
+
+.preset-chip.warning-chip.active {
+  background: var(--danger);
+  color: #fff;
+}
+
 .filter-field {
   min-width: 180px;
 }

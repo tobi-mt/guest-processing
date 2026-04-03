@@ -257,6 +257,7 @@ function renderOperationsAlerts() {
     ${doubleBookings.length ? `
       <div class="insight-stack caution">
         <strong class="insight-label">Possible duplicate guest bookings</strong>
+        <p>Use the <strong>Booking Risks</strong> preset below to jump straight to the affected interview cards.</p>
         <div class="stack-list">
           ${doubleBookings.map((alert) => `
             <div class="mini-card">
@@ -273,6 +274,7 @@ function renderOperationsAlerts() {
     ${cleanup.length ? `
       <div class="insight-stack caution">
         <strong class="insight-label">Calendar cleanup needed</strong>
+        <p>Use the <strong>Calendar Cleanup</strong> preset below to focus only on interviews that may still be blocking dates.</p>
         <div class="stack-list">
           ${cleanup.map((item) => `
             <div class="mini-card">
@@ -469,6 +471,11 @@ function filterAndSortInterviews(interviews) {
   const confirmationStatus = interviewConfirmationFilter.value;
   const sortMode = interviewSort.value || "closest";
   const now = new Date();
+  const alerts = latestOperationsPayload.booking_alerts || {};
+  const riskIds = new Set(
+    (alerts.double_bookings || []).flatMap((group) => (group.interviews || []).map((item) => Number(item.id))),
+  );
+  const cleanupIds = new Set((alerts.calendar_cleanup || []).map((item) => Number(item.id)));
 
   const filtered = interviews.filter((interview) => {
     const haystack = [
@@ -516,6 +523,12 @@ function filterAndSortInterviews(interviews) {
       return false;
     }
     if (activeInterviewPreset === "calendar_linked" && !normalizeText(interview.calendar_event_id)) {
+      return false;
+    }
+    if (activeInterviewPreset === "booking_risks" && !riskIds.has(Number(interview.id))) {
+      return false;
+    }
+    if (activeInterviewPreset === "calendar_cleanup" && !cleanupIds.has(Number(interview.id))) {
       return false;
     }
     return true;
