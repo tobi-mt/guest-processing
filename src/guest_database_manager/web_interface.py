@@ -770,6 +770,8 @@ class GuestWebService:
             _normalize_text(episode.get("release_status")),
         )
         normalized["release_status"] = normalized_status
+        if normalized_status == "released":
+            normalized["production_status"] = "released"
         if normalized_status == "scheduled" and _normalize_text(normalized.get("production_status")).lower() == "released":
             normalized["production_status"] = "ready"
         normalized["outreach_plan"] = _normalize_outreach_plan(normalized.get("outreach_plan"))

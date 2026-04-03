@@ -952,7 +952,10 @@ function filterEpisodes(episodes) {
       return false;
     }
     if (activeEpisodePreset === "ready_to_schedule") {
-      if (!(normalizeText(episode.production_status) === "ready" && normalizeText(episode.release_status) !== "scheduled")) {
+      if (!(
+        normalizeText(episode.production_status) === "ready" &&
+        !["scheduled", "released"].includes(normalizeText(episode.release_status))
+      )) {
         return false;
       }
     }

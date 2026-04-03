@@ -810,6 +810,26 @@ def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
     assert "production stage is still too early" not in episode["promotion_readiness"]["blockers"]
 
 
+def test_list_planning_normalizes_released_episode_production_state(temp_db):
+    """Released episodes should display as released, not ready, in planning."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "A Meaningful Conversation",
+            "release_date": "2026-03-31T17:00",
+            "release_status": "released",
+            "production_status": "ready",
+        }
+    )
+
+    episode = service.list_planning()["episodes"][0]
+
+    assert episode["release_status"] == "released"
+    assert episode["production_status"] == "released"
+
+
 def test_copy_assist_does_not_treat_guest_name_as_topic(temp_db):
     """Copy assist should not invent a fake topic by echoing the guest name."""
     service = GuestWebService(temp_db.db_path)
