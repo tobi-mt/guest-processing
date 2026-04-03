@@ -428,6 +428,26 @@ function renderGuestResearchCopilot(research) {
   `;
 }
 
+function renderAiSchedulingCopilot(aiCopilot) {
+  if (!aiCopilot?.summary && !(aiCopilot?.source_evidence || []).length) {
+    return "";
+  }
+  const whyNow = (aiCopilot.why_now || []).slice(0, 3);
+  const watchouts = (aiCopilot.watchouts || []).slice(0, 3);
+  const sourceEvidence = (aiCopilot.source_evidence || []).slice(0, 4);
+  return `
+    <div class="operations-preview">
+      <strong class="insight-label">AI scheduling copilot</strong>
+      ${aiCopilot.summary ? `<p>${escapeHtml(aiCopilot.summary)}</p>` : ""}
+      <p><strong>Alignment score:</strong> ${escapeHtml(aiCopilot.alignment_score || 0)}/100${aiCopilot.model ? ` · ${escapeHtml(aiCopilot.model)}` : ""}</p>
+      ${aiCopilot.monthly_theme ? `<p><strong>Monthly theme angle:</strong> ${escapeHtml(aiCopilot.monthly_theme)}</p>` : ""}
+      ${whyNow.length ? `<div class="insight-stack"><strong class="insight-label">AI why now</strong><ul>${whyNow.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+      ${watchouts.length ? `<div class="insight-stack caution"><strong class="insight-label">AI watchouts</strong><ul>${watchouts.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+      ${sourceEvidence.length ? `<div class="insight-stack"><strong class="insight-label">Evidence used</strong><ul>${sourceEvidence.map((item) => `<li><strong>${escapeHtml(item.source)}:</strong> ${escapeHtml(item.detail)}</li>`).join("")}</ul></div>` : ""}
+    </div>
+  `;
+}
+
 function renderCopyAssist(copyAssist) {
   if (!copyAssist) {
     return "";
@@ -1158,6 +1178,7 @@ function renderEpisodes(episodes, totalCount) {
       </div>
       ${renderOutreachSummary(episode.outreach_summary)}
       ${renderPromoReadiness(episode.promotion_readiness)}
+      ${renderAiSchedulingCopilot(episode.ai_copilot)}
       ${renderGuestResearchCopilot(episode.guest_research)}
       ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
@@ -1493,6 +1514,7 @@ function renderRecommendations(recommendations, totalCount) {
       ${episode.why_now?.length ? `<div class="operations-preview"><strong class="insight-label">Why this next</strong><ul>${episode.why_now.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${renderSeasonalFit(episode.seasonal_fit)}
+      ${renderAiSchedulingCopilot(episode.ai_copilot)}
       ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${episode.archive_overlap.message}</p></div>` : ""}
       ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}

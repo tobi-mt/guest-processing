@@ -288,6 +288,48 @@ def test_planning_uses_guest_research_as_copilot_context(monkeypatch, temp_db):
     assert "public work in healing, leadership" in episode["copy_assist"]["summary"].lower()
 
 
+def test_planning_can_attach_openai_scheduling_copilot(monkeypatch, temp_db):
+    """Planning recommendations should expose optional OpenAI scheduling copilot evidence."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Healing Through Honest Conversations",
+            "topic": "Healing and leadership",
+            "category": "Mental Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    class StubCopilot:
+        def enrich_recommendations(self, recommendations, *, reference, released_history):
+            enriched = []
+            for item in recommendations:
+                enriched_item = dict(item)
+                enriched_item["ai_copilot"] = {
+                    "model": "gpt-5",
+                    "alignment_score": 82,
+                    "summary": "Research-backed fit for the current release window.",
+                    "why_now": ["guest research supports a timely healing angle"],
+                    "watchouts": ["keep the framing grounded and specific"],
+                    "monthly_theme": "Renewal after hard seasons",
+                    "source_evidence": [{"source": "Guest website", "detail": "Mentions healing and leadership work"}],
+                }
+                enriched.append(enriched_item)
+            return enriched
+
+    monkeypatch.setattr(service, "_build_openai_scheduling_copilot", lambda: StubCopilot())
+
+    planning = service.list_planning()
+    recommendation = planning["recommendations"][0]
+
+    assert planning["ai_scheduling_enabled"] is True
+    assert recommendation["ai_copilot"]["model"] == "gpt-5"
+    assert recommendation["ai_copilot"]["alignment_score"] == 82
+
+
 def test_web_service_create_guest_preserves_existing_source_label(temp_db):
     """Dashboard writes should not replace an existing guest's original source label."""
     service = GuestWebService(temp_db.db_path)

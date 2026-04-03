@@ -39,6 +39,7 @@ from guest_database_manager.guest_recommender import (
 )
 from guest_database_manager.guest_research import research_guest_from_public_web
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
+from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
 
 STATIC_DIR = Path(__file__).parent / "static"
 FORM_SOURCE_NAME = "Direct Web Entry"
@@ -70,6 +71,8 @@ GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_DAYS_AHEAD"
 ASK_MIRROR_TALK_BASE_URL_ENV_VAR = "MIRROR_TALK_ASK_BASE_URL"
 ASK_MIRROR_TALK_USERNAME_ENV_VAR = "MIRROR_TALK_ASK_USERNAME"
 ASK_MIRROR_TALK_PASSWORD_ENV_VAR = "MIRROR_TALK_ASK_PASSWORD"
+OPENAI_API_KEY_ENV_VAR = "MIRROR_TALK_OPENAI_API_KEY"
+OPENAI_MODEL_ENV_VAR = "MIRROR_TALK_OPENAI_MODEL"
 DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD = 365
 FORM_FIELDS = {
     "full_name",
@@ -456,12 +459,27 @@ class GuestWebService:
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
+        recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
+        ai_scheduling_client = self._build_openai_scheduling_copilot()
+        if ai_scheduling_client is not None:
+            try:
+                recommendations = ai_scheduling_client.enrich_recommendations(
+                    recommendations,
+                    reference=datetime.now(),
+                    released_history=[
+                        item for item in enriched_episodes
+                        if _normalize_text(item.get("release_status")).lower() == "released"
+                    ],
+                )
+            except Exception:
+                pass
         return {
             "stats": self._build_episode_stats(enriched_episodes),
             "episodes": enriched_episodes,
-            "recommendations": build_release_recommendations(enriched_episodes, reference=datetime.now()),
+            "recommendations": recommendations,
             "available_categories": self.database.list_episode_categories(),
             "ask_sync_enabled": self._build_ask_mirror_talk_client() is not None,
+            "ai_scheduling_enabled": ai_scheduling_client is not None,
             "weekly_system": self._build_weekly_system_payload(),
         }
 
@@ -2038,6 +2056,15 @@ class GuestWebService:
         if not all([base_url, username, password]):
             return None
         return AskMirrorTalkClient(base_url=base_url, username=username, password=password)
+
+    @staticmethod
+    def _build_openai_scheduling_copilot() -> Optional[OpenAISchedulingCopilot]:
+        """Build the optional OpenAI scheduling copilot from environment configuration."""
+        api_key = os.environ.get(OPENAI_API_KEY_ENV_VAR, "").strip()
+        model = os.environ.get(OPENAI_MODEL_ENV_VAR, "").strip() or "gpt-5"
+        if not api_key:
+            return None
+        return OpenAISchedulingCopilot(api_key=api_key, model=model)
 
     def _build_email_manager(self) -> EmailManager:
         """Build an email manager from environment configuration for the hosted dashboard."""
