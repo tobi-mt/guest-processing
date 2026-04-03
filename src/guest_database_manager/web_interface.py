@@ -1192,11 +1192,16 @@ class GuestWebService:
             raise WebInterfaceError("Guest could not be saved after research.")
         return serialize_guest(guest)
 
-    def delete_interview(self, interview_id: int) -> Dict[str, Any]:
+    def delete_interview(self, interview_id: int, confirm_label: str = "") -> Dict[str, Any]:
         """Delete an interview and return a small confirmation payload."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
             raise WebInterfaceError("Interview not found.")
+        expected_label = _normalize_text(interview.get("guest_name")) or _normalize_text(interview.get("title"))
+        if expected_label and _normalize_text(confirm_label) != expected_label:
+            raise WebInterfaceError(
+                f'Type "{interview.get("guest_name") or interview.get("title")}" to delete this interview.'
+            )
         self.database.delete_interview(interview_id)
         return {"deleted": True, "id": interview_id}
 
@@ -1517,11 +1522,16 @@ class GuestWebService:
         saved = self.create_episode(episode_data)
         return saved
 
-    def delete_episode(self, episode_id: int) -> Dict[str, Any]:
+    def delete_episode(self, episode_id: int, confirm_label: str = "") -> Dict[str, Any]:
         """Delete an episode and return a small confirmation payload."""
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
             raise WebInterfaceError("Episode not found.")
+        expected_label = _normalize_text(episode.get("episode_title")) or _normalize_text(episode.get("guest_name"))
+        if expected_label and _normalize_text(confirm_label) != expected_label:
+            raise WebInterfaceError(
+                f'Type "{episode.get("episode_title") or episode.get("guest_name")}" to delete this episode.'
+            )
         self.database.delete_episode(episode_id)
         return {"deleted": True, "id": episode_id}
 
@@ -2766,8 +2776,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             if interview_id is None:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
                 return
+            payload = self._read_json_payload()
             try:
-                self._send_json(HTTPStatus.OK, self.service.delete_interview(interview_id))
+                self._send_json(HTTPStatus.OK, self.service.delete_interview(interview_id, payload.get("confirm_label", "")))
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
@@ -2780,8 +2791,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             if episode_id is None:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
                 return
+            payload = self._read_json_payload()
             try:
-                self._send_json(HTTPStatus.OK, self.service.delete_episode(episode_id))
+                self._send_json(HTTPStatus.OK, self.service.delete_episode(episode_id, payload.get("confirm_label", "")))
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return

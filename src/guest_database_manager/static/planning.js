@@ -208,6 +208,18 @@ function setMessage(node, text, tone = "") {
   node.className = `message ${tone}`.trim();
 }
 
+function confirmCriticalAction(message) {
+  return window.confirm(message);
+}
+
+function promptExactMatch(label, subject) {
+  const typedValue = window.prompt(`Type "${label}" to ${subject}.`);
+  if (typedValue === null) {
+    return null;
+  }
+  return typedValue.trim() === label ? typedValue.trim() : false;
+}
+
 function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -1241,6 +1253,9 @@ function renderEpisodes(episodes, totalCount) {
           setMessage(episodeMessage, "This episode does not have a guest email yet.", "error");
           return;
         }
+        if (!confirmCriticalAction(`Send the thank-you email to ${episode.guest_name || episode.guest_email || "this guest"} now?`)) {
+          return;
+        }
 
         sendAppreciationButton.disabled = true;
         sendAppreciationButton.textContent = "Sending...";
@@ -1349,6 +1364,9 @@ function renderEpisodes(episodes, totalCount) {
           }
           return;
         }
+        if (!confirmCriticalAction(`Send the release email to ${episode.guest_name || episode.guest_email || "this guest"} now?`)) {
+          return;
+        }
 
         sendReleaseButton.disabled = true;
         sendReleaseButton.textContent = "Sending...";
@@ -1392,7 +1410,12 @@ function renderEpisodes(episodes, totalCount) {
     }
     deleteButton.addEventListener("click", async () => {
       const label = episode.episode_title || episode.guest_name || "this episode";
-      if (!window.confirm(`Delete ${label} from the database?`)) {
+      const typedLabel = promptExactMatch(label, "delete this episode");
+      if (typedLabel === null) {
+        return;
+      }
+      if (typedLabel === false) {
+        setMessage(episodeMessage, `Deletion cancelled. Type ${label} exactly to remove this episode.`, "error");
         return;
       }
 
@@ -1401,7 +1424,10 @@ function renderEpisodes(episodes, totalCount) {
       activeEpisodeActionFeedback = { id: episode.id, text: `Deleting ${label}...`, tone: "pending" };
       actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
       try {
-        await fetchJSON(`/api/episodes/${episode.id}`, { method: "DELETE" });
+        await fetchJSON(`/api/episodes/${episode.id}`, {
+          method: "DELETE",
+          body: JSON.stringify({ confirm_label: typedLabel }),
+        });
         activeEpisodeActionFeedback = { id: episode.id, text: `${label} deleted.`, tone: "success" };
         setMessage(episodeMessage, `Deleted ${label}.`, "success");
         await loadPlanning();

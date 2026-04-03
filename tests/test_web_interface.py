@@ -182,6 +182,44 @@ def test_delete_unprocessed_guest_still_works_without_typed_confirmation(temp_db
     assert service.database.get_guest_by_id(guest["id"]) is None
 
 
+def test_delete_interview_requires_exact_label_confirmation(temp_db):
+    """Interview deletion should require a typed guest label."""
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "scheduled_for": "2026-04-10 18:00:00",
+        }
+    )
+
+    with pytest.raises(WebInterfaceError, match='Type "Jordan Rivers" to delete this interview.'):
+        service.delete_interview(interview["id"])
+
+    result = service.delete_interview(interview["id"], confirm_label="Jordan Rivers")
+    assert result["deleted"] is True
+    assert service.database.get_interview_by_id(interview["id"]) is None
+
+
+def test_delete_episode_requires_exact_label_confirmation(temp_db):
+    """Episode deletion should require a typed episode label."""
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Healing Through Honest Conversations",
+        }
+    )
+
+    with pytest.raises(WebInterfaceError, match='Type "Healing Through Honest Conversations" to delete this episode.'):
+        service.delete_episode(episode["id"])
+
+    result = service.delete_episode(episode["id"], confirm_label="Healing Through Honest Conversations")
+    assert result["deleted"] is True
+    assert service.database.get_episode_by_id(episode["id"]) is None
+
+
 def test_web_service_can_research_guest_and_store_public_profile_context(monkeypatch, temp_db):
     """Dashboard research should save structured public-profile evidence on the guest."""
     service = GuestWebService(temp_db.db_path)
@@ -723,8 +761,12 @@ def test_web_service_can_delete_interview_and_episode(temp_db):
         }
     )
 
-    assert service.delete_episode(episode["id"]) == {"deleted": True, "id": episode["id"]}
-    assert service.delete_interview(interview["id"]) == {"deleted": True, "id": interview["id"]}
+    assert service.delete_episode(
+        episode["id"], confirm_label="Healing Through Hard Seasons"
+    ) == {"deleted": True, "id": episode["id"]}
+    assert service.delete_interview(
+        interview["id"], confirm_label="Jordan Rivers"
+    ) == {"deleted": True, "id": interview["id"]}
     assert service.list_planning()["episodes"] == []
     assert service.list_operations()["interviews"] == []
 

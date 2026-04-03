@@ -72,6 +72,10 @@ function actionFeedbackMarkup(feedback) {
   return `<p class="composer-feedback ${feedback.tone || ""}">${escapeHtml(feedback.text)}</p>`;
 }
 
+function confirmCriticalAction(message) {
+  return window.confirm(message);
+}
+
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -689,6 +693,10 @@ function renderGuests(payload) {
       });
 
       composer.querySelector("[data-composer-action='send']").addEventListener("click", async () => {
+        const guestLabel = guest.full_name || "guest";
+        if (!confirmCriticalAction(`Send this ${activeEmailComposer.status === "accepted" ? "approval" : "decline"} email to ${guestLabel}?`)) {
+          return;
+        }
         activeEmailComposer.sending = true;
         activeEmailComposer.feedback = {
           text: activeEmailComposer.status === "accepted"

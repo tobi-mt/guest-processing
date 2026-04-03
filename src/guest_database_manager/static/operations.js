@@ -78,6 +78,18 @@ function setMessage(node, text, tone = "") {
   node.className = `message ${tone}`.trim();
 }
 
+function confirmCriticalAction(message) {
+  return window.confirm(message);
+}
+
+function promptExactMatch(label, subject) {
+  const typedValue = window.prompt(`Type "${label}" to ${subject}.`);
+  if (typedValue === null) {
+    return null;
+  }
+  return typedValue.trim() === label ? typedValue.trim() : false;
+}
+
 function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -798,6 +810,9 @@ function renderInterviews(interviews, totalCount) {
     });
 
     markCancelledButton.addEventListener("click", async () => {
+      if (!confirmCriticalAction(`Mark ${interview.guest_name || "this guest"} as cancelled?`)) {
+        return;
+      }
       markCancelledButton.disabled = true;
       markCancelledButton.textContent = "Cancelling...";
       try {
@@ -855,6 +870,9 @@ function renderInterviews(interviews, totalCount) {
       sendReminderButton.addEventListener("click", async () => {
         if (!interview.guest_email) {
           setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+        if (!confirmCriticalAction(`Send the reminder email to ${interview.guest_name || interview.guest_email || "this guest"} now?`)) {
           return;
         }
 
@@ -930,7 +948,7 @@ function renderInterviews(interviews, totalCount) {
 
     if (calendarRemoveButton) {
       calendarRemoveButton.addEventListener("click", async () => {
-        if (!window.confirm(`Remove ${interview.guest_name || "this guest"} from Google Calendar?`)) {
+        if (!confirmCriticalAction(`Remove ${interview.guest_name || "this guest"} from Google Calendar?`)) {
           return;
         }
         calendarRemoveButton.disabled = true;
@@ -963,7 +981,12 @@ function renderInterviews(interviews, totalCount) {
 
     deleteButton.addEventListener("click", async () => {
       const label = interview.guest_name || "this interview";
-      if (!window.confirm(`Delete ${label} from the database?`)) {
+      const typedLabel = promptExactMatch(label, "delete this interview");
+      if (typedLabel === null) {
+        return;
+      }
+      if (typedLabel === false) {
+        setMessage(interviewMessage, `Deletion cancelled. Type ${label} exactly to remove this interview.`, "error");
         return;
       }
 
@@ -972,7 +995,10 @@ function renderInterviews(interviews, totalCount) {
       activeInterviewActionFeedback = { id: interview.id, text: `Deleting ${label}...`, tone: "pending" };
       actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
       try {
-        await fetchJSON(`/api/interviews/${interview.id}`, { method: "DELETE" });
+        await fetchJSON(`/api/interviews/${interview.id}`, {
+          method: "DELETE",
+          body: JSON.stringify({ confirm_label: typedLabel }),
+        });
         activeInterviewActionFeedback = { id: interview.id, text: `${label} deleted.`, tone: "success" };
         setMessage(interviewMessage, `Deleted ${label}.`, "success");
         await loadOperations();
@@ -1073,6 +1099,9 @@ function renderReminderCandidates(interviews, totalCount) {
     });
 
     sendButton.addEventListener("click", async () => {
+      if (!confirmCriticalAction(`Send the reminder email to ${interview.guest_name || interview.guest_email || "this guest"} now?`)) {
+        return;
+      }
       try {
         await fetchJSON(`/api/interviews/${interview.id}/send-reminder`, {
           method: "POST",
