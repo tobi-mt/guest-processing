@@ -585,6 +585,69 @@ function renderOutreachSummary(summary) {
   `;
 }
 
+function renderReleaseComposer(node, episode, preview) {
+  node.classList.remove("hidden");
+  node.innerHTML = `
+    <div class="inline-editor-title">Release Email</div>
+    <label class="full-width">
+      <span>Subject</span>
+      <input data-release-field="subject" type="text" value="${escapeHtml(preview.subject || "")}" />
+    </label>
+    <label class="full-width">
+      <span>Email Body</span>
+      <textarea data-release-field="body" rows="12">${escapeHtml(preview.body || "")}</textarea>
+    </label>
+    <div class="inline-editor-actions full-width">
+      <button type="button" class="primary-button" data-release-composer-action="send">Send Edited Release Email</button>
+      <button type="button" class="ghost-button" data-release-composer-action="close">Close</button>
+    </div>
+    <p class="message" data-release-composer-message aria-live="polite"></p>
+  `;
+
+  const subjectField = node.querySelector("[data-release-field='subject']");
+  const bodyField = node.querySelector("[data-release-field='body']");
+  const sendButton = node.querySelector("[data-release-composer-action='send']");
+  const closeButton = node.querySelector("[data-release-composer-action='close']");
+  const messageNode = node.querySelector("[data-release-composer-message]");
+
+  closeButton.addEventListener("click", () => {
+    node.classList.add("hidden");
+    node.innerHTML = "";
+  });
+
+  sendButton.addEventListener("click", async () => {
+    sendButton.disabled = true;
+    sendButton.textContent = "Sending...";
+    setMessage(messageNode, "Sending edited release email...", "pending");
+    try {
+      await fetchJSON(`/api/episodes/${episode.id}/send-release-email`, {
+        method: "POST",
+        body: JSON.stringify({
+          subject: subjectField.value,
+          body: bodyField.value,
+        }),
+      });
+      setMessage(
+        episodeMessage,
+        `Release email sent to ${episode.guest_name || episode.guest_email}. The published follow-up is complete for this episode.`,
+        "success",
+      );
+      activeEpisodeActionFeedback = {
+        id: episode.id,
+        text: `Release email sent to ${episode.guest_name || episode.guest_email}.`,
+        tone: "success",
+      };
+      node.innerHTML = `<p class="composer-feedback success">Release email sent to ${episode.guest_name || episode.guest_email}.</p>`;
+      await loadPlanning();
+    } catch (error) {
+      setMessage(messageNode, error.message, "error");
+      sendButton.disabled = false;
+      sendButton.textContent = "Send Edited Release Email";
+      setMessage(episodeMessage, error.message, "error");
+    }
+  });
+}
+
 function splitRecommendationInsights(reason) {
   const text = String(reason || "").trim();
   if (!text) {
@@ -1191,17 +1254,12 @@ function renderEpisodes(episodes, totalCount) {
         actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
         try {
           const preview = await fetchJSON(`/api/episodes/${episode.id}/release-email-template`);
-          releasePreviewNode.classList.remove("hidden");
-          releasePreviewNode.innerHTML = `
-            <h4>${preview.subject}</h4>
-            <p>To: ${renderLinkedValue(episode.guest_email)}</p>
-            <pre>${preview.body}</pre>
-          `;
+          renderReleaseComposer(releasePreviewNode, episode, preview);
           appreciationPreviewNode.classList.add("hidden");
           appreciationPreviewNode.innerHTML = "";
           activeEpisodeActionFeedback = {
             id: episode.id,
-            text: `Release email preview ready for ${episode.guest_name || "guest"}.`,
+            text: `Release email ready to review and edit for ${episode.guest_name || "guest"}.`,
             tone: "success",
           };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
@@ -1263,6 +1321,8 @@ function renderEpisodes(episodes, totalCount) {
             method: "POST",
             body: JSON.stringify({}),
           });
+          sendReleaseButton.disabled = false;
+          sendReleaseButton.textContent = "Send Release Email";
           releasePreviewNode.classList.remove("hidden");
           releasePreviewNode.innerHTML = `<p class="composer-feedback success">Release email sent to ${episode.guest_name || episode.guest_email}.</p>`;
           appreciationPreviewNode.classList.add("hidden");
@@ -1278,6 +1338,7 @@ function renderEpisodes(episodes, totalCount) {
             `Release email sent to ${episode.guest_name || episode.guest_email}. The published follow-up is complete for this episode.`,
             "success",
           );
+          await loadPlanning();
         } catch (error) {
           activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
