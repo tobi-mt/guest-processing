@@ -73,6 +73,7 @@ ASK_MIRROR_TALK_USERNAME_ENV_VAR = "MIRROR_TALK_ASK_USERNAME"
 ASK_MIRROR_TALK_PASSWORD_ENV_VAR = "MIRROR_TALK_ASK_PASSWORD"
 OPENAI_API_KEY_ENV_VAR = "MIRROR_TALK_OPENAI_API_KEY"
 OPENAI_MODEL_ENV_VAR = "MIRROR_TALK_OPENAI_MODEL"
+OPENAI_TIMEOUT_ENV_VAR = "MIRROR_TALK_OPENAI_TIMEOUT_SECONDS"
 DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD = 365
 FORM_FIELDS = {
     "full_name",
@@ -2064,7 +2065,12 @@ class GuestWebService:
         model = os.environ.get(OPENAI_MODEL_ENV_VAR, "").strip() or "gpt-5"
         if not api_key:
             return None
-        return OpenAISchedulingCopilot(api_key=api_key, model=model)
+        timeout_raw = os.environ.get(OPENAI_TIMEOUT_ENV_VAR, "12").strip() or "12"
+        try:
+            timeout_seconds = max(3, min(30, int(timeout_raw)))
+        except ValueError:
+            timeout_seconds = 12
+        return OpenAISchedulingCopilot(api_key=api_key, model=model, timeout_seconds=timeout_seconds)
 
     def _build_email_manager(self) -> EmailManager:
         """Build an email manager from environment configuration for the hosted dashboard."""
@@ -2896,7 +2902,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(response)))
         self.end_headers()
-        self.wfile.write(response)
+        try:
+            self.wfile.write(response)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _send_csv(self, status: HTTPStatus, payload: str, filename: str) -> None:
         response = payload.encode("utf-8")

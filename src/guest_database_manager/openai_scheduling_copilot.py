@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -17,7 +20,7 @@ class OpenAISchedulingCopilot:
     api_key: str
     model: str
     base_url: str = "https://api.openai.com/v1/responses"
-    timeout_seconds: int = 25
+    timeout_seconds: int = 12
 
     def enrich_recommendations(
         self,
@@ -123,33 +126,37 @@ class OpenAISchedulingCopilot:
             "Do not invent outside facts. If evidence is thin, say so plainly. "
             "Return grounded suggestions that help with scheduling, not autopilot decisions."
         )
-        response = requests.post(
-            self.base_url,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
-                "input": [
-                    {"role": "system", "content": [{"type": "input_text", "text": instructions}]},
-                    {"role": "user", "content": [{"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)}]},
-                ],
-                "text": {
-                    "format": {
-                        "type": "json_schema",
-                        "name": schema["name"],
-                        "schema": schema["schema"],
-                        "strict": True,
-                    }
+        try:
+            response = requests.post(
+                self.base_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
                 },
-            },
-            timeout=self.timeout_seconds,
-        )
-        response.raise_for_status()
-        data = response.json()
-        text_output = self._extract_output_text(data)
-        return json.loads(text_output) if text_output else {"analyses": []}
+                json={
+                    "model": self.model,
+                    "input": [
+                        {"role": "system", "content": [{"type": "input_text", "text": instructions}]},
+                        {"role": "user", "content": [{"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)}]},
+                    ],
+                    "text": {
+                        "format": {
+                            "type": "json_schema",
+                            "name": schema["name"],
+                            "schema": schema["schema"],
+                            "strict": True,
+                        }
+                    },
+                },
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            data = response.json()
+            text_output = self._extract_output_text(data)
+            return json.loads(text_output) if text_output else {"analyses": []}
+        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("OpenAI scheduling copilot unavailable, falling back to deterministic planning: %s", exc)
+            return {"analyses": []}
 
     @staticmethod
     def _extract_output_text(data: Dict[str, Any]) -> str:
@@ -197,4 +204,3 @@ class OpenAISchedulingCopilot:
             "category": item.get("category"),
             "release_date": item.get("release_date"),
         }
-
