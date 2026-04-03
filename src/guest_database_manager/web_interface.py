@@ -65,9 +65,11 @@ GOOGLE_REFRESH_TOKEN_ENV_VAR = "MIRROR_TALK_GOOGLE_REFRESH_TOKEN"
 GOOGLE_CALENDAR_ID_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_ID"
 GOOGLE_CALENDAR_QUERY_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_QUERY"
 GOOGLE_CALENDAR_TIMEZONE_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_TIMEZONE"
+GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_DAYS_AHEAD"
 ASK_MIRROR_TALK_BASE_URL_ENV_VAR = "MIRROR_TALK_ASK_BASE_URL"
 ASK_MIRROR_TALK_USERNAME_ENV_VAR = "MIRROR_TALK_ASK_USERNAME"
 ASK_MIRROR_TALK_PASSWORD_ENV_VAR = "MIRROR_TALK_ASK_PASSWORD"
+DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD = 365
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -1776,7 +1778,7 @@ class GuestWebService:
     def sync_google_calendar_interviews(
         self,
         *,
-        days_ahead: int = 30,
+        days_ahead: int = DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD,
         reference: Optional[datetime] = None,
         query: str = "",
         dry_run: bool = False,
@@ -2363,7 +2365,11 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json_payload()
             reference_value = _normalize_text(payload.get("reference"))
             reference = self.service._parse_datetime(reference_value) if reference_value else None
-            days_ahead = int(payload.get("days_ahead", 30) or 30)
+            configured_days_ahead = os.environ.get(
+                GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR,
+                str(DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD),
+            ).strip() or str(DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD)
+            days_ahead = int(payload.get("days_ahead", configured_days_ahead) or configured_days_ahead)
             query = _normalize_text(payload.get("query"))
             dry_run = bool(payload.get("dry_run"))
 

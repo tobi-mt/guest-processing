@@ -21,6 +21,7 @@ from guest_database_manager.web_interface import (
     EMAIL_CC_ENV_VAR,
     EMAIL_RESEND_API_KEY_ENV_VAR,
     GOOGLE_CALENDAR_ID_ENV_VAR,
+    GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR,
     GOOGLE_CLIENT_ID_ENV_VAR,
     GOOGLE_CLIENT_SECRET_ENV_VAR,
     GOOGLE_REFRESH_TOKEN_ENV_VAR,
@@ -2245,6 +2246,33 @@ def test_web_service_can_sync_google_calendar_interviews(monkeypatch, temp_db):
     assert result["count"] == 1
     assert result["interviews"][0]["guest_name"] == "Jordan Rivers"
     assert service.list_operations()["interviews"][0]["calendar_source"] == "google_calendar"
+
+
+def test_web_service_syncs_google_calendar_with_long_horizon_by_default(monkeypatch, temp_db):
+    """Calendar sync should look far enough ahead by default for booking-safety checks."""
+
+    class StubCalendarClient:
+        def __init__(self):
+            self.days_ahead_seen = None
+
+        def list_upcoming_events(self, **kwargs):
+            self.days_ahead_seen = kwargs.get("days_ahead")
+            return []
+
+        def normalize_event(self, event):
+            return event
+
+    monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
+    monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
+    monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+    service = GuestWebService(temp_db.db_path)
+    stub_client = StubCalendarClient()
+    monkeypatch.setattr(service, "_build_google_calendar_client", lambda: stub_client)
+
+    service.sync_google_calendar_interviews()
+
+    assert stub_client.days_ahead_seen == 365
 
 
 def test_web_service_can_push_interview_updates_to_google_calendar(monkeypatch, temp_db):
