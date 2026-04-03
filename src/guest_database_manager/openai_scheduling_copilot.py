@@ -12,6 +12,11 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+MAX_RECOMMENDATIONS = 4
+MAX_RECENT_RELEASES = 5
+MAX_TEXT_CHARS = 180
+MAX_SOURCE_DETAIL_CHARS = 120
+
 
 @dataclass
 class OpenAISchedulingCopilot:
@@ -33,11 +38,12 @@ class OpenAISchedulingCopilot:
         recommendations = [dict(item) for item in recommendations]
         if not recommendations:
             return []
+        recommendations = recommendations[:MAX_RECOMMENDATIONS]
 
         prompt_payload = {
             "reference_date": reference.strftime("%Y-%m-%d"),
             "recommendations": [self._serialize_candidate(item) for item in recommendations],
-            "recent_releases": [self._serialize_release(item) for item in list(released_history)[:8]],
+            "recent_releases": [self._serialize_release(item) for item in list(released_history)[:MAX_RECENT_RELEASES]],
         }
         result = self._call_openai(prompt_payload)
         analyses = result.get("analyses", [])
@@ -124,7 +130,8 @@ class OpenAISchedulingCopilot:
             "You are an editorial scheduling copilot for Mirror Talk Podcast. "
             "Use only the supplied episode metadata, guest research, and recent release history. "
             "Do not invent outside facts. If evidence is thin, say so plainly. "
-            "Return grounded suggestions that help with scheduling, not autopilot decisions."
+            "Return grounded suggestions that help with scheduling, not autopilot decisions. "
+            "Be concise and evidence-led."
         )
         try:
             response = requests.post(
@@ -147,6 +154,7 @@ class OpenAISchedulingCopilot:
                             "strict": True,
                         }
                     },
+                    "max_output_tokens": 700,
                 },
                 timeout=self.timeout_seconds,
             )
@@ -173,34 +181,53 @@ class OpenAISchedulingCopilot:
         research = item.get("guest_research") if isinstance(item.get("guest_research"), dict) else {}
         return {
             "id": item.get("id"),
-            "guest_name": item.get("guest_name"),
-            "episode_title": item.get("episode_title"),
-            "topic": item.get("topic"),
-            "category": item.get("category"),
+            "guest_name": OpenAISchedulingCopilot._trim_text(item.get("guest_name"), 80),
+            "episode_title": OpenAISchedulingCopilot._trim_text(item.get("episode_title"), 100),
+            "topic": OpenAISchedulingCopilot._trim_text(item.get("topic"), 120),
+            "category": OpenAISchedulingCopilot._trim_text(item.get("category"), 50),
             "recommended_release_date": item.get("recommended_release_date"),
-            "release_status": item.get("release_status"),
             "production_status": item.get("production_status"),
             "promotion_status": item.get("promotion_status"),
-            "promotion_readiness": item.get("promotion_readiness"),
-            "archive_overlap": item.get("archive_overlap"),
-            "topic_cluster_warning": item.get("topic_cluster_warning"),
+            "promotion_readiness": {
+                "score": (item.get("promotion_readiness") or {}).get("score"),
+                "label": OpenAISchedulingCopilot._trim_text((item.get("promotion_readiness") or {}).get("label"), 40),
+            },
+            "archive_overlap": {
+                "status": (item.get("archive_overlap") or {}).get("status"),
+                "message": OpenAISchedulingCopilot._trim_text((item.get("archive_overlap") or {}).get("message"), MAX_TEXT_CHARS),
+            },
+            "topic_cluster_warning": {
+                "status": (item.get("topic_cluster_warning") or {}).get("status"),
+                "message": OpenAISchedulingCopilot._trim_text((item.get("topic_cluster_warning") or {}).get("message"), MAX_TEXT_CHARS),
+            },
             "guest_research": {
-                "summary": research.get("summary"),
-                "likely_topics": research.get("likely_topics", []),
-                "timely_signals": research.get("timely_signals", []),
+                "summary": OpenAISchedulingCopilot._trim_text(research.get("summary"), MAX_TEXT_CHARS),
+                "likely_topics": [OpenAISchedulingCopilot._trim_text(topic, 40) for topic in research.get("likely_topics", [])[:3]],
+                "timely_signals": [OpenAISchedulingCopilot._trim_text(signal, 80) for signal in research.get("timely_signals", [])[:2]],
                 "sources": [
-                    {"source": source.get("title") or source.get("host") or source.get("url"), "detail": source.get("description") or ""}
+                    {
+                        "source": OpenAISchedulingCopilot._trim_text(source.get("title") or source.get("host") or source.get("url"), 60),
+                        "detail": OpenAISchedulingCopilot._trim_text(source.get("description") or "", MAX_SOURCE_DETAIL_CHARS),
+                    }
                     for source in research.get("sources", [])
-                ][:3],
+                ][:2],
             },
         }
 
     @staticmethod
     def _serialize_release(item: Dict[str, Any]) -> Dict[str, Any]:
         return {
-            "guest_name": item.get("guest_name"),
-            "episode_title": item.get("episode_title"),
-            "topic": item.get("topic"),
-            "category": item.get("category"),
+            "guest_name": OpenAISchedulingCopilot._trim_text(item.get("guest_name"), 80),
+            "episode_title": OpenAISchedulingCopilot._trim_text(item.get("episode_title"), 100),
+            "topic": OpenAISchedulingCopilot._trim_text(item.get("topic"), 100),
+            "category": OpenAISchedulingCopilot._trim_text(item.get("category"), 50),
             "release_date": item.get("release_date"),
         }
+
+    @staticmethod
+    def _trim_text(value: Any, limit: int) -> str:
+        """Trim long prompt fields to keep the OpenAI payload lean."""
+        text = str(value or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
