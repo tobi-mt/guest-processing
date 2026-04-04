@@ -177,10 +177,13 @@ class OpenAISchedulingCopilot:
         result = self._call_openai(prompt_payload)
         analyses = result.get("analyses", [])
         analysis_by_id = {int(item["id"]): item for item in analyses if str(item.get("id", "")).isdigit()}
+        fallback_analyses = self._build_grounded_fallback_analyses(recommendations, reference)
 
         enriched: list[Dict[str, Any]] = []
         for recommendation in recommendations:
             analysis = analysis_by_id.get(int(recommendation.get("id") or 0))
+            if not analysis:
+                analysis = fallback_analyses.get(int(recommendation.get("id") or 0))
             enriched_item = dict(recommendation)
             if analysis:
                 ai_score = int(analysis.get("alignment_score") or 0)
@@ -214,9 +217,22 @@ class OpenAISchedulingCopilot:
             )
         )
         enriched_count = sum(1 for item in enriched if item.get("ai_copilot"))
+        model_analysis_count = sum(1 for item in recommendations if analysis_by_id.get(int(item.get("id") or 0)))
+        fallback_analysis_count = max(0, enriched_count - model_analysis_count)
         if enriched_count:
             status = "active"
-            message = f"AI copilot enriched {enriched_count} recommendation{'s' if enriched_count != 1 else ''} using guest profiles, web research, and current-month context."
+            if fallback_analysis_count > 0 and model_analysis_count > 0:
+                message = (
+                    f"AI copilot enriched {enriched_count} recommendation{'s' if enriched_count != 1 else ''}; "
+                    f"{model_analysis_count} came directly from the model and {fallback_analysis_count} used grounded copilot fallback notes."
+                )
+            elif fallback_analysis_count > 0:
+                message = (
+                    f"AI copilot produced grounded fallback guidance for {fallback_analysis_count} researched recommendation"
+                    f"{'s' if fallback_analysis_count != 1 else ''} using current-month context and saved evidence."
+                )
+            else:
+                message = f"AI copilot enriched {enriched_count} recommendation{'s' if enriched_count != 1 else ''} using guest profiles, web research, and current-month context."
         elif result.get("status") == "fallback":
             status = "fallback"
             message = str(result.get("message") or "AI copilot fell back to deterministic planning.")
@@ -231,6 +247,52 @@ class OpenAISchedulingCopilot:
             "current_month_context": build_month_context(reference),
             "recommendations": enriched,
         }
+
+    @staticmethod
+    def _build_grounded_fallback_analyses(recommendations: list[Dict[str, Any]], reference: datetime) -> Dict[int, Dict[str, Any]]:
+        """Build cautious copilot notes when researched candidates exist but the model returns nothing useful."""
+        month_context = build_month_context(reference)
+        fallback: Dict[int, Dict[str, Any]] = {}
+        for item in recommendations:
+            recommendation_id = int(item.get("id") or 0)
+            if not recommendation_id:
+                continue
+            research = item.get("guest_research") if isinstance(item.get("guest_research"), dict) else {}
+            profile = item.get("guest_profile_context") if isinstance(item.get("guest_profile_context"), dict) else {}
+            likely_topics = [str(topic).strip() for topic in research.get("likely_topics", []) if str(topic).strip()]
+            timely_signals = [str(signal).strip() for signal in research.get("timely_signals", []) if str(signal).strip()]
+            summary = str(research.get("summary") or "").strip()
+            evidence = []
+            for source in research.get("sources", [])[:3]:
+                label = str(source.get("title") or source.get("host") or source.get("url") or "").strip()
+                detail = str(source.get("description") or "").strip()
+                if label and detail:
+                    evidence.append({"source": label, "detail": OpenAISchedulingCopilot._trim_text(detail, MAX_SOURCE_DETAIL_CHARS)})
+            if not (likely_topics or timely_signals or summary or profile):
+                continue
+
+            why_now: list[str] = []
+            if likely_topics:
+                why_now.append(f"public profile research points toward {', '.join(likely_topics[:2]).lower()}")
+            if timely_signals:
+                why_now.append(timely_signals[0])
+            if month_context["theme"] and likely_topics:
+                why_now.append(f"can be framed carefully within {month_context['theme'].lower()}")
+
+            watchouts = ["keep the framing grounded in the guest's actual public work rather than a broad seasonal label"]
+            if not profile:
+                watchouts.append("dashboard guest profile match is still missing, so rely on website evidence carefully")
+
+            fallback[recommendation_id] = {
+                "id": recommendation_id,
+                "alignment_score": 64 if profile else 58,
+                "summary": summary or "Saved public-profile evidence gives this episode enough context for cautious scheduling guidance.",
+                "monthly_theme": month_context["theme"],
+                "why_now": why_now[:3],
+                "watchouts": watchouts[:3],
+                "source_evidence": evidence[:4],
+            }
+        return fallback
 
     def _call_openai(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         schema = {

@@ -38,6 +38,7 @@ from guest_database_manager.web_interface import (
 )
 from guest_database_manager.guest_research import _candidate_urls
 from guest_database_manager import guest_research
+from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
 
 
 def test_build_guest_payload_requires_name():
@@ -643,6 +644,46 @@ def test_planning_ai_copilot_can_research_episode_directly_without_guest_match(m
 
     assert ai_planning["ai_copilot_status"]["status"] == "active"
     assert ai_planning["recommendations"][0]["guest_research"]["likely_topics"] == ["Healing", "Leadership"]
+
+
+def test_openai_scheduling_copilot_builds_grounded_fallback_when_model_returns_no_analyses():
+    """Researched candidates should still get cautious copilot guidance when the model returns an empty analysis list."""
+    copilot = OpenAISchedulingCopilot(api_key="test", model="gpt-5")
+
+    recommendations = [
+        {
+            "id": 1,
+            "guest_name": "Jordan Rivers",
+            "website": "https://jordan.example.com",
+            "episode_title": "Jordan Rivers",
+            "topic": "",
+            "category": "Mental Health",
+            "recommended_release_date": "2026-04-08 17:00:00",
+            "production_status": "ready",
+            "promotion_status": "ready",
+            "priority_score": 100,
+            "promotion_readiness": {"score": 76, "label": "Nearly ready"},
+            "archive_overlap": {"status": "clear", "message": ""},
+            "topic_cluster_warning": {"status": "clear", "message": ""},
+            "guest_profile_context": None,
+            "guest_research": {
+                "summary": "Public profile research suggests strong conversation angles around healing and leadership.",
+                "likely_topics": ["Healing", "Leadership"],
+                "timely_signals": ["public profile emphasizes speaking experience"],
+                "sources": [{"title": "Jordan Rivers", "description": "Jordan helps people heal through honest conversations."}],
+                "research_mode": "auto_episode",
+            },
+            "why_now": [],
+            "watchouts": [],
+        }
+    ]
+
+    copilot._call_openai = lambda payload: {"status": "active", "analyses": []}  # type: ignore[method-assign]
+    result = copilot.enrich_recommendations(recommendations, reference=pd.Timestamp("2026-04-04").to_pydatetime(), released_history=[])
+
+    assert result["status"] == "active"
+    assert "fallback guidance" in result["message"].lower()
+    assert result["recommendations"][0]["ai_copilot"]["alignment_score"] >= 58
 
 
 def test_planning_matches_guest_on_safe_name_variant(temp_db):
