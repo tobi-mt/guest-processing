@@ -75,6 +75,7 @@ OPENAI_API_KEY_ENV_VAR = "MIRROR_TALK_OPENAI_API_KEY"
 OPENAI_MODEL_ENV_VAR = "MIRROR_TALK_OPENAI_MODEL"
 OPENAI_TIMEOUT_ENV_VAR = "MIRROR_TALK_OPENAI_TIMEOUT_SECONDS"
 DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD = 365
+AI_AUTORESEARCH_CANDIDATE_LIMIT = 12
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -481,18 +482,28 @@ class GuestWebService:
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
 
-        auto_researched_count = 0
-        for episode in enriched_episodes:
-            if _normalize_text(episode.get("release_status")).lower() == "released":
-                continue
-            auto_research = self._auto_research_guest_for_episode(episode, guests)
-            if auto_research:
-                previous_updated_at = _normalize_text((episode.get("guest_research") or {}).get("updated_at"))
-                previous_mode = _normalize_text((episode.get("guest_research") or {}).get("research_mode"))
-                episode["guest_research"] = auto_research
-                if previous_updated_at != _normalize_text(auto_research.get("updated_at")) or previous_mode != _normalize_text(auto_research.get("research_mode")):
-                    auto_researched_count += 1
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
+        auto_researched_count = 0
+        candidate_ids = {
+            item.get("id")
+            for item in recommendations[:AI_AUTORESEARCH_CANDIDATE_LIMIT]
+            if item.get("id") is not None
+        }
+        if candidate_ids:
+            for episode in enriched_episodes:
+                if episode.get("id") not in candidate_ids:
+                    continue
+                if _normalize_text(episode.get("release_status")).lower() == "released":
+                    continue
+                auto_research = self._auto_research_guest_for_episode(episode, guests)
+                if auto_research:
+                    previous_updated_at = _normalize_text((episode.get("guest_research") or {}).get("updated_at"))
+                    previous_mode = _normalize_text((episode.get("guest_research") or {}).get("research_mode"))
+                    episode["guest_research"] = auto_research
+                    if previous_updated_at != _normalize_text(auto_research.get("updated_at")) or previous_mode != _normalize_text(auto_research.get("research_mode")):
+                        auto_researched_count += 1
+            if auto_researched_count:
+                recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
         ai_result = ai_scheduling_client.enrich_recommendations(
             recommendations,
             reference=datetime.now(),
