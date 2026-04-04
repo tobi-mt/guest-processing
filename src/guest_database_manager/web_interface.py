@@ -504,6 +504,7 @@ class GuestWebService:
                         auto_researched_count += 1
             if auto_researched_count:
                 recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
+        ai_diagnostics = self._build_ai_candidate_diagnostics(recommendations)
         ai_result = ai_scheduling_client.enrich_recommendations(
             recommendations,
             reference=datetime.now(),
@@ -516,17 +517,28 @@ class GuestWebService:
             "ai_scheduling_enabled": True,
             "ai_copilot_status": {
                 "status": ai_result.get("status", "fallback"),
-                "message": self._compose_ai_copilot_status_message(ai_result, auto_researched_count),
+                "message": self._compose_ai_copilot_status_message(ai_result, auto_researched_count, ai_diagnostics),
                 "model": ai_result.get("model"),
                 "current_month_context": ai_result.get("current_month_context"),
+                "diagnostics": ai_diagnostics,
             },
             "recommendations": ai_result.get("recommendations", recommendations),
         }
 
     @staticmethod
-    def _compose_ai_copilot_status_message(ai_result: Dict[str, Any], auto_researched_count: int) -> str:
+    def _compose_ai_copilot_status_message(
+        ai_result: Dict[str, Any],
+        auto_researched_count: int,
+        diagnostics: Dict[str, int],
+    ) -> str:
         """Blend AI runtime status with any automatic guest-research work."""
         base_message = _normalize_text(ai_result.get("message"))
+        if _normalize_text(ai_result.get("status")) == "thin_context":
+            base_message = (
+                f"{base_message} "
+                f"{diagnostics.get('with_profile_context', 0)} of {diagnostics.get('candidate_count', 0)} AI candidates had matched guest profile data, "
+                f"and {diagnostics.get('with_guest_research', 0)} had reusable guest research."
+            ).strip()
         if auto_researched_count <= 0:
             return base_message
         prefix = (
@@ -534,6 +546,22 @@ class GuestWebService:
             f"{'s' if auto_researched_count != 1 else ''} from saved website or social data. "
         )
         return f"{prefix}{base_message}".strip()
+
+    @staticmethod
+    def _build_ai_candidate_diagnostics(recommendations: list[Dict[str, Any]]) -> Dict[str, int]:
+        """Summarize how much grounded context the AI candidate window actually has."""
+        candidate_window = recommendations[:4]
+        return {
+            "candidate_count": len(candidate_window),
+            "with_profile_context": sum(1 for item in candidate_window if item.get("guest_profile_context")),
+            "with_guest_research": sum(1 for item in candidate_window if item.get("guest_research")),
+            "with_non_placeholder_topic": sum(
+                1
+                for item in candidate_window
+                if _normalize_text(item.get("topic"))
+                and _normalize_text(item.get("topic")).casefold() != _normalize_text(item.get("guest_name")).casefold()
+            ),
+        }
 
     def export_guests_csv(self) -> str:
         """Export all guests as a CSV string for occasional admin downloads."""

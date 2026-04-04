@@ -467,6 +467,39 @@ def test_planning_ai_copilot_does_not_rerun_existing_auto_research(monkeypatch, 
     assert "auto-researched" not in ai_planning["ai_copilot_status"]["message"].lower()
 
 
+def test_planning_ai_copilot_thin_context_message_explains_candidate_coverage(monkeypatch, temp_db):
+    """Thin-context status should explain how much grounded data the AI candidate window had."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Jordan Rivers",
+            "category": "Mental Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    class ThinContextCopilot:
+        def enrich_recommendations(self, recommendations, *, reference, released_history):
+            return {
+                "status": "thin_context",
+                "message": "AI copilot was configured, but the current candidates had too little grounded context to add trustworthy guidance.",
+                "model": "gpt-5",
+                "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
+                "recommendations": recommendations,
+            }
+
+    monkeypatch.setattr(service, "_build_openai_scheduling_copilot", lambda: ThinContextCopilot())
+
+    ai_planning = service.list_planning_ai_copilot()
+
+    assert ai_planning["ai_copilot_status"]["status"] == "thin_context"
+    assert "0 of 1 ai candidates had matched guest profile data" in ai_planning["ai_copilot_status"]["message"].lower()
+    assert ai_planning["ai_copilot_status"]["diagnostics"]["with_guest_research"] == 0
+
+
 def test_web_service_create_guest_preserves_existing_source_label(temp_db):
     """Dashboard writes should not replace an existing guest's original source label."""
     service = GuestWebService(temp_db.db_path)
