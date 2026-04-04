@@ -732,6 +732,31 @@ def test_planning_matches_guest_on_safe_name_variant(temp_db):
     assert episode["guest_research"]["likely_topics"] == ["Healing"]
 
 
+def test_episode_monthly_angle_review_state_is_persisted(temp_db):
+    """Pinned or rejected monthly-angle decisions should persist on the episode record."""
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "episode_title": "Jordan Rivers",
+            "category": "Mental Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    updated = service.update_episode(
+        episode["id"],
+        {
+            "ai_monthly_angle_state": "pinned",
+            "ai_monthly_angle_theme": "Renewal after hard seasons",
+        },
+    )
+
+    assert updated["ai_monthly_angle_state"] == "pinned"
+    assert updated["ai_monthly_angle_theme"] == "Renewal after hard seasons"
+
+
 def test_planning_keeps_ambiguous_name_matches_unlinked(temp_db):
     """Planning should skip guest research when multiple guests would match the same short name equally well."""
     service = GuestWebService(temp_db.db_path)

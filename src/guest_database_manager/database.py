@@ -451,6 +451,8 @@ class GuestDatabase:
                 episode_data.get("release_files_url"),
                 episode_data.get("transcript_text"),
                 _normalize_outreach_plan_storage(episode_data.get("outreach_plan")),
+                episode_data.get("ai_monthly_angle_state"),
+                episode_data.get("ai_monthly_angle_theme"),
                 episode_data.get("notes"),
             )
 
@@ -463,7 +465,7 @@ class GuestDatabase:
                         release_status = ?, production_status = ?, promotion_status = ?, priority_score = ?, recommendation_reason = ?,
                         legacy_episode_number = ?, riverside_status = ?, source_file_name = ?, source_type = ?,
                         show_notes_url = ?, release_files_url = ?, transcript_text = ?, outreach_plan = ?,
-                        notes = ?, updated_at = CURRENT_TIMESTAMP
+                        ai_monthly_angle_state = ?, ai_monthly_angle_theme = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     fields + (existing_row["id"],),
@@ -477,8 +479,9 @@ class GuestDatabase:
                     guest_id, interview_id, guest_name, guest_email, website, episode_title, topic, category,
                     interview_date, recording_date, release_date, release_status, production_status,
                     promotion_status, priority_score, recommendation_reason, legacy_episode_number, riverside_status,
-                    source_file_name, source_type, show_notes_url, release_files_url, transcript_text, outreach_plan, notes, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    source_file_name, source_type, show_notes_url, release_files_url, transcript_text, outreach_plan,
+                    ai_monthly_angle_state, ai_monthly_angle_theme, notes, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 fields,
             )

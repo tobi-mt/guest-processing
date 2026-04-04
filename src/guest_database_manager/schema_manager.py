@@ -115,6 +115,8 @@ class SchemaManager:
             release_files_url TEXT,
             transcript_text TEXT,
             outreach_plan TEXT,
+            ai_monthly_angle_state TEXT,
+            ai_monthly_angle_theme TEXT,
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -172,6 +174,8 @@ class SchemaManager:
         ("release_files_url", "TEXT"),
         ("transcript_text", "TEXT"),
         ("outreach_plan", "TEXT"),
+        ("ai_monthly_angle_state", "TEXT"),
+        ("ai_monthly_angle_theme", "TEXT"),
     ]
     
     @staticmethod

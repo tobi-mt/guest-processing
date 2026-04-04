@@ -191,6 +191,7 @@ class OpenAISchedulingCopilot:
                 enriched_item["priority_score"] = round(float(enriched_item.get("priority_score") or 0) + score_adjustment, 1)
                 enriched_item["ai_copilot"] = {
                     "model": self.model,
+                    "guidance_mode": str(analysis.get("guidance_mode") or "model").strip(),
                     "alignment_score": ai_score,
                     "summary": str(analysis.get("summary") or "").strip(),
                     "why_now": [str(item).strip() for item in analysis.get("why_now", []) if str(item).strip()][:3],
@@ -288,6 +289,7 @@ class OpenAISchedulingCopilot:
                 "alignment_score": 64 if profile else 58,
                 "summary": summary or "Saved public-profile evidence gives this episode enough context for cautious scheduling guidance.",
                 "monthly_theme": month_context["theme"],
+                "guidance_mode": "grounded_fallback",
                 "why_now": why_now[:3],
                 "watchouts": watchouts[:3],
                 "source_evidence": evidence[:4],
@@ -311,6 +313,7 @@ class OpenAISchedulingCopilot:
                                 "alignment_score": {"type": "integer"},
                                 "summary": {"type": "string"},
                                 "monthly_theme": {"type": "string"},
+                                "guidance_mode": {"type": "string"},
                                 "why_now": {"type": "array", "items": {"type": "string"}},
                                 "watchouts": {"type": "array", "items": {"type": "string"}},
                                 "source_evidence": {

@@ -1698,6 +1698,8 @@ class GuestWebService:
             "release_files_url": _normalize_text(payload.get("release_files_url")),
             "transcript_text": _normalize_text(payload.get("transcript_text")),
             "outreach_plan": _normalize_outreach_plan(payload.get("outreach_plan")),
+            "ai_monthly_angle_state": _normalize_text(payload.get("ai_monthly_angle_state")),
+            "ai_monthly_angle_theme": _normalize_text(payload.get("ai_monthly_angle_theme")),
             "notes": _normalize_text(payload.get("notes")),
         }
 
@@ -1767,6 +1769,8 @@ class GuestWebService:
             "release_files_url": _normalize_text((linked_episode or {}).get("release_files_url")),
             "transcript_text": _normalize_text((linked_episode or {}).get("transcript_text")),
             "outreach_plan": _normalize_outreach_plan((linked_episode or {}).get("outreach_plan")),
+            "ai_monthly_angle_state": _normalize_text((linked_episode or {}).get("ai_monthly_angle_state")),
+            "ai_monthly_angle_theme": _normalize_text((linked_episode or {}).get("ai_monthly_angle_theme")),
             "notes": _normalize_text((linked_episode or {}).get("notes")) or _normalize_text(interview.get("notes")),
         }
 

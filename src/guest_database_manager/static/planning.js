@@ -462,15 +462,39 @@ function renderAiSchedulingCopilot(aiCopilot) {
   const whyNow = (aiCopilot.why_now || []).slice(0, 3);
   const watchouts = (aiCopilot.watchouts || []).slice(0, 3);
   const sourceEvidence = (aiCopilot.source_evidence || []).slice(0, 4);
+  const guidanceMode = normalizeText(aiCopilot.guidance_mode) || "model";
+  const guidanceLabel = guidanceMode === "grounded_fallback" ? "Grounded fallback guidance" : "Direct model analysis";
   return `
     <div class="operations-preview">
       <strong class="insight-label">AI scheduling copilot</strong>
+      <div class="signal-list">
+        <span class="signal-chip ${guidanceMode === "grounded_fallback" ? "warning" : "good"}">${escapeHtml(guidanceLabel)}</span>
+      </div>
       ${aiCopilot.summary ? `<p>${escapeHtml(aiCopilot.summary)}</p>` : ""}
       <p><strong>Alignment score:</strong> ${escapeHtml(aiCopilot.alignment_score || 0)}/100${aiCopilot.model ? ` · ${escapeHtml(aiCopilot.model)}` : ""}</p>
       ${aiCopilot.monthly_theme ? `<p><strong>Monthly theme angle:</strong> ${escapeHtml(aiCopilot.monthly_theme)}</p>` : ""}
+      ${sourceEvidence.length ? `<div class="insight-stack"><strong class="insight-label">Evidence used</strong><ul>${sourceEvidence.map((item) => `<li><strong>${escapeHtml(item.source)}:</strong> ${escapeHtml(item.detail)}</li>`).join("")}</ul></div>` : ""}
       ${whyNow.length ? `<div class="insight-stack"><strong class="insight-label">AI why now</strong><ul>${whyNow.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
       ${watchouts.length ? `<div class="insight-stack caution"><strong class="insight-label">AI watchouts</strong><ul>${watchouts.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
-      ${sourceEvidence.length ? `<div class="insight-stack"><strong class="insight-label">Evidence used</strong><ul>${sourceEvidence.map((item) => `<li><strong>${escapeHtml(item.source)}:</strong> ${escapeHtml(item.detail)}</li>`).join("")}</ul></div>` : ""}
+    </div>
+  `;
+}
+
+function renderMonthlyAngleDecision(episode) {
+  const state = normalizeText(episode.ai_monthly_angle_state);
+  const theme = String(episode.ai_monthly_angle_theme || episode.ai_copilot?.monthly_theme || "").trim();
+  if (!state && !theme) {
+    return "";
+  }
+  const label = state === "pinned" ? "Pinned" : state === "rejected" ? "Rejected" : "Unreviewed";
+  const tone = state === "pinned" ? "good" : state === "rejected" ? "warning" : "";
+  return `
+    <div class="operations-preview">
+      <strong class="insight-label">Monthly angle review</strong>
+      <div class="signal-list">
+        <span class="signal-chip ${tone}">${escapeHtml(label)}</span>
+      </div>
+      ${theme ? `<p><strong>Theme:</strong> ${escapeHtml(theme)}</p>` : ""}
     </div>
   `;
 }
@@ -1206,6 +1230,7 @@ function renderEpisodes(episodes, totalCount) {
       ${renderOutreachSummary(episode.outreach_summary)}
       ${renderPromoReadiness(episode.promotion_readiness)}
       ${renderAiSchedulingCopilot(episode.ai_copilot)}
+      ${renderMonthlyAngleDecision(episode)}
       ${renderGuestResearchCopilot(episode.guest_research)}
       ${renderCopyAssist(episode.copy_assist)}
       <div class="context-links">
@@ -1542,6 +1567,7 @@ function renderRecommendations(recommendations, totalCount) {
       ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${renderSeasonalFit(episode.seasonal_fit)}
       ${renderAiSchedulingCopilot(episode.ai_copilot)}
+      ${renderMonthlyAngleDecision(episode)}
       ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${episode.archive_overlap.message}</p></div>` : ""}
       ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}
@@ -1556,11 +1582,17 @@ function renderRecommendations(recommendations, totalCount) {
       <div class="operations-actions">
         <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
         <button type="button" class="secondary-button" data-recommendation-action="edit">Review In Form</button>
+        <button type="button" class="ghost-button" data-recommendation-action="pin-angle" ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}>Pin Angle</button>
+        <button type="button" class="ghost-button" data-recommendation-action="reject-angle" ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}>Reject Angle</button>
+        <button type="button" class="ghost-button" data-recommendation-action="clear-angle" ${episode.ai_monthly_angle_state ? "" : "disabled"}>Clear Angle Review</button>
       </div>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
     `;
     const scheduleButton = card.querySelector("[data-recommendation-action='schedule']");
     const editButton = card.querySelector("[data-recommendation-action='edit']");
+    const pinAngleButton = card.querySelector("[data-recommendation-action='pin-angle']");
+    const rejectAngleButton = card.querySelector("[data-recommendation-action='reject-angle']");
+    const clearAngleButton = card.querySelector("[data-recommendation-action='clear-angle']");
     const actionFeedbackNode = card.querySelector(".card-action-feedback");
     scheduleButton.addEventListener("click", async () => {
       scheduleButton.disabled = true;
@@ -1610,6 +1642,48 @@ function renderRecommendations(recommendations, totalCount) {
         `Loaded ${episode.episode_title || episode.guest_name || "episode"} with the recommended release slot.`,
         "success",
       );
+    });
+    const setMonthlyAngleDecision = async (state) => {
+      const theme = state ? String(episode.ai_copilot?.monthly_theme || episode.ai_monthly_angle_theme || "").trim() : "";
+      activeEpisodeActionFeedback = {
+        id: episode.id,
+        text: state ? `${state === "pinned" ? "Pinning" : "Rejecting"} monthly angle for ${episode.guest_name || "episode"}...` : `Clearing monthly angle review for ${episode.guest_name || "episode"}...`,
+        tone: "pending",
+      };
+      actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+      try {
+        await fetchJSON(`/api/episodes/${episode.id}`, {
+          method: "POST",
+          body: JSON.stringify({
+            ai_monthly_angle_state: state,
+            ai_monthly_angle_theme: theme,
+          }),
+        });
+        activeEpisodeActionFeedback = {
+          id: episode.id,
+          text: state ? `Monthly angle ${state} for ${episode.guest_name || "episode"}.` : `Monthly angle review cleared for ${episode.guest_name || "episode"}.`,
+          tone: "success",
+        };
+        setMessage(
+          episodeMessage,
+          state ? `${state === "pinned" ? "Pinned" : "Rejected"} the AI monthly angle for ${episode.guest_name || "episode"}.` : `Cleared the AI monthly angle review for ${episode.guest_name || "episode"}.`,
+          "success",
+        );
+        await loadPlanning();
+      } catch (error) {
+        activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+        setMessage(episodeMessage, error.message, "error");
+      }
+    };
+    pinAngleButton?.addEventListener("click", async () => {
+      await setMonthlyAngleDecision("pinned");
+    });
+    rejectAngleButton?.addEventListener("click", async () => {
+      await setMonthlyAngleDecision("rejected");
+    });
+    clearAngleButton?.addEventListener("click", async () => {
+      await setMonthlyAngleDecision("");
     });
     recommendationList.appendChild(card);
   });
