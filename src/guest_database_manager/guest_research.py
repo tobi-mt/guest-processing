@@ -16,6 +16,13 @@ from urllib.request import Request, urlopen
 USER_AGENT = "MirrorTalkGuestCopilot/1.0 (+https://mirrortalkpodcast.com)"
 MAX_SOURCES = 3
 FETCH_TIMEOUT_SECONDS = 8
+GENERIC_SOURCE_PATTERNS = (
+    r"create an account or log in to instagram",
+    r"log in to facebook",
+    r"sign in to facebook",
+    r"join facebook",
+    r"login • instagram",
+)
 
 STOPWORDS = {
     "about", "after", "also", "been", "being", "because", "between", "build", "coach", "community",
@@ -211,6 +218,15 @@ def _summary_from_research(topics: list[str], sources: list[dict[str, Any]]) -> 
     return ""
 
 
+def _is_generic_source(source: dict[str, Any]) -> bool:
+    combined = _normalize_text(" ".join([
+        source.get("title", ""),
+        source.get("description", ""),
+        source.get("heading", ""),
+    ]))
+    return any(re.search(pattern, combined) for pattern in GENERIC_SOURCE_PATTERNS)
+
+
 def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
     """Fetch a few public profile pages and extract grounded copilot notes."""
     urls = _candidate_urls(guest)
@@ -229,6 +245,9 @@ def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
             continue
         source["host"] = urlparse(url).netloc
         source["evidence"] = _evidence_snippets(source)
+        if _is_generic_source(source):
+            errors.append(f"{url}: generic social/login page")
+            continue
         if source["title"] or source["description"] or source["heading"]:
             fetched_sources.append(source)
             evidence_texts.extend(source["evidence"])
@@ -245,9 +264,14 @@ def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
     )
     topics = _topic_matches(combined_text)
     signals = _timely_signals(combined_text)
+    summary = _summary_from_research(topics, fetched_sources)
+
+    if not topics and not signals and not summary:
+        detail = errors[0] if errors else "The available pages did not contain enough meaningful profile information."
+        raise ValueError(f"Public web research could not find usable profile information. {detail}")
 
     return {
-        "summary": _summary_from_research(topics, fetched_sources),
+        "summary": summary,
         "likely_topics": topics,
         "timely_signals": signals,
         "sources": [

@@ -37,6 +37,7 @@ from guest_database_manager.web_interface import (
     validate_intake_payload,
 )
 from guest_database_manager.guest_research import _candidate_urls
+from guest_database_manager import guest_research
 
 
 def test_build_guest_payload_requires_name():
@@ -84,6 +85,29 @@ def test_guest_research_candidate_urls_split_multiline_website_field():
 
     assert "https://Www.peakhealthandfitness.co.uk" in urls
     assert "https://Www.thelifeorganic.com" in urls
+
+
+def test_guest_research_rejects_generic_instagram_login_page(monkeypatch):
+    """Generic social login pages should not be stored as useful guest research."""
+    monkeypatch.setattr(
+        guest_research,
+        "_fetch_page",
+        lambda url: {
+            "url": url,
+            "title": "Login • Instagram",
+            "description": "Create an account or log in to Instagram - Share what you're into with the people who get you.",
+            "heading": "",
+            "text": "Create an account or log in to Instagram",
+        },
+    )
+
+    with pytest.raises(ValueError):
+        guest_research.research_guest_from_public_web(
+            {
+                "website": "",
+                "social_media_handles": "Instagram: eva.hooft",
+            }
+        )
 
 
 def test_web_service_can_create_and_update_guest(temp_db):
