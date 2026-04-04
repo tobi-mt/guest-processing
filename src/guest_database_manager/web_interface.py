@@ -110,12 +110,6 @@ MIN_WORDS_BY_FIELD = {
     "experience": 4,
     "additional_info": 4,
 }
-PROFILE_LINK_FIELDS = {
-    "website",
-    "social_handles",
-    "experience",
-    "additional_info",
-}
 SPAM_KEYWORDS = {
     "seo",
     "casino",
@@ -283,11 +277,6 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text))
 
 
-def _link_count(text: str) -> int:
-    """Count link-like fragments in a text block."""
-    return len(re.findall(r"https?://|www\.", text.lower()))
-
-
 def _normalize_text(value: Any) -> str:
     """Convert form values to trimmed strings."""
     if value is None:
@@ -323,17 +312,6 @@ def validate_intake_payload(payload: Dict[str, str]) -> None:
 
     if any(keyword in combined_text for keyword in SPAM_KEYWORDS):
         raise WebInterfaceError("Your submission was flagged as spam.")
-
-    total_links = _link_count(combined_text)
-    editorial_link_text = " ".join(
-        str(payload.get(field, ""))
-        for field in payload
-        if field not in PROFILE_LINK_FIELDS
-    )
-    editorial_links = _link_count(editorial_link_text)
-
-    if total_links > 16 or editorial_links > 5:
-        raise WebInterfaceError("Too many links in submission.")
 
     for field in LONG_TEXT_FIELDS:
         value = str(payload.get(field, "")).strip()

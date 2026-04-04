@@ -2749,17 +2749,17 @@ def test_validate_intake_payload_allows_profile_links_plus_podcast_link_in_addit
     )
 
 
-def test_validate_intake_payload_rejects_excessive_editorial_link_stuffing():
-    """Too many links in the narrative answers should still be treated as spammy."""
-    with pytest.raises(WebInterfaceError):
-        validate_intake_payload(
-            {
-                "background": "Read more at https://a.example https://b.example https://c.example https://d.example https://e.example",
-                "profession": "I also share work at https://f.example",
-                "passionate_topics": "I discuss healing, faith, leadership, reflection, courage, and growth with heart.",
-                "message": "I want listeners to leave with more hope, more honesty, and more compassion for their own journey.",
-            }
-        )
+def test_validate_intake_payload_allows_many_relevant_links():
+    """Link-heavy creator submissions should still go through when the content is genuine."""
+    validate_intake_payload(
+        {
+            "background": "Read more at https://a.example https://b.example https://c.example https://d.example https://e.example while I continue sharing honest work around healing, faith, and leadership.",
+            "profession": "Speaker",
+            "passionate_topics": "Faith",
+            "message": "Hope",
+            "experience": "I have spoken on https://f.example and hosted conversations at https://g.example.",
+        }
+    )
 
 
 def test_validate_intake_payload_rejects_low_effort_answers():
