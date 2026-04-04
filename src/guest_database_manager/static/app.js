@@ -189,6 +189,7 @@ function guestMatchesPreset(guest, preset) {
   if (preset === "ai_strong_fit") return support.suggested_decision === "approve";
   if (preset === "ai_review") return support.suggested_decision === "review";
   if (preset === "ai_risky") return support.suggested_decision === "decline";
+  if (preset === "research_failed") return guest.guest_research?.cache_status === "failed";
   if (preset === "accepted") return guestStatusLabel(guest) === "accepted";
   if (preset === "rejected") return guestStatusLabel(guest) === "rejected";
   if (preset === "no_email") return !normalizeText(guest.email);
@@ -416,7 +417,38 @@ function renderPromotionProfile(guest) {
 
 function renderGuestCopilotSummary(guest) {
   const research = guest.guest_research;
-  if (!research?.summary && !(research?.likely_topics || []).length) {
+  if (!research) {
+    return "";
+  }
+  if (research.cache_status === "failed") {
+    const failureReason = normalizeText(research.last_error) || "The available public profile source could not be read cleanly.";
+    const freshness = research.freshness || {};
+    return `
+      <div class="guest-ai-card">
+        <div class="guest-ai-head">
+          <div>
+            <p class="composer-eyebrow">Guest Copilot Research</p>
+            <div class="guest-ai-title-row">
+              <strong>Research failed</strong>
+              <span class="guest-ai-badge warning">Needs source fix</span>
+            </div>
+            <p class="guest-ai-copy">${escapeHtml(failureReason)}</p>
+            ${freshness.label ? `<p class="guest-ai-copy">Last attempt: ${escapeHtml(freshness.label)}</p>` : ""}
+          </div>
+        </div>
+        <div class="guest-ai-grid">
+          <div class="guest-ai-block caution">
+            <strong>What to do next</strong>
+            <ul>
+              <li>Check whether the website or social profile field is missing, malformed, or blocked.</li>
+              <li>Update the guest details, then use <strong>Research Guest</strong> to retry intentionally.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  if (!research.summary && !(research.likely_topics || []).length) {
     return "";
   }
 
