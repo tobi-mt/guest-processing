@@ -37,7 +37,7 @@ from guest_database_manager.guest_recommender import (
     build_guest_recommendation_stats,
     enrich_guests_with_recommendations,
 )
-from guest_database_manager.guest_research import research_guest_from_public_web
+from guest_database_manager.guest_research import research_guest_from_google_search, research_guest_from_public_web
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot, build_month_context
 
@@ -1431,6 +1431,36 @@ class GuestWebService:
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved after research.")
+        return serialize_guest(guest)
+
+    def retry_guest_research_with_search(self, guest_id: int) -> Dict[str, Any]:
+        """Retry failed guest research by using Google search results as a rescue source."""
+        current = self.database.get_guest_by_id(guest_id)
+        if not current:
+            raise WebInterfaceError("Guest not found.")
+
+        existing_research = self._decorate_research_payload(
+            self._research_payload(current.get("guest_research")),
+            current.get("guest_research_updated_at"),
+        )
+        if not existing_research or existing_research.get("cache_status") != "failed":
+            raise WebInterfaceError("Search-assisted retry is only available for guests whose research has already failed.")
+
+        try:
+            research = research_guest_from_google_search(current)
+        except ValueError as exc:
+            raise WebInterfaceError(str(exc))
+        research["research_mode"] = "manual"
+        research["cache_status"] = "ready"
+
+        updated_guest = dict(current)
+        updated_guest["guest_research"] = json.dumps(research, ensure_ascii=False)
+        updated_guest["guest_research_updated_at"] = research.get("updated_at")
+
+        self.database.update_guest_by_id(guest_id, updated_guest)
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest could not be saved after search-assisted research.")
         return serialize_guest(guest)
 
     def bulk_research_guests(self, limit: int = BULK_GUEST_RESEARCH_BATCH_SIZE) -> Dict[str, Any]:
@@ -2836,6 +2866,24 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 guest = self.service.research_guest(guest_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, guest)
+            return
+
+        if self.path.startswith("/api/guests/") and self.path.endswith("/research-with-search"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            guest_id = self._extract_guest_id(self.path, suffix="/research-with-search")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            try:
+                guest = self.service.retry_guest_research_with_search(guest_id)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return

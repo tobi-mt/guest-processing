@@ -9,13 +9,14 @@ from datetime import datetime
 from http.client import InvalidURL
 from typing import Any, Dict, List
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, unquote, urlparse
 from urllib.request import Request, urlopen
 
 
 USER_AGENT = "MirrorTalkGuestCopilot/1.0 (+https://mirrortalkpodcast.com)"
 MAX_SOURCES = 3
 FETCH_TIMEOUT_SECONDS = 8
+GOOGLE_SEARCH_URL = "https://www.google.com/search?q={query}&hl=en"
 GENERIC_SOURCE_PATTERNS = (
     r"create an account or log in to instagram",
     r"log in to facebook",
@@ -146,6 +147,43 @@ def _candidate_urls(guest: Dict[str, Any]) -> list[str]:
     return unique[:MAX_SOURCES]
 
 
+def _search_query_parts(guest: Dict[str, Any]) -> list[str]:
+    parts: list[str] = []
+    full_name = _clean_text(guest.get("full_name") or guest.get("name"))
+    if full_name:
+        parts.append(f'"{full_name}"')
+
+    website_value = _clean_text(guest.get("website"))
+    website_bits = _split_url_like_values(website_value)
+    if website_bits:
+        website_host = re.sub(r"^https?://", "", website_bits[0], flags=re.IGNORECASE)
+        website_host = re.sub(r"^www\.", "", website_host, flags=re.IGNORECASE).split("/")[0]
+        if website_host:
+            parts.append(website_host)
+            return parts
+
+    social_text = _clean_text(guest.get("social_media_handles") or guest.get("social_handles"))
+    for line in social_text.splitlines():
+        entry = line.strip()
+        if not entry:
+            continue
+        labeled_match = re.match(r"^([^:]+):\s*(.+)$", entry)
+        value = labeled_match.group(2).strip() if labeled_match else entry
+        handle = value.lstrip("@").strip()
+        if handle:
+            parts.append(f'"{handle}"')
+            break
+
+    return parts
+
+
+def _google_search_url(guest: Dict[str, Any]) -> str:
+    parts = _search_query_parts(guest)
+    if not parts:
+        return ""
+    return GOOGLE_SEARCH_URL.format(query=quote_plus(" ".join(parts)))
+
+
 def _strip_tags(raw_html: str) -> str:
     without_scripts = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", raw_html)
     text = re.sub(r"(?s)<[^>]+>", " ", without_scripts)
@@ -184,6 +222,26 @@ def _fetch_page(url: str) -> dict[str, str]:
         "heading": _extract_heading(raw_html),
         "text": _strip_tags(raw_html)[:4000],
     }
+
+
+def _google_result_urls(raw_html: str) -> list[str]:
+    candidates = re.findall(r'href="/url\?q=([^"&]+)', raw_html)
+    urls: list[str] = []
+    seen = set()
+    for candidate in candidates:
+        decoded = unquote(candidate)
+        if not re.match(r"^https?://", decoded, flags=re.IGNORECASE):
+            continue
+        host = urlparse(decoded).netloc.casefold()
+        if host.endswith("google.com") or host.endswith("googleusercontent.com"):
+            continue
+        if decoded.casefold() in seen:
+            continue
+        seen.add(decoded.casefold())
+        urls.append(decoded)
+        if len(urls) >= MAX_SOURCES:
+            break
+    return urls
 
 
 def _topic_matches(text: str) -> list[str]:
@@ -290,3 +348,30 @@ def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
         "evidence": evidence_texts[:4],
         "updated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
     }
+
+
+def research_guest_from_google_search(guest: Dict[str, Any]) -> Dict[str, Any]:
+    """Use a Google search results page to find likely profile sources, then extract grounded notes."""
+    search_url = _google_search_url(guest)
+    if not search_url:
+        raise ValueError("Add a guest name plus a website or social profile before retrying with search.")
+
+    search_request = Request(search_url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en"})
+    try:
+        with urlopen(search_request, timeout=FETCH_TIMEOUT_SECONDS) as response:
+            raw_html = response.read(120_000).decode("utf-8", errors="ignore")
+    except (HTTPError, URLError, TimeoutError, ValueError, InvalidURL) as exc:
+        raise ValueError(f"Google search fallback could not load results. {exc}") from exc
+
+    result_urls = _google_result_urls(raw_html)
+    if not result_urls:
+        raise ValueError("Google search fallback did not find any readable profile links.")
+
+    rescued_guest = dict(guest)
+    rescued_guest["website"] = "\n".join(result_urls[:MAX_SOURCES])
+    research = research_guest_from_public_web(rescued_guest)
+    research["search_fallback"] = {
+        "query_url": search_url,
+        "result_urls": result_urls[:MAX_SOURCES],
+    }
+    return research

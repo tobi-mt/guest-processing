@@ -522,7 +522,7 @@ function renderGuestCopilotSummary(guest) {
           <strong>What to do next</strong>
           <ul>
               <li>Check whether the website or social profile field is missing, malformed, or blocked.</li>
-              <li>Update the guest details, then use <strong>Research Guest</strong> to retry intentionally.</li>
+              <li>Update the guest details, then use <strong>Retry With Search</strong> to rescue the profile intentionally.</li>
             </ul>
           </div>
           ${renderResearchRecoveryLinks(guest)}
@@ -761,6 +761,11 @@ function renderGuests(payload) {
     statusPill.classList.add(guestStatusLabel(guest));
 
     const researchButton = node.querySelector("[data-action='research']");
+    const researchFailed = guest.guest_research?.cache_status === "failed";
+    if (researchButton && researchFailed) {
+      researchButton.textContent = "Retry With Search";
+      researchButton.title = "Use Google search results as a rescue path for this failed research record.";
+    }
     if (researchButton && !guest.website && !guest.social_media_handles) {
       researchButton.disabled = true;
       researchButton.title = "Add a website or labeled social profile first so copilot research has a public source to read.";
@@ -922,19 +927,33 @@ function renderGuests(payload) {
             renderGuests(latestPayload);
             setMessage(`Copied ${guest.full_name}'s intake details.`, "success");
           } else if (action === "research") {
-            activeGuestActionFeedback = { guestId: guest.id, text: `Researching public profile signals for ${guest.full_name || "guest"}...`, tone: "pending" };
+            const failedResearch = guest.guest_research?.cache_status === "failed";
+            activeGuestActionFeedback = {
+              guestId: guest.id,
+              text: failedResearch
+                ? `Retrying research for ${guest.full_name || "guest"} with search results...`
+                : `Researching public profile signals for ${guest.full_name || "guest"}...`,
+              tone: "pending",
+            };
             renderGuests(latestPayload);
-            await fetchJSON(`/api/guests/${guest.id}/research`, {
+            await fetchJSON(`/api/guests/${guest.id}/${failedResearch ? "research-with-search" : "research"}`, {
               method: "POST",
               body: JSON.stringify({}),
             });
             activeGuestActionFeedback = {
               guestId: guest.id,
-              text: `Public profile research saved for ${guest.full_name || "guest"}.`,
+              text: failedResearch
+                ? `Search-assisted research saved for ${guest.full_name || "guest"}.`
+                : `Public profile research saved for ${guest.full_name || "guest"}.`,
               tone: "success",
             };
             renderGuests(latestPayload);
-            setMessage(`Saved public profile research for ${guest.full_name}. Planning can now use it as copilot context.`, "success");
+            setMessage(
+              failedResearch
+                ? `Saved search-assisted profile research for ${guest.full_name}. Planning can now use it as copilot context.`
+                : `Saved public profile research for ${guest.full_name}. Planning can now use it as copilot context.`,
+              "success",
+            );
           } else if (action === "accepted_email" || action === "rejected_email") {
             activeGuestEditor = null;
             const decision = action === "accepted_email" ? "accepted" : "rejected";

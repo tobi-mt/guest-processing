@@ -301,6 +301,55 @@ def test_web_service_can_research_guest_and_store_public_profile_context(monkeyp
     assert researched_guest["guest_research"]["freshness"]["status"] in {"fresh", "aging", "stale", "unknown"}
 
 
+def test_web_service_can_retry_failed_research_with_search(monkeypatch, temp_db):
+    """Failed research should be recoverable via the search-assisted retry path."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://broken.example.com",
+        }
+    )
+    service._persist_guest_research_failure(guest, "403 Forbidden", mode="manual")
+
+    monkeypatch.setattr(
+        "guest_database_manager.web_interface.research_guest_from_google_search",
+        lambda current: {
+            "summary": "Search-assisted research suggests strong conversation angles around healing and leadership.",
+            "likely_topics": ["Healing", "Leadership"],
+            "timely_signals": ["public profile emphasizes speaking experience"],
+            "sources": [{"url": "https://jordan.example.com", "host": "jordan.example.com", "title": "Jordan Rivers"}],
+            "search_fallback": {
+                "query_url": "https://www.google.com/search?q=Jordan+Rivers",
+                "result_urls": ["https://jordan.example.com"],
+            },
+            "updated_at": "2026-04-04T10:00:00Z",
+        },
+    )
+
+    researched_guest = service.retry_guest_research_with_search(guest["id"])
+
+    assert researched_guest["guest_research"]["likely_topics"] == ["Healing", "Leadership"]
+    assert researched_guest["guest_research"]["cache_status"] == "ready"
+    assert researched_guest["guest_research"]["search_fallback"]["result_urls"] == ["https://jordan.example.com"]
+
+
+def test_retry_failed_research_with_search_requires_failed_cache(temp_db):
+    """Search-assisted retry should only run on guests whose research previously failed."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+
+    with pytest.raises(WebInterfaceError, match="only available for guests whose research has already failed"):
+        service.retry_guest_research_with_search(guest["id"])
+
+
 def test_planning_uses_guest_research_as_copilot_context(monkeypatch, temp_db):
     """Planning should attach stored guest research and reuse it in copy suggestions."""
     service = GuestWebService(temp_db.db_path)
