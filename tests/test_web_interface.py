@@ -36,6 +36,7 @@ from guest_database_manager.web_interface import (
     build_guest_payload,
     validate_intake_payload,
 )
+from guest_database_manager.guest_research import _candidate_urls
 
 
 def test_build_guest_payload_requires_name():
@@ -70,6 +71,19 @@ def test_build_guest_payload_normalizes_website_without_scheme():
     )
 
     assert payload["website"] == "https://www.example.com"
+
+
+def test_guest_research_candidate_urls_split_multiline_website_field():
+    """Bulk guest research should tolerate multiple website URLs in one stored field."""
+    urls = _candidate_urls(
+        {
+            "website": "Www.peakhealthandfitness.co.uk\nWww.thelifeorganic.com",
+            "social_media_handles": "",
+        }
+    )
+
+    assert "https://Www.peakhealthandfitness.co.uk" in urls
+    assert "https://Www.thelifeorganic.com" in urls
 
 
 def test_web_service_can_create_and_update_guest(temp_db):

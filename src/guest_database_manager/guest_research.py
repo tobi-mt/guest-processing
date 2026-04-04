@@ -6,6 +6,7 @@ import html
 import json
 import re
 from datetime import datetime
+from http.client import InvalidURL
 from typing import Any, Dict, List
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -74,11 +75,25 @@ def _website_with_scheme(value: str) -> str:
     return text
 
 
+def _split_url_like_values(value: Any) -> list[str]:
+    """Split multiline or comma-separated profile fields into individual URL-like entries."""
+    text = _clean_text(value)
+    if not text:
+        return []
+    parts = [
+        chunk.strip()
+        for chunk in re.split(r"[\r\n,;]+", text)
+        if chunk and chunk.strip()
+    ]
+    return parts
+
+
 def _candidate_urls(guest: Dict[str, Any]) -> list[str]:
     urls: list[str] = []
-    website = _website_with_scheme(_clean_text(guest.get("website")))
-    if website:
-        urls.append(website)
+    for website_value in _split_url_like_values(guest.get("website")):
+        website = _website_with_scheme(website_value)
+        if website:
+            urls.append(website)
 
     social_text = _clean_text(guest.get("social_media_handles"))
     for line in social_text.splitlines():
@@ -209,7 +224,7 @@ def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
     for url in urls:
         try:
             source = _fetch_page(url)
-        except (HTTPError, URLError, TimeoutError, ValueError) as exc:
+        except (HTTPError, URLError, TimeoutError, ValueError, InvalidURL) as exc:
             errors.append(f"{url}: {exc}")
             continue
         source["host"] = urlparse(url).netloc
@@ -248,4 +263,3 @@ def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
         "evidence": evidence_texts[:4],
         "updated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
     }
-
