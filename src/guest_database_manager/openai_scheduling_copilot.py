@@ -329,7 +329,7 @@ class OpenAISchedulingCopilot:
                                     },
                                 },
                             },
-                            "required": ["id", "alignment_score", "summary", "monthly_theme", "why_now", "watchouts", "source_evidence"],
+                            "required": ["id", "alignment_score", "summary", "monthly_theme", "guidance_mode", "why_now", "watchouts", "source_evidence"],
                         },
                     }
                 },
@@ -379,7 +379,14 @@ class OpenAISchedulingCopilot:
             text_output = self._extract_output_text(data)
             return {"status": "active", "analyses": json.loads(text_output).get("analyses", []) if text_output else []}
         except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
-            logger.warning("OpenAI scheduling copilot unavailable, falling back to deterministic planning: %s", exc)
+            if isinstance(exc, requests.HTTPError) and exc.response is not None:
+                logger.warning(
+                    "OpenAI scheduling copilot unavailable, falling back to deterministic planning: %s | body=%s",
+                    exc,
+                    exc.response.text[:400],
+                )
+            else:
+                logger.warning("OpenAI scheduling copilot unavailable, falling back to deterministic planning: %s", exc)
             return {
                 "status": "fallback",
                 "message": f"OpenAI scheduling copilot fell back to deterministic planning: {exc}",
