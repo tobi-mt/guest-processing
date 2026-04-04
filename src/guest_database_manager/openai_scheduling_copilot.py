@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List
 
 import requests
@@ -16,6 +16,128 @@ MAX_RECOMMENDATIONS = 4
 MAX_RECENT_RELEASES = 5
 MAX_TEXT_CHARS = 180
 MAX_SOURCE_DETAIL_CHARS = 120
+
+MONTHLY_EDITORIAL_PROFILES: Dict[int, Dict[str, Any]] = {
+    1: {
+        "theme": "Fresh beginnings and intentional reset",
+        "timely_signals": ["new year reflection", "goal setting", "renewed discipline"],
+        "observances": ["New Year season", "fresh-start momentum"],
+    },
+    2: {
+        "theme": "Love, belonging, and relational depth",
+        "timely_signals": ["friendship", "marriage", "emotional intimacy"],
+        "observances": ["Valentine season", "heart-centered reflection"],
+    },
+    3: {
+        "theme": "Purpose, courage, and emerging identity",
+        "timely_signals": ["women's voices", "spring transition", "inner growth"],
+        "observances": ["Women's History Month", "seasonal transition into spring"],
+    },
+    4: {
+        "theme": "Renewal, resurrection, and new life",
+        "timely_signals": ["hope after hard seasons", "healing", "fresh beginnings"],
+        "observances": ["Stress Awareness Month", "Autism Acceptance Month", "Earth Day"],
+    },
+    5: {
+        "theme": "Mental health, motherhood, and sustaining growth",
+        "timely_signals": ["emotional wellbeing", "caregiving", "graduation season"],
+        "observances": ["Mental Health Awareness Month", "Mother's Day"],
+    },
+    6: {
+        "theme": "Identity, fatherhood, resilience, and community",
+        "timely_signals": ["fatherhood", "community leadership", "summer reflection"],
+        "observances": ["Men's Health Month", "Father's Day"],
+    },
+    7: {
+        "theme": "Freedom, calling, and brave leadership",
+        "timely_signals": ["independence", "vocation", "service"],
+        "observances": ["mid-year reset", "summer leadership season"],
+    },
+    8: {
+        "theme": "Preparation, discipline, and back-to-rhythm momentum",
+        "timely_signals": ["school routines", "family structure", "recommitment"],
+        "observances": ["back-to-school season", "late-summer planning"],
+    },
+    9: {
+        "theme": "Resilience, mental health, and renewed focus",
+        "timely_signals": ["recovery", "purpose", "mental wellbeing"],
+        "observances": ["Suicide Prevention Month", "new academic rhythm"],
+    },
+    10: {
+        "theme": "Healing stories, awareness, and courageous honesty",
+        "timely_signals": ["healing journeys", "awareness campaigns", "testimony"],
+        "observances": ["Breast Cancer Awareness Month", "Domestic Violence Awareness Month"],
+    },
+    11: {
+        "theme": "Gratitude, reflection, and community care",
+        "timely_signals": ["thankfulness", "service", "family conversations"],
+        "observances": ["Thanksgiving season", "gratitude reflection"],
+    },
+    12: {
+        "theme": "Advent hope, peace, and meaningful endings",
+        "timely_signals": ["hope", "rest", "year-end reflection"],
+        "observances": ["Advent season", "Christmas"],
+    },
+}
+
+
+def _compute_easter_sunday(year: int) -> date:
+    """Return Gregorian Easter Sunday for the given year."""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def build_month_context(reference: datetime) -> Dict[str, Any]:
+    """Build a month-aware editorial context with real calendar timing."""
+    profile = MONTHLY_EDITORIAL_PROFILES.get(reference.month, MONTHLY_EDITORIAL_PROFILES[1])
+    christian_moments: list[str] = []
+    easter = _compute_easter_sunday(reference.year)
+    movable_events = {
+        "Ash Wednesday": easter - timedelta(days=46),
+        "Palm Sunday": easter - timedelta(days=7),
+        "Good Friday": easter - timedelta(days=2),
+        "Easter Sunday": easter,
+        "Pentecost": easter + timedelta(days=49),
+    }
+    fixed_events = {
+        "Christmas Day": date(reference.year, 12, 25),
+        "New Year's Day": date(reference.year, 1, 1),
+    }
+    for label, event_date in {**movable_events, **fixed_events}.items():
+        if event_date.month == reference.month:
+            christian_moments.append(f"{label} ({event_date.strftime('%b')} {event_date.day})")
+
+    return {
+        "month_label": reference.strftime("%B %Y"),
+        "theme": profile["theme"],
+        "timely_signals": list(profile["timely_signals"]),
+        "observances": list(profile["observances"]),
+        "christian_moments": christian_moments,
+        "season": _season_label(reference.month),
+    }
+
+
+def _season_label(month: int) -> str:
+    if month in (12, 1, 2):
+        return "Winter"
+    if month in (3, 4, 5):
+        return "Spring"
+    if month in (6, 7, 8):
+        return "Summer"
+    return "Autumn"
 
 
 @dataclass
@@ -33,15 +155,22 @@ class OpenAISchedulingCopilot:
         *,
         reference: datetime,
         released_history: Iterable[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Return recommendations with optional AI copilot hints and a controlled score adjustment."""
+    ) -> Dict[str, Any]:
+        """Return recommendations with optional AI copilot hints and explicit runtime status."""
         recommendations = [dict(item) for item in recommendations]
         if not recommendations:
-            return []
+            return {
+                "status": "no_candidates",
+                "message": "No recommendation candidates were available for AI review.",
+                "model": self.model,
+                "current_month_context": build_month_context(reference),
+                "recommendations": [],
+            }
         recommendations = recommendations[:MAX_RECOMMENDATIONS]
 
         prompt_payload = {
             "reference_date": reference.strftime("%Y-%m-%d"),
+            "current_month_context": build_month_context(reference),
             "recommendations": [self._serialize_candidate(item) for item in recommendations],
             "recent_releases": [self._serialize_release(item) for item in list(released_history)[:MAX_RECENT_RELEASES]],
         }
@@ -84,7 +213,24 @@ class OpenAISchedulingCopilot:
                 str(item.get("guest_name") or ""),
             )
         )
-        return enriched
+        enriched_count = sum(1 for item in enriched if item.get("ai_copilot"))
+        if enriched_count:
+            status = "active"
+            message = f"AI copilot enriched {enriched_count} recommendation{'s' if enriched_count != 1 else ''} using guest profiles, web research, and current-month context."
+        elif result.get("status") == "fallback":
+            status = "fallback"
+            message = str(result.get("message") or "AI copilot fell back to deterministic planning.")
+        else:
+            status = "thin_context"
+            message = "AI copilot was configured, but the current candidates had too little grounded context to add trustworthy guidance."
+
+        return {
+            "status": status,
+            "message": message,
+            "model": self.model,
+            "current_month_context": build_month_context(reference),
+            "recommendations": enriched,
+        }
 
     def _call_openai(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         schema = {
@@ -128,8 +274,9 @@ class OpenAISchedulingCopilot:
 
         instructions = (
             "You are an editorial scheduling copilot for Mirror Talk Podcast. "
-            "Use only the supplied episode metadata, guest research, and recent release history. "
+            "Use only the supplied episode metadata, guest database profile context, guest web research, current month context, and recent release history. "
             "Do not invent outside facts. If evidence is thin, say so plainly. "
+            "Match the recommended release month to relevant observances, Christian moments, and timely themes only when the guest information genuinely supports that angle. "
             "Return grounded suggestions that help with scheduling, not autopilot decisions. "
             "Be concise and evidence-led."
         )
@@ -161,10 +308,14 @@ class OpenAISchedulingCopilot:
             response.raise_for_status()
             data = response.json()
             text_output = self._extract_output_text(data)
-            return json.loads(text_output) if text_output else {"analyses": []}
+            return {"status": "active", "analyses": json.loads(text_output).get("analyses", []) if text_output else []}
         except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
             logger.warning("OpenAI scheduling copilot unavailable, falling back to deterministic planning: %s", exc)
-            return {"analyses": []}
+            return {
+                "status": "fallback",
+                "message": f"OpenAI scheduling copilot fell back to deterministic planning: {exc}",
+                "analyses": [],
+            }
 
     @staticmethod
     def _extract_output_text(data: Dict[str, Any]) -> str:
@@ -179,13 +330,23 @@ class OpenAISchedulingCopilot:
     @staticmethod
     def _serialize_candidate(item: Dict[str, Any]) -> Dict[str, Any]:
         research = item.get("guest_research") if isinstance(item.get("guest_research"), dict) else {}
+        profile = item.get("guest_profile_context") if isinstance(item.get("guest_profile_context"), dict) else {}
+        release_date = item.get("recommended_release_date")
+        release_month_context = None
+        if release_date:
+            try:
+                release_month_context = build_month_context(datetime.fromisoformat(str(release_date).replace("Z", "+00:00")))
+            except ValueError:
+                release_month_context = None
         return {
             "id": item.get("id"),
             "guest_name": OpenAISchedulingCopilot._trim_text(item.get("guest_name"), 80),
+            "website": OpenAISchedulingCopilot._trim_text(item.get("website"), 100),
             "episode_title": OpenAISchedulingCopilot._trim_text(item.get("episode_title"), 100),
             "topic": OpenAISchedulingCopilot._trim_text(item.get("topic"), 120),
             "category": OpenAISchedulingCopilot._trim_text(item.get("category"), 50),
             "recommended_release_date": item.get("recommended_release_date"),
+            "release_month_context": release_month_context,
             "production_status": item.get("production_status"),
             "promotion_status": item.get("promotion_status"),
             "promotion_readiness": {
@@ -199,6 +360,13 @@ class OpenAISchedulingCopilot:
             "topic_cluster_warning": {
                 "status": (item.get("topic_cluster_warning") or {}).get("status"),
                 "message": OpenAISchedulingCopilot._trim_text((item.get("topic_cluster_warning") or {}).get("message"), MAX_TEXT_CHARS),
+            },
+            "guest_profile_context": {
+                "profession": OpenAISchedulingCopilot._trim_text(profile.get("profession"), 80),
+                "background": OpenAISchedulingCopilot._trim_text(profile.get("background"), MAX_TEXT_CHARS),
+                "faith_practice": OpenAISchedulingCopilot._trim_text(profile.get("faith_practice"), 90),
+                "core_values": OpenAISchedulingCopilot._trim_text(profile.get("core_values"), 100),
+                "passionate_topics": OpenAISchedulingCopilot._trim_text(profile.get("passionate_topics"), 100),
             },
             "guest_research": {
                 "summary": OpenAISchedulingCopilot._trim_text(research.get("summary"), MAX_TEXT_CHARS),

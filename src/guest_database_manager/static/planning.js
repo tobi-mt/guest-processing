@@ -14,6 +14,7 @@ const askSyncBreakdown = document.getElementById("ask-sync-breakdown");
 const askSyncAmbiguous = document.getElementById("ask-sync-ambiguous");
 const planningExportMessage = document.getElementById("planning-export-message");
 const planningWeeklySystem = document.getElementById("planning-weekly-system");
+const aiCopilotStatus = document.getElementById("planning-ai-copilot-status");
 const outreachChecklist = document.getElementById("episode-outreach-checklist");
 const episodeList = document.getElementById("episode-list");
 const recommendationList = document.getElementById("recommendation-list");
@@ -426,6 +427,27 @@ function renderGuestResearchCopilot(research) {
           : escapeHtml(label);
       }).join(", ")}</p>` : ""}
     </div>
+  `;
+}
+
+function renderAiCopilotStatus(statusPayload) {
+  if (!aiCopilotStatus) {
+    return;
+  }
+  const status = statusPayload?.status || "unknown";
+  const tone = status === "active" || status === "configured" ? "success" : status === "fallback" ? "warning" : "";
+  const monthContext = statusPayload?.current_month_context;
+  const observances = (monthContext?.observances || []).slice(0, 3);
+  const christianMoments = (monthContext?.christian_moments || []).slice(0, 2);
+  aiCopilotStatus.className = `operations-preview ai-copilot-status ${tone}`.trim();
+  aiCopilotStatus.innerHTML = `
+    <strong class="insight-label">AI scheduling copilot</strong>
+    <p><strong>Status:</strong> ${escapeHtml(status.replaceAll("_", " "))}</p>
+    ${statusPayload?.message ? `<p>${escapeHtml(statusPayload.message)}</p>` : ""}
+    ${statusPayload?.model ? `<p><strong>Model:</strong> ${escapeHtml(statusPayload.model)}</p>` : ""}
+    ${monthContext?.month_label ? `<p><strong>Current month lens:</strong> ${escapeHtml(monthContext.month_label)} · ${escapeHtml(monthContext.theme || "")}</p>` : ""}
+    ${observances.length ? `<p><strong>Live month signals:</strong> ${observances.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
+    ${christianMoments.length ? `<p><strong>Faith calendar:</strong> ${christianMoments.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
   `;
 }
 
@@ -1604,6 +1626,7 @@ function renderPlanning() {
   populatePlanningFilters(categories, episodes);
   renderCategoryOptions(categories);
   renderWeeklySystemPanel(latestPlanningPayload.weekly_system);
+  renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
   renderRecommendations(filterRecommendations(recommendations), recommendations.length);
   renderEpisodes(filterEpisodes(episodes), episodes.length);
 }
@@ -1615,12 +1638,22 @@ async function hydrateAiSchedulingCopilot() {
   aiCopilotHydrationInFlight = true;
   try {
     const payload = await fetchJSON("/api/planning/ai-copilot");
+    if (payload?.ai_scheduling_enabled) {
+      latestPlanningPayload.ai_copilot_status = payload.ai_copilot_status || latestPlanningPayload.ai_copilot_status;
+    }
     if (payload?.ai_scheduling_enabled && Array.isArray(payload.recommendations) && payload.recommendations.length) {
       latestPlanningPayload.recommendations = payload.recommendations;
       renderPlanning();
+    } else {
+      renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
     }
   } catch (error) {
     console.warn("AI scheduling copilot hydration failed:", error);
+    latestPlanningPayload.ai_copilot_status = {
+      status: "fallback",
+      message: "AI scheduling copilot request failed after the deterministic plan had already loaded.",
+    };
+    renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
   } finally {
     aiCopilotHydrationInFlight = false;
   }

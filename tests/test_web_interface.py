@@ -318,7 +318,13 @@ def test_planning_can_attach_openai_scheduling_copilot(monkeypatch, temp_db):
                     "source_evidence": [{"source": "Guest website", "detail": "Mentions healing and leadership work"}],
                 }
                 enriched.append(enriched_item)
-            return enriched
+            return {
+                "status": "active",
+                "message": "AI copilot enriched the recommendations.",
+                "model": "gpt-5",
+                "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
+                "recommendations": enriched,
+            }
 
     monkeypatch.setattr(service, "_build_openai_scheduling_copilot", lambda: StubCopilot())
 
@@ -328,7 +334,10 @@ def test_planning_can_attach_openai_scheduling_copilot(monkeypatch, temp_db):
 
     assert planning["ai_scheduling_enabled"] is True
     assert "ai_copilot" not in planning["recommendations"][0]
+    assert planning["ai_copilot_status"]["status"] == "configured"
     assert ai_planning["ai_scheduling_enabled"] is True
+    assert ai_planning["ai_copilot_status"]["status"] == "active"
+    assert ai_planning["ai_copilot_status"]["current_month_context"]["theme"] == "Renewal, resurrection, and new life"
     assert recommendation["ai_copilot"]["model"] == "gpt-5"
     assert recommendation["ai_copilot"]["alignment_score"] == 82
 

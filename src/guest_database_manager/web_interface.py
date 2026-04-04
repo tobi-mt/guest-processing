@@ -39,7 +39,7 @@ from guest_database_manager.guest_recommender import (
 )
 from guest_database_manager.guest_research import research_guest_from_public_web
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
-from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
+from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot, build_month_context
 
 STATIC_DIR = Path(__file__).parent / "static"
 FORM_SOURCE_NAME = "Direct Web Entry"
@@ -453,9 +453,11 @@ class GuestWebService:
         """Return episode planning data separate from interview operations."""
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
+        ai_copilot = self._build_openai_scheduling_copilot()
         enriched_episodes = []
         for episode in episodes:
             enriched = dict(episode)
+            enriched["guest_profile_context"] = self._match_guest_profile_context(enriched, guests)
             enriched["guest_research"] = self._match_guest_research(enriched, guests)
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
@@ -467,7 +469,16 @@ class GuestWebService:
             "recommendations": recommendations,
             "available_categories": self.database.list_episode_categories(),
             "ask_sync_enabled": self._build_ask_mirror_talk_client() is not None,
-            "ai_scheduling_enabled": self._build_openai_scheduling_copilot() is not None,
+            "ai_scheduling_enabled": ai_copilot is not None,
+            "ai_copilot_status": {
+                "status": "configured" if ai_copilot is not None else "not_configured",
+                "message": (
+                    "AI copilot is configured and will hydrate recommendation cards after the base planning view loads."
+                    if ai_copilot is not None
+                    else "AI copilot is not configured on this deployment."
+                ),
+                "current_month_context": build_month_context(datetime.now()),
+            },
             "weekly_system": self._build_weekly_system_payload(),
         }
 
@@ -482,13 +493,14 @@ class GuestWebService:
         enriched_episodes = []
         for episode in episodes:
             enriched = dict(episode)
+            enriched["guest_profile_context"] = self._match_guest_profile_context(enriched, guests)
             enriched["guest_research"] = self._match_guest_research(enriched, guests)
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
 
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
-        recommendations = ai_scheduling_client.enrich_recommendations(
+        ai_result = ai_scheduling_client.enrich_recommendations(
             recommendations,
             reference=datetime.now(),
             released_history=[
@@ -498,7 +510,13 @@ class GuestWebService:
         )
         return {
             "ai_scheduling_enabled": True,
-            "recommendations": recommendations,
+            "ai_copilot_status": {
+                "status": ai_result.get("status", "fallback"),
+                "message": ai_result.get("message", ""),
+                "model": ai_result.get("model"),
+                "current_month_context": ai_result.get("current_month_context"),
+            },
+            "recommendations": ai_result.get("recommendations", recommendations),
         }
 
     def export_guests_csv(self) -> str:
@@ -702,6 +720,35 @@ class GuestWebService:
                 return self._research_payload(guest.get("guest_research"))
 
         return None
+
+    def _match_guest_profile_context(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Attach compact guest profile context from the Mirror Talk database."""
+        email_key = _normalize_text(episode.get("guest_email")).casefold()
+        name_key = _normalize_text(episode.get("guest_name")).casefold()
+
+        matched_guest = None
+        for guest in guests:
+            if email_key and _normalize_text(guest.get("email")).casefold() == email_key:
+                matched_guest = guest
+                break
+
+        if matched_guest is None:
+            for guest in guests:
+                guest_name = _normalize_text(guest.get("full_name") or guest.get("name")).casefold()
+                if name_key and guest_name == name_key:
+                    matched_guest = guest
+                    break
+
+        if matched_guest is None:
+            return None
+
+        return {
+            "profession": _normalize_text(matched_guest.get("profession")),
+            "background": _normalize_text(matched_guest.get("background")),
+            "faith_practice": _normalize_text(matched_guest.get("faith_practice")),
+            "core_values": _normalize_text(matched_guest.get("core_values")),
+            "passionate_topics": _normalize_text(matched_guest.get("passionate_topics")),
+        }
 
     def _build_episode_outreach_summary(self, episode: Dict[str, Any]) -> Dict[str, Any]:
         """Summarize the outreach checklist and next activation step for an episode."""

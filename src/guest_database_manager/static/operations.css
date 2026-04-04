@@ -251,6 +251,16 @@
   border: 1px solid rgba(91, 70, 47, 0.10);
 }
 
+.operations-preview.ai-copilot-status.success {
+  border-color: rgba(50, 122, 88, 0.28);
+  background: rgba(236, 249, 242, 0.92);
+}
+
+.operations-preview.ai-copilot-status.warning {
+  border-color: rgba(176, 126, 45, 0.28);
+  background: rgba(255, 247, 232, 0.96);
+}
+
 .operations-preview h4,
 .operations-preview p {
   overflow-wrap: anywhere;
