@@ -497,6 +497,8 @@ class GuestWebService:
                 if _normalize_text(episode.get("release_status")).lower() == "released":
                     continue
                 auto_research = self._auto_research_guest_for_episode(episode, guests)
+                if not auto_research and not episode.get("guest_research"):
+                    auto_research = self._auto_research_episode_profile(episode)
                 if auto_research:
                     previous_updated_at = _normalize_text((episode.get("guest_research") or {}).get("updated_at"))
                     previous_mode = _normalize_text((episode.get("guest_research") or {}).get("research_mode"))
@@ -956,6 +958,26 @@ class GuestWebService:
             self._research_payload(refreshed_guest.get("guest_research")) or research,
             refreshed_guest.get("guest_research_updated_at") or research.get("updated_at"),
         )
+
+    def _auto_research_episode_profile(self, episode: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Use the episode's own guest name and website as a direct research fallback."""
+        if not _normalize_text(episode.get("guest_name")) or not _normalize_text(episode.get("website")):
+            return None
+        try:
+            research = research_guest_from_public_web(
+                {
+                    "full_name": episode.get("guest_name"),
+                    "email": episode.get("guest_email"),
+                    "website": episode.get("website"),
+                    "social_media_handles": "",
+                    "social_handles": "",
+                }
+            )
+        except ValueError:
+            return None
+        research["research_mode"] = "auto_episode"
+        research["cache_status"] = "ready"
+        return self._decorate_research_payload(research, research.get("updated_at"))
 
     def _match_guest_research(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Attach guest research to planning records by guest email first, then by name."""

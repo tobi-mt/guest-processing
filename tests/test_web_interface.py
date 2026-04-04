@@ -600,6 +600,51 @@ def test_planning_ai_copilot_thin_context_message_explains_candidate_coverage(mo
     assert ai_planning["ai_copilot_status"]["diagnostics"]["with_guest_research"] == 0
 
 
+def test_planning_ai_copilot_can_research_episode_directly_without_guest_match(monkeypatch, temp_db):
+    """AI planning should use the episode website directly when no dashboard guest match exists."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Jordan Rivers",
+            "website": "https://jordan.example.com",
+            "category": "Mental Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    monkeypatch.setattr(
+        "guest_database_manager.web_interface.research_guest_from_public_web",
+        lambda current: {
+            "summary": "Direct episode research found a healing and leadership profile.",
+            "likely_topics": ["Healing", "Leadership"],
+            "timely_signals": ["public profile emphasizes speaking experience"],
+            "sources": [{"url": "https://jordan.example.com", "host": "jordan.example.com", "title": "Jordan Rivers"}],
+            "updated_at": "2026-04-04T10:00:00Z",
+        },
+    )
+
+    class StubCopilot:
+        def enrich_recommendations(self, recommendations, *, reference, released_history):
+            assert recommendations[0]["guest_research"]["research_mode"] == "auto_episode"
+            return {
+                "status": "active",
+                "message": "AI copilot enriched the recommendations.",
+                "model": "gpt-5",
+                "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
+                "recommendations": recommendations,
+            }
+
+    monkeypatch.setattr(service, "_build_openai_scheduling_copilot", lambda: StubCopilot())
+
+    ai_planning = service.list_planning_ai_copilot()
+
+    assert ai_planning["ai_copilot_status"]["status"] == "active"
+    assert ai_planning["recommendations"][0]["guest_research"]["likely_topics"] == ["Healing", "Leadership"]
+
+
 def test_planning_matches_guest_on_safe_name_variant(temp_db):
     """Planning should attach guest context when the episode name is a safe subset of the stored guest name."""
     service = GuestWebService(temp_db.db_path)
