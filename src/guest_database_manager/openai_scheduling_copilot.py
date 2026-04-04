@@ -278,6 +278,10 @@ class OpenAISchedulingCopilot:
             "Do not invent outside facts. If evidence is thin, say so plainly. "
             "Match the recommended release month to relevant observances, Christian moments, and timely themes only when the guest information genuinely supports that angle. "
             "Return grounded suggestions that help with scheduling, not autopilot decisions. "
+            "You must return one analysis object for every candidate id you receive. "
+            "If the evidence is moderate rather than strong, still return an analysis with a lower alignment score, cautious summary, and explicit watchouts instead of skipping the candidate. "
+            "Treat reusable guest research, auto-researched episode websites, and multiple public sources as valid grounded context. "
+            "Only use a very low score and strong caution when the supplied evidence is genuinely too generic or contradictory. "
             "Be concise and evidence-led."
         )
         try:
@@ -367,6 +371,15 @@ class OpenAISchedulingCopilot:
                 "faith_practice": OpenAISchedulingCopilot._trim_text(profile.get("faith_practice"), 90),
                 "core_values": OpenAISchedulingCopilot._trim_text(profile.get("core_values"), 100),
                 "passionate_topics": OpenAISchedulingCopilot._trim_text(profile.get("passionate_topics"), 100),
+            },
+            "context_strength": {
+                "has_profile_context": bool(profile),
+                "has_guest_research": bool(research),
+                "research_mode": OpenAISchedulingCopilot._trim_text(research.get("research_mode"), 30),
+                "research_source_count": len(research.get("sources", [])),
+                "likely_topic_count": len(research.get("likely_topics", [])),
+                "timely_signal_count": len(research.get("timely_signals", [])),
+                "summary_present": bool(OpenAISchedulingCopilot._trim_text(research.get("summary"), MAX_TEXT_CHARS)),
             },
             "guest_research": {
                 "summary": OpenAISchedulingCopilot._trim_text(research.get("summary"), MAX_TEXT_CHARS),
