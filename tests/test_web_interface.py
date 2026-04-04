@@ -500,6 +500,59 @@ def test_planning_ai_copilot_thin_context_message_explains_candidate_coverage(mo
     assert ai_planning["ai_copilot_status"]["diagnostics"]["with_guest_research"] == 0
 
 
+def test_bulk_research_guests_skips_cached_and_missing_profiles(monkeypatch, temp_db):
+    """Bulk guest research should only process guests who still need it and have usable profile hints."""
+    service = GuestWebService(temp_db.db_path)
+    cached_guest = service.create_guest(
+        {
+            "full_name": "Cached Guest",
+            "email": "cached@example.com",
+            "website": "https://cached.example.com",
+        }
+    )
+    missing_profile_guest = service.create_guest(
+        {
+            "full_name": "Missing Profile Guest",
+            "email": "missing@example.com",
+        }
+    )
+    needs_research_guest = service.create_guest(
+        {
+            "full_name": "Needs Research Guest",
+            "email": "needs@example.com",
+            "website": "https://needs.example.com",
+        }
+    )
+    service.database.update_guest_by_id(
+        cached_guest["id"],
+        {
+            **service.database.get_guest_by_id(cached_guest["id"]),
+            "guest_research": json.dumps({"summary": "Stored", "updated_at": "2026-04-01T10:00:00Z", "research_mode": "manual"}, ensure_ascii=False),
+            "guest_research_updated_at": "2026-04-01T10:00:00Z",
+        },
+    )
+
+    monkeypatch.setattr(
+        "guest_database_manager.web_interface.research_guest_from_public_web",
+        lambda current: {
+            "summary": f"Research for {str(current.get('full_name') or '').strip()}",
+            "likely_topics": ["Healing"],
+            "timely_signals": [],
+            "sources": [{"url": str(current.get("website") or "").strip(), "host": "example.com", "title": str(current.get("full_name") or "").strip()}],
+            "updated_at": "2026-04-03T10:00:00Z",
+        },
+    )
+
+    result = service.bulk_research_guests(limit=10)
+    refreshed_needs_research = service.database.get_guest_by_id(needs_research_guest["id"])
+
+    assert result["researched"] == 1
+    assert result["skipped_cached"] >= 1
+    assert result["skipped_missing_profile"] >= 1
+    assert result["remaining_eligible"] == 0
+    assert json.loads(refreshed_needs_research["guest_research"])["research_mode"] == "manual"
+
+
 def test_web_service_create_guest_preserves_existing_source_label(temp_db):
     """Dashboard writes should not replace an existing guest's original source label."""
     service = GuestWebService(temp_db.db_path)

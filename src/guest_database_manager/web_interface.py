@@ -76,6 +76,7 @@ OPENAI_MODEL_ENV_VAR = "MIRROR_TALK_OPENAI_MODEL"
 OPENAI_TIMEOUT_ENV_VAR = "MIRROR_TALK_OPENAI_TIMEOUT_SECONDS"
 DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD = 365
 AI_AUTORESEARCH_CANDIDATE_LIMIT = 12
+BULK_GUEST_RESEARCH_BATCH_SIZE = 25
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -1397,6 +1398,49 @@ class GuestWebService:
             raise WebInterfaceError("Guest could not be saved after research.")
         return serialize_guest(guest)
 
+    def bulk_research_guests(self, limit: int = BULK_GUEST_RESEARCH_BATCH_SIZE) -> Dict[str, Any]:
+        """Research missing guest profiles in bounded batches for faster planning copilot prep."""
+        limit = max(1, min(100, int(limit or BULK_GUEST_RESEARCH_BATCH_SIZE)))
+        guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
+        actionable: list[Dict[str, Any]] = []
+        skipped_cached = 0
+        skipped_missing_profile = 0
+
+        for guest in guests:
+            existing_research = self._decorate_research_payload(
+                self._research_payload(guest.get("guest_research")),
+                guest.get("guest_research_updated_at"),
+            )
+            if existing_research:
+                skipped_cached += 1
+                continue
+            if not self._guest_has_public_profile_hint(guest):
+                skipped_missing_profile += 1
+                continue
+            actionable.append(guest)
+
+        researched = 0
+        errors: list[str] = []
+        for guest in actionable[:limit]:
+            try:
+                research = research_guest_from_public_web(guest)
+            except ValueError as exc:
+                errors.append(f"{_normalize_text(guest.get('full_name')) or 'Guest'}: {exc}")
+                continue
+            research["research_mode"] = "manual"
+            self._persist_guest_research(guest, research)
+            researched += 1
+
+        return {
+            "researched": researched,
+            "errors": errors[:5],
+            "skipped_cached": skipped_cached,
+            "skipped_missing_profile": skipped_missing_profile,
+            "remaining_eligible": max(0, len(actionable) - limit),
+            "processed_batch_size": min(limit, len(actionable)),
+            "eligible_total": len(actionable),
+        }
+
     def delete_interview(self, interview_id: int, confirm_label: str = "") -> Dict[str, Any]:
         """Delete an interview and return a small confirmation payload."""
         interview = self.database.get_interview_by_id(interview_id)
@@ -2626,6 +2670,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     uploaded_file["filename"],
                     uploaded_file["content"],
                 )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path == "/api/guests/research-bulk":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            payload = self._read_json_payload()
+            try:
+                result = self.service.bulk_research_guests(int(payload.get("limit", BULK_GUEST_RESEARCH_BATCH_SIZE) or BULK_GUEST_RESEARCH_BATCH_SIZE))
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return

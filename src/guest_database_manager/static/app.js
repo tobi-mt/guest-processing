@@ -6,6 +6,8 @@ const guestList = document.getElementById("guest-list");
 const template = document.getElementById("guest-card-template");
 const refreshButton = document.getElementById("refresh-button");
 const exportButton = document.getElementById("export-button");
+const bulkResearchButton = document.getElementById("bulk-research-button");
+const bulkResearchMessage = document.getElementById("bulk-research-message");
 const decisionFilter = document.getElementById("decision-filter");
 const guestSearch = document.getElementById("guest-search");
 const guestSort = document.getElementById("guest-sort");
@@ -117,6 +119,14 @@ function setMessage(text, tone = "") {
 function setImportMessage(text, tone = "") {
   importMessage.textContent = text;
   importMessage.className = `message ${tone}`.trim();
+}
+
+function setBulkResearchMessage(text, tone = "") {
+  if (!bulkResearchMessage) {
+    return;
+  }
+  bulkResearchMessage.textContent = text;
+  bulkResearchMessage.className = `message ${tone}`.trim();
 }
 
 function guestStatusLabel(guest) {
@@ -965,6 +975,56 @@ refreshButton.addEventListener("click", async () => {
 exportButton.addEventListener("click", () => {
   window.location.href = "/api/export";
 });
+
+if (bulkResearchButton) {
+  bulkResearchButton.addEventListener("click", async () => {
+    if (!confirmCriticalAction("Research missing guest profiles now? This will use saved website and social data to prefill planning copilot context.")) {
+      return;
+    }
+    bulkResearchButton.disabled = true;
+    bulkResearchButton.textContent = "Researching...";
+    setBulkResearchMessage("Researching missing guest profiles in batches...", "pending");
+
+    let totalResearched = 0;
+    let remainingEligible = 0;
+    let skippedCached = 0;
+    let skippedMissingProfile = 0;
+    const errors = [];
+
+    try {
+      while (true) {
+        const result = await fetchJSON("/api/guests/research-bulk", {
+          method: "POST",
+          body: JSON.stringify({ limit: 25 }),
+        });
+        totalResearched += Number(result.researched || 0);
+        remainingEligible = Number(result.remaining_eligible || 0);
+        skippedCached = Number(result.skipped_cached || 0);
+        skippedMissingProfile = Number(result.skipped_missing_profile || 0);
+        errors.push(...(result.errors || []));
+        if (!remainingEligible || !result.processed_batch_size) {
+          break;
+        }
+        setBulkResearchMessage(
+          `Researched ${totalResearched} guest profile${totalResearched === 1 ? "" : "s"} so far. ${remainingEligible} still eligible.`,
+          "pending",
+        );
+      }
+
+      const errorSuffix = errors.length ? ` First issue: ${errors[0]}` : "";
+      setBulkResearchMessage(
+        `Research finished. New research: ${totalResearched}. Already cached: ${skippedCached}. Missing website/social data: ${skippedMissingProfile}. Remaining eligible: ${remainingEligible}.${errorSuffix}`,
+        errors.length ? "error" : "success",
+      );
+      await loadGuests();
+    } catch (error) {
+      setBulkResearchMessage(error.message, "error");
+    } finally {
+      bulkResearchButton.disabled = false;
+      bulkResearchButton.textContent = "Research Missing Profiles";
+    }
+  });
+}
 
 decisionFilter.addEventListener("change", () => {
   visibleGuestCount = GUEST_PAGE_SIZE;
