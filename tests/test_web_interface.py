@@ -87,6 +87,19 @@ def test_guest_research_candidate_urls_split_multiline_website_field():
     assert "https://Www.thelifeorganic.com" in urls
 
 
+def test_guest_research_candidate_urls_extract_urls_from_messy_website_text():
+    """Website parsing should recover usable URLs from messy pasted text."""
+    urls = _candidate_urls(
+        {
+            "website": "Website [https://vft23.com/] and www.example.org",
+            "social_media_handles": "",
+        }
+    )
+
+    assert "https://vft23.com/" in urls
+    assert "https://www.example.org" in urls
+
+
 def test_guest_research_rejects_generic_instagram_login_page(monkeypatch):
     """Generic social login pages should not be stored as useful guest research."""
     monkeypatch.setattr(
@@ -589,6 +602,33 @@ def test_bulk_research_guests_skips_cached_and_missing_profiles(monkeypatch, tem
     assert result["skipped_missing_profile"] >= 1
     assert result["remaining_eligible"] == 0
     assert json.loads(refreshed_needs_research["guest_research"])["research_mode"] == "manual"
+
+
+def test_bulk_research_guests_caches_failures_and_skips_them_later(monkeypatch, temp_db):
+    """Bulk research should cache repeated failures so later runs do not retry the same guest."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Broken Profile Guest",
+            "email": "broken@example.com",
+            "website": "https://broken.example.com",
+        }
+    )
+
+    monkeypatch.setattr(
+        "guest_database_manager.web_interface.research_guest_from_public_web",
+        lambda current: (_ for _ in ()).throw(ValueError("403 Forbidden")),
+    )
+
+    first_result = service.bulk_research_guests(limit=10)
+    stored_guest = service.database.get_guest_by_id(guest["id"])
+    second_result = service.bulk_research_guests(limit=10)
+
+    assert first_result["researched"] == 0
+    assert "403 forbidden" in first_result["errors"][0].lower()
+    assert json.loads(stored_guest["guest_research"])["cache_status"] == "failed"
+    assert second_result["skipped_failed"] >= 1
+    assert second_result["remaining_eligible"] == 0
 
 
 def test_web_service_create_guest_preserves_existing_source_label(temp_db):

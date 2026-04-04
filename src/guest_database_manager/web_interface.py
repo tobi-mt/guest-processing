@@ -778,8 +778,10 @@ class GuestWebService:
         decorated = dict(research)
         research_updated_at = _normalize_text(decorated.get("updated_at")) or _normalize_text(updated_at)
         mode = _normalize_text(decorated.get("research_mode")) or "manual"
+        cache_status = _normalize_text(decorated.get("cache_status")) or "ready"
         decorated["updated_at"] = research_updated_at
         decorated["research_mode"] = mode
+        decorated["cache_status"] = cache_status
         decorated["freshness"] = GuestWebService._research_freshness(research_updated_at)
         return decorated
 
@@ -823,6 +825,32 @@ class GuestWebService:
         refreshed = self.database.get_guest_by_id(int(guest_id))
         return serialize_guest(refreshed) if refreshed else guest
 
+    def _persist_guest_research_failure(self, guest: Dict[str, Any], error_message: str, mode: str = "auto") -> Dict[str, Any]:
+        """Cache a failed research attempt so repeated runs do not retry the same bad source forever."""
+        guest_id = guest.get("id")
+        if not str(guest_id or "").isdigit():
+            return guest
+        current = self.database.get_guest_by_id(int(guest_id))
+        if not current:
+            return guest
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        failure_payload = {
+            "summary": "",
+            "likely_topics": [],
+            "timely_signals": [],
+            "sources": [],
+            "updated_at": now,
+            "research_mode": mode,
+            "cache_status": "failed",
+            "last_error": _normalize_text(error_message),
+        }
+        updated_guest = dict(current)
+        updated_guest["guest_research"] = json.dumps(failure_payload, ensure_ascii=False)
+        updated_guest["guest_research_updated_at"] = now
+        self.database.update_guest_by_id(int(guest_id), updated_guest)
+        refreshed = self.database.get_guest_by_id(int(guest_id))
+        return serialize_guest(refreshed) if refreshed else guest
+
     def _auto_research_guest_for_episode(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Auto-research a matched guest so planning can rely on real profile evidence."""
         matched_guest = self._find_matching_guest(episode, guests)
@@ -833,14 +861,18 @@ class GuestWebService:
             matched_guest.get("guest_research_updated_at"),
         )
         if existing_research:
+            if existing_research.get("cache_status") == "failed":
+                return None
             return existing_research
         if not self._guest_has_public_profile_hint(matched_guest):
             return existing_research
         try:
             research = research_guest_from_public_web(matched_guest)
-        except ValueError:
+        except ValueError as exc:
+            self._persist_guest_research_failure(matched_guest, str(exc), mode="auto")
             return existing_research
         research["research_mode"] = "auto"
+        research["cache_status"] = "ready"
         refreshed_guest = self._persist_guest_research(matched_guest, research)
         matched_guest.update(refreshed_guest)
         return self._decorate_research_payload(
@@ -853,10 +885,13 @@ class GuestWebService:
         matched_guest = self._find_matching_guest(episode, guests)
         if not matched_guest:
             return None
-        return self._decorate_research_payload(
+        research = self._decorate_research_payload(
             self._research_payload(matched_guest.get("guest_research")),
             matched_guest.get("guest_research_updated_at"),
         )
+        if research and research.get("cache_status") == "failed":
+            return None
+        return research
 
     def _match_guest_profile_context(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Attach compact guest profile context from the Mirror Talk database."""
@@ -1404,6 +1439,7 @@ class GuestWebService:
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
         actionable: list[Dict[str, Any]] = []
         skipped_cached = 0
+        skipped_failed = 0
         skipped_missing_profile = 0
 
         for guest in guests:
@@ -1412,7 +1448,10 @@ class GuestWebService:
                 guest.get("guest_research_updated_at"),
             )
             if existing_research:
-                skipped_cached += 1
+                if existing_research.get("cache_status") == "failed":
+                    skipped_failed += 1
+                else:
+                    skipped_cached += 1
                 continue
             if not self._guest_has_public_profile_hint(guest):
                 skipped_missing_profile += 1
@@ -1426,8 +1465,10 @@ class GuestWebService:
                 research = research_guest_from_public_web(guest)
             except ValueError as exc:
                 errors.append(f"{_normalize_text(guest.get('full_name')) or 'Guest'}: {exc}")
+                self._persist_guest_research_failure(guest, str(exc), mode="manual")
                 continue
             research["research_mode"] = "manual"
+            research["cache_status"] = "ready"
             self._persist_guest_research(guest, research)
             researched += 1
 
@@ -1435,6 +1476,7 @@ class GuestWebService:
             "researched": researched,
             "errors": errors[:5],
             "skipped_cached": skipped_cached,
+            "skipped_failed": skipped_failed,
             "skipped_missing_profile": skipped_missing_profile,
             "remaining_eligible": max(0, len(actionable) - limit),
             "processed_batch_size": min(limit, len(actionable)),

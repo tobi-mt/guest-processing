@@ -87,6 +87,9 @@ def _split_url_like_values(value: Any) -> list[str]:
     text = _clean_text(value)
     if not text:
         return []
+    extracted_urls = re.findall(r"https?://[^\s\],)]+|www\.[^\s\],)]+", text, flags=re.IGNORECASE)
+    if extracted_urls:
+        return [item.strip() for item in extracted_urls if item.strip()]
     parts = [
         chunk.strip()
         for chunk in re.split(r"[\r\n,;]+", text)
