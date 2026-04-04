@@ -404,6 +404,69 @@ def test_planning_ai_copilot_auto_researches_top_candidates(monkeypatch, temp_db
     assert json.loads(researched_guest["guest_research"])["research_mode"] == "auto"
 
 
+def test_planning_ai_copilot_does_not_rerun_existing_auto_research(monkeypatch, temp_db):
+    """Stored guest research should be reused until the operator manually refreshes it."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+    stored_research = {
+        "summary": "Stored profile evidence around healing and leadership.",
+        "likely_topics": ["Healing", "Leadership"],
+        "timely_signals": ["public profile emphasizes speaking experience"],
+        "sources": [{"url": "https://jordan.example.com", "host": "jordan.example.com", "title": "Jordan Rivers"}],
+        "updated_at": "2025-01-01T10:00:00Z",
+        "research_mode": "auto",
+    }
+    service.database.update_guest_by_id(
+        guest["id"],
+        {
+            **service.database.get_guest_by_id(guest["id"]),
+            "guest_research": json.dumps(stored_research, ensure_ascii=False),
+            "guest_research_updated_at": "2025-01-01T10:00:00Z",
+        },
+    )
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Jordan Rivers",
+            "category": "Mental Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    def should_not_run(_current):
+        raise AssertionError("Planning should not rerun guest research when cached research already exists.")
+
+    monkeypatch.setattr(
+        "guest_database_manager.web_interface.research_guest_from_public_web",
+        should_not_run,
+    )
+
+    class StubCopilot:
+        def enrich_recommendations(self, recommendations, *, reference, released_history):
+            assert recommendations[0]["guest_research"]["research_mode"] == "auto"
+            return {
+                "status": "active",
+                "message": "AI copilot enriched the recommendations.",
+                "model": "gpt-5",
+                "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
+                "recommendations": recommendations,
+            }
+
+    monkeypatch.setattr(service, "_build_openai_scheduling_copilot", lambda: StubCopilot())
+
+    ai_planning = service.list_planning_ai_copilot()
+
+    assert "auto-researched" not in ai_planning["ai_copilot_status"]["message"].lower()
+
+
 def test_web_service_create_guest_preserves_existing_source_label(temp_db):
     """Dashboard writes should not replace an existing guest's original source label."""
     service = GuestWebService(temp_db.db_path)

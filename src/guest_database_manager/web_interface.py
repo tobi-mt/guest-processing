@@ -803,7 +803,7 @@ class GuestWebService:
             self._research_payload(matched_guest.get("guest_research")),
             matched_guest.get("guest_research_updated_at"),
         )
-        if existing_research and existing_research.get("freshness", {}).get("status") != "stale":
+        if existing_research:
             return existing_research
         if not self._guest_has_public_profile_hint(matched_guest):
             return existing_research
