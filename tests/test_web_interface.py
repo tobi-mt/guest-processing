@@ -342,6 +342,65 @@ def test_planning_can_attach_openai_scheduling_copilot(monkeypatch, temp_db):
     assert recommendation["ai_copilot"]["alignment_score"] == 82
 
 
+def test_planning_ai_copilot_auto_researches_top_candidates(monkeypatch, temp_db):
+    """AI planning should auto-research matched guests when stored research is still missing."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+            "profession": "Speaker",
+            "background": "Jordan helps people heal through honest conversations and resilient leadership.",
+            "passionate_topics": "Healing",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Jordan Rivers",
+            "category": "Mental Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    monkeypatch.setattr(
+        "guest_database_manager.web_interface.research_guest_from_public_web",
+        lambda current: {
+            "summary": "Public profile research suggests strong conversation angles around healing and leadership.",
+            "likely_topics": ["Healing", "Leadership"],
+            "timely_signals": ["public profile emphasizes speaking experience"],
+            "sources": [{"url": "https://jordan.example.com", "host": "jordan.example.com", "title": "Jordan Rivers"}],
+            "updated_at": "2026-04-03T10:00:00Z",
+        },
+    )
+
+    class StubCopilot:
+        def enrich_recommendations(self, recommendations, *, reference, released_history):
+            assert recommendations[0]["guest_research"]["likely_topics"] == ["Healing", "Leadership"]
+            return {
+                "status": "active",
+                "message": "AI copilot enriched the recommendations.",
+                "model": "gpt-5",
+                "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
+                "recommendations": recommendations,
+            }
+
+    monkeypatch.setattr(service, "_build_openai_scheduling_copilot", lambda: StubCopilot())
+
+    ai_planning = service.list_planning_ai_copilot()
+    researched_guest = next(
+        guest for guest in service.database.get_all_guests()
+        if guest.get("email") == "jordan@example.com"
+    )
+
+    assert ai_planning["ai_copilot_status"]["status"] == "active"
+    assert "auto-researched 1 guest profile" in ai_planning["ai_copilot_status"]["message"].lower()
+    assert researched_guest["guest_research"]
+
+
 def test_web_service_create_guest_preserves_existing_source_label(temp_db):
     """Dashboard writes should not replace an existing guest's original source label."""
     service = GuestWebService(temp_db.db_path)

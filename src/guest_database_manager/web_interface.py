@@ -478,6 +478,14 @@ class GuestWebService:
             enriched_episodes.append(enriched)
 
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
+        auto_researched_count = 0
+        for recommendation in recommendations[:4]:
+            if recommendation.get("guest_research"):
+                continue
+            auto_research = self._auto_research_guest_for_episode(recommendation, guests)
+            if auto_research:
+                recommendation["guest_research"] = auto_research
+                auto_researched_count += 1
         ai_result = ai_scheduling_client.enrich_recommendations(
             recommendations,
             reference=datetime.now(),
@@ -490,12 +498,24 @@ class GuestWebService:
             "ai_scheduling_enabled": True,
             "ai_copilot_status": {
                 "status": ai_result.get("status", "fallback"),
-                "message": ai_result.get("message", ""),
+                "message": self._compose_ai_copilot_status_message(ai_result, auto_researched_count),
                 "model": ai_result.get("model"),
                 "current_month_context": ai_result.get("current_month_context"),
             },
             "recommendations": ai_result.get("recommendations", recommendations),
         }
+
+    @staticmethod
+    def _compose_ai_copilot_status_message(ai_result: Dict[str, Any], auto_researched_count: int) -> str:
+        """Blend AI runtime status with any automatic guest-research work."""
+        base_message = _normalize_text(ai_result.get("message"))
+        if auto_researched_count <= 0:
+            return base_message
+        prefix = (
+            f"Planning auto-researched {auto_researched_count} guest profile"
+            f"{'s' if auto_researched_count != 1 else ''} from saved website or social data. "
+        )
+        return f"{prefix}{base_message}".strip()
 
     def export_guests_csv(self) -> str:
         """Export all guests as a CSV string for occasional admin downloads."""
@@ -683,40 +703,74 @@ class GuestWebService:
             return None
         return parsed if isinstance(parsed, dict) else None
 
-    def _match_guest_research(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Attach guest research to planning records by guest email first, then by name."""
+    @staticmethod
+    def _guest_has_public_profile_hint(guest: Dict[str, Any]) -> bool:
+        """Check whether a guest has enough public profile data for web research."""
+        return bool(
+            _normalize_text(guest.get("website"))
+            or _normalize_text(guest.get("social_media_handles"))
+            or _normalize_text(guest.get("social_handles"))
+        )
+
+    def _find_matching_guest(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Find the best matching guest for an episode by email first, then exact name."""
         email_key = _normalize_text(episode.get("guest_email")).casefold()
         name_key = _normalize_text(episode.get("guest_name")).casefold()
 
         for guest in guests:
             if email_key and _normalize_text(guest.get("email")).casefold() == email_key:
-                return self._research_payload(guest.get("guest_research"))
+                return guest
 
         for guest in guests:
             guest_name = _normalize_text(guest.get("full_name") or guest.get("name")).casefold()
             if name_key and guest_name == name_key:
-                return self._research_payload(guest.get("guest_research"))
+                return guest
 
         return None
 
+    def _persist_guest_research(self, guest: Dict[str, Any], research: Dict[str, Any]) -> Dict[str, Any]:
+        """Save refreshed public-profile research back onto the guest record."""
+        guest_id = guest.get("id")
+        if not str(guest_id or "").isdigit():
+            return guest
+        current = self.database.get_guest_by_id(int(guest_id))
+        if not current:
+            return guest
+        updated_guest = dict(current)
+        updated_guest["guest_research"] = json.dumps(research, ensure_ascii=False)
+        updated_guest["guest_research_updated_at"] = research.get("updated_at")
+        self.database.update_guest_by_id(int(guest_id), updated_guest)
+        refreshed = self.database.get_guest_by_id(int(guest_id))
+        return serialize_guest(refreshed) if refreshed else guest
+
+    def _auto_research_guest_for_episode(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Auto-research a matched guest so planning can rely on real profile evidence."""
+        matched_guest = self._find_matching_guest(episode, guests)
+        if not matched_guest:
+            return None
+        existing_research = self._research_payload(matched_guest.get("guest_research"))
+        if existing_research:
+            return existing_research
+        if not self._guest_has_public_profile_hint(matched_guest):
+            return None
+        try:
+            research = research_guest_from_public_web(matched_guest)
+        except ValueError:
+            return None
+        refreshed_guest = self._persist_guest_research(matched_guest, research)
+        matched_guest.update(refreshed_guest)
+        return self._research_payload(refreshed_guest.get("guest_research")) or research
+
+    def _match_guest_research(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Attach guest research to planning records by guest email first, then by name."""
+        matched_guest = self._find_matching_guest(episode, guests)
+        if not matched_guest:
+            return None
+        return self._research_payload(matched_guest.get("guest_research"))
+
     def _match_guest_profile_context(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Attach compact guest profile context from the Mirror Talk database."""
-        email_key = _normalize_text(episode.get("guest_email")).casefold()
-        name_key = _normalize_text(episode.get("guest_name")).casefold()
-
-        matched_guest = None
-        for guest in guests:
-            if email_key and _normalize_text(guest.get("email")).casefold() == email_key:
-                matched_guest = guest
-                break
-
-        if matched_guest is None:
-            for guest in guests:
-                guest_name = _normalize_text(guest.get("full_name") or guest.get("name")).casefold()
-                if name_key and guest_name == name_key:
-                    matched_guest = guest
-                    break
-
+        matched_guest = self._find_matching_guest(episode, guests)
         if matched_guest is None:
             return None
 
