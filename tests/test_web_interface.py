@@ -600,6 +600,86 @@ def test_planning_ai_copilot_thin_context_message_explains_candidate_coverage(mo
     assert ai_planning["ai_copilot_status"]["diagnostics"]["with_guest_research"] == 0
 
 
+def test_planning_matches_guest_on_safe_name_variant(temp_db):
+    """Planning should attach guest context when the episode name is a safe subset of the stored guest name."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan A Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+            "profession": "Coach",
+            "background": "Leadership and healing mentor",
+        }
+    )
+    service.database.update_guest_by_id(
+        guest["id"],
+        {
+            **service.database.get_guest_by_id(guest["id"]),
+            "guest_research": json.dumps(
+                {
+                    "summary": "Stored profile context",
+                    "likely_topics": ["Healing"],
+                    "updated_at": "2026-04-01T10:00:00Z",
+                    "research_mode": "manual",
+                    "cache_status": "ready",
+                },
+                ensure_ascii=False,
+            ),
+            "guest_research_updated_at": "2026-04-01T10:00:00Z",
+        },
+    )
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "episode_title": "Jordan Rivers",
+            "category": "Mental Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    planning = service.list_planning()
+    episode = next(item for item in planning["recommendations"] if item["guest_name"] == "Jordan Rivers")
+
+    assert episode["guest_profile_context"]["profession"] == "Coach"
+    assert episode["guest_research"]["likely_topics"] == ["Healing"]
+
+
+def test_planning_keeps_ambiguous_name_matches_unlinked(temp_db):
+    """Planning should skip guest research when multiple guests would match the same short name equally well."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "Jordan A Rivers",
+            "email": "jordan1@example.com",
+            "website": "https://jordan-one.example.com",
+        }
+    )
+    service.create_guest(
+        {
+            "full_name": "Jordan B Rivers",
+            "email": "jordan2@example.com",
+            "website": "https://jordan-two.example.com",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "episode_title": "Jordan Rivers",
+            "category": "Mental Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    planning = service.list_planning()
+    episode = next(item for item in planning["recommendations"] if item["guest_name"] == "Jordan Rivers")
+
+    assert episode["guest_profile_context"] is None
+    assert episode["guest_research"] is None
+
+
 def test_bulk_research_guests_skips_cached_and_missing_profiles(monkeypatch, temp_db):
     """Bulk guest research should only process guests who still need it and have usable profile hints."""
     service = GuestWebService(temp_db.db_path)

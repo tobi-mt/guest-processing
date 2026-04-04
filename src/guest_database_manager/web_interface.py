@@ -794,19 +794,96 @@ class GuestWebService:
             or _normalize_text(guest.get("social_handles"))
         )
 
+    @staticmethod
+    def _website_host(value: Any) -> str:
+        text = _normalize_text(value)
+        if not text:
+            return ""
+        first_chunk = re.split(r"[\s\r\n,;]+", text, maxsplit=1)[0].strip()
+        if not first_chunk:
+            return ""
+        normalized = first_chunk if "://" in first_chunk else f"https://{first_chunk}"
+        try:
+            host = urlsplit(normalized).netloc.casefold()
+        except ValueError:
+            return ""
+        return re.sub(r"^www\.", "", host)
+
+    @staticmethod
+    def _name_tokens(value: Any) -> list[str]:
+        text = _normalize_text(value)
+        if not text:
+            return []
+        tokens = re.findall(r"[a-z0-9]+", text)
+        honorifics = {"mr", "mrs", "ms", "dr", "prof", "rev", "sir", "jr", "sr", "ii", "iii", "iv"}
+        filtered = [token for token in tokens if token not in honorifics]
+        return filtered
+
+    def _name_match_score(self, episode_name: Any, guest_name: Any) -> int:
+        episode_tokens = self._name_tokens(episode_name)
+        guest_tokens = self._name_tokens(guest_name)
+        if not episode_tokens or not guest_tokens:
+            return 0
+        if episode_tokens == guest_tokens:
+            return 100
+
+        episode_set = set(episode_tokens)
+        guest_set = set(guest_tokens)
+        overlap = episode_set & guest_set
+        if not overlap:
+            return 0
+
+        first_episode = episode_tokens[0]
+        first_guest = guest_tokens[0]
+        last_episode = episode_tokens[-1]
+        last_guest = guest_tokens[-1]
+
+        if first_episode == first_guest and last_episode == last_guest:
+            return 95
+        if last_episode == last_guest and len(overlap) >= min(2, len(episode_set), len(guest_set)):
+            return 90
+        if episode_set <= guest_set and len(episode_set) >= 2:
+            return 85
+        if guest_set <= episode_set and len(guest_set) >= 2:
+            return 85
+        if last_episode == last_guest and len(overlap) >= 1 and len(episode_set) >= 2 and len(guest_set) >= 2:
+            return 70
+        return 0
+
     def _find_matching_guest(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Find the best matching guest for an episode by email first, then exact name."""
+        """Find the best matching guest for an episode by stable identifiers, then safe name variants."""
         email_key = _normalize_text(episode.get("guest_email")).casefold()
-        name_key = _normalize_text(episode.get("guest_name")).casefold()
+        website_host = self._website_host(episode.get("website"))
+        episode_name = episode.get("guest_name")
 
         for guest in guests:
             if email_key and _normalize_text(guest.get("email")).casefold() == email_key:
                 return guest
 
+        host_matches: list[Dict[str, Any]] = []
         for guest in guests:
-            guest_name = _normalize_text(guest.get("full_name") or guest.get("name")).casefold()
-            if name_key and guest_name == name_key:
-                return guest
+            guest_host = self._website_host(guest.get("website"))
+            if website_host and guest_host and guest_host == website_host:
+                host_matches.append(guest)
+
+        if len(host_matches) == 1:
+            return host_matches[0]
+
+        scored_matches: list[tuple[int, Dict[str, Any]]] = []
+        for guest in guests:
+            guest_name = guest.get("full_name") or guest.get("name")
+            score = self._name_match_score(episode_name, guest_name)
+            if score > 0:
+                scored_matches.append((score, guest))
+
+        if not scored_matches:
+            return None
+
+        scored_matches.sort(key=lambda item: (item[0], int(item[1].get("id") or 0)), reverse=True)
+        best_score = scored_matches[0][0]
+        best_matches = [guest for score, guest in scored_matches if score == best_score]
+        if best_score >= 85 and len(best_matches) == 1:
+            return best_matches[0]
 
         return None
 
