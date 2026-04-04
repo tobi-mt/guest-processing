@@ -415,6 +415,87 @@ function renderPromotionProfile(guest) {
   `;
 }
 
+function buildGuestResearchSearchUrl(guest) {
+  const parts = [];
+  const name = String(guest.full_name || "").trim();
+  if (name) {
+    parts.push(`"${name}"`);
+  }
+
+  const website = String(guest.website || "").trim();
+  if (website) {
+    parts.push(website.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0]);
+  } else {
+    const socialEntries = parseSocialHandleEntries(guest.social_media_handles || guest.social_handles);
+    const firstNamedEntry = socialEntries.find((entry) => String(entry.value || "").trim());
+    if (firstNamedEntry) {
+      parts.push(`"${String(firstNamedEntry.value || "").trim().replace(/^@/, "")}"`);
+    }
+  }
+
+  if (!parts.length) {
+    return "";
+  }
+
+  return `https://www.google.com/search?q=${encodeURIComponent(parts.join(" "))}`;
+}
+
+function renderResearchRecoveryLinks(guest) {
+  const links = [];
+  const website = normalizeText(guest.website);
+  if (website) {
+    links.push({
+      label: "Open website",
+      url: /^https?:\/\//i.test(website) ? website : `https://${website}`,
+    });
+  }
+
+  parseSocialHandleEntries(guest.social_media_handles || guest.social_handles)
+    .slice(0, 3)
+    .forEach((entry) => {
+      const url = socialValueToUrl(entry.label, entry.value);
+      if (url) {
+        links.push({
+          label: `Open ${entry.label}`,
+          url,
+        });
+      }
+    });
+
+  const googleSearchUrl = buildGuestResearchSearchUrl(guest);
+  if (googleSearchUrl) {
+    links.push({
+      label: "Google search",
+      url: googleSearchUrl,
+    });
+  }
+
+  const uniqueLinks = [];
+  const seen = new Set();
+  links.forEach((link) => {
+    const key = `${link.label}|${link.url}`;
+    if (!link.url || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    uniqueLinks.push(link);
+  });
+
+  if (!uniqueLinks.length) {
+    return "";
+  }
+
+  return `
+    <div class="guest-ai-block">
+      <strong>Recovery links</strong>
+      <p class="guest-ai-copy">Use these to verify the right public profile before retrying research.</p>
+      <p class="guest-ai-copy">
+        ${uniqueLinks.map((link) => `<a class="inline-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.label)}</a>`).join(" · ")}
+      </p>
+    </div>
+  `;
+}
+
 function renderGuestCopilotSummary(guest) {
   const research = guest.guest_research;
   if (!research) {
@@ -437,13 +518,14 @@ function renderGuestCopilotSummary(guest) {
           </div>
         </div>
         <div class="guest-ai-grid">
-          <div class="guest-ai-block caution">
-            <strong>What to do next</strong>
-            <ul>
+        <div class="guest-ai-block caution">
+          <strong>What to do next</strong>
+          <ul>
               <li>Check whether the website or social profile field is missing, malformed, or blocked.</li>
               <li>Update the guest details, then use <strong>Research Guest</strong> to retry intentionally.</li>
             </ul>
           </div>
+          ${renderResearchRecoveryLinks(guest)}
         </div>
       </div>
     `;
