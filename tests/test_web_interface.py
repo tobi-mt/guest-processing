@@ -246,6 +246,8 @@ def test_web_service_can_research_guest_and_store_public_profile_context(monkeyp
 
     assert researched_guest["guest_research"]["likely_topics"] == ["Healing", "Leadership"]
     assert researched_guest["guest_research_updated_at"] == "2026-04-03T10:00:00Z"
+    assert researched_guest["guest_research"]["research_mode"] == "manual"
+    assert researched_guest["guest_research"]["freshness"]["status"] in {"fresh", "aging", "stale", "unknown"}
 
 
 def test_planning_uses_guest_research_as_copilot_context(monkeypatch, temp_db):
@@ -399,6 +401,7 @@ def test_planning_ai_copilot_auto_researches_top_candidates(monkeypatch, temp_db
     assert ai_planning["ai_copilot_status"]["status"] == "active"
     assert "auto-researched 1 guest profile" in ai_planning["ai_copilot_status"]["message"].lower()
     assert researched_guest["guest_research"]
+    assert json.loads(researched_guest["guest_research"])["research_mode"] == "auto"
 
 
 def test_web_service_create_guest_preserves_existing_source_label(temp_db):

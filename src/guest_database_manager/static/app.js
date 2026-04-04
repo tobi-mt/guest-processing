@@ -426,6 +426,8 @@ function renderGuestCopilotSummary(guest) {
       `;
     })
     .join("");
+  const mode = normalizeText(research.research_mode) || "manual";
+  const freshness = research.freshness || {};
 
   return `
     <div class="guest-ai-card">
@@ -434,9 +436,10 @@ function renderGuestCopilotSummary(guest) {
           <p class="composer-eyebrow">Guest Copilot Research</p>
           <div class="guest-ai-title-row">
             <strong>Public profile evidence</strong>
-            <span class="guest-ai-badge">${escapeHtml(research.updated_at ? "Updated" : "Stored")}</span>
+            <span class="guest-ai-badge">${escapeHtml(mode === "auto" ? "Auto" : "Manual")}</span>
           </div>
           <p class="guest-ai-copy">${escapeHtml(research.summary || "Public profile context is available for planning and drafting.")}</p>
+          ${freshness.label ? `<p class="guest-ai-copy">Freshness: ${escapeHtml(freshness.label)}</p>` : ""}
         </div>
       </div>
       ${topics ? `<div class="signal-list guest-ai-signals">${topics}</div>` : ""}

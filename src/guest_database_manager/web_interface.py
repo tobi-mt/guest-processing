@@ -356,6 +356,10 @@ def serialize_guest(guest: Dict[str, Any]) -> Dict[str, Any]:
             serialized["guest_research"] = None
     elif not isinstance(guest_research, dict):
         serialized["guest_research"] = None
+    serialized["guest_research"] = GuestWebService._decorate_research_payload(
+        serialized.get("guest_research"),
+        serialized.get("guest_research_updated_at"),
+    )
     return serialized
 
 
@@ -477,15 +481,18 @@ class GuestWebService:
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
 
-        recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
         auto_researched_count = 0
-        for recommendation in recommendations[:4]:
-            if recommendation.get("guest_research"):
+        for episode in enriched_episodes:
+            if _normalize_text(episode.get("release_status")).lower() == "released":
                 continue
-            auto_research = self._auto_research_guest_for_episode(recommendation, guests)
+            auto_research = self._auto_research_guest_for_episode(episode, guests)
             if auto_research:
-                recommendation["guest_research"] = auto_research
-                auto_researched_count += 1
+                previous_updated_at = _normalize_text((episode.get("guest_research") or {}).get("updated_at"))
+                previous_mode = _normalize_text((episode.get("guest_research") or {}).get("research_mode"))
+                episode["guest_research"] = auto_research
+                if previous_updated_at != _normalize_text(auto_research.get("updated_at")) or previous_mode != _normalize_text(auto_research.get("research_mode")):
+                    auto_researched_count += 1
+        recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
         ai_result = ai_scheduling_client.enrich_recommendations(
             recommendations,
             reference=datetime.now(),
@@ -704,6 +711,39 @@ class GuestWebService:
         return parsed if isinstance(parsed, dict) else None
 
     @staticmethod
+    def _research_freshness(updated_at: Any) -> Dict[str, Any]:
+        """Summarize how fresh stored guest research is."""
+        updated_text = _normalize_text(updated_at)
+        if not updated_text:
+            return {"status": "missing", "label": "Not researched yet", "age_days": None}
+        normalized = updated_text.replace("Z", "+00:00")
+        try:
+            updated_dt = datetime.fromisoformat(normalized)
+        except ValueError:
+            return {"status": "unknown", "label": "Research date unavailable", "age_days": None}
+        if updated_dt.tzinfo is None:
+            updated_dt = updated_dt.replace(tzinfo=timezone.utc)
+        age_days = max(0, int((datetime.now(timezone.utc) - updated_dt.astimezone(timezone.utc)).total_seconds() // 86400))
+        if age_days <= 30:
+            return {"status": "fresh", "label": f"Fresh · {age_days}d ago", "age_days": age_days}
+        if age_days <= 90:
+            return {"status": "aging", "label": f"Aging · {age_days}d ago", "age_days": age_days}
+        return {"status": "stale", "label": f"Stale · {age_days}d ago", "age_days": age_days}
+
+    @staticmethod
+    def _decorate_research_payload(research: Any, updated_at: Any = None) -> Optional[Dict[str, Any]]:
+        """Attach stable metadata to stored guest research payloads."""
+        if not isinstance(research, dict):
+            return None
+        decorated = dict(research)
+        research_updated_at = _normalize_text(decorated.get("updated_at")) or _normalize_text(updated_at)
+        mode = _normalize_text(decorated.get("research_mode")) or "manual"
+        decorated["updated_at"] = research_updated_at
+        decorated["research_mode"] = mode
+        decorated["freshness"] = GuestWebService._research_freshness(research_updated_at)
+        return decorated
+
+    @staticmethod
     def _guest_has_public_profile_hint(guest: Dict[str, Any]) -> bool:
         """Check whether a guest has enough public profile data for web research."""
         return bool(
@@ -748,25 +788,35 @@ class GuestWebService:
         matched_guest = self._find_matching_guest(episode, guests)
         if not matched_guest:
             return None
-        existing_research = self._research_payload(matched_guest.get("guest_research"))
-        if existing_research:
+        existing_research = self._decorate_research_payload(
+            self._research_payload(matched_guest.get("guest_research")),
+            matched_guest.get("guest_research_updated_at"),
+        )
+        if existing_research and existing_research.get("freshness", {}).get("status") != "stale":
             return existing_research
         if not self._guest_has_public_profile_hint(matched_guest):
-            return None
+            return existing_research
         try:
             research = research_guest_from_public_web(matched_guest)
         except ValueError:
-            return None
+            return existing_research
+        research["research_mode"] = "auto"
         refreshed_guest = self._persist_guest_research(matched_guest, research)
         matched_guest.update(refreshed_guest)
-        return self._research_payload(refreshed_guest.get("guest_research")) or research
+        return self._decorate_research_payload(
+            self._research_payload(refreshed_guest.get("guest_research")) or research,
+            refreshed_guest.get("guest_research_updated_at") or research.get("updated_at"),
+        )
 
     def _match_guest_research(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Attach guest research to planning records by guest email first, then by name."""
         matched_guest = self._find_matching_guest(episode, guests)
         if not matched_guest:
             return None
-        return self._research_payload(matched_guest.get("guest_research"))
+        return self._decorate_research_payload(
+            self._research_payload(matched_guest.get("guest_research")),
+            matched_guest.get("guest_research_updated_at"),
+        )
 
     def _match_guest_profile_context(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Attach compact guest profile context from the Mirror Talk database."""
@@ -1296,6 +1346,7 @@ class GuestWebService:
             research = research_guest_from_public_web(current)
         except ValueError as exc:
             raise WebInterfaceError(str(exc))
+        research["research_mode"] = "manual"
 
         updated_guest = dict(current)
         updated_guest["guest_research"] = json.dumps(research, ensure_ascii=False)

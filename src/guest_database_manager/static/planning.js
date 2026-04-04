@@ -414,9 +414,13 @@ function renderGuestResearchCopilot(research) {
   const topics = (research.likely_topics || []).slice(0, 4);
   const timelySignals = (research.timely_signals || []).slice(0, 3);
   const sources = (research.sources || []).slice(0, 3);
+  const mode = normalizeText(research.research_mode) || "manual";
+  const freshness = research.freshness || {};
   return `
     <div class="operations-preview">
       <strong class="insight-label">Guest copilot context</strong>
+      <p><strong>Research source:</strong> ${escapeHtml(mode === "auto" ? "Auto-researched during planning" : "Manually researched")}
+      ${freshness.label ? ` · <span class="inline-muted">${escapeHtml(freshness.label)}</span>` : ""}</p>
       ${research.summary ? `<p>${escapeHtml(research.summary)}</p>` : ""}
       ${topics.length ? `<p><strong>Likely themes:</strong> ${topics.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
       ${timelySignals.length ? `<div class="insight-stack"><strong class="insight-label">Why this guest may be timely</strong><ul>${timelySignals.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
