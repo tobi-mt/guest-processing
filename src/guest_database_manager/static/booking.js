@@ -366,12 +366,17 @@ async function submitBooking() {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    selectedSlot = null;
+    selectedDateKey = "";
+    bookingSubmit.disabled = true;
+    bookingSubmit.textContent = "Booked";
     renderExistingBooking(result.interview);
     bookingAvailability.classList.add("hidden");
     bookingCalendarGrid.innerHTML = "";
     bookingTimes.innerHTML = "";
     bookingForm.classList.add("hidden");
     bookingSelectedSlot.classList.add("hidden");
+    bookingSelectedSlot.innerHTML = "";
     panelHeading.textContent = "Your Soulful Conversation is now confirmed";
     setMessage("Your Soulful Conversation is booked. We’ve also sent you a confirmation email with the next steps.", "success");
   } catch (error) {
