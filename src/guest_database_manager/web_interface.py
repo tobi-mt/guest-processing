@@ -3503,6 +3503,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
+                except Exception as exc:  # pragma: no cover - defensive API guard
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Google Calendar removal failed: {exc}"})
+                    return
 
                 self._send_json(HTTPStatus.OK, interview)
                 return
