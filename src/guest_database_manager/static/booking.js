@@ -2,7 +2,6 @@ const bookingMessage = document.getElementById("booking-message");
 const bookingSubtitle = document.getElementById("booking-subtitle");
 const bookingExisting = document.getElementById("booking-existing");
 const bookingMeta = document.getElementById("booking-meta");
-const bookingSlots = document.getElementById("booking-slots");
 const bookingForm = document.getElementById("booking-form");
 const bookingSubmit = document.getElementById("booking-submit");
 const bookingTitle = document.getElementById("booking-title");
@@ -10,9 +9,20 @@ const panelHeading = document.getElementById("panel-heading");
 const bookingInvitation = document.getElementById("booking-invitation");
 const bookingAvailability = document.getElementById("booking-availability");
 const bookingSelectedSlot = document.getElementById("booking-selected-slot");
+const bookingCalendarGrid = document.getElementById("booking-calendar-grid");
+const bookingTimes = document.getElementById("booking-times");
+const bookingMonthLabel = document.getElementById("booking-month-label");
+const bookingWindowLabel = document.getElementById("booking-window-label");
+const bookingMonthPrev = document.getElementById("booking-month-prev");
+const bookingMonthNext = document.getElementById("booking-month-next");
 
 let bookingToken = "";
 let selectedSlot = null;
+let selectedDateKey = "";
+let visibleMonthKey = "";
+let availableSlots = [];
+let availableMonths = [];
+let slotTimezone = "Europe/Berlin";
 
 function setMessage(text, tone = "") {
   bookingMessage.textContent = text;
@@ -25,7 +35,8 @@ function showInvitationState() {
   bookingExisting.classList.add("hidden");
   bookingAvailability.classList.add("hidden");
   bookingSelectedSlot.classList.add("hidden");
-  bookingSlots.innerHTML = "";
+  bookingCalendarGrid.innerHTML = "";
+  bookingTimes.innerHTML = "";
   bookingForm.classList.add("hidden");
   bookingTitle.textContent = "Your Mirror Talk invitation link opens here";
   panelHeading.textContent = "A personal booking link keeps the experience secure and connected";
@@ -73,6 +84,34 @@ function formatSlotTime(dateText) {
   });
 }
 
+function slotLocalDate(slot) {
+  const date = new Date(slot.start);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function slotMonthKey(slot) {
+  return slotLocalDate(slot).slice(0, 7);
+}
+
+function monthStartFromKey(monthKey) {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(year, month - 1, 1);
+}
+
+function monthLabel(monthKey) {
+  return monthStartFromKey(monthKey).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function slotsForDate(dateKey) {
+  return availableSlots.filter((slot) => slotLocalDate(slot) === dateKey);
+}
+
 function renderExistingBooking(existing) {
   if (!existing) {
     bookingExisting.classList.add("hidden");
@@ -88,51 +127,156 @@ function renderExistingBooking(existing) {
   `;
 }
 
-function renderSlots(slots, timezone) {
-  bookingSlots.innerHTML = "";
-  selectedSlot = null;
-  bookingSubmit.disabled = true;
-  bookingSubmit.textContent = "Book This Slot";
-  bookingSelectedSlot.classList.add("hidden");
-  bookingSelectedSlot.innerHTML = "";
-  bookingAvailability.classList.remove("hidden");
-  if (!slots.length) {
-    bookingSlots.innerHTML = `
-      <div class="empty-slot-state">
-        <strong>No booking slots are available right now.</strong>
-        <p>Please reply to the Mirror Talk email and we’ll help you find a suitable time personally.</p>
-      </div>
-    `;
+function renderSelectedSlot(slot) {
+  if (!slot) {
+    bookingSelectedSlot.classList.add("hidden");
+    bookingSelectedSlot.innerHTML = "";
+    return;
+  }
+  bookingSelectedSlot.classList.remove("hidden");
+  bookingSelectedSlot.innerHTML = `
+    <strong>Selected slot</strong>
+    <p>${formatSlot(slot.start)}</p>
+    <span>${slotTimezone}</span>
+  `;
+}
+
+function renderTimeOptions(dateKey) {
+  bookingTimes.innerHTML = "";
+  const daySlots = slotsForDate(dateKey);
+  if (!daySlots.length) {
+    bookingTimes.innerHTML = "";
     bookingForm.classList.add("hidden");
+    bookingSubmit.disabled = true;
+    renderSelectedSlot(null);
     return;
   }
 
-  slots.forEach((slot) => {
+  const intro = document.createElement("div");
+  intro.className = "time-grid-intro";
+  intro.innerHTML = `
+    <strong>Available times for ${formatSlotDay(daySlots[0].start)}</strong>
+    <p>Select the time that works best for you.</p>
+  `;
+  bookingTimes.appendChild(intro);
+
+  daySlots.forEach((slot) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "slot-card";
-    button.innerHTML = `
-      <strong>${formatSlotDay(slot.start)}</strong>
-      <span>${formatSlotTime(slot.start)} · ${timezone}</span>
-    `;
+    button.className = "time-slot-button";
+    button.textContent = `${formatSlotTime(slot.start)} · ${slotTimezone}`;
+    if (selectedSlot && selectedSlot.start === slot.start) {
+      button.classList.add("active");
+    }
     button.addEventListener("click", () => {
       selectedSlot = slot;
       bookingForm.elements.scheduled_for.value = slot.start;
       bookingSubmit.disabled = false;
       bookingSubmit.textContent = "Book This Slot";
-      bookingSelectedSlot.classList.remove("hidden");
-      bookingSelectedSlot.innerHTML = `
-        <strong>Selected slot</strong>
-        <p>${formatSlot(slot.start)}</p>
-        <span>${timezone}</span>
-      `;
-      bookingSlots.querySelectorAll(".slot-card").forEach((item) => item.classList.remove("active"));
+      renderSelectedSlot(slot);
+      bookingTimes.querySelectorAll(".time-slot-button").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
     });
-    bookingSlots.appendChild(button);
+    bookingTimes.appendChild(button);
   });
 
   bookingForm.classList.remove("hidden");
+}
+
+function renderCalendarMonth() {
+  bookingCalendarGrid.innerHTML = "";
+  if (!visibleMonthKey) {
+    bookingMonthLabel.textContent = "Available dates";
+    bookingWindowLabel.textContent = "";
+    bookingMonthPrev.disabled = true;
+    bookingMonthNext.disabled = true;
+    return;
+  }
+
+  bookingMonthLabel.textContent = monthLabel(visibleMonthKey);
+  const visibleMonthIndex = availableMonths.indexOf(visibleMonthKey);
+  bookingMonthPrev.disabled = visibleMonthIndex <= 0;
+  bookingMonthNext.disabled = visibleMonthIndex === -1 || visibleMonthIndex >= availableMonths.length - 1;
+
+  const monthDate = monthStartFromKey(visibleMonthKey);
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const availableDateKeys = new Set(availableSlots.filter((slot) => slotMonthKey(slot) === visibleMonthKey).map(slotLocalDate));
+
+  for (let index = 0; index < firstWeekday; index += 1) {
+    const filler = document.createElement("div");
+    filler.className = "calendar-day empty";
+    bookingCalendarGrid.appendChild(filler);
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateKey = `${visibleMonthKey}-${String(day).padStart(2, "0")}`;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "calendar-day";
+    button.textContent = String(day);
+    const isAvailable = availableDateKeys.has(dateKey);
+    if (!isAvailable) {
+      button.disabled = true;
+      button.classList.add("disabled");
+    } else {
+      button.classList.add("available");
+      if (selectedDateKey === dateKey) {
+        button.classList.add("active");
+      }
+      button.addEventListener("click", () => {
+        selectedDateKey = dateKey;
+        selectedSlot = null;
+        bookingSubmit.disabled = true;
+        renderSelectedSlot(null);
+        renderCalendarMonth();
+        renderTimeOptions(dateKey);
+      });
+    }
+    bookingCalendarGrid.appendChild(button);
+  }
+}
+
+function setAvailableSlots(slots, timezone, bookingWindow = {}) {
+  availableSlots = Array.isArray(slots) ? [...slots].sort((left, right) => new Date(left.start) - new Date(right.start)) : [];
+  slotTimezone = timezone || "Europe/Berlin";
+  availableMonths = [...new Set(availableSlots.map(slotMonthKey))];
+  visibleMonthKey = availableMonths[0] || "";
+  selectedDateKey = "";
+  selectedSlot = null;
+  bookingSubmit.disabled = true;
+  bookingSubmit.textContent = "Book This Slot";
+  renderSelectedSlot(null);
+
+  if (bookingWindow.months_ahead) {
+    bookingWindowLabel.textContent = `Open for the next ${bookingWindow.months_ahead} month${bookingWindow.months_ahead === 1 ? "" : "s"}`;
+  } else {
+    bookingWindowLabel.textContent = "";
+  }
+
+  bookingAvailability.classList.remove("hidden");
+  if (!availableSlots.length) {
+    bookingCalendarGrid.innerHTML = `
+      <div class="empty-slot-state">
+        <strong>No booking slots are available right now.</strong>
+        <p>Please reply to the Mirror Talk email and we’ll help you find a suitable time personally.</p>
+      </div>
+    `;
+    bookingTimes.innerHTML = "";
+    bookingForm.classList.add("hidden");
+    bookingMonthLabel.textContent = "Available dates";
+    bookingMonthPrev.disabled = true;
+    bookingMonthNext.disabled = true;
+    return;
+  }
+
+  renderCalendarMonth();
+  const firstAvailableDate = slotLocalDate(availableSlots[0]);
+  selectedDateKey = firstAvailableDate;
+  renderCalendarMonth();
+  renderTimeOptions(firstAvailableDate);
 }
 
 async function loadBookingPage() {
@@ -163,10 +307,11 @@ async function loadBookingPage() {
     renderExistingBooking(context.existing_booking);
     if (context.existing_booking) {
       bookingAvailability.classList.add("hidden");
-      bookingSlots.innerHTML = "";
+      bookingCalendarGrid.innerHTML = "";
+      bookingTimes.innerHTML = "";
       bookingForm.classList.add("hidden");
     } else {
-      renderSlots(availability.slots || [], availability.booking_timezone || "Europe/Berlin");
+      setAvailableSlots(availability.slots || [], availability.booking_timezone || "Europe/Berlin", availability.booking_window || {});
     }
     if (Intl.DateTimeFormat().resolvedOptions().timeZone) {
       bookingForm.elements.timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -174,7 +319,7 @@ async function loadBookingPage() {
     if (context.existing_booking) {
       setMessage("Your interview is already booked. If you need any change, just reply to the Mirror Talk email and we’ll help you personally.", "success");
     } else {
-      setMessage("Choose one of the available interview slots below. Once you book, we’ll send your confirmation details right away.", "success");
+      setMessage("Choose a date in the calendar, then select a time to activate your booking button.", "success");
     }
   } catch (error) {
     showInvitationState();
@@ -182,10 +327,26 @@ async function loadBookingPage() {
   }
 }
 
+bookingMonthPrev.addEventListener("click", () => {
+  const currentIndex = availableMonths.indexOf(visibleMonthKey);
+  if (currentIndex > 0) {
+    visibleMonthKey = availableMonths[currentIndex - 1];
+    renderCalendarMonth();
+  }
+});
+
+bookingMonthNext.addEventListener("click", () => {
+  const currentIndex = availableMonths.indexOf(visibleMonthKey);
+  if (currentIndex !== -1 && currentIndex < availableMonths.length - 1) {
+    visibleMonthKey = availableMonths[currentIndex + 1];
+    renderCalendarMonth();
+  }
+});
+
 bookingForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!selectedSlot) {
-    setMessage("Please choose one of the available interview slots first.", "error");
+    setMessage("Please choose a date and time first.", "error");
     return;
   }
 
@@ -206,7 +367,8 @@ bookingForm.addEventListener("submit", async (event) => {
     });
     renderExistingBooking(result.interview);
     bookingAvailability.classList.add("hidden");
-    bookingSlots.innerHTML = "";
+    bookingCalendarGrid.innerHTML = "";
+    bookingTimes.innerHTML = "";
     bookingForm.classList.add("hidden");
     bookingSelectedSlot.classList.add("hidden");
     panelHeading.textContent = "Your Mirror Talk conversation is now confirmed";

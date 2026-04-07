@@ -88,9 +88,27 @@
                   <p class="availability-copy">Choose the slot that works best for you. The booking button will activate as soon as you pick one.</p>
                 </div>
               </div>
+              <div class="calendar-toolbar">
+                <button id="booking-month-prev" type="button" class="calendar-nav-button" aria-label="Previous month">Previous</button>
+                <div class="calendar-toolbar-copy">
+                  <strong id="booking-month-label">Available dates</strong>
+                  <span id="booking-window-label"></span>
+                </div>
+                <button id="booking-month-next" type="button" class="calendar-nav-button" aria-label="Next month">Next</button>
+              </div>
+              <div class="calendar-weekdays" aria-hidden="true">
+                <span>Mon</span>
+                <span>Tue</span>
+                <span>Wed</span>
+                <span>Thu</span>
+                <span>Fri</span>
+                <span>Sat</span>
+                <span>Sun</span>
+              </div>
+              <div id="booking-calendar-grid" class="calendar-grid"></div>
+              <div id="booking-times" class="time-grid"></div>
               <div id="booking-selected-slot" class="selected-slot-card hidden"></div>
             </section>
-            <div id="booking-slots" class="slot-grid"></div>
 
             <form id="booking-form" class="booking-form hidden">
               <div class="form-step-heading">

@@ -335,6 +335,94 @@ body {
   margin: 6px 0;
 }
 
+.calendar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.calendar-toolbar-copy {
+  display: grid;
+  gap: 4px;
+  text-align: center;
+}
+
+.calendar-toolbar-copy strong {
+  font-size: 1.05rem;
+}
+
+.calendar-toolbar-copy span {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.calendar-nav-button {
+  border: 1px solid rgba(125, 90, 59, 0.16);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: #fffdf9;
+  font: inherit;
+  cursor: pointer;
+}
+
+.calendar-nav-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.calendar-weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.calendar-weekdays {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.calendar-grid {
+  margin-top: 10px;
+}
+
+.calendar-day {
+  min-height: 56px;
+  border: 1px solid rgba(125, 90, 59, 0.14);
+  border-radius: 14px;
+  background: #fffdf9;
+  font: inherit;
+  cursor: pointer;
+}
+
+.calendar-day.available {
+  border-color: rgba(15, 93, 79, 0.2);
+  background: rgba(15, 93, 79, 0.06);
+}
+
+.calendar-day.active {
+  border-color: #8c5d2b;
+  background: rgba(189, 138, 46, 0.14);
+  font-weight: 700;
+}
+
+.calendar-day.disabled,
+.calendar-day:disabled {
+  cursor: not-allowed;
+  color: rgba(106, 87, 66, 0.45);
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.calendar-day.empty {
+  background: transparent;
+  border: none;
+  min-height: 56px;
+}
+
 .booking-existing strong {
   display: block;
   margin-bottom: 8px;
@@ -392,6 +480,38 @@ body {
 .empty-slot-state p {
   margin: 0;
   color: var(--muted);
+}
+
+.time-grid {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 24px;
+}
+
+.time-grid-intro strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.time-grid-intro p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.time-slot-button {
+  border: 1px solid rgba(125, 90, 59, 0.15);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: #fffdf9;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.time-slot-button.active {
+  border-color: #8c5d2b;
+  background: rgba(189, 138, 46, 0.14);
+  font-weight: 700;
 }
 
 .booking-form {
@@ -479,5 +599,14 @@ body {
 
   .slot-grid {
     grid-template-columns: 1fr;
+  }
+
+  .calendar-toolbar {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .calendar-toolbar-copy {
+    text-align: left;
   }
 }

@@ -81,6 +81,7 @@ BOOKING_TIMEZONE_ENV_VAR = "MIRROR_TALK_BOOKING_TIMEZONE"
 BOOKING_SLOT_WEEKDAYS_ENV_VAR = "MIRROR_TALK_BOOKING_SLOT_WEEKDAYS"
 BOOKING_SLOT_TIMES_ENV_VAR = "MIRROR_TALK_BOOKING_SLOT_TIMES"
 BOOKING_DAYS_AHEAD_ENV_VAR = "MIRROR_TALK_BOOKING_DAYS_AHEAD"
+BOOKING_MONTHS_AHEAD_ENV_VAR = "MIRROR_TALK_BOOKING_MONTHS_AHEAD"
 BOOKING_MIN_NOTICE_HOURS_ENV_VAR = "MIRROR_TALK_BOOKING_MIN_NOTICE_HOURS"
 BOOKING_DURATION_MINUTES_ENV_VAR = "MIRROR_TALK_BOOKING_DURATION_MINUTES"
 BOOKING_JOIN_URL_ENV_VAR = "MIRROR_TALK_BOOKING_JOIN_URL"
@@ -90,6 +91,7 @@ BULK_GUEST_RESEARCH_BATCH_SIZE = 25
 BOOKING_DEFAULT_WEEKDAYS = ("TU", "WE", "TH")
 BOOKING_DEFAULT_TIMES = ("17:00", "19:00")
 BOOKING_DEFAULT_DAYS_AHEAD = 45
+BOOKING_DEFAULT_MONTHS_AHEAD = 3
 BOOKING_DEFAULT_MIN_NOTICE_HOURS = 24
 BOOKING_DEFAULT_DURATION_MINUTES = 60
 FORM_FIELDS = {
@@ -1784,7 +1786,7 @@ class GuestWebService:
             "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
         }
 
-    def list_public_booking_slots(self, booking_token: str, *, limit: int = 12) -> Dict[str, Any]:
+    def list_public_booking_slots(self, booking_token: str, *, limit: Optional[int] = None) -> Dict[str, Any]:
         """Return available booking slots for a guest-facing booking link."""
         guest = self._guest_from_booking_token(booking_token)
         existing_interview = self._find_future_interview_for_guest(guest)
@@ -1828,15 +1830,19 @@ class GuestWebService:
                         "timezone": self._booking_timezone_name(),
                     }
                 )
-                if len(slots) >= limit:
+                if limit is not None and len(slots) >= limit:
                     break
-            if len(slots) >= limit:
+            if limit is not None and len(slots) >= limit:
                 break
 
         return {
             "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest",
             "booking_timezone": self._booking_timezone_name(),
             "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
+            "booking_window": {
+                "months_ahead": self._booking_months_ahead(),
+                "days_ahead": self._booking_days_ahead(),
+            },
             "slots": slots,
         }
 
@@ -1852,7 +1858,7 @@ class GuestWebService:
         if not scheduled_for:
             raise WebInterfaceError("Please choose one of the available interview slots.")
 
-        available = self.list_public_booking_slots(booking_token, limit=40)
+        available = self.list_public_booking_slots(booking_token)
         available_starts = {item["start"] for item in available.get("slots", [])}
         normalized_scheduled_for = scheduled_for.replace("Z", "+00:00")
         if normalized_scheduled_for not in available_starts:
@@ -2801,11 +2807,30 @@ class GuestWebService:
 
     @staticmethod
     def _booking_days_ahead() -> int:
+        months_raw = os.environ.get(BOOKING_MONTHS_AHEAD_ENV_VAR, "").strip()
+        if months_raw:
+            try:
+                months = max(1, min(12, int(months_raw)))
+                return max(14, min(366, months * 31))
+            except ValueError:
+                return BOOKING_DEFAULT_MONTHS_AHEAD * 31
+
         raw = os.environ.get(BOOKING_DAYS_AHEAD_ENV_VAR, str(BOOKING_DEFAULT_DAYS_AHEAD)).strip() or str(BOOKING_DEFAULT_DAYS_AHEAD)
         try:
             return max(7, min(120, int(raw)))
         except ValueError:
             return BOOKING_DEFAULT_DAYS_AHEAD
+
+    @staticmethod
+    def _booking_months_ahead() -> int:
+        raw = os.environ.get(BOOKING_MONTHS_AHEAD_ENV_VAR, "").strip()
+        if raw:
+            try:
+                return max(1, min(12, int(raw)))
+            except ValueError:
+                return BOOKING_DEFAULT_MONTHS_AHEAD
+        days = GuestWebService._booking_days_ahead()
+        return max(1, min(12, (days + 30) // 31))
 
     @staticmethod
     def _booking_min_notice_hours() -> int:

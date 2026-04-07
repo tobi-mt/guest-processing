@@ -17,6 +17,7 @@ from guest_database_manager.web_interface import (
     ASK_MIRROR_TALK_PASSWORD_ENV_VAR,
     ASK_MIRROR_TALK_USERNAME_ENV_VAR,
     API_TOKEN_ENV_VAR,
+    BOOKING_MONTHS_AHEAD_ENV_VAR,
     EMAIL_FROM_ENV_VAR,
     EMAIL_FROM_NAME_ENV_VAR,
     EMAIL_PASSWORD_ENV_VAR,
@@ -2251,6 +2252,28 @@ def test_public_booking_context_and_slots_for_accepted_guest(monkeypatch, temp_d
     assert context["existing_booking"] is None
     assert availability["slots"]
     assert availability["slots"][0]["timezone"] == tz_name
+
+
+def test_public_booking_slots_include_month_window_metadata(monkeypatch, temp_db):
+    """Booking availability should expose the configured month window for the guest-facing calendar."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+
+    monkeypatch.setenv(BOOKING_MONTHS_AHEAD_ENV_VAR, "4")
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: None)
+    monkeypatch.setattr(GuestWebService, "_booking_min_notice_hours", staticmethod(lambda: 0))
+    monkeypatch.setattr(GuestWebService, "_booking_slot_weekdays", staticmethod(lambda: tuple(range(7))))
+
+    tz_obj = ZoneInfo(service._booking_timezone_name())
+    next_slot = (datetime.now(tz_obj) + timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
+    monkeypatch.setattr(GuestWebService, "_booking_slot_times", staticmethod(lambda: (next_slot.strftime("%H:%M"),)))
+
+    availability = service.list_public_booking_slots(token, limit=5)
+
+    assert availability["booking_window"]["months_ahead"] == 4
+    assert availability["booking_window"]["days_ahead"] >= 120
 
 
 def test_public_booking_creates_interview_calendar_event_and_confirmation(monkeypatch, temp_db):
