@@ -8,32 +8,112 @@
   </head>
   <body>
     <main class="booking-shell">
-      <section class="booking-hero">
-        <p class="eyebrow">Mirror Talk Guest Booking</p>
-        <h1>Choose your interview slot</h1>
-        <p id="booking-subtitle" class="hero-copy">We’ll show you the next available times for your Mirror Talk conversation.</p>
-      </section>
-
-      <section class="booking-card">
-        <div id="booking-message" class="message" aria-live="polite"></div>
-        <div id="booking-existing" class="booking-existing hidden"></div>
-        <div id="booking-meta" class="booking-meta hidden"></div>
-        <div id="booking-slots" class="slot-grid"></div>
-
-        <form id="booking-form" class="booking-form hidden">
-          <input type="hidden" name="scheduled_for" />
-          <label>
-            Your timezone
-            <input name="timezone" type="text" placeholder="Detected automatically" />
-          </label>
-          <label>
-            Optional note
-            <textarea name="note" rows="4" placeholder="Anything you'd like us to know before the interview?"></textarea>
-          </label>
-          <div class="form-actions">
-            <button id="booking-submit" type="submit" class="primary-button" disabled>Book This Slot</button>
+      <aside class="booking-sidebar">
+        <div>
+          <div class="brand-lockup">
+            <img class="brand-logo" src="/static/mirror-talk-logo.png" alt="Mirror Talk Podcast logo" />
+            <div class="brand-copy">
+              <p class="brand-name">Mirror Talk</p>
+              <p class="brand-subtitle">Podcast</p>
+            </div>
           </div>
-        </form>
+          <p class="eyebrow">Guest Booking</p>
+          <p class="sidebar-kicker">A warm, intentional next step into your Mirror Talk conversation.</p>
+          <h1 id="booking-title">Choose your interview slot</h1>
+          <p id="booking-subtitle" class="hero-copy">
+            We’ll show you the next available times for your Mirror Talk conversation and guide you through what happens next.
+          </p>
+        </div>
+
+        <div class="sidebar-panel">
+          <h2 class="sidebar-panel-title">What This Booking Does</h2>
+          <ul class="sidebar-bullets">
+            <li>Reserves your podcast conversation slot with Mirror Talk</li>
+            <li>Creates the interview inside our internal workflow automatically</li>
+            <li>Sends you a confirmation email with your recording details</li>
+          </ul>
+        </div>
+
+        <div class="sidebar-panel">
+          <h2 class="sidebar-panel-title">What Happens Next</h2>
+          <ol class="workflow-list">
+            <li>Choose the available time that feels best for you.</li>
+            <li>Receive your confirmation email and recording details.</li>
+            <li>Join the Riverside studio at the booked time for your conversation.</li>
+          </ol>
+        </div>
+
+        <blockquote class="sidebar-quote">
+          “Mirror Talk is about honest stories, meaningful reflection, and conversations that leave people with something real.”
+        </blockquote>
+      </aside>
+
+      <section class="booking-panel">
+        <div class="panel-top">
+          <div class="status-copy">
+            <p class="eyebrow">Booking Experience</p>
+            <h2 id="panel-heading">Choose a time with confidence</h2>
+            <p class="panel-intro">
+              The flow below is designed to feel simple and clear. Once you book, we take care of the internal operations and follow-up on our side.
+            </p>
+          </div>
+          <div class="premium-badges" aria-label="Booking reassurance">
+            <span class="premium-badge">Guest-specific secure link</span>
+            <span class="premium-badge">Confirmation email included</span>
+            <span class="premium-badge warm">Thoughtful, human workflow</span>
+          </div>
+        </div>
+
+        <div id="booking-message" class="message" aria-live="polite"></div>
+
+        <section id="booking-invitation" class="invitation-panel hidden">
+          <img class="invitation-wordmark" src="/static/mirror-talk-wordmark.svg" alt="Mirror Talk Podcast" />
+          <h3>This page opens through your personal Mirror Talk invitation</h3>
+          <p>
+            If you were invited to book a conversation with Mirror Talk, please use the booking link sent to your email. That personal link lets us reserve a time specifically for you and keep the whole workflow connected.
+          </p>
+          <p class="invitation-note">
+            If you believe you should have received a booking link, just reply to the email from Mirror Talk and we’ll help you right away.
+          </p>
+        </section>
+
+        <div class="booking-grid">
+          <div class="booking-main-card">
+            <div id="booking-existing" class="booking-existing hidden"></div>
+            <div id="booking-meta" class="booking-meta hidden"></div>
+            <div id="booking-slots" class="slot-grid"></div>
+
+            <form id="booking-form" class="booking-form hidden">
+              <input type="hidden" name="scheduled_for" />
+              <label>
+                Your timezone
+                <input name="timezone" type="text" placeholder="Detected automatically" />
+                <small>This helps us preserve what you saw when selecting your slot.</small>
+              </label>
+              <label>
+                Optional note
+                <textarea name="note" rows="4" placeholder="Anything you'd like us to know before the interview?"></textarea>
+                <small>Share anything helpful, such as accessibility needs, scheduling context, or a question for us.</small>
+              </label>
+              <div class="form-actions">
+                <button id="booking-submit" type="submit" class="primary-button" disabled>Book This Slot</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="booking-sidecard">
+            <h3>Before we meet</h3>
+            <ul class="sidebar-bullets compact">
+              <li>You do not need a polished media setup to have a meaningful conversation.</li>
+              <li>A calm room, a stable internet connection, and a little quiet are enough.</li>
+              <li>If anything changes, reply to the Mirror Talk email and we’ll support you.</li>
+            </ul>
+            <div class="sidecard-note">
+              <strong>Best flow</strong>
+              <p>Book your time, watch for the confirmation email, then simply join the recording link at the scheduled moment.</p>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
 

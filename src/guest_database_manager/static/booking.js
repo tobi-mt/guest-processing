@@ -5,6 +5,9 @@ const bookingMeta = document.getElementById("booking-meta");
 const bookingSlots = document.getElementById("booking-slots");
 const bookingForm = document.getElementById("booking-form");
 const bookingSubmit = document.getElementById("booking-submit");
+const bookingTitle = document.getElementById("booking-title");
+const panelHeading = document.getElementById("panel-heading");
+const bookingInvitation = document.getElementById("booking-invitation");
 
 let bookingToken = "";
 let selectedSlot = null;
@@ -12,6 +15,16 @@ let selectedSlot = null;
 function setMessage(text, tone = "") {
   bookingMessage.textContent = text;
   bookingMessage.className = `message ${tone}`.trim();
+}
+
+function showInvitationState() {
+  bookingInvitation.classList.remove("hidden");
+  bookingMeta.classList.add("hidden");
+  bookingExisting.classList.add("hidden");
+  bookingSlots.innerHTML = "";
+  bookingForm.classList.add("hidden");
+  bookingTitle.textContent = "Your Mirror Talk invitation link opens here";
+  panelHeading.textContent = "A personal booking link keeps the experience secure and connected";
 }
 
 async function fetchJSON(url, options = {}) {
@@ -49,7 +62,7 @@ function renderExistingBooking(existing) {
     <strong>You already have a booking</strong>
     <p>${formatSlot(existing.scheduled_for)}${existing.timezone ? ` · ${existing.timezone}` : ""}</p>
     ${existing.join_url ? `<p>Your recording link: <a href="${existing.join_url}" target="_blank" rel="noopener">${existing.join_url}</a></p>` : ""}
-    <p>If you need to reschedule, please reply to the email you received from Mirror Talk.</p>
+    <p>If you need to reschedule, please reply to the email you received from Mirror Talk and we’ll support you directly.</p>
   `;
 }
 
@@ -87,21 +100,26 @@ async function loadBookingPage() {
   const params = new URLSearchParams(window.location.search);
   bookingToken = params.get("token") || "";
   if (!bookingToken) {
-    setMessage("This booking link is missing a token.", "error");
+    showInvitationState();
+    setMessage("This page is opened through a personal Mirror Talk invitation link. Please use the booking link sent to your email.", "success");
     return;
   }
 
   try {
+    bookingInvitation.classList.add("hidden");
     setMessage("Loading your booking page...", "pending");
     const [context, availability] = await Promise.all([
       fetchJSON(`/api/booking/context?token=${encodeURIComponent(bookingToken)}`),
       fetchJSON(`/api/booking/availability?token=${encodeURIComponent(bookingToken)}`),
     ]);
+    bookingTitle.textContent = `${context.guest_name}, choose your conversation slot`;
+    panelHeading.textContent = "A calm and clear booking flow for your Mirror Talk interview";
     bookingSubtitle.textContent = `${context.guest_name}, choose the best time for your Mirror Talk conversation.`;
     bookingMeta.classList.remove("hidden");
     bookingMeta.innerHTML = `
       <p><strong>Booking timezone:</strong> ${availability.booking_timezone}</p>
       <p><strong>Email:</strong> ${context.guest_email || "Not set"}</p>
+      <p><strong>Booking flow:</strong> Once you reserve a slot, we will confirm everything on our side automatically.</p>
     `;
     renderExistingBooking(context.existing_booking);
     if (context.existing_booking) {
@@ -114,11 +132,12 @@ async function loadBookingPage() {
       bookingForm.elements.timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone;
     }
     if (context.existing_booking) {
-      setMessage("Your interview is already booked. If you need to change it, just reply to the Mirror Talk email.", "success");
+      setMessage("Your interview is already booked. If you need any change, just reply to the Mirror Talk email and we’ll help you personally.", "success");
     } else {
-      setMessage("Choose one of the available interview slots below.", "success");
+      setMessage("Choose one of the available interview slots below. Once you book, we’ll send your confirmation details right away.", "success");
     }
   } catch (error) {
+    showInvitationState();
     setMessage(error.message, "error");
   }
 }
@@ -148,7 +167,8 @@ bookingForm.addEventListener("submit", async (event) => {
     renderExistingBooking(result.interview);
     bookingSlots.innerHTML = "";
     bookingForm.classList.add("hidden");
-    setMessage("Your Mirror Talk conversation is booked. We’ve also sent you a confirmation email.", "success");
+    panelHeading.textContent = "Your Mirror Talk conversation is now confirmed";
+    setMessage("Your Mirror Talk conversation is booked. We’ve also sent you a confirmation email with the next steps.", "success");
   } catch (error) {
     bookingSubmit.disabled = false;
     bookingSubmit.textContent = "Book This Slot";
