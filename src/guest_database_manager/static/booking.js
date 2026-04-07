@@ -15,7 +15,6 @@ const bookingMonthLabel = document.getElementById("booking-month-label");
 const bookingWindowLabel = document.getElementById("booking-window-label");
 const bookingMonthPrev = document.getElementById("booking-month-prev");
 const bookingMonthNext = document.getElementById("booking-month-next");
-const bookingMonthSummary = document.getElementById("booking-month-summary");
 
 let bookingToken = "";
 let selectedSlot = null;
@@ -38,8 +37,6 @@ function showInvitationState() {
   bookingSelectedSlot.classList.add("hidden");
   bookingCalendarGrid.innerHTML = "";
   bookingTimes.innerHTML = "";
-  bookingMonthSummary.classList.add("hidden");
-  bookingMonthSummary.innerHTML = "";
   bookingForm.classList.add("hidden");
   bookingTitle.textContent = "Your Mirror Talk invitation link opens here";
   panelHeading.textContent = "A personal booking link keeps the experience secure and connected";
@@ -107,13 +104,6 @@ function monthStartFromKey(monthKey) {
 function monthLabel(monthKey) {
   return monthStartFromKey(monthKey).toLocaleDateString(undefined, {
     month: "long",
-    year: "numeric",
-  });
-}
-
-function shortMonthLabel(monthKey) {
-  return monthStartFromKey(monthKey).toLocaleDateString(undefined, {
-    month: "short",
     year: "numeric",
   });
 }
@@ -249,19 +239,6 @@ function renderCalendarMonth() {
   }
 }
 
-function renderMonthSummary() {
-  bookingMonthSummary.innerHTML = "";
-  if (!availableMonths.length) {
-    bookingMonthSummary.classList.add("hidden");
-    return;
-  }
-  bookingMonthSummary.classList.remove("hidden");
-  bookingMonthSummary.innerHTML = `
-    <strong>Months with availability:</strong>
-    <span>${availableMonths.map((monthKey) => shortMonthLabel(monthKey)).join(", ")}</span>
-  `;
-}
-
 function setAvailableSlots(slots, timezone, bookingWindow = {}) {
   availableSlots = Array.isArray(slots) ? [...slots].sort((left, right) => new Date(left.start) - new Date(right.start)) : [];
   slotTimezone = timezone || "Europe/Berlin";
@@ -278,7 +255,6 @@ function setAvailableSlots(slots, timezone, bookingWindow = {}) {
   } else {
     bookingWindowLabel.textContent = "";
   }
-  renderMonthSummary();
 
   bookingAvailability.classList.remove("hidden");
   if (!availableSlots.length) {
