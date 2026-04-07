@@ -157,6 +157,15 @@ function setPlanningTab(tabName) {
   });
 }
 
+function replaceEpisodeInPayload(savedEpisode) {
+  if (!savedEpisode?.id) {
+    return;
+  }
+  const replaceById = (item) => (String(item.id || "") === String(savedEpisode.id) ? { ...item, ...savedEpisode } : item);
+  latestPlanningPayload.episodes = (latestPlanningPayload.episodes || []).map(replaceById);
+  latestPlanningPayload.recommendations = (latestPlanningPayload.recommendations || []).map(replaceById);
+}
+
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -338,6 +347,14 @@ function updatePresetButtons(buttons, activeValue, dataName) {
   buttons.forEach((button) => {
     button.classList.toggle("active", button.dataset[dataName] === activeValue);
   });
+}
+
+function focusEpisodeEditor(episode, successMessage = "") {
+  setPlanningTab("release_planning");
+  loadEpisodeIntoForm(episode);
+  if (successMessage) {
+    setMessage(episodeMessage, successMessage, "success");
+  }
 }
 
 function createFieldMarkup(label, inputMarkup, fullWidth = false) {
@@ -1633,18 +1650,23 @@ function renderRecommendations(recommendations, totalCount) {
       }
     });
     editButton.addEventListener("click", () => {
+      setPlanningTab("release_planning");
       loadEpisodeIntoForm(episode, {
         releaseDate: episode.recommended_release_date,
         releaseStatus: "scheduled",
       });
       setMessage(
         episodeMessage,
-        `Loaded ${episode.episode_title || episode.guest_name || "episode"} with the recommended release slot.`,
+        `Loaded ${episode.episode_title || episode.guest_name || "episode"} into the release form with the recommended slot ready for review.`,
         "success",
       );
     });
     const setMonthlyAngleDecision = async (state) => {
       const theme = state ? String(episode.ai_copilot?.monthly_theme || episode.ai_monthly_angle_theme || "").trim() : "";
+      const actingButtons = [pinAngleButton, rejectAngleButton, clearAngleButton].filter(Boolean);
+      actingButtons.forEach((button) => {
+        button.disabled = true;
+      });
       activeEpisodeActionFeedback = {
         id: episode.id,
         text: state ? `${state === "pinned" ? "Pinning" : "Rejecting"} monthly angle for ${episode.guest_name || "episode"}...` : `Clearing monthly angle review for ${episode.guest_name || "episode"}...`,
@@ -1652,13 +1674,14 @@ function renderRecommendations(recommendations, totalCount) {
       };
       actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
       try {
-        await fetchJSON(`/api/episodes/${episode.id}`, {
+        const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
           method: "POST",
           body: JSON.stringify({
             ai_monthly_angle_state: state,
             ai_monthly_angle_theme: theme,
           }),
         });
+        replaceEpisodeInPayload(savedEpisode);
         activeEpisodeActionFeedback = {
           id: episode.id,
           text: state ? `Monthly angle ${state} for ${episode.guest_name || "episode"}.` : `Monthly angle review cleared for ${episode.guest_name || "episode"}.`,
@@ -1669,11 +1692,14 @@ function renderRecommendations(recommendations, totalCount) {
           state ? `${state === "pinned" ? "Pinned" : "Rejected"} the AI monthly angle for ${episode.guest_name || "episode"}.` : `Cleared the AI monthly angle review for ${episode.guest_name || "episode"}.`,
           "success",
         );
-        await loadPlanning();
+        renderPlanning();
       } catch (error) {
         activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
         actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
         setMessage(episodeMessage, error.message, "error");
+        actingButtons.forEach((button) => {
+          button.disabled = false;
+        });
       }
     };
     pinAngleButton?.addEventListener("click", async () => {
