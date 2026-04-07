@@ -15,6 +15,8 @@ const bookingMonthLabel = document.getElementById("booking-month-label");
 const bookingWindowLabel = document.getElementById("booking-window-label");
 const bookingMonthPrev = document.getElementById("booking-month-prev");
 const bookingMonthNext = document.getElementById("booking-month-next");
+const bookingMonthSelect = document.getElementById("booking-month-select");
+const bookingMonthSummary = document.getElementById("booking-month-summary");
 
 let bookingToken = "";
 let selectedSlot = null;
@@ -37,6 +39,8 @@ function showInvitationState() {
   bookingSelectedSlot.classList.add("hidden");
   bookingCalendarGrid.innerHTML = "";
   bookingTimes.innerHTML = "";
+  bookingMonthSelect.innerHTML = "";
+  bookingMonthSummary.innerHTML = "";
   bookingForm.classList.add("hidden");
   bookingTitle.textContent = "Your Mirror Talk invitation link opens here";
   panelHeading.textContent = "A personal booking link keeps the experience secure and connected";
@@ -239,6 +243,46 @@ function renderCalendarMonth() {
   }
 }
 
+function renderAvailableMonthControls() {
+  bookingMonthSelect.innerHTML = "";
+  bookingMonthSummary.innerHTML = "";
+
+  if (!availableMonths.length) {
+    return;
+  }
+
+  availableMonths.forEach((monthKey) => {
+    const option = document.createElement("option");
+    option.value = monthKey;
+    option.textContent = monthLabel(monthKey);
+    if (monthKey === visibleMonthKey) {
+      option.selected = true;
+    }
+    bookingMonthSelect.appendChild(option);
+  });
+
+  const title = document.createElement("strong");
+  title.textContent = "Months with availability";
+  bookingMonthSummary.appendChild(title);
+
+  availableMonths.forEach((monthKey) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "month-chip";
+    chip.textContent = monthLabel(monthKey);
+    if (monthKey === visibleMonthKey) {
+      chip.classList.add("active");
+    }
+    chip.addEventListener("click", () => {
+      visibleMonthKey = monthKey;
+      bookingMonthSelect.value = monthKey;
+      renderAvailableMonthControls();
+      renderCalendarMonth();
+    });
+    bookingMonthSummary.appendChild(chip);
+  });
+}
+
 function setAvailableSlots(slots, timezone, bookingWindow = {}) {
   availableSlots = Array.isArray(slots) ? [...slots].sort((left, right) => new Date(left.start) - new Date(right.start)) : [];
   slotTimezone = timezone || "Europe/Berlin";
@@ -272,9 +316,12 @@ function setAvailableSlots(slots, timezone, bookingWindow = {}) {
     return;
   }
 
+  renderAvailableMonthControls();
   renderCalendarMonth();
   const firstAvailableDate = slotLocalDate(availableSlots[0]);
   selectedDateKey = firstAvailableDate;
+  visibleMonthKey = slotMonthKey(availableSlots[0]);
+  renderAvailableMonthControls();
   renderCalendarMonth();
   renderTimeOptions(firstAvailableDate);
 }
@@ -331,6 +378,8 @@ bookingMonthPrev.addEventListener("click", () => {
   const currentIndex = availableMonths.indexOf(visibleMonthKey);
   if (currentIndex > 0) {
     visibleMonthKey = availableMonths[currentIndex - 1];
+    bookingMonthSelect.value = visibleMonthKey;
+    renderAvailableMonthControls();
     renderCalendarMonth();
   }
 });
@@ -339,8 +388,16 @@ bookingMonthNext.addEventListener("click", () => {
   const currentIndex = availableMonths.indexOf(visibleMonthKey);
   if (currentIndex !== -1 && currentIndex < availableMonths.length - 1) {
     visibleMonthKey = availableMonths[currentIndex + 1];
+    bookingMonthSelect.value = visibleMonthKey;
+    renderAvailableMonthControls();
     renderCalendarMonth();
   }
+});
+
+bookingMonthSelect.addEventListener("change", () => {
+  visibleMonthKey = bookingMonthSelect.value;
+  renderAvailableMonthControls();
+  renderCalendarMonth();
 });
 
 bookingForm.addEventListener("submit", async (event) => {
