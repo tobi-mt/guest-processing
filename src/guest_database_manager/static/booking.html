@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Book Your Mirror Talk Conversation</title>
+    <link rel="stylesheet" href="/static/booking.css" />
+  </head>
+  <body>
+    <main class="booking-shell">
+      <section class="booking-hero">
+        <p class="eyebrow">Mirror Talk Guest Booking</p>
+        <h1>Choose your interview slot</h1>
+        <p id="booking-subtitle" class="hero-copy">We’ll show you the next available times for your Mirror Talk conversation.</p>
+      </section>
+
+      <section class="booking-card">
+        <div id="booking-message" class="message" aria-live="polite"></div>
+        <div id="booking-existing" class="booking-existing hidden"></div>
+        <div id="booking-meta" class="booking-meta hidden"></div>
+        <div id="booking-slots" class="slot-grid"></div>
+
+        <form id="booking-form" class="booking-form hidden">
+          <input type="hidden" name="scheduled_for" />
+          <label>
+            Your timezone
+            <input name="timezone" type="text" placeholder="Detected automatically" />
+          </label>
+          <label>
+            Optional note
+            <textarea name="note" rows="4" placeholder="Anything you'd like us to know before the interview?"></textarea>
+          </label>
+          <div class="form-actions">
+            <button id="booking-submit" type="submit" class="primary-button" disabled>Book This Slot</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <script src="/static/booking.js" defer></script>
+  </body>
+</html>

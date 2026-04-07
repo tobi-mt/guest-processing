@@ -131,8 +131,9 @@ class GuestDatabase:
                     background, profession, motivation, life_experiences, core_values, 
                     faith_practice, beliefs_align, favorite_quote, passionate_topics, message_takeaway,
                     podcast_experience, additional_info, following_us, is_processed,
-                    original_file_name, original_data, guest_research, guest_research_updated_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    original_file_name, original_data, guest_research, guest_research_updated_at,
+                    booking_token, booking_token_created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """, (
                 guest_data.get('full_name'), guest_data.get('full_name'), guest_data.get('email'), 
                 guest_data.get('website'), guest_data.get('social_handles'),
@@ -143,6 +144,7 @@ class GuestDatabase:
                 guest_data.get('has_social_media'), guest_data.get('is_processed', False),
                 guest_data.get('original_file_name'), guest_data.get('original_data'),
                 guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
+                guest_data.get('booking_token'), guest_data.get('booking_token_created_at'),
             ))
             conn.commit()
             return cursor.lastrowid
@@ -218,6 +220,11 @@ class GuestDatabase:
                 guest_data.get("guest_research_updated_at")
                 or existing_guest.get("guest_research_updated_at")
             )
+            merged_guest["booking_token"] = guest_data.get("booking_token") or existing_guest.get("booking_token")
+            merged_guest["booking_token_created_at"] = (
+                guest_data.get("booking_token_created_at")
+                or existing_guest.get("booking_token_created_at")
+            )
             self.update_guest_by_id(existing_guest["id"], merged_guest)
             return existing_guest["id"], "updated"
 
@@ -234,7 +241,7 @@ class GuestDatabase:
                     passionate_topics = ?, message_takeaway = ?, podcast_experience = ?, 
                     additional_info = ?, following_us = ?, is_processed = ?, email_status = ?,
                     email_sent_at = ?, skip_reason = ?, original_file_name = ?, original_data = ?,
-                    guest_research = ?, guest_research_updated_at = ?,
+                    guest_research = ?, guest_research_updated_at = ?, booking_token = ?, booking_token_created_at = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (
@@ -248,6 +255,7 @@ class GuestDatabase:
                 guest_data.get('email_sent_at'), guest_data.get('skip_reason'),
                 guest_data.get('original_file_name'), guest_data.get('original_data'),
                 guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
+                guest_data.get('booking_token'), guest_data.get('booking_token_created_at'),
                 guest_id
             ))
             conn.commit()
@@ -284,17 +292,35 @@ class GuestDatabase:
             cursor = conn.execute("SELECT * FROM guests ORDER BY date_added DESC")
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_guest_by_booking_token(self, booking_token: str) -> Optional[Dict]:
+        """Fetch a single guest by booking token."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM guests WHERE booking_token = ? LIMIT 1",
+                (booking_token,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     # ==================== Podcast Operations ====================
 
     def upsert_interview(self, interview_data: Dict[str, Any]) -> tuple[int, str]:
         """Insert or update an interview using the calendar event id when available."""
+        interview_id = interview_data.get("id")
         calendar_event_id = interview_data.get("calendar_event_id")
 
         with sqlite3.connect(str(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
 
             existing_row = None
-            if calendar_event_id:
+            if interview_id:
+                cursor = conn.execute(
+                    "SELECT id FROM interviews WHERE id = ? LIMIT 1",
+                    (interview_id,),
+                )
+                existing_row = cursor.fetchone()
+            elif calendar_event_id:
                 cursor = conn.execute(
                     "SELECT id FROM interviews WHERE calendar_event_id = ? LIMIT 1",
                     (calendar_event_id,),

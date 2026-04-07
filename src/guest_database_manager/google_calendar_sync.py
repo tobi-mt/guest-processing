@@ -129,6 +129,46 @@ class GoogleCalendarSyncClient:
             if item.get("start", {}).get("dateTime") and self._looks_like_podcast_event(item, query=query)
         ]
 
+    def list_busy_events(
+        self,
+        *,
+        days_ahead: int = 30,
+        reference: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch timed calendar events for booking availability checks."""
+        access_token = self._get_access_token()
+        reference = reference or datetime.now(timezone.utc)
+        time_min = reference.astimezone(timezone.utc).isoformat()
+        time_max = (reference + timedelta(days=days_ahead)).astimezone(timezone.utc).isoformat()
+
+        params = {
+            "singleEvents": "true",
+            "orderBy": "startTime",
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "maxResults": 250,
+        }
+
+        url = self.EVENTS_URL_TEMPLATE.format(calendar_id=requests.utils.quote(self.calendar_id, safe=""))
+        try:
+            response = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+                params=params,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
+
+        if not response.ok:
+            raise GoogleCalendarSyncError(
+                f"Google Calendar availability fetch failed: {response.text.strip() or response.status_code}"
+            )
+
+        payload = response.json()
+        items = payload.get("items", [])
+        return [item for item in items if item.get("start", {}).get("dateTime")]
+
     def get_event(self, event_id: str) -> Dict[str, Any]:
         """Fetch a single Google Calendar event."""
         access_token = self._get_access_token()
@@ -200,6 +240,64 @@ class GoogleCalendarSyncClient:
 
         if not response.ok:
             self._raise_calendar_api_error("event updates", response)
+
+        return response.json()
+
+    def create_event_from_interview(self, interview: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a Google Calendar event for a newly booked interview."""
+        new_start = self._parse_event_datetime(interview.get("scheduled_for", ""))
+        if not new_start:
+            raise GoogleCalendarSyncError("Interview date is missing or invalid.")
+
+        timezone_name = (interview.get("timezone") or self.default_timezone).strip() or self.default_timezone
+        new_end = new_start + timedelta(hours=1)
+        guest_name = (interview.get("guest_name") or "Guest").strip()
+        guest_email = (interview.get("guest_email") or "").strip()
+        join_url = (interview.get("join_url") or "").strip()
+        description = "\n".join(
+            part
+            for part in [
+                f"Mirror Talk conversation with {guest_name}",
+                "",
+                "Booked through the Mirror Talk guest booking flow.",
+                f"Join link: {join_url}" if join_url else "",
+            ]
+            if part
+        )
+
+        payload: Dict[str, Any] = {
+            "summary": (interview.get("title") or f"Mirror Talk conversation with {guest_name}").strip(),
+            "location": join_url,
+            "description": description,
+            "start": {
+                "dateTime": new_start.isoformat(),
+                "timeZone": timezone_name,
+            },
+            "end": {
+                "dateTime": new_end.isoformat(),
+                "timeZone": timezone_name,
+            },
+        }
+        if guest_email:
+            payload["attendees"] = [{"email": guest_email, "displayName": guest_name}]
+
+        access_token = self._get_access_token()
+        url = self.EVENTS_URL_TEMPLATE.format(calendar_id=requests.utils.quote(self.calendar_id, safe=""))
+        try:
+            response = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
+
+        if not response.ok:
+            self._raise_calendar_api_error("event creation", response)
 
         return response.json()
 

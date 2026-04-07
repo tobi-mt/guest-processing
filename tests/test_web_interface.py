@@ -4,7 +4,9 @@
 """Tests for the direct web interface service layer."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -1933,10 +1935,11 @@ def test_web_service_can_send_acceptance_email(monkeypatch, temp_db):
         def is_configured(self):
             return self.configured
 
-        def send_acceptance_email(self, guest_name, to_email, custom_message=""):
+        def send_acceptance_email(self, guest_name, to_email, custom_message="", booking_url=""):
             assert guest_name == "Amina Hart"
             assert to_email == "amina@example.com"
             assert custom_message == "Welcome aboard"
+            assert booking_url
             return True
 
         def send_rejection_email(self, guest_name, to_email, custom_message=""):
@@ -2171,8 +2174,9 @@ def test_web_service_can_return_email_template(monkeypatch, temp_db):
         def is_configured(self):
             return self.configured
 
-        def get_acceptance_template(self, guest_name, custom_message=""):
+        def get_acceptance_template(self, guest_name, custom_message="", booking_url=""):
             assert guest_name == "Amina Hart"
+            assert booking_url
             return {"subject": "Accepted", "body": "Welcome to Mirror Talk"}
 
         def get_rejection_template(self, guest_name, custom_message=""):
@@ -2188,6 +2192,123 @@ def test_web_service_can_return_email_template(monkeypatch, temp_db):
 
     assert acceptance_template["subject"] == "Accepted"
     assert rejection_template["subject"] == "Declined"
+
+
+def test_acceptance_template_uses_guest_booking_link(monkeypatch, temp_db):
+    """Accepted-guest email previews should include the guest-specific booking link."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_smtp(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def get_acceptance_template(self, guest_name, custom_message="", booking_url=""):
+            return {
+                "subject": "Accepted",
+                "body": f"{guest_name} -> {booking_url}",
+            }
+
+        def get_rejection_template(self, guest_name, custom_message=""):
+            return {"subject": "Declined", "body": "No"}
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Amina Hart", "email": "amina@example.com"})
+
+    template = service.get_guest_decision_email_template(guest["id"], "accepted")
+
+    assert "token=" in template["body"]
+    saved_guest = service.database.get_guest_by_id(guest["id"])
+    assert saved_guest["booking_token"]
+
+
+def test_public_booking_context_and_slots_for_accepted_guest(monkeypatch, temp_db):
+    """Accepted guests should receive a tokenized booking page with available slots."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: None)
+    monkeypatch.setattr(GuestWebService, "_booking_days_ahead", staticmethod(lambda: 2))
+    monkeypatch.setattr(GuestWebService, "_booking_min_notice_hours", staticmethod(lambda: 0))
+    monkeypatch.setattr(GuestWebService, "_booking_slot_weekdays", staticmethod(lambda: tuple(range(7))))
+
+    tz_name = service._booking_timezone_name()
+    tz_obj = ZoneInfo(tz_name)
+    next_slot = (datetime.now(tz_obj) + timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
+    monkeypatch.setattr(GuestWebService, "_booking_slot_times", staticmethod(lambda: (next_slot.strftime("%H:%M"),)))
+
+    context = service.get_public_booking_context(token)
+    availability = service.list_public_booking_slots(token, limit=5)
+
+    assert context["guest_name"] == "Jordan Rivers"
+    assert context["existing_booking"] is None
+    assert availability["slots"]
+    assert availability["slots"][0]["timezone"] == tz_name
+
+
+def test_public_booking_creates_interview_calendar_event_and_confirmation(monkeypatch, temp_db):
+    """Booking a public slot should create the interview, attach the calendar event, and send confirmation."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+
+    scheduled_for = (datetime.now(timezone.utc) + timedelta(days=2)).replace(minute=0, second=0, microsecond=0).isoformat()
+
+    monkeypatch.setattr(
+        GuestWebService,
+        "list_public_booking_slots",
+        lambda self, booking_token, limit=12: {
+            "guest_name": "Jordan Rivers",
+            "booking_timezone": "Europe/Berlin",
+            "existing_booking": None,
+            "slots": [{"start": scheduled_for, "end": scheduled_for, "timezone": "Europe/Berlin"}],
+        },
+    )
+
+    class StubCalendarClient:
+        def create_event_from_interview(self, interview):
+            assert interview["guest_name"] == "Jordan Rivers"
+            return {"id": "google-event-1", "updated": "2026-04-07T12:00:00Z"}
+
+    sent = {}
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: StubCalendarClient())
+    monkeypatch.setattr(
+        GuestWebService,
+        "_send_booking_confirmation_email",
+        lambda self, guest_payload, interview: sent.update({"guest": guest_payload["full_name"], "interview_id": interview["id"]}),
+    )
+
+    interview = service.create_public_booking(
+        token,
+        {
+            "scheduled_for": scheduled_for,
+            "timezone": "Europe/Berlin",
+            "note": "Looking forward to it",
+        },
+    )
+
+    saved = service.database.get_interview_by_id(interview["id"])
+    assert saved is not None
+    assert saved["guest_name"] == "Jordan Rivers"
+    assert saved["calendar_event_id"] == "google-event-1"
+    assert saved["confirmation_status"] == "confirmed"
+    assert "Booked through the Mirror Talk guest booking flow." in (saved["notes"] or "")
+    assert sent == {"guest": "Jordan Rivers", "interview_id": interview["id"]}
 
 
 def test_web_service_can_send_custom_email_body(monkeypatch, temp_db):

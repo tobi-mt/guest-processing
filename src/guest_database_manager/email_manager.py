@@ -123,7 +123,7 @@ class EmailManager:
         else:
             st.error(f"❌ **Failed to send email:** {error_msg}")
 
-    def get_acceptance_template(self, guest_name: str, custom_message: str = "") -> Dict[str, str]:
+    def get_acceptance_template(self, guest_name: str, custom_message: str = "", booking_url: str = "") -> Dict[str, str]:
         """Get the email template for guest acceptance.
 
         Args:
@@ -134,6 +134,7 @@ class EmailManager:
             Dictionary with subject and body
         """
         subject = "Your Mirror Talk Podcast application has been accepted"
+        booking_line = booking_url or "https://mirrortalkpodcast.com/be-our-next-guest/"
 
         if custom_message:
             body = f"""Hi {guest_name},
@@ -145,7 +146,7 @@ We are delighted to let you know that your application to join Mirror Talk Podca
 Your story, perspective, and voice feel like a strong fit for the kind of soulful conversation we want to create for our listeners, and we would love to welcome you onto the show.
 
 Next steps:
-- Please choose a suitable time for recording here: https://mirrortalkpodcast.com/be-our-next-guest/
+- Please choose a suitable time for recording here: {booking_line}
 - If helpful, you can also learn more about the podcast and our wider work on the site.
 
 Thank you again for taking the time to share your story with us. We are looking forward to the conversation ahead.
@@ -160,7 +161,7 @@ We are delighted to let you know that your application to join Mirror Talk Podca
 We were moved by what you shared, and we believe your voice and lived experience would make for a meaningful conversation with our audience.
 
 Next steps:
-- Please choose a suitable time for recording here: https://mirrortalkpodcast.com/be-our-next-guest/
+- Please choose a suitable time for recording here: {booking_line}
 - Once your booking is in place, we will take it from there and prepare for the conversation with you.
 
 Thank you for trusting us with your story. We are genuinely looking forward to having you as a guest on Mirror Talk.
@@ -251,6 +252,38 @@ https://mirrortalkpodcast.com/join-our-family/
 Ask Mirror Talk:
 https://mirrortalkpodcast.com/ask-mirror-talk/
 """
+
+        return {"subject": subject, "body": body}
+
+    def get_booking_confirmation_template(
+        self,
+        guest_name: str,
+        scheduled_for: datetime,
+        timezone_label: str,
+        join_url: str,
+    ) -> Dict[str, str]:
+        """Build the initial booking confirmation email for a newly scheduled interview."""
+        subject = f"Your Mirror Talk conversation is booked for {scheduled_for.strftime('%A %d %B')}"
+        formatted_date = scheduled_for.strftime("%A %d %B, %Y")
+        formatted_time = scheduled_for.strftime("%H:%M")
+        join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
+
+        body = f"""Hi {guest_name},
+
+Thank you for booking your Mirror Talk podcast conversation.
+
+Your interview is now scheduled for {formatted_date} at {formatted_time} {timezone_label}.
+
+We’ll be recording on Riverside FM, and you can join the session here:
+{join_line}
+
+If anything changes and you need to reschedule, just reply to this email and we’ll sort it out together.
+
+Looking forward to the conversation.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
 
         return {"subject": subject, "body": body}
 
@@ -474,7 +507,7 @@ Mirror Talk Podcast
             self._report_send_failure(error_msg)
             return False
 
-    def send_acceptance_email(self, guest_name: str, to_email: str, custom_message: str = "") -> bool:
+    def send_acceptance_email(self, guest_name: str, to_email: str, custom_message: str = "", booking_url: str = "") -> bool:
         """Send acceptance email to a guest.
 
         Args:
@@ -485,7 +518,19 @@ Mirror Talk Podcast
         Returns:
             True if email sent successfully, False otherwise
         """
-        template = self.get_acceptance_template(guest_name, custom_message)
+        template = self.get_acceptance_template(guest_name, custom_message, booking_url=booking_url)
+        return self.send_email(to_email, template["subject"], template["body"])
+
+    def send_booking_confirmation_email(
+        self,
+        guest_name: str,
+        to_email: str,
+        scheduled_for: datetime,
+        timezone_label: str,
+        join_url: str,
+    ) -> bool:
+        """Send the first booking confirmation email after a guest books a slot."""
+        template = self.get_booking_confirmation_template(guest_name, scheduled_for, timezone_label, join_url)
         return self.send_email(to_email, template["subject"], template["body"])
 
     def send_rejection_email(self, guest_name: str, to_email: str, custom_message: str = "") -> bool:

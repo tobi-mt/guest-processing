@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import tempfile
 import webbrowser
 from csv import DictWriter
@@ -19,7 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openpyxl import Workbook
 
@@ -74,9 +76,22 @@ ASK_MIRROR_TALK_PASSWORD_ENV_VAR = "MIRROR_TALK_ASK_PASSWORD"
 OPENAI_API_KEY_ENV_VAR = "MIRROR_TALK_OPENAI_API_KEY"
 OPENAI_MODEL_ENV_VAR = "MIRROR_TALK_OPENAI_MODEL"
 OPENAI_TIMEOUT_ENV_VAR = "MIRROR_TALK_OPENAI_TIMEOUT_SECONDS"
+BOOKING_BASE_URL_ENV_VAR = "MIRROR_TALK_BOOKING_BASE_URL"
+BOOKING_TIMEZONE_ENV_VAR = "MIRROR_TALK_BOOKING_TIMEZONE"
+BOOKING_SLOT_WEEKDAYS_ENV_VAR = "MIRROR_TALK_BOOKING_SLOT_WEEKDAYS"
+BOOKING_SLOT_TIMES_ENV_VAR = "MIRROR_TALK_BOOKING_SLOT_TIMES"
+BOOKING_DAYS_AHEAD_ENV_VAR = "MIRROR_TALK_BOOKING_DAYS_AHEAD"
+BOOKING_MIN_NOTICE_HOURS_ENV_VAR = "MIRROR_TALK_BOOKING_MIN_NOTICE_HOURS"
+BOOKING_DURATION_MINUTES_ENV_VAR = "MIRROR_TALK_BOOKING_DURATION_MINUTES"
+BOOKING_JOIN_URL_ENV_VAR = "MIRROR_TALK_BOOKING_JOIN_URL"
 DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD = 365
 AI_AUTORESEARCH_CANDIDATE_LIMIT = 12
 BULK_GUEST_RESEARCH_BATCH_SIZE = 25
+BOOKING_DEFAULT_WEEKDAYS = ("TU", "WE", "TH")
+BOOKING_DEFAULT_TIMES = ("17:00", "19:00")
+BOOKING_DEFAULT_DAYS_AHEAD = 45
+BOOKING_DEFAULT_MIN_NOTICE_HOURS = 24
+BOOKING_DEFAULT_DURATION_MINUTES = 60
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -1393,7 +1408,10 @@ class GuestWebService:
         email_manager = self._build_email_manager()
 
         if normalized_status == "accepted":
-            return email_manager.get_acceptance_template(guest_name)
+            return email_manager.get_acceptance_template(
+                guest_name,
+                booking_url=self._booking_link_for_guest(guest_id),
+            )
 
         return email_manager.get_rejection_template(guest_name)
 
@@ -1431,7 +1449,12 @@ class GuestWebService:
             sent = email_manager.send_email(guest_email, subject, body)
         else:
             if normalized_status == "accepted":
-                sent = email_manager.send_acceptance_email(guest_name, guest_email, custom_message)
+                sent = email_manager.send_acceptance_email(
+                    guest_name,
+                    guest_email,
+                    custom_message,
+                    booking_url=self._booking_link_for_guest(guest_id),
+                )
             else:
                 sent = email_manager.send_rejection_email(guest_name, guest_email, custom_message)
 
@@ -1664,6 +1687,218 @@ class GuestWebService:
         interview_data.update(payload)
         saved = self.create_interview(interview_data)
         return saved
+
+    def _guest_from_booking_token(self, booking_token: str) -> Dict[str, Any]:
+        """Fetch a guest by booking token and ensure the guest can still book."""
+        normalized_token = _normalize_text(booking_token)
+        if not normalized_token:
+            raise WebInterfaceError("Booking link is missing or invalid.")
+        guest = self.database.get_guest_by_booking_token(normalized_token)
+        if not guest:
+            raise WebInterfaceError("This booking link is not valid anymore.")
+        email_status = _normalize_text(guest.get("email_status")).lower()
+        if email_status != "accepted":
+            raise WebInterfaceError("This guest is not currently eligible to book an interview.")
+        return guest
+
+    def _serialize_public_booking_interview(self, interview: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a small safe booking summary for the guest-facing page."""
+        return {
+            "id": interview.get("id"),
+            "scheduled_for": interview.get("scheduled_for"),
+            "timezone": interview.get("timezone"),
+            "join_url": interview.get("join_url"),
+            "status": interview.get("status"),
+            "confirmation_status": interview.get("confirmation_status"),
+            "title": interview.get("title"),
+        }
+
+    def _find_future_interview_for_guest(self, guest: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Return the next still-active interview for a guest, if one exists."""
+        guest_id = str(guest.get("id") or "").strip()
+        guest_email = _normalize_text(guest.get("email")).casefold()
+        reference = datetime.now(timezone.utc)
+        for interview in self.database.list_interviews():
+            scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+            if not scheduled_for or scheduled_for < reference:
+                continue
+            status = _normalize_text(interview.get("status")).lower()
+            if status == "cancelled":
+                continue
+            if guest_id and str(interview.get("guest_id") or "").strip() == guest_id:
+                return interview
+            if guest_email and _normalize_text(interview.get("guest_email")).casefold() == guest_email:
+                return interview
+        return None
+
+    def _booking_timezone(self) -> ZoneInfo:
+        """Return the configured booking timezone object."""
+        try:
+            return ZoneInfo(self._booking_timezone_name())
+        except ZoneInfoNotFoundError as exc:
+            raise WebInterfaceError("Booking timezone is invalid on the server.") from exc
+
+    def _booking_busy_windows(self, *, reference: datetime) -> list[tuple[datetime, datetime]]:
+        """Return busy windows from Google Calendar and existing interviews."""
+        busy: list[tuple[datetime, datetime]] = []
+        client = self._build_google_calendar_client()
+        duration = timedelta(minutes=self._booking_duration_minutes())
+        if client is not None:
+            try:
+                events = client.list_busy_events(days_ahead=self._booking_days_ahead(), reference=reference)
+            except GoogleCalendarSyncError as exc:
+                raise WebInterfaceError(str(exc)) from exc
+            for event in events:
+                start = self._parse_datetime((event.get("start") or {}).get("dateTime"))
+                end = self._parse_datetime((event.get("end") or {}).get("dateTime"))
+                if start and end and end > start:
+                    busy.append((start, end))
+
+        for interview in self.database.list_interviews():
+            status = _normalize_text(interview.get("status")).lower()
+            if status == "cancelled":
+                continue
+            start = self._parse_datetime(interview.get("scheduled_for"))
+            if not start:
+                continue
+            end = start + duration
+            busy.append((start, end))
+        return busy
+
+    @staticmethod
+    def _slot_overlaps_busy(slot_start: datetime, slot_end: datetime, busy_windows: list[tuple[datetime, datetime]]) -> bool:
+        """Return True when a slot overlaps any busy window."""
+        for busy_start, busy_end in busy_windows:
+            if slot_start < busy_end and slot_end > busy_start:
+                return True
+        return False
+
+    def get_public_booking_context(self, booking_token: str) -> Dict[str, Any]:
+        """Return guest-facing booking context from a secure token."""
+        guest = self._guest_from_booking_token(booking_token)
+        existing_interview = self._find_future_interview_for_guest(guest)
+        return {
+            "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest",
+            "guest_email": _normalize_text(guest.get("email")),
+            "booking_timezone": self._booking_timezone_name(),
+            "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
+        }
+
+    def list_public_booking_slots(self, booking_token: str, *, limit: int = 12) -> Dict[str, Any]:
+        """Return available booking slots for a guest-facing booking link."""
+        guest = self._guest_from_booking_token(booking_token)
+        existing_interview = self._find_future_interview_for_guest(guest)
+        timezone_obj = self._booking_timezone()
+        reference = datetime.now(timezone.utc)
+        min_notice = reference + timedelta(hours=self._booking_min_notice_hours())
+        duration = timedelta(minutes=self._booking_duration_minutes())
+        busy_windows = self._booking_busy_windows(reference=reference)
+        weekdays = set(self._booking_slot_weekdays())
+        slot_times = self._booking_slot_times()
+
+        slots: list[Dict[str, Any]] = []
+        current_local = min_notice.astimezone(timezone_obj)
+        for day_offset in range(self._booking_days_ahead() + 1):
+            candidate_day = (current_local + timedelta(days=day_offset)).date()
+            weekday = datetime(candidate_day.year, candidate_day.month, candidate_day.day).weekday()
+            if weekday not in weekdays:
+                continue
+            for slot_time in slot_times:
+                try:
+                    hour_text, minute_text = slot_time.split(":", 1)
+                    slot_start = datetime(
+                        candidate_day.year,
+                        candidate_day.month,
+                        candidate_day.day,
+                        int(hour_text),
+                        int(minute_text),
+                        tzinfo=timezone_obj,
+                    )
+                except ValueError:
+                    continue
+                if slot_start.astimezone(timezone.utc) < min_notice:
+                    continue
+                slot_end = slot_start + duration
+                if self._slot_overlaps_busy(slot_start.astimezone(timezone.utc), slot_end.astimezone(timezone.utc), busy_windows):
+                    continue
+                slots.append(
+                    {
+                        "start": slot_start.astimezone(timezone.utc).isoformat(),
+                        "end": slot_end.astimezone(timezone.utc).isoformat(),
+                        "timezone": self._booking_timezone_name(),
+                    }
+                )
+                if len(slots) >= limit:
+                    break
+            if len(slots) >= limit:
+                break
+
+        return {
+            "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest",
+            "booking_timezone": self._booking_timezone_name(),
+            "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
+            "slots": slots,
+        }
+
+    def create_public_booking(self, booking_token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Create an interview from a public booking token and selected slot."""
+        guest = self._guest_from_booking_token(booking_token)
+        if self._find_future_interview_for_guest(guest):
+            raise WebInterfaceError("A future interview is already booked for this guest.")
+
+        scheduled_for = _normalize_text(payload.get("scheduled_for"))
+        timezone_label = _normalize_text(payload.get("timezone")) or self._booking_timezone_name()
+        guest_note = _normalize_text(payload.get("note"))
+        if not scheduled_for:
+            raise WebInterfaceError("Please choose one of the available interview slots.")
+
+        available = self.list_public_booking_slots(booking_token, limit=40)
+        available_starts = {item["start"] for item in available.get("slots", [])}
+        normalized_scheduled_for = scheduled_for.replace("Z", "+00:00")
+        if normalized_scheduled_for not in available_starts:
+            raise WebInterfaceError("That slot is no longer available. Please choose another time.")
+
+        interview = self.create_interview(
+            {
+                "guest_id": guest.get("id"),
+                "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")),
+                "guest_email": _normalize_text(guest.get("email")),
+                "title": f"Mirror Talk conversation with {_normalize_text(guest.get('full_name') or guest.get('name') or 'Guest')}",
+                "scheduled_for": normalized_scheduled_for,
+                "timezone": timezone_label,
+                "join_url": self._booking_join_url(),
+                "status": "scheduled",
+                "confirmation_status": "confirmed",
+                "reminder_status": "not_scheduled",
+                "notes": "\n".join(
+                    part for part in [
+                        "Booked through the Mirror Talk guest booking flow.",
+                        f"Guest browser timezone: {timezone_label}" if timezone_label else "",
+                        guest_note,
+                    ] if part
+                ),
+            }
+        )
+
+        client = self._build_google_calendar_client()
+        if client is not None:
+            try:
+                created_event = client.create_event_from_interview(interview)
+            except GoogleCalendarSyncError as exc:
+                raise WebInterfaceError(str(exc)) from exc
+            self.database.update_interview(
+                interview["id"],
+                {
+                    "calendar_event_id": created_event.get("id"),
+                    "calendar_source": "google_calendar",
+                    "event_updated_at": created_event.get("updated"),
+                    "last_synced_at": datetime.now().astimezone().isoformat(),
+                },
+            )
+            interview = self.database.get_interview_by_id(interview["id"]) or interview
+
+        self._send_booking_confirmation_email(guest, interview)
+        return self._serialize_public_booking_interview(interview)
 
     def create_episode(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create or update an episode record."""
@@ -2523,6 +2758,89 @@ class GuestWebService:
 
         return email_manager
 
+    @staticmethod
+    def _booking_base_url() -> str:
+        """Return the configured public booking base URL."""
+        configured = os.environ.get(BOOKING_BASE_URL_ENV_VAR, "").strip()
+        return configured or "https://guest-processing-production.up.railway.app/book"
+
+    @staticmethod
+    def _booking_timezone_name() -> str:
+        """Return the configured booking timezone."""
+        return os.environ.get(BOOKING_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin"
+
+    @staticmethod
+    def _booking_slot_weekdays() -> tuple[int, ...]:
+        """Return weekday numbers for guest booking availability."""
+        raw = os.environ.get(BOOKING_SLOT_WEEKDAYS_ENV_VAR, ",".join(BOOKING_DEFAULT_WEEKDAYS)).strip()
+        mapping = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+        values = []
+        for item in raw.split(","):
+            normalized = item.strip().upper()
+            if normalized in mapping:
+                values.append(mapping[normalized])
+        return tuple(values or [mapping[item] for item in BOOKING_DEFAULT_WEEKDAYS])
+
+    @staticmethod
+    def _booking_slot_times() -> tuple[str, ...]:
+        """Return local times for guest booking availability."""
+        raw = os.environ.get(BOOKING_SLOT_TIMES_ENV_VAR, ",".join(BOOKING_DEFAULT_TIMES)).strip()
+        values = tuple(item.strip() for item in raw.split(",") if item.strip())
+        return values or BOOKING_DEFAULT_TIMES
+
+    @staticmethod
+    def _booking_days_ahead() -> int:
+        raw = os.environ.get(BOOKING_DAYS_AHEAD_ENV_VAR, str(BOOKING_DEFAULT_DAYS_AHEAD)).strip() or str(BOOKING_DEFAULT_DAYS_AHEAD)
+        try:
+            return max(7, min(120, int(raw)))
+        except ValueError:
+            return BOOKING_DEFAULT_DAYS_AHEAD
+
+    @staticmethod
+    def _booking_min_notice_hours() -> int:
+        raw = os.environ.get(BOOKING_MIN_NOTICE_HOURS_ENV_VAR, str(BOOKING_DEFAULT_MIN_NOTICE_HOURS)).strip() or str(BOOKING_DEFAULT_MIN_NOTICE_HOURS)
+        try:
+            return max(2, min(168, int(raw)))
+        except ValueError:
+            return BOOKING_DEFAULT_MIN_NOTICE_HOURS
+
+    @staticmethod
+    def _booking_duration_minutes() -> int:
+        raw = os.environ.get(BOOKING_DURATION_MINUTES_ENV_VAR, str(BOOKING_DEFAULT_DURATION_MINUTES)).strip() or str(BOOKING_DEFAULT_DURATION_MINUTES)
+        try:
+            return max(30, min(180, int(raw)))
+        except ValueError:
+            return BOOKING_DEFAULT_DURATION_MINUTES
+
+    @staticmethod
+    def _booking_join_url() -> str:
+        return os.environ.get(
+            BOOKING_JOIN_URL_ENV_VAR,
+            "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db",
+        ).strip()
+
+    def _ensure_guest_booking_token(self, guest_id: int) -> str:
+        """Ensure a guest has a stable booking token."""
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+        existing_token = _normalize_text(guest.get("booking_token"))
+        if existing_token:
+            return existing_token
+
+        booking_token = secrets.token_urlsafe(24)
+        updated_guest = dict(guest)
+        updated_guest["booking_token"] = booking_token
+        updated_guest["booking_token_created_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        self.database.update_guest_by_id(guest_id, updated_guest)
+        return booking_token
+
+    def _booking_link_for_guest(self, guest_id: int) -> str:
+        """Build the public booking link for a guest."""
+        booking_token = self._ensure_guest_booking_token(guest_id)
+        separator = "&" if "?" in self._booking_base_url() else "?"
+        return f"{self._booking_base_url()}{separator}token={booking_token}"
+
     def _send_intake_confirmation_email(self, guest: Dict[str, Any]) -> None:
         """Best-effort confirmation email for public intake submissions."""
         guest_email = _normalize_text(guest.get("email"))
@@ -2536,6 +2854,31 @@ class GuestWebService:
         guest_name = _normalize_text(guest.get("full_name")) or "there"
         try:
             email_manager.send_intake_confirmation_email(guest_name, guest_email)
+        except Exception:
+            return
+
+    def _send_booking_confirmation_email(self, guest: Dict[str, Any], interview: Dict[str, Any]) -> None:
+        """Best-effort confirmation email after a guest books a slot."""
+        guest_email = _normalize_text(guest.get("email"))
+        if not guest_email:
+            return
+        scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+        if not scheduled_for:
+            return
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            return
+
+        guest_name = _normalize_text(guest.get("full_name") or guest.get("name")) or "there"
+        try:
+            email_manager.send_booking_confirmation_email(
+                guest_name,
+                guest_email,
+                scheduled_for,
+                _normalize_text(interview.get("timezone")) or self._booking_timezone_name(),
+                _normalize_text(interview.get("join_url")) or self._booking_join_url(),
+            )
         except Exception:
             return
 
@@ -2559,6 +2902,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
         if request_path in {"/", "/intake", "/intake.html"}:
             self._serve_static("intake.html")
+            return
+
+        if request_path in {"/book", "/booking", "/book.html"}:
+            self._serve_static("booking.html")
             return
 
         if request_path in {"/dashboard", "/index.html"}:
@@ -2592,6 +2939,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.list_guests())
+            return
+
+        if request_path == "/api/booking/context":
+            query = self._query_params(self.path)
+            try:
+                payload = self.service.get_public_booking_context(query.get("token", ""))
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if request_path == "/api/booking/availability":
+            query = self._query_params(self.path)
+            try:
+                payload = self.service.list_public_booking_slots(query.get("token", ""))
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, payload)
             return
 
         if request_path == "/api/export":
@@ -2754,6 +3121,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 {
                     "message": "Thank you for applying. Your submission has been received.",
                     "guest": guest,
+                },
+            )
+            return
+
+        if self.path == "/api/booking/confirm":
+            payload = self._read_json_payload()
+            try:
+                interview = self.service.create_public_booking(
+                    _normalize_text(payload.get("token")),
+                    payload,
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(
+                HTTPStatus.CREATED,
+                {
+                    "message": "Your Mirror Talk conversation has been booked.",
+                    "interview": interview,
                 },
             )
             return
@@ -3288,6 +3675,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
         raw_data = self.rfile.read(content_length)
         return json.loads(raw_data.decode("utf-8"))
+
+    @staticmethod
+    def _query_params(path: str) -> Dict[str, str]:
+        """Parse simple query parameters from a request path."""
+        query = urlsplit(path).query
+        return {key: value for key, value in parse_qsl(query, keep_blank_values=True)}
 
     def _read_multipart_form_data(self) -> tuple[Dict[str, str], Dict[str, Dict[str, Any]]]:
         content_length = int(self.headers.get("Content-Length", "0"))
