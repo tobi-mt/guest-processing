@@ -12,6 +12,7 @@ from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Dict, Optional, Sequence
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
@@ -226,9 +227,10 @@ Mirror Talk Podcast"""
         join_url: str,
     ) -> Dict[str, str]:
         """Build the weekly confirmation reminder template for an upcoming interview."""
-        subject = f"Please confirm our Mirror Talk conversation on {scheduled_for.strftime('%A %d %B')}"
-        formatted_date = scheduled_for.strftime("%A %d %B, %Y")
-        formatted_time = scheduled_for.strftime("%H:%M")
+        localized = self._localize_datetime(scheduled_for, timezone_label)
+        subject = f"Please confirm our Mirror Talk conversation on {localized.strftime('%A %d %B')}"
+        formatted_date = localized.strftime("%A %d %B, %Y")
+        formatted_time = localized.strftime("%H:%M")
         join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
 
         body = f"""Hi {guest_name},
@@ -265,9 +267,10 @@ https://mirrortalkpodcast.com/ask-mirror-talk/
         join_url: str,
     ) -> Dict[str, str]:
         """Build the initial booking confirmation email for a newly scheduled interview."""
-        subject = f"Your Mirror Talk conversation is booked for {scheduled_for.strftime('%A %d %B')}"
-        formatted_date = scheduled_for.strftime("%A %d %B, %Y")
-        formatted_time = scheduled_for.strftime("%H:%M")
+        localized = self._localize_datetime(scheduled_for, timezone_label)
+        subject = f"Your Mirror Talk conversation is booked for {localized.strftime('%A %d %B')}"
+        formatted_date = localized.strftime("%A %d %B, %Y")
+        formatted_time = localized.strftime("%H:%M")
         join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
 
         body = f"""Hi {guest_name},
@@ -288,6 +291,19 @@ Tobi Ojekunle
 Mirror Talk Podcast"""
 
         return {"subject": subject, "body": body}
+
+    @staticmethod
+    def _localize_datetime(value: datetime, timezone_label: str) -> datetime:
+        """Return a datetime rendered in the guest-facing timezone when possible."""
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        normalized_timezone = (timezone_label or "").strip()
+        if not normalized_timezone:
+            return value
+        try:
+            return value.astimezone(ZoneInfo(normalized_timezone))
+        except ZoneInfoNotFoundError:
+            return value
 
     def get_post_interview_appreciation_template(self, guest_name: str) -> Dict[str, str]:
         """Build a refined thank-you email for guests after recording."""

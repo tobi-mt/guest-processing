@@ -2422,6 +2422,20 @@ def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):
     assert "https://riverside.fm/studio/example" in attachment_text
 
 
+def test_booking_confirmation_email_formats_time_in_booking_timezone():
+    """Booking emails should display the interview time in the guest-facing booking timezone."""
+    manager = EmailManager()
+
+    template = manager.get_booking_confirmation_template(
+        "Jordan Rivers",
+        datetime(2026, 6, 11, 18, 0, tzinfo=timezone.utc),
+        "Europe/Berlin",
+        "https://riverside.fm/studio/example",
+    )
+
+    assert "Thursday 11 June, 2026 at 20:00 Europe/Berlin." in template["body"]
+
+
 def test_google_calendar_event_creation_requests_attendee_updates(monkeypatch):
     """New booking events should ask Google Calendar to send attendee invites."""
     captured = {}
