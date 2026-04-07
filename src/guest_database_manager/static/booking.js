@@ -12,7 +12,6 @@ const bookingSelectedSlot = document.getElementById("booking-selected-slot");
 const bookingCalendarGrid = document.getElementById("booking-calendar-grid");
 const bookingTimes = document.getElementById("booking-times");
 const bookingMonthLabel = document.getElementById("booking-month-label");
-const bookingWindowLabel = document.getElementById("booking-window-label");
 const bookingMonthPrev = document.getElementById("booking-month-prev");
 const bookingMonthNext = document.getElementById("booking-month-next");
 
@@ -187,7 +186,6 @@ function renderCalendarMonth() {
   bookingCalendarGrid.innerHTML = "";
   if (!visibleMonthKey) {
     bookingMonthLabel.textContent = "Available dates";
-    bookingWindowLabel.textContent = "";
     bookingMonthPrev.disabled = true;
     bookingMonthNext.disabled = true;
     return;
@@ -249,12 +247,6 @@ function setAvailableSlots(slots, timezone, bookingWindow = {}) {
   bookingSubmit.disabled = true;
   bookingSubmit.textContent = "Book This Slot";
   renderSelectedSlot(null);
-
-  if (bookingWindow.months_ahead) {
-    bookingWindowLabel.textContent = `Open for the next ${bookingWindow.months_ahead} month${bookingWindow.months_ahead === 1 ? "" : "s"}`;
-  } else {
-    bookingWindowLabel.textContent = "";
-  }
 
   bookingAvailability.classList.remove("hidden");
   if (!availableSlots.length) {
@@ -320,7 +312,7 @@ async function loadBookingPage() {
     if (context.existing_booking) {
       setMessage("Your interview is already booked. If you need any change, just reply to the Mirror Talk email and we’ll help you personally.", "success");
     } else {
-      setMessage("Choose a date in the calendar, then select a time to activate your booking button.", "success");
+      setMessage("Choose a date in the calendar, then select a time and confirm your booking below.", "success");
     }
   } catch (error) {
     showInvitationState();
@@ -344,8 +336,7 @@ bookingMonthNext.addEventListener("click", () => {
   }
 });
 
-bookingForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+async function submitBooking() {
   if (!selectedSlot) {
     setMessage("Please choose a date and time first.", "error");
     return;
@@ -379,6 +370,15 @@ bookingForm.addEventListener("submit", async (event) => {
     bookingSubmit.textContent = "Book This Slot";
     setMessage(error.message, "error");
   }
+}
+
+bookingForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await submitBooking();
+});
+
+bookingSubmit.addEventListener("click", async () => {
+  await submitBooking();
 });
 
 loadBookingPage().catch((error) => {

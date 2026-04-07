@@ -92,7 +92,6 @@
                 <button id="booking-month-prev" type="button" class="calendar-nav-button" aria-label="Previous month">Previous</button>
                 <div class="calendar-toolbar-copy">
                   <strong id="booking-month-label">Available dates</strong>
-                  <span id="booking-window-label"></span>
                 </div>
                 <button id="booking-month-next" type="button" class="calendar-nav-button" aria-label="Next month">Next</button>
               </div>
@@ -111,7 +110,7 @@
               <div id="booking-selected-slot" class="selected-slot-card hidden"></div>
             </section>
 
-            <form id="booking-form" class="booking-form hidden">
+            <form id="booking-form" class="booking-form hidden" novalidate>
               <div class="form-step-heading">
                 <p class="step-badge">Step 2</p>
                 <h3>Confirm your booking details</h3>
@@ -128,7 +127,7 @@
                 <small>Share anything helpful, such as accessibility needs, scheduling context, or a question for us.</small>
               </label>
               <div class="form-actions">
-                <button id="booking-submit" type="submit" class="primary-button" disabled>Book This Slot</button>
+                <button id="booking-submit" type="button" class="primary-button" disabled>Book This Slot</button>
               </div>
             </form>
           </div>
