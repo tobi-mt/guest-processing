@@ -3283,7 +3283,7 @@ def test_web_service_can_remove_interview_from_google_calendar(monkeypatch, temp
     assert removed["status"] == "cancelled"
     assert removed["confirmation_status"] == "declined"
     assert "Removed from Google Calendar." in removed["notes"]
-    assert removed["calendar_event_id"] == ""
+    assert removed["calendar_event_id"] is None
 
 
 def test_web_service_treats_already_deleted_google_calendar_event_as_cleaned_up(monkeypatch, temp_db):
@@ -3317,7 +3317,7 @@ def test_web_service_treats_already_deleted_google_calendar_event_as_cleaned_up(
     removed = service.remove_interview_from_google_calendar(interview["id"])
 
     assert removed["status"] == "cancelled"
-    assert removed["calendar_event_id"] == ""
+    assert removed["calendar_event_id"] is None
     assert removed["calendar_source"] == ""
     assert "already gone" in removed["notes"].lower()
 

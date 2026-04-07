@@ -2623,7 +2623,7 @@ class GuestWebService:
             "status": "cancelled",
             "confirmation_status": "declined" if _normalize_text(interview.get("confirmation_status")).lower() == "pending" else interview.get("confirmation_status"),
             "last_synced_at": datetime.now().astimezone().isoformat(),
-            "calendar_event_id": "",
+            "calendar_event_id": None,
             "calendar_source": "",
             "event_updated_at": "",
             "notes": "\n".join(

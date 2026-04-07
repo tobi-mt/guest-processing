@@ -308,7 +308,10 @@ class GuestDatabase:
     def upsert_interview(self, interview_data: Dict[str, Any]) -> tuple[int, str]:
         """Insert or update an interview using the calendar event id when available."""
         interview_id = interview_data.get("id")
-        calendar_event_id = interview_data.get("calendar_event_id")
+        raw_calendar_event_id = interview_data.get("calendar_event_id")
+        calendar_event_id = str(raw_calendar_event_id).strip() if raw_calendar_event_id is not None else ""
+        if not calendar_event_id:
+            calendar_event_id = None
 
         with sqlite3.connect(str(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
