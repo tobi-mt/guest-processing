@@ -3,13 +3,15 @@
 # SPDX-License-Identifier: MIT
 """Email functionality for Guest Database Manager."""
 
+import base64
 import html
 import smtplib
 import ssl
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 
 import requests
 
@@ -381,6 +383,52 @@ Mirror Talk Podcast
 
         return {"subject": subject, "body": body}
 
+    @staticmethod
+    def build_calendar_invite(
+        *,
+        guest_name: str,
+        scheduled_for: datetime,
+        timezone_label: str,
+        join_url: str,
+        duration_minutes: int = 60,
+    ) -> bytes:
+        """Build a simple ICS calendar invite for booking confirmations."""
+        if scheduled_for.tzinfo is None:
+            scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+        start_utc = scheduled_for.astimezone(timezone.utc)
+        end_utc = start_utc + timedelta(minutes=duration_minutes)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        uid = f"mirror-talk-{int(start_utc.timestamp())}@mirrortalkpodcast.com"
+        summary = f"Mirror Talk conversation with {guest_name}"
+        description = "\\n".join(
+            part
+            for part in [
+                f"Your Mirror Talk conversation with {guest_name}.",
+                f"Timezone: {timezone_label}" if timezone_label else "",
+                f"Join link: {join_url}" if join_url else "",
+            ]
+            if part
+        )
+        lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Mirror Talk Podcast//Guest Booking//EN",
+            "CALSCALE:GREGORIAN",
+            "METHOD:REQUEST",
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{timestamp}",
+            f"DTSTART:{start_utc.strftime('%Y%m%dT%H%M%SZ')}",
+            f"DTEND:{end_utc.strftime('%Y%m%dT%H%M%SZ')}",
+            f"SUMMARY:{summary}",
+            f"DESCRIPTION:{description}",
+            f"LOCATION:{join_url or 'Mirror Talk Riverside Studio'}",
+            "STATUS:CONFIRMED",
+            "END:VEVENT",
+            "END:VCALENDAR",
+        ]
+        return "\r\n".join(lines).encode("utf-8")
+
     def _resend_from_address(self) -> str:
         """Format the Resend sender address."""
         if self.from_name:
@@ -399,7 +447,13 @@ Mirror Talk Podcast
             rendered.append(f"<p>{escaped}</p>")
         return "".join(rendered)
 
-    def _send_via_resend(self, to_email: str, subject: str, body: str) -> bool:
+    def _send_via_resend(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        attachments: Optional[Sequence[Dict[str, object]]] = None,
+    ) -> bool:
         """Send an email through the Resend HTTPS API."""
         if not self.resend_api_key or not self.from_email:
             self.last_error = "Resend is not configured."
@@ -414,6 +468,14 @@ Mirror Talk Podcast
         }
         if self.cc_email:
             payload["cc"] = [self.cc_email]
+        if attachments:
+            payload["attachments"] = [
+                {
+                    "filename": str(item["filename"]),
+                    "content": base64.b64encode(bytes(item["content"])).decode("ascii"),
+                }
+                for item in attachments
+            ]
 
         try:
             response = requests.post(
@@ -453,7 +515,13 @@ Mirror Talk Podcast
         self.last_error = error_message or response.text.strip() or f"Resend returned HTTP {response.status_code}"
         return False
 
-    def send_email(self, to_email: str, subject: str, body: str) -> bool:
+    def send_email(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        attachments: Optional[Sequence[Dict[str, object]]] = None,
+    ) -> bool:
         """Send an email.
 
         Args:
@@ -471,7 +539,7 @@ Mirror Talk Podcast
             raise ValueError(self.last_error)
 
         if self.resend_api_key:
-            sent = self._send_via_resend(to_email, subject, body)
+            sent = self._send_via_resend(to_email, subject, body, attachments=attachments)
             if not sent:
                 self._report_send_failure(self.last_error)
             return sent
@@ -487,6 +555,10 @@ Mirror Talk Podcast
 
             # Attach body
             msg.attach(MIMEText(body, 'plain'))
+            for attachment in attachments or []:
+                part = MIMEApplication(bytes(attachment["content"]), Name=str(attachment["filename"]))
+                part["Content-Disposition"] = f'attachment; filename="{attachment["filename"]}"'
+                msg.attach(part)
 
             # Create SMTP session
             context = ssl.create_default_context()
@@ -531,7 +603,16 @@ Mirror Talk Podcast
     ) -> bool:
         """Send the first booking confirmation email after a guest books a slot."""
         template = self.get_booking_confirmation_template(guest_name, scheduled_for, timezone_label, join_url)
-        return self.send_email(to_email, template["subject"], template["body"])
+        invite_attachment = {
+            "filename": "mirror-talk-booking.ics",
+            "content": self.build_calendar_invite(
+                guest_name=guest_name,
+                scheduled_for=scheduled_for,
+                timezone_label=timezone_label,
+                join_url=join_url,
+            ),
+        }
+        return self.send_email(to_email, template["subject"], template["body"], attachments=[invite_attachment])
 
     def send_rejection_email(self, guest_name: str, to_email: str, custom_message: str = "") -> bool:
         """Send rejection email to a guest.

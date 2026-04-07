@@ -290,6 +290,7 @@ class GoogleCalendarSyncClient:
                     "Authorization": f"Bearer {access_token}",
                     "Content-Type": "application/json",
                 },
+                params={"sendUpdates": "all"},
                 json=payload,
                 timeout=20,
             )

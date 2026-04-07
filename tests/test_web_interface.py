@@ -41,6 +41,8 @@ from guest_database_manager.web_interface import (
 )
 from guest_database_manager.guest_research import _candidate_urls
 from guest_database_manager import guest_research
+from guest_database_manager.email_manager import EmailManager
+from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
 
 
@@ -2316,7 +2318,12 @@ def test_booking_slot_buffer_only_blocks_nearby_conflicts(monkeypatch, temp_db):
     )
 
     availability = service.list_public_booking_slots(token)
-    slot_times = {datetime.fromisoformat(item["start"].replace("Z", "+00:00")).astimezone(tz_obj).strftime("%H:%M") for item in availability["slots"]}
+    slot_times = {
+        slot_start.strftime("%H:%M")
+        for item in availability["slots"]
+        for slot_start in [datetime.fromisoformat(item["start"].replace("Z", "+00:00")).astimezone(tz_obj)]
+        if slot_start.date() == candidate_day
+    }
 
     assert "10:00" not in slot_times
     assert "17:00" in slot_times
@@ -2378,6 +2385,91 @@ def test_public_booking_creates_interview_calendar_event_and_confirmation(monkey
     assert saved["confirmation_status"] == "confirmed"
     assert "Booked through the Mirror Talk guest booking flow." in (saved["notes"] or "")
     assert sent == {"guest": "Jordan Rivers", "interview_id": interview["id"]}
+
+
+def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):
+    """Booking confirmations should include an ICS invite attachment."""
+    manager = EmailManager()
+    captured = {}
+
+    def fake_send_email(to_email, subject, body, attachments=None):
+        captured["to_email"] = to_email
+        captured["subject"] = subject
+        captured["body"] = body
+        captured["attachments"] = attachments or []
+        return True
+
+    monkeypatch.setattr(manager, "send_email", fake_send_email)
+
+    scheduled_for = datetime(2026, 4, 9, 17, 0, tzinfo=timezone.utc)
+    sent = manager.send_booking_confirmation_email(
+        "Jordan Rivers",
+        "jordan@example.com",
+        scheduled_for,
+        "Europe/Berlin",
+        "https://riverside.fm/studio/example",
+    )
+
+    assert sent is True
+    assert captured["to_email"] == "jordan@example.com"
+    assert len(captured["attachments"]) == 1
+    attachment = captured["attachments"][0]
+    assert attachment["filename"] == "mirror-talk-booking.ics"
+    attachment_text = bytes(attachment["content"]).decode("utf-8")
+    assert "BEGIN:VCALENDAR" in attachment_text
+    assert "METHOD:REQUEST" in attachment_text
+    assert "SUMMARY:Mirror Talk conversation with Jordan Rivers" in attachment_text
+    assert "https://riverside.fm/studio/example" in attachment_text
+
+
+def test_google_calendar_event_creation_requests_attendee_updates(monkeypatch):
+    """New booking events should ask Google Calendar to send attendee invites."""
+    captured = {}
+
+    class StubResponse:
+        ok = True
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"id": "event-123", "updated": "2026-04-07T20:00:00Z"}
+
+    def fake_post(url, headers=None, params=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["params"] = params
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return StubResponse()
+
+    monkeypatch.setattr("guest_database_manager.google_calendar_sync.requests.post", fake_post)
+    monkeypatch.setattr(
+        GoogleCalendarSyncClient,
+        "_get_access_token",
+        lambda self: "test-access-token",
+    )
+
+    client = GoogleCalendarSyncClient(
+        client_id="client-id",
+        client_secret="client-secret",
+        refresh_token="refresh-token",
+        calendar_id="mirror-talk@example.com",
+    )
+    result = client.create_event_from_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Mirror Talk conversation with Jordan Rivers",
+            "scheduled_for": "2026-04-09T17:00:00+00:00",
+            "timezone": "Europe/Berlin",
+            "join_url": "https://riverside.fm/studio/example",
+        }
+    )
+
+    assert result["id"] == "event-123"
+    assert captured["params"] == {"sendUpdates": "all"}
+    assert captured["json"]["attendees"] == [{"email": "jordan@example.com", "displayName": "Jordan Rivers"}]
 
 
 def test_web_service_can_send_custom_email_body(monkeypatch, temp_db):
