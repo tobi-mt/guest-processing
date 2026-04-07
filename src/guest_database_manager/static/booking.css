@@ -343,6 +343,19 @@ body {
   margin-top: 16px;
 }
 
+.month-summary {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--muted);
+}
+
+.month-summary strong {
+  color: var(--text);
+  margin-right: 6px;
+}
+
 .calendar-toolbar-copy {
   display: grid;
   gap: 4px;
