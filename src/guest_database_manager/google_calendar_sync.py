@@ -301,8 +301,11 @@ class GoogleCalendarSyncClient:
 
         return response.json()
 
-    def delete_event(self, event_id: str) -> None:
-        """Delete a Google Calendar event."""
+    def delete_event(self, event_id: str) -> Dict[str, bool]:
+        """Delete a Google Calendar event.
+
+        Returns whether the event was actively removed or was already gone.
+        """
         if not (event_id or "").strip():
             raise GoogleCalendarSyncError("This interview is not linked to a Google Calendar event.")
 
@@ -317,8 +320,13 @@ class GoogleCalendarSyncClient:
         except requests.RequestException as exc:
             raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
 
+        if response.status_code == 410:
+            return {"deleted": False, "already_deleted": True}
+
         if response.status_code not in {200, 204}:
             self._raise_calendar_api_error("event removal", response)
+
+        return {"deleted": True, "already_deleted": False}
 
     def normalize_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a Google Calendar event payload into an interview record shape."""

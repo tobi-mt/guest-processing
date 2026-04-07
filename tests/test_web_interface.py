@@ -3283,6 +3283,43 @@ def test_web_service_can_remove_interview_from_google_calendar(monkeypatch, temp
     assert removed["status"] == "cancelled"
     assert removed["confirmation_status"] == "declined"
     assert "Removed from Google Calendar." in removed["notes"]
+    assert removed["calendar_event_id"] == ""
+
+
+def test_web_service_treats_already_deleted_google_calendar_event_as_cleaned_up(monkeypatch, temp_db):
+    """A stale Google Calendar event id should be treated as already removed, not as a fatal error."""
+
+    class StubCalendarClient:
+        def delete_event(self, event_id):
+            assert event_id == "google_event_1"
+            return {"deleted": False, "already_deleted": True}
+
+    monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
+    monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
+    monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Updated Mirror Talk conversation",
+            "scheduled_for": "2099-03-31 18:30:00",
+            "timezone": "Europe/Berlin",
+            "calendar_event_id": "google_event_1",
+            "calendar_source": "google_calendar",
+            "confirmation_status": "pending",
+        }
+    )
+    monkeypatch.setattr(service, "_build_google_calendar_client", lambda: StubCalendarClient())
+
+    removed = service.remove_interview_from_google_calendar(interview["id"])
+
+    assert removed["status"] == "cancelled"
+    assert removed["calendar_event_id"] == ""
+    assert removed["calendar_source"] == ""
+    assert "already gone" in removed["notes"].lower()
 
 
 def test_google_calendar_sync_recognizes_soulful_podcast_event_markers():

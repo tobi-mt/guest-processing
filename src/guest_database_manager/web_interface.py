@@ -2606,20 +2606,31 @@ class GuestWebService:
         if client is None:
             raise WebInterfaceError("Google Calendar sync is not configured on the server.")
 
+        removal_result = {"deleted": True, "already_deleted": False}
         try:
-            client.delete_event(event_id)
+            client_result = client.delete_event(event_id)
+            if isinstance(client_result, dict):
+                removal_result = client_result
         except GoogleCalendarSyncError as exc:
             raise WebInterfaceError(str(exc)) from exc
 
+        removal_note = (
+            "Google Calendar event was already gone, so the local interview was unlinked."
+            if removal_result.get("already_deleted")
+            else "Removed from Google Calendar."
+        )
         updates = {
             "status": "cancelled",
             "confirmation_status": "declined" if _normalize_text(interview.get("confirmation_status")).lower() == "pending" else interview.get("confirmation_status"),
             "last_synced_at": datetime.now().astimezone().isoformat(),
+            "calendar_event_id": "",
+            "calendar_source": "",
+            "event_updated_at": "",
             "notes": "\n".join(
                 part
                 for part in [
                     _normalize_text(interview.get("notes")),
-                    "Removed from Google Calendar.",
+                    removal_note,
                 ]
                 if part
             ),
