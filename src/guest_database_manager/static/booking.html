@@ -60,7 +60,6 @@
           <div class="premium-badges" aria-label="Booking reassurance">
             <span class="premium-badge">Guest-specific secure link</span>
             <span class="premium-badge">Confirmation email included</span>
-            <span class="premium-badge warm">Thoughtful, human workflow</span>
           </div>
         </div>
 
@@ -81,9 +80,23 @@
           <div class="booking-main-card">
             <div id="booking-existing" class="booking-existing hidden"></div>
             <div id="booking-meta" class="booking-meta hidden"></div>
+            <section id="booking-availability" class="availability-panel hidden">
+              <div class="availability-header">
+                <div>
+                  <p class="step-badge">Step 1</p>
+                  <h3>Select one of the available dates</h3>
+                  <p class="availability-copy">Choose the slot that works best for you. The booking button will activate as soon as you pick one.</p>
+                </div>
+              </div>
+              <div id="booking-selected-slot" class="selected-slot-card hidden"></div>
+            </section>
             <div id="booking-slots" class="slot-grid"></div>
 
             <form id="booking-form" class="booking-form hidden">
+              <div class="form-step-heading">
+                <p class="step-badge">Step 2</p>
+                <h3>Confirm your booking details</h3>
+              </div>
               <input type="hidden" name="scheduled_for" />
               <label>
                 Your timezone

@@ -287,6 +287,54 @@ body {
   background: rgba(125, 90, 59, 0.07);
 }
 
+.availability-panel {
+  margin-bottom: 18px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(15, 93, 79, 0.07);
+  border: 1px solid rgba(15, 93, 79, 0.1);
+}
+
+.availability-header h3,
+.form-step-heading h3 {
+  margin: 0 0 8px;
+}
+
+.availability-copy {
+  margin: 0;
+  color: var(--muted);
+}
+
+.step-badge {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(15, 93, 79, 0.12);
+}
+
+.selected-slot-card {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #fffdf9;
+  border: 1px solid rgba(125, 90, 59, 0.14);
+}
+
+.selected-slot-card strong,
+.selected-slot-card span {
+  display: block;
+}
+
+.selected-slot-card p {
+  margin: 6px 0;
+}
+
 .booking-existing strong {
   display: block;
   margin-bottom: 8px;
@@ -330,9 +378,29 @@ body {
   color: var(--muted);
 }
 
+.empty-slot-state {
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(125, 90, 59, 0.07);
+}
+
+.empty-slot-state strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.empty-slot-state p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .booking-form {
   display: grid;
   gap: 16px;
+}
+
+.form-step-heading {
+  margin-bottom: 2px;
 }
 
 .booking-form label {

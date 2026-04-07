@@ -8,6 +8,8 @@ const bookingSubmit = document.getElementById("booking-submit");
 const bookingTitle = document.getElementById("booking-title");
 const panelHeading = document.getElementById("panel-heading");
 const bookingInvitation = document.getElementById("booking-invitation");
+const bookingAvailability = document.getElementById("booking-availability");
+const bookingSelectedSlot = document.getElementById("booking-selected-slot");
 
 let bookingToken = "";
 let selectedSlot = null;
@@ -21,6 +23,8 @@ function showInvitationState() {
   bookingInvitation.classList.remove("hidden");
   bookingMeta.classList.add("hidden");
   bookingExisting.classList.add("hidden");
+  bookingAvailability.classList.add("hidden");
+  bookingSelectedSlot.classList.add("hidden");
   bookingSlots.innerHTML = "";
   bookingForm.classList.add("hidden");
   bookingTitle.textContent = "Your Mirror Talk invitation link opens here";
@@ -51,6 +55,24 @@ function formatSlot(dateText) {
   });
 }
 
+function formatSlotDay(dateText) {
+  const date = new Date(dateText);
+  return date.toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function formatSlotTime(dateText) {
+  const date = new Date(dateText);
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function renderExistingBooking(existing) {
   if (!existing) {
     bookingExisting.classList.add("hidden");
@@ -68,8 +90,19 @@ function renderExistingBooking(existing) {
 
 function renderSlots(slots, timezone) {
   bookingSlots.innerHTML = "";
+  selectedSlot = null;
+  bookingSubmit.disabled = true;
+  bookingSubmit.textContent = "Book This Slot";
+  bookingSelectedSlot.classList.add("hidden");
+  bookingSelectedSlot.innerHTML = "";
+  bookingAvailability.classList.remove("hidden");
   if (!slots.length) {
-    bookingSlots.innerHTML = "<p>No booking slots are available right now. Please check back later or reply to the acceptance email.</p>";
+    bookingSlots.innerHTML = `
+      <div class="empty-slot-state">
+        <strong>No booking slots are available right now.</strong>
+        <p>Please reply to the Mirror Talk email and we’ll help you find a suitable time personally.</p>
+      </div>
+    `;
     bookingForm.classList.add("hidden");
     return;
   }
@@ -79,14 +112,20 @@ function renderSlots(slots, timezone) {
     button.type = "button";
     button.className = "slot-card";
     button.innerHTML = `
-      <strong>${formatSlot(slot.start)}</strong>
-      <span>${timezone}</span>
+      <strong>${formatSlotDay(slot.start)}</strong>
+      <span>${formatSlotTime(slot.start)} · ${timezone}</span>
     `;
     button.addEventListener("click", () => {
       selectedSlot = slot;
       bookingForm.elements.scheduled_for.value = slot.start;
       bookingSubmit.disabled = false;
       bookingSubmit.textContent = "Book This Slot";
+      bookingSelectedSlot.classList.remove("hidden");
+      bookingSelectedSlot.innerHTML = `
+        <strong>Selected slot</strong>
+        <p>${formatSlot(slot.start)}</p>
+        <span>${timezone}</span>
+      `;
       bookingSlots.querySelectorAll(".slot-card").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
     });
@@ -123,6 +162,7 @@ async function loadBookingPage() {
     `;
     renderExistingBooking(context.existing_booking);
     if (context.existing_booking) {
+      bookingAvailability.classList.add("hidden");
       bookingSlots.innerHTML = "";
       bookingForm.classList.add("hidden");
     } else {
@@ -165,8 +205,10 @@ bookingForm.addEventListener("submit", async (event) => {
       body: JSON.stringify(payload),
     });
     renderExistingBooking(result.interview);
+    bookingAvailability.classList.add("hidden");
     bookingSlots.innerHTML = "";
     bookingForm.classList.add("hidden");
+    bookingSelectedSlot.classList.add("hidden");
     panelHeading.textContent = "Your Mirror Talk conversation is now confirmed";
     setMessage("Your Mirror Talk conversation is booked. We’ve also sent you a confirmation email with the next steps.", "success");
   } catch (error) {
