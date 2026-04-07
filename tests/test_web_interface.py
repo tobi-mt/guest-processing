@@ -2418,7 +2418,7 @@ def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):
     attachment_text = bytes(attachment["content"]).decode("utf-8")
     assert "BEGIN:VCALENDAR" in attachment_text
     assert "METHOD:REQUEST" in attachment_text
-    assert "SUMMARY:Mirror Talk conversation with Jordan Rivers" in attachment_text
+    assert "SUMMARY:Soulful Conversation with Jordan Rivers" in attachment_text
     assert "https://riverside.fm/studio/example" in attachment_text
 
 
@@ -2474,7 +2474,7 @@ def test_google_calendar_event_creation_requests_attendee_updates(monkeypatch):
         {
             "guest_name": "Jordan Rivers",
             "guest_email": "jordan@example.com",
-            "title": "Mirror Talk conversation with Jordan Rivers",
+            "title": "Soulful Conversation with Jordan Rivers",
             "scheduled_for": "2026-04-09T17:00:00+00:00",
             "timezone": "Europe/Berlin",
             "join_url": "https://riverside.fm/studio/example",

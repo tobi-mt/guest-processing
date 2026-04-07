@@ -228,7 +228,7 @@ Mirror Talk Podcast"""
     ) -> Dict[str, str]:
         """Build the weekly confirmation reminder template for an upcoming interview."""
         localized = self._localize_datetime(scheduled_for, timezone_label)
-        subject = f"Please confirm our Mirror Talk conversation on {localized.strftime('%A %d %B')}"
+        subject = f"Please confirm our Soulful Conversation on {localized.strftime('%A %d %B')}"
         formatted_date = localized.strftime("%A %d %B, %Y")
         formatted_time = localized.strftime("%H:%M")
         join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
@@ -237,7 +237,7 @@ Mirror Talk Podcast"""
 
 I hope you are doing well.
 
-I’m writing to gently confirm our upcoming Mirror Talk podcast conversation, scheduled for {formatted_date} at {formatted_time} {timezone_label}.
+I’m writing to gently confirm our upcoming Soulful Conversation on Mirror Talk, scheduled for {formatted_date} at {formatted_time} {timezone_label}.
 
 When you have a moment, please reply to this email to confirm that the time still works for you.
 
@@ -268,14 +268,14 @@ https://mirrortalkpodcast.com/ask-mirror-talk/
     ) -> Dict[str, str]:
         """Build the initial booking confirmation email for a newly scheduled interview."""
         localized = self._localize_datetime(scheduled_for, timezone_label)
-        subject = f"Your Mirror Talk conversation is booked for {localized.strftime('%A %d %B')}"
+        subject = f"Your Soulful Conversation is booked for {localized.strftime('%A %d %B')}"
         formatted_date = localized.strftime("%A %d %B, %Y")
         formatted_time = localized.strftime("%H:%M")
         join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
 
         body = f"""Hi {guest_name},
 
-Thank you for booking your Mirror Talk podcast conversation.
+Thank you for booking your Soulful Conversation on Mirror Talk.
 
 Your interview is now scheduled for {formatted_date} at {formatted_time} {timezone_label}.
 
@@ -307,7 +307,7 @@ Mirror Talk Podcast"""
 
     def get_post_interview_appreciation_template(self, guest_name: str) -> Dict[str, str]:
         """Build a refined thank-you email for guests after recording."""
-        subject = "Thank you for your Mirror Talk conversation"
+        subject = "Thank you for your Soulful Conversation"
 
         body = f"""Hi {guest_name},
 
@@ -415,11 +415,11 @@ Mirror Talk Podcast
         end_utc = start_utc + timedelta(minutes=duration_minutes)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         uid = f"mirror-talk-{int(start_utc.timestamp())}@mirrortalkpodcast.com"
-        summary = f"Mirror Talk conversation with {guest_name}"
+        summary = f"Soulful Conversation with {guest_name}"
         description = "\\n".join(
             part
             for part in [
-                f"Your Mirror Talk conversation with {guest_name}.",
+                f"Your Soulful Conversation with {guest_name}.",
                 f"Timezone: {timezone_label}" if timezone_label else "",
                 f"Join link: {join_url}" if join_url else "",
             ]

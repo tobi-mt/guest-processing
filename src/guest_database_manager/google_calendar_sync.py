@@ -211,7 +211,7 @@ class GoogleCalendarSyncClient:
         new_end = new_start + duration
 
         payload: Dict[str, Any] = {
-            "summary": (interview.get("title") or existing_event.get("summary") or f"Mirror Talk conversation with {interview.get('guest_name', 'Guest')}").strip(),
+            "summary": (interview.get("title") or existing_event.get("summary") or f"Soulful Conversation with {interview.get('guest_name', 'Guest')}").strip(),
             "location": (interview.get("join_url") or existing_event.get("location") or "").strip(),
             "start": {
                 "dateTime": new_start.isoformat(),
@@ -257,7 +257,7 @@ class GoogleCalendarSyncClient:
         description = "\n".join(
             part
             for part in [
-                f"Mirror Talk conversation with {guest_name}",
+                f"Soulful Conversation with {guest_name}",
                 "",
                 "Booked through the Mirror Talk guest booking flow.",
                 f"Join link: {join_url}" if join_url else "",
@@ -266,7 +266,7 @@ class GoogleCalendarSyncClient:
         )
 
         payload: Dict[str, Any] = {
-            "summary": (interview.get("title") or f"Mirror Talk conversation with {guest_name}").strip(),
+            "summary": (interview.get("title") or f"Soulful Conversation with {guest_name}").strip(),
             "location": join_url,
             "description": description,
             "start": {
@@ -356,7 +356,7 @@ class GoogleCalendarSyncClient:
             "calendar_source": "google_calendar",
             "event_updated_at": event.get("updated", ""),
             "last_synced_at": datetime.now(timezone.utc).isoformat(),
-            "title": event.get("summary", "") or f"Mirror Talk conversation with {guest_name}",
+            "title": event.get("summary", "") or f"Soulful Conversation with {guest_name}",
             "scheduled_for": scheduled_for,
             "timezone": timezone_label,
             "join_url": self._extract_join_url(event),

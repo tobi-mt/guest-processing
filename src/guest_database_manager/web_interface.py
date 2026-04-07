@@ -1884,7 +1884,7 @@ class GuestWebService:
                 "guest_id": guest.get("id"),
                 "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")),
                 "guest_email": _normalize_text(guest.get("email")),
-                "title": f"Mirror Talk conversation with {_normalize_text(guest.get('full_name') or guest.get('name') or 'Guest')}",
+                "title": f"Soulful Conversation with {_normalize_text(guest.get('full_name') or guest.get('name') or 'Guest')}",
                 "scheduled_for": normalized_scheduled_for,
                 "timezone": timezone_label,
                 "join_url": self._booking_join_url(),
@@ -3198,7 +3198,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(
                 HTTPStatus.CREATED,
                 {
-                    "message": "Your Mirror Talk conversation has been booked.",
+                    "message": "Your Soulful Conversation has been booked.",
                     "interview": interview,
                 },
             )

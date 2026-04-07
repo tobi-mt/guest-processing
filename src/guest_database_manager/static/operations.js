@@ -1052,7 +1052,7 @@ function renderReminderCandidates(interviews, totalCount) {
     card.className = "operations-card";
     card.innerHTML = `
       <h3>${interview.guest_name || "Unnamed guest"}</h3>
-      <p>${interview.title || "Mirror Talk conversation"}</p>
+      <p>${interview.title || "Soulful Conversation"}</p>
       <div class="operations-meta">
         <span>Scheduled: ${interview.scheduled_for_display || formatDateTime(interview.scheduled_for)}</span>
         <span>Email: ${renderLinkedValue(interview.guest_email)}</span>

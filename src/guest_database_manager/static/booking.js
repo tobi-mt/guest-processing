@@ -299,7 +299,7 @@ async function loadBookingPage() {
     ]);
     bookingTitle.textContent = `${context.guest_name}, choose your conversation slot`;
     panelHeading.textContent = "A calm and clear booking flow for your Mirror Talk interview";
-    bookingSubtitle.textContent = `${context.guest_name}, choose the best time for your Mirror Talk conversation.`;
+    bookingSubtitle.textContent = `${context.guest_name}, choose the best time for your Soulful Conversation.`;
     bookingMeta.classList.remove("hidden");
     bookingMeta.innerHTML = `
       <p><strong>Booking timezone:</strong> ${availability.booking_timezone}</p>
@@ -372,8 +372,8 @@ async function submitBooking() {
     bookingTimes.innerHTML = "";
     bookingForm.classList.add("hidden");
     bookingSelectedSlot.classList.add("hidden");
-    panelHeading.textContent = "Your Mirror Talk conversation is now confirmed";
-    setMessage("Your Mirror Talk conversation is booked. We’ve also sent you a confirmation email with the next steps.", "success");
+    panelHeading.textContent = "Your Soulful Conversation is now confirmed";
+    setMessage("Your Soulful Conversation is booked. We’ve also sent you a confirmation email with the next steps.", "success");
   } catch (error) {
     bookingSubmit.disabled = false;
     bookingSubmit.textContent = "Book This Slot";
