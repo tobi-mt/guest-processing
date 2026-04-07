@@ -2276,6 +2276,52 @@ def test_public_booking_slots_include_month_window_metadata(monkeypatch, temp_db
     assert availability["booking_window"]["days_ahead"] >= 120
 
 
+def test_booking_slot_buffer_only_blocks_nearby_conflicts(monkeypatch, temp_db):
+    """Availability should only be blocked when an event overlaps the configured slot plus buffer."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: None)
+    monkeypatch.setattr(GuestWebService, "_booking_days_ahead", staticmethod(lambda: 1))
+    monkeypatch.setattr(GuestWebService, "_booking_min_notice_hours", staticmethod(lambda: 0))
+    monkeypatch.setattr(GuestWebService, "_booking_slot_weekdays", staticmethod(lambda: tuple(range(7))))
+    monkeypatch.setattr(GuestWebService, "_booking_slot_times", staticmethod(lambda: ("10:00", "17:00")))
+    monkeypatch.setattr(GuestWebService, "_booking_buffer_minutes", staticmethod(lambda: 15))
+
+    tz_name = service._booking_timezone_name()
+    tz_obj = ZoneInfo(tz_name)
+    candidate_day = (datetime.now(tz_obj) + timedelta(days=1)).date()
+    blocked_start = datetime(candidate_day.year, candidate_day.month, candidate_day.day, 9, 50, tzinfo=tz_obj)
+    safe_start = datetime(candidate_day.year, candidate_day.month, candidate_day.day, 13, 0, tzinfo=tz_obj)
+
+    service.create_interview(
+        {
+            "guest_name": "Already Busy",
+            "guest_email": "busy@example.com",
+            "title": "Busy slot",
+            "scheduled_for": blocked_start.astimezone(timezone.utc).isoformat(),
+            "timezone": tz_name,
+        }
+    )
+    service.create_interview(
+        {
+            "guest_name": "Later Meeting",
+            "guest_email": "later@example.com",
+            "title": "Unrelated event",
+            "scheduled_for": safe_start.astimezone(timezone.utc).isoformat(),
+            "timezone": tz_name,
+        }
+    )
+
+    availability = service.list_public_booking_slots(token)
+    slot_times = {datetime.fromisoformat(item["start"].replace("Z", "+00:00")).astimezone(tz_obj).strftime("%H:%M") for item in availability["slots"]}
+
+    assert "10:00" not in slot_times
+    assert "17:00" in slot_times
+
+
 def test_public_booking_creates_interview_calendar_event_and_confirmation(monkeypatch, temp_db):
     """Booking a public slot should create the interview, attach the calendar event, and send confirmation."""
     service = GuestWebService(temp_db.db_path)

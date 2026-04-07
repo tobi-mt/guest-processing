@@ -82,6 +82,7 @@ BOOKING_SLOT_WEEKDAYS_ENV_VAR = "MIRROR_TALK_BOOKING_SLOT_WEEKDAYS"
 BOOKING_SLOT_TIMES_ENV_VAR = "MIRROR_TALK_BOOKING_SLOT_TIMES"
 BOOKING_DAYS_AHEAD_ENV_VAR = "MIRROR_TALK_BOOKING_DAYS_AHEAD"
 BOOKING_MONTHS_AHEAD_ENV_VAR = "MIRROR_TALK_BOOKING_MONTHS_AHEAD"
+BOOKING_BUFFER_MINUTES_ENV_VAR = "MIRROR_TALK_BOOKING_BUFFER_MINUTES"
 BOOKING_MIN_NOTICE_HOURS_ENV_VAR = "MIRROR_TALK_BOOKING_MIN_NOTICE_HOURS"
 BOOKING_DURATION_MINUTES_ENV_VAR = "MIRROR_TALK_BOOKING_DURATION_MINUTES"
 BOOKING_JOIN_URL_ENV_VAR = "MIRROR_TALK_BOOKING_JOIN_URL"
@@ -92,6 +93,7 @@ BOOKING_DEFAULT_WEEKDAYS = ("TU", "WE", "TH")
 BOOKING_DEFAULT_TIMES = ("17:00", "19:00")
 BOOKING_DEFAULT_DAYS_AHEAD = 45
 BOOKING_DEFAULT_MONTHS_AHEAD = 3
+BOOKING_DEFAULT_BUFFER_MINUTES = 15
 BOOKING_DEFAULT_MIN_NOTICE_HOURS = 24
 BOOKING_DEFAULT_DURATION_MINUTES = 60
 FORM_FIELDS = {
@@ -1768,8 +1770,16 @@ class GuestWebService:
         return busy
 
     @staticmethod
-    def _slot_overlaps_busy(slot_start: datetime, slot_end: datetime, busy_windows: list[tuple[datetime, datetime]]) -> bool:
+    def _slot_overlaps_busy(
+        slot_start: datetime,
+        slot_end: datetime,
+        busy_windows: list[tuple[datetime, datetime]],
+        *,
+        buffer_minutes: int = BOOKING_DEFAULT_BUFFER_MINUTES,
+    ) -> bool:
         """Return True when a slot overlaps any busy window."""
+        slot_start = slot_start - timedelta(minutes=max(0, buffer_minutes))
+        slot_end = slot_end + timedelta(minutes=max(0, buffer_minutes))
         for busy_start, busy_end in busy_windows:
             if slot_start < busy_end and slot_end > busy_start:
                 return True
@@ -1821,7 +1831,12 @@ class GuestWebService:
                 if slot_start.astimezone(timezone.utc) < min_notice:
                     continue
                 slot_end = slot_start + duration
-                if self._slot_overlaps_busy(slot_start.astimezone(timezone.utc), slot_end.astimezone(timezone.utc), busy_windows):
+                if self._slot_overlaps_busy(
+                    slot_start.astimezone(timezone.utc),
+                    slot_end.astimezone(timezone.utc),
+                    busy_windows,
+                    buffer_minutes=self._booking_buffer_minutes(),
+                ):
                     continue
                 slots.append(
                     {
@@ -2839,6 +2854,14 @@ class GuestWebService:
             return max(2, min(168, int(raw)))
         except ValueError:
             return BOOKING_DEFAULT_MIN_NOTICE_HOURS
+
+    @staticmethod
+    def _booking_buffer_minutes() -> int:
+        raw = os.environ.get(BOOKING_BUFFER_MINUTES_ENV_VAR, str(BOOKING_DEFAULT_BUFFER_MINUTES)).strip() or str(BOOKING_DEFAULT_BUFFER_MINUTES)
+        try:
+            return max(0, min(120, int(raw)))
+        except ValueError:
+            return BOOKING_DEFAULT_BUFFER_MINUTES
 
     @staticmethod
     def _booking_duration_minutes() -> int:
