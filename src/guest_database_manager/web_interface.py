@@ -380,10 +380,75 @@ def _website_host_for_identity(value: Any) -> str:
     return re.sub(r"^www\.", "", host)
 
 
+def _parse_original_data(value: Any) -> Dict[str, Any]:
+    """Parse stored original_data JSON into a dictionary."""
+    if isinstance(value, dict):
+        return value
+    text = _normalize_text(value)
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _build_submission_meta(guest: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Build a structured submission summary for dashboard review."""
+    source_name = _normalize_text(guest.get("original_file_name"))
+    original_data = _parse_original_data(guest.get("original_data"))
+
+    if source_name == AGENCY_REFERRAL_SOURCE_NAME:
+        agency_name = _normalize_text(original_data.get("agency_name"))
+        agency_email = _normalize_text(original_data.get("agency_email"))
+        guest_name = _normalize_text(
+            original_data.get("represented_guest_name") or guest.get("full_name")
+        )
+        guest_email = _normalize_text(
+            original_data.get("represented_guest_email") or guest.get("email")
+        )
+        return {
+            "mode": "agency_referral",
+            "label": "Agency referral",
+            "guest_name": guest_name,
+            "guest_email": guest_email,
+            "agency_name": agency_name,
+            "agency_email": agency_email,
+            "personal_application_required": True,
+            "personal_application_status": (
+                "Awaiting the guest's own application."
+                if source_name == AGENCY_REFERRAL_SOURCE_NAME
+                else ""
+            ),
+        }
+
+    application_role = _normalize_text(original_data.get("application_role")).lower()
+    self_attestation = _normalize_text(original_data.get("self_attestation")).lower()
+    if source_name == INTAKE_SOURCE_NAME or application_role == "self":
+        return {
+            "mode": "self_application",
+            "label": "Self application",
+            "guest_name": _normalize_text(guest.get("full_name")),
+            "guest_email": _normalize_text(guest.get("email")),
+            "agency_name": "",
+            "agency_email": "",
+            "personal_application_required": True,
+            "personal_application_status": (
+                "Confirmed by the guest."
+                if self_attestation == "yes"
+                else "Submitted directly by the guest."
+            ),
+        }
+
+    return None
+
+
 def serialize_guest(guest: Dict[str, Any]) -> Dict[str, Any]:
     """Convert database rows into frontend-friendly JSON."""
     serialized = dict(guest)
     serialized["is_processed"] = bool(serialized.get("is_processed"))
+    serialized["submission_meta"] = _build_submission_meta(serialized)
     guest_research = serialized.get("guest_research")
     if isinstance(guest_research, str) and guest_research.strip():
         try:
@@ -1422,6 +1487,11 @@ class GuestWebService:
         )
         guest = self.create_guest(
             {
+                "application_role": "on_behalf",
+                "agency_name": agency_name,
+                "agency_email": agency_email,
+                "represented_guest_name": guest_name,
+                "represented_guest_email": guest_email,
                 "full_name": guest_name,
                 "email": guest_email,
                 "additional_info": referral_note,

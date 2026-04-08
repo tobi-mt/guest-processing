@@ -1053,6 +1053,87 @@ def test_agency_referral_sends_personal_application_link(monkeypatch, temp_db):
     assert "email=amar%40example.com" in sent["intake_url"]
 
 
+def test_list_guests_exposes_agency_submission_meta(monkeypatch, temp_db):
+    """Dashboard payload should surface structured agency referral context."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def send_personal_application_request_email(self, guest_name, to_email, intake_url, agency_name=""):
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    service.create_intake_submission(
+        {
+            "application_role": "on_behalf",
+            "agency_name": "Bright Talent Agency",
+            "agency_email": "hello@brighttalent.example",
+            "represented_guest_name": "Amar Dhall",
+            "represented_guest_email": "amar@example.com",
+        }
+    )
+
+    payload = service.list_guests()
+    guest = next(item for item in payload["guests"] if item["full_name"] == "Amar Dhall")
+
+    assert guest["submission_meta"] == {
+        "mode": "agency_referral",
+        "label": "Agency referral",
+        "guest_name": "Amar Dhall",
+        "guest_email": "amar@example.com",
+        "agency_name": "Bright Talent Agency",
+        "agency_email": "hello@brighttalent.example",
+        "personal_application_required": True,
+        "personal_application_status": "Awaiting the guest's own application.",
+    }
+
+
+def test_list_guests_exposes_self_submission_meta(temp_db):
+    """Dashboard payload should show direct self-application context."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_intake_submission(
+        {
+            "application_role": "self",
+            "self_attestation": "yes",
+            "full_name": "Amara Stone",
+            "email": "amara@example.com",
+            "profession": "Author",
+            "background": "I help people find hope and clarity after major life transitions and hard seasons.",
+            "passionate_topics": "Healing",
+            "message": "Hope",
+            "experience": "Yes - I have joined a few meaningful podcast conversations before.",
+            "additional_info": "I would love to encourage your audience with honest, grounded hope.",
+            "social_handles": "Instagram: @amarastone",
+        }
+    )
+
+    payload = service.list_guests()
+    guest = next(item for item in payload["guests"] if item["full_name"] == "Amara Stone")
+
+    assert guest["submission_meta"] == {
+        "mode": "self_application",
+        "label": "Self application",
+        "guest_name": "Amara Stone",
+        "guest_email": "amara@example.com",
+        "agency_name": "",
+        "agency_email": "",
+        "personal_application_required": True,
+        "personal_application_status": "Confirmed by the guest.",
+    }
+
+
 def test_list_guests_flags_shared_identity_patterns(temp_db):
     """Dashboard review assist should flag reused email and shared website domains across different names."""
     service = GuestWebService(temp_db.db_path)

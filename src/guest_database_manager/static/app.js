@@ -389,6 +389,23 @@ function renderSocialHandlesMarkup(rawValue) {
   `;
 }
 
+function renderSubmissionMetaMarkup(meta) {
+  if (!meta?.mode) {
+    return "";
+  }
+
+  const details = [`Submission Mode: ${meta.label || meta.mode}`];
+  if (meta.agency_name) details.push(`Agency: ${meta.agency_name}`);
+  if (meta.agency_email) details.push(`Agency Email: ${meta.agency_email}`);
+  if (meta.personal_application_status) details.push(`Personal Application: ${meta.personal_application_status}`);
+
+  return `
+    <div class="submission-detail-list">
+      ${details.map((detail) => `<span>${linkifyText(detail)}</span>`).join("")}
+    </div>
+  `;
+}
+
 function renderPromotionProfile(guest) {
   const profile = guest.promotion_profile;
   if (!profile) {
@@ -889,6 +906,7 @@ function renderGuests(payload) {
     if (socialHandles) {
       node.querySelector(".guest-details").insertAdjacentHTML("beforeend", renderSocialHandlesMarkup(socialHandles));
     }
+    node.querySelector(".guest-details").insertAdjacentHTML("beforeend", renderSubmissionMetaMarkup(guest.submission_meta));
     node.querySelector(".guest-details").insertAdjacentHTML(
       "beforeend",
       `
