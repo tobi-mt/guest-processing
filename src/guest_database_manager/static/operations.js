@@ -666,10 +666,14 @@ function renderInterviews(interviews, totalCount) {
       ? `
         <button type="button" class="ghost-button" data-interview-action="preview-reminder">Preview Reminder</button>
         <button type="button" class="primary-button" data-interview-action="send-reminder">Send Reminder</button>
+        <button type="button" class="ghost-button" data-interview-action="preview-cancellation">Preview Cancellation</button>
+        <button type="button" class="secondary-button" data-interview-action="send-cancellation">Cancel & Email</button>
       `
       : `
         <button type="button" class="ghost-button" data-interview-action="preview-reminder" disabled>Preview Reminder</button>
         <button type="button" class="primary-button" data-interview-action="send-reminder" disabled>Send Reminder</button>
+        <button type="button" class="ghost-button" data-interview-action="preview-cancellation" disabled>Preview Cancellation</button>
+        <button type="button" class="secondary-button" data-interview-action="send-cancellation" disabled>Cancel & Email</button>
       `;
     card.innerHTML = `
       <h3>${interview.guest_name || "Unnamed guest"}</h3>
@@ -711,6 +715,8 @@ function renderInterviews(interviews, totalCount) {
     const markPendingButton = card.querySelector("[data-interview-action='mark-pending']");
     const previewReminderButton = card.querySelector("[data-interview-action='preview-reminder']");
     const sendReminderButton = card.querySelector("[data-interview-action='send-reminder']");
+    const previewCancellationButton = card.querySelector("[data-interview-action='preview-cancellation']");
+    const sendCancellationButton = card.querySelector("[data-interview-action='send-cancellation']");
     const markReminderUnsentButton = card.querySelector("[data-interview-action='mark-reminder-unsent']");
     const markCancelledButton = card.querySelector("[data-interview-action='mark-cancelled']");
     const calendarPushButton = card.querySelector("[data-calendar-action='push']");
@@ -904,6 +910,72 @@ function renderInterviews(interviews, totalCount) {
           setMessage(interviewMessage, error.message, "error");
           sendReminderButton.disabled = false;
           sendReminderButton.textContent = "Send Reminder";
+        }
+      });
+    }
+
+    if (previewCancellationButton) {
+      previewCancellationButton.addEventListener("click", async () => {
+        if (!interview.guest_email) {
+          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+
+        previewCancellationButton.disabled = true;
+        previewCancellationButton.textContent = "Loading...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Loading cancellation preview for ${interview.guest_name || "guest"}...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        try {
+          const preview = await fetchJSON(`/api/interviews/${interview.id}/cancellation-template`);
+          reminderPreviewNode.classList.remove("hidden");
+          reminderPreviewNode.innerHTML = `
+            <h4>${preview.subject}</h4>
+            <p>To: ${renderLinkedValue(interview.guest_email)}</p>
+            <pre>${preview.body}</pre>
+          `;
+          activeInterviewActionFeedback = { id: interview.id, text: `Cancellation preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+          setMessage(interviewMessage, error.message, "error");
+        } finally {
+          previewCancellationButton.disabled = false;
+          previewCancellationButton.textContent = "Preview Cancellation";
+        }
+      });
+    }
+
+    if (sendCancellationButton) {
+      sendCancellationButton.addEventListener("click", async () => {
+        if (!interview.guest_email) {
+          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+        if (!confirmCriticalAction(`Send the cancellation email to ${interview.guest_name || interview.guest_email || "this guest"} and mark this interview cancelled?`)) {
+          return;
+        }
+
+        sendCancellationButton.disabled = true;
+        sendCancellationButton.textContent = "Sending...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Sending cancellation to ${interview.guest_name || interview.guest_email}...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        try {
+          await fetchJSON(`/api/interviews/${interview.id}/send-cancellation`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          reminderPreviewNode.classList.remove("hidden");
+          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Cancellation email sent to ${interview.guest_name || interview.guest_email}. Interview marked cancelled.</p>`;
+          activeInterviewActionFeedback = { id: interview.id, text: `Cancellation email sent to ${interview.guest_name || interview.guest_email}.`, tone: "success" };
+          setMessage(interviewMessage, `Cancellation email sent to ${interview.guest_name || interview.guest_email}. Interview marked cancelled.`, "success");
+          await loadOperations();
+        } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          renderOperations();
+          setMessage(interviewMessage, error.message, "error");
+          sendCancellationButton.disabled = false;
+          sendCancellationButton.textContent = "Cancel & Email";
         }
       });
     }

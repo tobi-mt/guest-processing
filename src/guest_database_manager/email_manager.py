@@ -259,6 +259,34 @@ https://mirrortalkpodcast.com/ask-mirror-talk/
 
         return {"subject": subject, "body": body}
 
+    def get_interview_cancellation_template(
+        self,
+        guest_name: str,
+        scheduled_for: datetime,
+        timezone_label: str,
+    ) -> Dict[str, str]:
+        """Build a thoughtful cancellation email for an interview that will not go ahead as planned."""
+        localized = self._localize_datetime(scheduled_for, timezone_label)
+        subject = f"An update about our Soulful Conversation on {localized.strftime('%A %d %B')}"
+        formatted_date = localized.strftime("%A %d %B, %Y")
+        formatted_time = localized.strftime("%H:%M")
+
+        body = f"""Hi {guest_name},
+
+I wanted to reach out personally with an update about our Soulful Conversation on Mirror Talk, originally scheduled for {formatted_date} at {formatted_time} {timezone_label}.
+
+Unfortunately, we need to cancel this booking on our side.
+
+I’m sorry for the inconvenience, and I truly appreciate your time and willingness to join the podcast.
+
+If you would still be open to the conversation at a later date, please feel free to reply to this email and we’ll gladly find a new time together.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
+
+        return {"subject": subject, "body": body}
+
     def get_booking_confirmation_template(
         self,
         guest_name: str,

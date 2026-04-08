@@ -2481,6 +2481,31 @@ class GuestWebService:
             "body": template["body"],
         }
 
+    def preview_interview_cancellation(self, interview_id: int) -> Dict[str, Any]:
+        """Return the cancellation email template for an interview."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+
+        scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+        if not scheduled_for:
+            raise WebInterfaceError("Interview date is invalid or missing.")
+
+        guest_name = _normalize_text(interview.get("guest_name")) or "Guest"
+        timezone_label = _normalize_text(interview.get("timezone")) or "CET"
+
+        email_manager = self._build_email_manager()
+        template = email_manager.get_interview_cancellation_template(
+            guest_name=guest_name,
+            scheduled_for=scheduled_for,
+            timezone_label=timezone_label,
+        )
+        return {
+            "interview": self._serialize_interview_reminder(interview),
+            "subject": template["subject"],
+            "body": template["body"],
+        }
+
     def preview_interview_appreciation(self, interview_id: int) -> Dict[str, Any]:
         """Return the post-interview appreciation email template."""
         interview = self.database.get_interview_by_id(interview_id)
@@ -2600,6 +2625,53 @@ class GuestWebService:
         if not refreshed:
             raise WebInterfaceError("Interview not found after appreciation email send.")
         return self._serialize_interview_reminder(refreshed)
+
+    def send_interview_cancellation(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+        """Send a cancellation email for an interview and mark it cancelled."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+
+        guest_email = _normalize_text(interview.get("guest_email"))
+        if not guest_email:
+            raise WebInterfaceError("This interview does not have a guest email.")
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            raise WebInterfaceError("Dashboard email is not configured on the server.")
+
+        preview = self.preview_interview_cancellation(interview_id)
+        resolved_subject = subject.strip() or preview["subject"]
+        resolved_body = body.strip() or preview["body"]
+
+        sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        if not sent:
+            error_detail = (email_manager.last_error or "").strip()
+            if error_detail:
+                raise WebInterfaceError(f"The cancellation email could not be sent: {error_detail}")
+            raise WebInterfaceError("The cancellation email could not be sent.")
+
+        provider = "resend" if email_manager.resend_api_key else "smtp"
+        self.database.log_interview_email(
+            interview_id=interview_id,
+            email_type="interview_cancellation",
+            sent_to=guest_email,
+            status="sent",
+            provider=provider,
+            notes=resolved_subject,
+        )
+        updated = self.update_interview(
+            interview_id,
+            {
+                "status": "cancelled",
+                "confirmation_status": (
+                    interview.get("confirmation_status")
+                    if _normalize_text(interview.get("confirmation_status")).lower() == "confirmed"
+                    else "declined"
+                ),
+            },
+        )
+        return self._serialize_interview_reminder(updated)
 
     def preview_episode_appreciation(self, episode_id: int) -> Dict[str, Any]:
         """Return the post-recording appreciation email template from an episode record."""
@@ -3292,6 +3364,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, payload)
             return
 
+        if request_path.startswith("/api/interviews/") and request_path.endswith("/cancellation-template"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            interview_id = self._extract_record_id(request_path[: -len("/cancellation-template")], "/api/interviews/")
+            if interview_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                return
+
+            try:
+                payload = self.service.preview_interview_cancellation(interview_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
         if request_path.startswith("/api/interviews/") and request_path.endswith("/appreciation-template"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -3770,6 +3861,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 payload = self._read_json_payload()
                 try:
                     interview = self.service.send_interview_reminder(
+                        interview_id,
+                        payload.get("subject", ""),
+                        payload.get("body", ""),
+                    )
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, interview)
+                return
+
+            if self.path.endswith("/send-cancellation"):
+                interview_id = self._extract_record_id(self.path[: -len("/send-cancellation")], "/api/interviews/")
+                if interview_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                    return
+
+                payload = self._read_json_payload()
+                try:
+                    interview = self.service.send_interview_cancellation(
                         interview_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),

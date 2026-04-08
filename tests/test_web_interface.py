@@ -3398,6 +3398,63 @@ def test_web_service_can_preview_and_send_post_interview_appreciation(monkeypatc
     assert sent_interview["reminder_status"] == "not_scheduled"
 
 
+def test_web_service_can_preview_and_send_interview_cancellation(monkeypatch, temp_db):
+    """Cancellation emails should send through the hosted path and mark the interview cancelled."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+            self.last_error = ""
+            self.resend_api_key = "re_test"
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def get_interview_cancellation_template(self, guest_name, scheduled_for, timezone_label):
+            assert guest_name == "Jordan Rivers"
+            assert timezone_label == "CET"
+            return {"subject": "Schedule Update", "body": "We need to cancel this booking."}
+
+        def send_email(self, to_email, subject, body):
+            assert to_email == "jordan@example.com"
+            assert subject == "Schedule Update"
+            assert "cancel" in body.lower()
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Soulful Conversation with Jordan Rivers",
+            "scheduled_for": "2026-03-30 17:00:00",
+            "timezone": "CET",
+            "join_url": "https://riverside.fm/example",
+            "calendar_event_id": "calendar-event-1",
+            "confirmation_status": "confirmed",
+        }
+    )
+
+    preview = service.preview_interview_cancellation(interview["id"])
+    assert preview["subject"] == "Schedule Update"
+
+    sent_interview = service.send_interview_cancellation(interview["id"])
+    assert sent_interview["status"] == "cancelled"
+    assert sent_interview["confirmation_status"] == "confirmed"
+    assert sent_interview["reminder_status"] == "not_scheduled"
+
+    log_entries = temp_db.get_reminder_log(interview["id"])
+    assert any(entry["reminder_type"] == "interview_cancellation" for entry in log_entries)
+
+
 def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp_db):
     """Episode records should support the post-recording appreciation workflow."""
 
