@@ -18,6 +18,7 @@ except ImportError as exc:
     from schema_manager import SchemaManager
 
 logger = logging.getLogger(__name__)
+INTAKE_SOURCE_NAME = "Website Intake Questionnaire"
 
 
 def _normalized_identity(value: Optional[str]) -> str:
@@ -192,6 +193,26 @@ class GuestDatabase:
         existing_guest = self.find_existing_guest(guest_data)
 
         if existing_guest:
+            incoming_source = str(guest_data.get("original_file_name") or "").strip()
+            existing_was_reviewed = bool(existing_guest.get("is_processed")) or bool(existing_guest.get("email_status"))
+            if incoming_source == INTAKE_SOURCE_NAME and existing_was_reviewed:
+                reopened_guest = dict(existing_guest)
+                reopened_guest.update(guest_data)
+                reopened_guest["full_name"] = guest_data.get("full_name") or existing_guest.get("full_name") or existing_guest.get("name")
+                reopened_guest["email"] = (
+                    guest_data.get("email")
+                    if self.mapper.should_update_email(existing_guest.get("email"), guest_data.get("email"))
+                    else existing_guest.get("email")
+                )
+                reopened_guest["is_processed"] = False
+                reopened_guest["email_status"] = None
+                reopened_guest["email_sent_at"] = None
+                reopened_guest["skip_reason"] = None
+                reopened_guest["original_file_name"] = guest_data.get("original_file_name")
+                reopened_guest["original_data"] = guest_data.get("original_data")
+                self.update_guest_by_id(existing_guest["id"], reopened_guest)
+                return existing_guest["id"], "updated"
+
             merged_guest = dict(existing_guest)
             merged_guest.update(guest_data)
             merged_guest["full_name"] = guest_data.get("full_name") or existing_guest.get("full_name") or existing_guest.get("name")

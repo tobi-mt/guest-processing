@@ -924,6 +924,43 @@ def test_web_service_can_create_public_intake_submission(temp_db):
     assert created_guest["email_status"] is None
 
 
+def test_public_intake_submission_does_not_inherit_previous_acceptance(temp_db):
+    """A fresh website intake should not silently inherit accepted status from an older reviewed guest."""
+    service = GuestWebService(temp_db.db_path)
+    original = service.create_guest(
+        {
+            "full_name": "Amar Dhall",
+            "email": "amar@example.com",
+            "website": "https://example.com",
+        }
+    )
+    service.update_guest_status(original["id"], "accepted")
+
+    created_guest = service.create_intake_submission(
+        {
+            "full_name": "Amar Dhall",
+            "email": "amar@example.com",
+            "website": "https://example.com",
+            "profession": "Author",
+            "background": "I help people rebuild their confidence after hard seasons and major life transitions.",
+            "passionate_topics": "Healing",
+            "message": "Hope",
+            "experience": "Yes - I have joined a few meaningful podcast conversations before.",
+            "additional_info": "I would love to share practical hope and emotional resilience with your audience.",
+            "social_handles": "Instagram: @amardhall",
+            "has_social_media": "yes",
+        }
+    )
+
+    assert created_guest["id"] == original["id"]
+    assert created_guest["email_status"] is None
+    assert created_guest["is_processed"] is False
+
+    original_after = service.database.get_guest_by_id(original["id"])
+    assert original_after["email_status"] is None
+    assert original_after["is_processed"] == 0
+
+
 def test_public_intake_submission_sends_confirmation_email_when_configured(monkeypatch, temp_db):
     """Public intake should send a best-effort confirmation email when hosted email is configured."""
 
