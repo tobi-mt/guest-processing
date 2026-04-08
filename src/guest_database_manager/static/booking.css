@@ -279,6 +279,48 @@ body {
   color: var(--muted);
 }
 
+.connection-panel,
+.charity-note {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.52);
+  border: 1px solid rgba(71, 53, 34, 0.08);
+}
+
+.connection-panel strong,
+.charity-note strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.connection-links {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.connection-links a,
+.charity-note a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.connection-links a:hover,
+.charity-note a:hover {
+  text-decoration: underline;
+}
+
+.charity-note {
+  background: linear-gradient(180deg, rgba(189, 138, 46, 0.1), rgba(255, 255, 255, 0.55));
+}
+
+.charity-note p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .booking-meta,
 .booking-existing {
   margin-bottom: 16px;
