@@ -92,6 +92,15 @@ body {
   gap: 8px;
 }
 
+.submission-detail-list {
+  display: grid;
+  gap: 4px;
+}
+
+.submission-detail-list span {
+  display: block;
+}
+
 .social-chip {
   display: inline-flex;
   flex-wrap: wrap;
