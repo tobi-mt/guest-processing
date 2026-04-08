@@ -97,61 +97,112 @@
             <h3>Let’s start with the essentials.</h3>
             <p class="step-copy">Tell us who you are, where we can find your work, and how to reach you if your story feels like a fit.</p>
 
-            <label>
-              Full Name
-              <input name="full_name" type="text" required />
-              <small>Use the name you would want us to use in future communication.</small>
+            <div class="workflow-note">
+              <strong>Keep it personal</strong>
+              <p>To keep Mirror Talk personal and intentional, we ask each guest to complete their own application in their own voice.</p>
+            </div>
+
+            <label class="full-width">
+              Are you applying for yourself or on behalf of someone else?
+              <select name="application_role" required>
+                <option value="">Select one</option>
+                <option value="self">I am the guest applying for myself</option>
+                <option value="on_behalf">I am applying on behalf of someone else</option>
+              </select>
+              <small>Each guest should complete their own final application personally.</small>
             </label>
-            <label>
-              Email Address
-              <input name="email" type="email" required />
-              <small>This is where we will contact you if we would like to continue.</small>
-            </label>
-            <label>
-              Website
-              <input name="website" type="text" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://yourwebsite.com or www.yourwebsite.com" />
-              <small>Optional. You can enter a full link or just start with `www.` and we will format it safely.</small>
-            </label>
-            <div class="full-width social-group">
-              <div class="social-group-title">Social Media Handles</div>
-              <div class="social-grid">
-                <label>
-                  Instagram
-                  <input name="social_instagram" type="text" data-social-platform="Instagram" placeholder="@name" />
+
+            <div class="conditional-followup hidden" data-conditional-source="application_role" data-conditional-value="self">
+              <label class="full-width checkbox-field">
+                <input name="self_attestation" type="checkbox" value="yes" />
+                <span>I confirm that I am the guest applying for myself and that this email belongs to me professionally or personally.</span>
+              </label>
+              <label>
+                Full Name
+                <input name="full_name" type="text" data-conditional-required="application_role:self" />
+                <small>Use the name you would want us to use in future communication.</small>
+              </label>
+              <label>
+                Email Address
+                <input name="email" type="email" data-conditional-required="application_role:self" />
+                <small>Please use your own personal or professional email address, not a shared agency inbox.</small>
+              </label>
+              <label>
+                Website
+                <input name="website" type="text" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://yourwebsite.com or www.yourwebsite.com" />
+                <small>Optional. You can enter a full link or just start with `www.` and we will format it safely.</small>
+              </label>
+            </div>
+
+            <div class="conditional-followup hidden" data-conditional-source="application_role" data-conditional-value="on_behalf">
+              <label>
+                Agency or representative name
+                <input name="agency_name" type="text" data-conditional-required="application_role:on_behalf" />
+                <small>Tell us the name of the agency, PR representative, or management contact.</small>
+              </label>
+              <label>
+                Agency email address
+                <input name="agency_email" type="email" />
+                <small>Optional, but helpful if we need to follow up with the representative.</small>
+              </label>
+              <label>
+                Guest full name
+                <input name="represented_guest_name" type="text" data-conditional-required="application_role:on_behalf" />
+                <small>We will use this name when inviting the guest personally.</small>
+              </label>
+              <label>
+                Guest email address
+                <input name="represented_guest_email" type="email" data-conditional-required="application_role:on_behalf" />
+                <small>We will email the guest their own personal Mirror Talk application link.</small>
+              </label>
+              <div class="workflow-note soft">
+                <strong>What happens next</strong>
+                <p>We will not treat this as the final application. Instead, we will send the guest a personal link so they can complete the intake in their own voice.</p>
+              </div>
+            </div>
+
+            <div class="conditional-followup hidden" data-conditional-source="application_role" data-conditional-value="self">
+              <div class="full-width social-group">
+                <div class="social-group-title">Social Media Handles</div>
+                <div class="social-grid">
+                  <label>
+                    Instagram
+                    <input name="social_instagram" type="text" data-social-platform="Instagram" placeholder="@name" />
+                  </label>
+                  <label>
+                    LinkedIn
+                    <input name="social_linkedin" type="text" data-social-platform="LinkedIn" placeholder="linkedin.com/in/name or Name" />
+                  </label>
+                  <label>
+                    YouTube
+                    <input name="social_youtube" type="text" data-social-platform="YouTube" placeholder="@channel or youtube.com/@channel" />
+                  </label>
+                  <label>
+                    X / Twitter
+                    <input name="social_twitter" type="text" data-social-platform="X/Twitter" placeholder="@name" />
+                  </label>
+                  <label>
+                    Facebook
+                    <input name="social_facebook" type="text" data-social-platform="Facebook" placeholder="facebook.com/name or Name" />
+                  </label>
+                  <label>
+                    TikTok
+                    <input name="social_tiktok" type="text" data-social-platform="TikTok" placeholder="@name" />
+                  </label>
+                </div>
+                <label class="full-width">
+                  Other social or media links
+                  <textarea name="social_other" rows="3" placeholder="Podcast website, speaker page, press kit, podcast links, or any other relevant profiles"></textarea>
+                  <small>Please share at least one social handle, relevant public profile, or a website so we can understand your voice and work better.</small>
                 </label>
-                <label>
-                  LinkedIn
-                  <input name="social_linkedin" type="text" data-social-platform="LinkedIn" placeholder="linkedin.com/in/name or Name" />
-                </label>
-                <label>
-                  YouTube
-                  <input name="social_youtube" type="text" data-social-platform="YouTube" placeholder="@channel or youtube.com/@channel" />
-                </label>
-                <label>
-                  X / Twitter
-                  <input name="social_twitter" type="text" data-social-platform="X/Twitter" placeholder="@name" />
-                </label>
-                <label>
-                  Facebook
-                  <input name="social_facebook" type="text" data-social-platform="Facebook" placeholder="facebook.com/name or Name" />
-                </label>
-                <label>
-                  TikTok
-                  <input name="social_tiktok" type="text" data-social-platform="TikTok" placeholder="@name" />
-                </label>
+                <input name="social_handles" type="hidden" />
               </div>
               <label class="full-width">
-                Other social or media links
-                <textarea name="social_other" rows="3" placeholder="Podcast website, speaker page, press kit, podcast links, or any other relevant profiles"></textarea>
-                <small>Please share at least one social handle, relevant public profile, or a website so we can understand your voice and work better.</small>
+                A brief overview of your personal and professional background
+                <textarea name="background" rows="5" data-conditional-required="application_role:self"></textarea>
+                <small>Give us the shape of your story in a way that feels natural, grounded, and true to you.</small>
               </label>
-              <input name="social_handles" type="hidden" />
             </div>
-            <label class="full-width">
-              A brief overview of your personal and professional background
-              <textarea name="background" rows="5" required></textarea>
-              <small>Give us the shape of your story in a way that feels natural, grounded, and true to you.</small>
-            </label>
           </section>
 
           <section class="form-step" data-step="2">

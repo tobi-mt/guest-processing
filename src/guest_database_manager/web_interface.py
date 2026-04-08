@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openpyxl import Workbook
@@ -46,6 +46,7 @@ from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCop
 STATIC_DIR = Path(__file__).parent / "static"
 FORM_SOURCE_NAME = "Direct Web Entry"
 INTAKE_SOURCE_NAME = "Website Intake Questionnaire"
+AGENCY_REFERRAL_SOURCE_NAME = "Agency Referral"
 ALLOWED_ORIGINS = {
     "https://www.mirrortalkpodcast.com",
     "https://mirrortalkpodcast.com",
@@ -77,6 +78,7 @@ OPENAI_API_KEY_ENV_VAR = "MIRROR_TALK_OPENAI_API_KEY"
 OPENAI_MODEL_ENV_VAR = "MIRROR_TALK_OPENAI_MODEL"
 OPENAI_TIMEOUT_ENV_VAR = "MIRROR_TALK_OPENAI_TIMEOUT_SECONDS"
 BOOKING_BASE_URL_ENV_VAR = "MIRROR_TALK_BOOKING_BASE_URL"
+PUBLIC_INTAKE_URL_ENV_VAR = "MIRROR_TALK_PUBLIC_INTAKE_URL"
 BOOKING_TIMEZONE_ENV_VAR = "MIRROR_TALK_BOOKING_TIMEZONE"
 BOOKING_SLOT_WEEKDAYS_ENV_VAR = "MIRROR_TALK_BOOKING_SLOT_WEEKDAYS"
 BOOKING_SLOT_TIMES_ENV_VAR = "MIRROR_TALK_BOOKING_SLOT_TIMES"
@@ -363,6 +365,19 @@ def build_guest_payload(payload: Dict[str, Any], source_name: str = FORM_SOURCE_
         validate_intake_payload(guest_data)
 
     return guest_data
+
+
+def _website_host_for_identity(value: Any) -> str:
+    """Return a normalized website host for duplicate-intent checks."""
+    text = _normalize_text(value)
+    if not text:
+        return ""
+    normalized = text if "://" in text else f"https://{text}"
+    try:
+        host = urlsplit(normalized).netloc.casefold()
+    except ValueError:
+        return ""
+    return re.sub(r"^www\.", "", host)
 
 
 def serialize_guest(guest: Dict[str, Any]) -> Dict[str, Any]:
@@ -1351,8 +1366,103 @@ class GuestWebService:
         guest = self.database.get_guest_by_id(guest_id)
         return serialize_guest(guest) if guest else {"id": guest_id}
 
+    def _email_used_by_other_guest(self, email: str, guest_name: str) -> bool:
+        """Return whether an email is already associated with another guest name."""
+        normalized_email = _normalize_text(email).casefold()
+        normalized_name = _normalize_text(guest_name).casefold()
+        if not normalized_email or not normalized_name:
+            return False
+        for guest in self.database.get_all_guests():
+            if _normalize_text(guest.get("email")).casefold() != normalized_email:
+                continue
+            existing_name = _normalize_text(guest.get("full_name") or guest.get("name")).casefold()
+            if existing_name and existing_name != normalized_name:
+                return True
+        return False
+
+    @staticmethod
+    def _public_intake_link(full_name: str = "", email: str = "") -> str:
+        """Return the guest-facing intake URL, optionally prefilled."""
+        base_url = (
+            os.environ.get(PUBLIC_INTAKE_URL_ENV_VAR, "").strip()
+            or "https://mirrortalkpodcast.com/be-our-next-guest/"
+        )
+        params = urlencode(
+            {
+                key: value
+                for key, value in {
+                    "full_name": full_name.strip(),
+                    "email": email.strip(),
+                }.items()
+                if value
+            }
+        )
+        if not params:
+            return base_url
+        separator = "&" if "?" in base_url else "?"
+        return f"{base_url}{separator}{params}"
+
+    def _create_agency_referral(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a soft agency referral and send the real intake link to the guest."""
+        agency_name = _normalize_text(payload.get("agency_name"))
+        agency_email = _normalize_text(payload.get("agency_email"))
+        guest_name = _normalize_text(payload.get("represented_guest_name"))
+        guest_email = _normalize_text(payload.get("represented_guest_email"))
+        if not agency_name:
+            raise WebInterfaceError("Please share the agency or representative name.")
+        if not guest_name:
+            raise WebInterfaceError("Please share the guest's full name.")
+        if not guest_email or "@" not in guest_email:
+            raise WebInterfaceError("Please share the guest's real email address so we can contact them directly.")
+
+        referral_note = (
+            f"Agency referral from {agency_name}"
+            + (f" ({agency_email})" if agency_email else "")
+            + ". Awaiting a personal intake submission from the guest."
+        )
+        guest = self.create_guest(
+            {
+                "full_name": guest_name,
+                "email": guest_email,
+                "additional_info": referral_note,
+                "background": "Agency-introduced referral awaiting the guest's own application.",
+                "profession": "",
+                "passionate_topics": "",
+                "message": "",
+                "has_social_media": "",
+            },
+            source_name=AGENCY_REFERRAL_SOURCE_NAME,
+        )
+        self._send_guest_self_application_request_email(
+            guest_name,
+            guest_email,
+            self._public_intake_link(guest_name, guest_email),
+            agency_name,
+        )
+        response = dict(guest)
+        response["submission_mode"] = "agency_referral"
+        response["message"] = (
+            f"Thank you. We’ve emailed {guest_name} their personal Mirror Talk application link so they can apply in their own voice."
+        )
+        return response
+
     def create_intake_submission(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create a guest submission from the public intake questionnaire."""
+        application_role = _normalize_text(payload.get("application_role")).lower()
+        if application_role == "on_behalf":
+            return self._create_agency_referral(payload)
+
+        if application_role not in {"", "self"}:
+            raise WebInterfaceError("Please choose whether you are applying for yourself or on behalf of someone else.")
+
+        full_name = _normalize_text(payload.get("full_name"))
+        email = _normalize_text(payload.get("email"))
+        if application_role == "self" and _normalize_text(payload.get("self_attestation")).lower() != "yes":
+            raise WebInterfaceError("Please confirm that you are the guest applying for yourself before submitting.")
+        if self._email_used_by_other_guest(email, full_name):
+            raise WebInterfaceError(
+                "Please use the guest's own personal or professional email address. We noticed this email is already associated with a different guest."
+            )
         guest = self.create_guest(payload, source_name=INTAKE_SOURCE_NAME)
         self._send_intake_confirmation_email(guest)
         return guest
@@ -2913,6 +3023,29 @@ class GuestWebService:
         guest_name = _normalize_text(guest.get("full_name")) or "there"
         try:
             email_manager.send_intake_confirmation_email(guest_name, guest_email)
+        except Exception:
+            return
+
+    def _send_guest_self_application_request_email(
+        self,
+        guest_name: str,
+        guest_email: str,
+        intake_url: str,
+        agency_name: str = "",
+    ) -> None:
+        """Best-effort email asking a referred guest to complete their own intake."""
+        if not guest_email:
+            return
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            return
+        try:
+            email_manager.send_personal_application_request_email(
+                guest_name,
+                guest_email,
+                intake_url,
+                agency_name,
+            )
         except Exception:
             return
 

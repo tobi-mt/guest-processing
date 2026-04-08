@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from urllib.parse import urlsplit
 from typing import Any, Dict, Iterable, List
 
 
@@ -115,6 +117,41 @@ def _theme_tokens(guest: Dict[str, Any]) -> set[str]:
     return tokens
 
 
+def _website_host(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    normalized = text if "://" in text else f"https://{text}"
+    try:
+        host = urlsplit(normalized).netloc.casefold()
+    except ValueError:
+        return ""
+    return re.sub(r"^www\.", "", host)
+
+
+def _identity_conflict_signals(guest: Dict[str, Any], all_guests: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Detect suspicious shared-email and shared-domain patterns across guest records."""
+    current_name = _normalize_text(guest.get("full_name") or guest.get("name"))
+    current_email = _normalize_text(guest.get("email"))
+    current_host = _website_host(guest.get("website"))
+    email_conflicts: list[str] = []
+    host_conflicts: list[str] = []
+
+    for other in all_guests:
+        other_name = _normalize_text(other.get("full_name") or other.get("name"))
+        if not other_name or other_name == current_name:
+            continue
+        if current_email and _normalize_text(other.get("email")) == current_email:
+            email_conflicts.append(_clean_text(other.get("full_name") or other.get("name")))
+        if current_host and _website_host(other.get("website")) == current_host:
+            host_conflicts.append(_clean_text(other.get("full_name") or other.get("name")))
+
+    return {
+        "email_conflicts": email_conflicts[:3],
+        "host_conflicts": host_conflicts[:3],
+    }
+
+
 def _accepted_history_signal(guest: Dict[str, Any], accepted_history: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     """Compare a guest with previously accepted guests using only stored profile themes."""
     current_name = _normalize_text(guest.get("full_name") or guest.get("name"))
@@ -167,10 +204,16 @@ def _build_signals(score: float, strengths: list[str], cautions: list[str], matc
         signals.append({"label": "Promotional Risk", "tone": "warning"})
     if any("worldview" in reason or "faith" in reason or "values" in reason for reason in cautions):
         signals.append({"label": "Worldview Caution", "tone": "warning"})
+    if any("agency" in reason or "shared inbox" in reason or "website domain is shared" in reason for reason in cautions):
+        signals.append({"label": "Identity Check", "tone": "warning"})
     return signals[:4]
 
 
-def score_guest(guest: Dict[str, Any], accepted_history: Iterable[Dict[str, Any]] | None = None) -> Dict[str, Any]:
+def score_guest(
+    guest: Dict[str, Any],
+    accepted_history: Iterable[Dict[str, Any]] | None = None,
+    all_guests: Iterable[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
     """Return an explainable recommendation payload for a single guest."""
     background = _clean_text(guest.get("background"))
     profession = _clean_text(guest.get("profession"))
@@ -301,6 +344,14 @@ def score_guest(guest: Dict[str, Any], accepted_history: Iterable[Dict[str, Any]
         score += accepted_history_signal["bonus"]
         strengths.append(accepted_history_signal["reason"])
 
+    identity_conflicts = _identity_conflict_signals(guest, all_guests or [])
+    if identity_conflicts["email_conflicts"]:
+        score -= 8
+        cautions.append("same email appears on other guest records, which may indicate an agency or shared inbox submission")
+    if identity_conflicts["host_conflicts"]:
+        score -= 4
+        cautions.append("the website domain is shared across multiple guest names, so identity should be confirmed carefully")
+
     score = max(0.0, min(100.0, round(score, 1)))
 
     if score >= 58:
@@ -338,6 +389,7 @@ def score_guest(guest: Dict[str, Any], accepted_history: Iterable[Dict[str, Any]
         "cautions": cautions[:3],
         "signals": _build_signals(score, strengths, cautions, matched_keywords),
         "accepted_guest_matches": accepted_history_signal["matches"],
+        "identity_flags": identity_conflicts,
         "model_version": "mirror-talk-intake-v1",
     }
 
@@ -351,7 +403,7 @@ def enrich_guests_with_recommendations(guests: Iterable[Dict[str, Any]]) -> list
     ]
     enriched: list[Dict[str, Any]] = []
     for guest in guest_list:
-        recommendation = score_guest(guest, accepted_history=accepted_history)
+        recommendation = score_guest(guest, accepted_history=accepted_history, all_guests=guest_list)
         enriched_guest = dict(guest)
         enriched_guest["decision_support"] = recommendation
         enriched.append(enriched_guest)

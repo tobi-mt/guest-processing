@@ -361,6 +361,36 @@ Mirror Talk Podcast
 
         return {"subject": subject, "body": body}
 
+    def get_personal_application_request_template(
+        self,
+        guest_name: str,
+        intake_url: str,
+        agency_name: str = "",
+    ) -> Dict[str, str]:
+        """Build the email that invites a guest to complete their own personal intake."""
+        subject = "Please complete your personal Mirror Talk guest application"
+        intro_line = (
+            f"{agency_name} shared your details with us and thought you could be a meaningful fit for Mirror Talk."
+            if agency_name
+            else "Your details were shared with us as someone who could be a meaningful fit for Mirror Talk."
+        )
+        body = f"""Hi {guest_name},
+
+{intro_line}
+
+To keep Mirror Talk personal and intentional, we ask each guest to complete their own application in their own voice.
+
+Please use your personal application link here:
+{intake_url}
+
+The form is short, thoughtful, and designed to help us understand your story directly from you.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast
+"""
+        return {"subject": subject, "body": body}
+
     def get_released_episode_template(self, guest_name: str, show_notes_url: str, files_url: str) -> Dict[str, str]:
         """Build a polished release-notification email for a guest."""
         subject = "Your Mirror Talk episode is now live"
@@ -647,6 +677,17 @@ Mirror Talk Podcast
     def send_intake_confirmation_email(self, guest_name: str, to_email: str) -> bool:
         """Send a submission-confirmation email to an intake applicant."""
         template = self.get_intake_confirmation_template(guest_name)
+        return self.send_email(to_email, template["subject"], template["body"])
+
+    def send_personal_application_request_email(
+        self,
+        guest_name: str,
+        to_email: str,
+        intake_url: str,
+        agency_name: str = "",
+    ) -> bool:
+        """Send a guest their own personal intake link after an agency referral."""
+        template = self.get_personal_application_request_template(guest_name, intake_url, agency_name)
         return self.send_email(to_email, template["subject"], template["body"])
 
     def load_saved_config(self) -> bool:

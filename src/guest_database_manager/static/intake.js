@@ -16,6 +16,8 @@ const conditionalGroups = Array.from(document.querySelectorAll("[data-conditiona
 const socialPlatformFields = Array.from(document.querySelectorAll("[data-social-platform]"));
 const socialOtherField = form.elements.namedItem("social_other");
 const socialHandlesField = form.elements.namedItem("social_handles");
+const applicationRoleField = form.elements.namedItem("application_role");
+const selfAttestationField = form.elements.namedItem("self_attestation");
 
 const stepNames = ["Contact", "Journey", "Perspective", "Conversation"];
 const DRAFT_STORAGE_KEY = "mirror-talk-intake-draft-v1";
@@ -24,6 +26,14 @@ const DEFAULT_DRAFT_BANNER_TEXT = "Your progress is saved automatically in this 
 let currentStep = 0;
 let isComplete = false;
 let draftBannerResetTimer = null;
+
+function isAgencyMode() {
+  return String(applicationRoleField?.value || "").trim() === "on_behalf";
+}
+
+function isSelfApplicationMode() {
+  return String(applicationRoleField?.value || "").trim() === "self";
+}
 
 function buildConditionalAnswer(choiceName, detailName) {
   const choiceField = form.elements.namedItem(choiceName);
@@ -166,8 +176,27 @@ function restoreDraft() {
   }
 
   normalizeWebsiteValue(websiteField);
+  applyQueryPrefill();
   syncSocialHandlesField();
   updateConditionalGroups();
+}
+
+function applyQueryPrefill() {
+  const params = new URLSearchParams(window.location.search);
+  const prefillEntries = [
+    ["full_name", params.get("full_name") || ""],
+    ["email", params.get("email") || ""],
+  ];
+  prefillEntries.forEach(([name, value]) => {
+    if (!value) {
+      return;
+    }
+    const field = form.elements.namedItem(name);
+    if (!field || field.value) {
+      return;
+    }
+    field.value = value;
+  });
 }
 
 function setDraftBannerText(text, saved = false) {
@@ -216,6 +245,19 @@ function updateConditionalGroups() {
   window.requestAnimationFrame(notifyParentHeight);
 }
 
+function syncApplicationModeUI() {
+  const agencyMode = isAgencyMode();
+  steps.forEach((step, index) => {
+    step.classList.toggle("hidden", agencyMode && index > 0);
+  });
+  indicators.forEach((indicator, index) => {
+    indicator.classList.toggle("hidden", agencyMode && index > 0);
+  });
+  if (agencyMode) {
+    currentStep = 0;
+  }
+}
+
 function notifyParentHeight() {
   if (window.parent === window) {
     return;
@@ -232,6 +274,7 @@ function notifyParentHeight() {
 }
 
 function syncStepUI() {
+  syncApplicationModeUI();
   steps.forEach((step, index) => {
     step.classList.toggle("active", index === currentStep);
   });
@@ -241,17 +284,26 @@ function syncStepUI() {
     indicator.classList.toggle("completed", isComplete || index < currentStep);
   });
 
-  backButton.disabled = currentStep === 0;
-  nextButton.classList.toggle("hidden", currentStep === steps.length - 1);
-  submitButton.classList.toggle("hidden", currentStep !== steps.length - 1);
+  const agencyMode = isAgencyMode();
+  backButton.disabled = currentStep === 0 || agencyMode;
+  nextButton.classList.toggle("hidden", agencyMode || currentStep === steps.length - 1);
+  submitButton.classList.toggle("hidden", agencyMode ? currentStep !== 0 : currentStep !== steps.length - 1);
   if (isComplete) {
     stepCounter.textContent = "Finished";
     progressFill.style.width = "100%";
     progressCaption.textContent = "Application complete";
   } else {
-    stepCounter.textContent = `Step ${currentStep + 1} of ${steps.length}`;
-    progressFill.style.width = `${((currentStep + 1) / steps.length) * 100}%`;
-    progressCaption.textContent = `Currently on ${stepNames[currentStep]}`;
+    if (agencyMode) {
+      stepCounter.textContent = "Agency Referral";
+      progressFill.style.width = "25%";
+      progressCaption.textContent = "Confirming the right guest is invited personally";
+      submitButton.textContent = "Send Personal Application Link";
+    } else {
+      stepCounter.textContent = `Step ${currentStep + 1} of ${steps.length}`;
+      progressFill.style.width = `${((currentStep + 1) / steps.length) * 100}%`;
+      progressCaption.textContent = `Currently on ${stepNames[currentStep]}`;
+      submitButton.textContent = "Submit Application";
+    }
   }
   window.requestAnimationFrame(notifyParentHeight);
 }
@@ -297,6 +349,16 @@ function validateCurrentStep() {
     return false;
   }
 
+  if (isSelfApplicationMode() && selfAttestationField && !selfAttestationField.checked) {
+    setMessage("Please confirm that you are the guest applying for yourself before continuing.", "error");
+    selfAttestationField.focus({ preventScroll: true });
+    return false;
+  }
+
+  if (isAgencyMode()) {
+    return true;
+  }
+
   if (activeStep.contains(socialHandlesField)) {
     const hasWebsite = Boolean(String(websiteField?.value || "").trim());
     const hasSocial = Boolean(String(socialHandlesField.value || "").trim());
@@ -319,6 +381,11 @@ function validateCurrentStep() {
 }
 
 function validateEntireForm() {
+  if (isAgencyMode()) {
+    currentStep = 0;
+    syncStepUI();
+    return validateCurrentStep();
+  }
   for (let index = 0; index < steps.length; index += 1) {
     syncSocialHandlesField();
     const fields = steps[index].querySelectorAll("input, select, textarea");
@@ -442,6 +509,7 @@ form.addEventListener("submit", async (event) => {
   }
 
   const payload = Object.fromEntries(new FormData(form).entries());
+  const wasAgencyMode = isAgencyMode();
   payload.faith = buildConditionalAnswer("faith_choice", "faith_detail");
   payload.alignment = buildConditionalAnswer("alignment_choice", "alignment_detail");
   payload.favorite_quote = buildConditionalAnswer("favorite_quote_choice", "favorite_quote_detail");
@@ -462,15 +530,17 @@ form.addEventListener("submit", async (event) => {
       throw new Error(data.error || "Unable to submit your application.");
     }
 
-    const fullName = (payload.full_name || "").trim();
+    const fullName = (payload.full_name || payload.represented_guest_name || "").trim();
     form.reset();
     clearDraft();
     currentStep = steps.length - 1;
     setDraftBannerText(DEFAULT_DRAFT_BANNER_TEXT, false);
     if (successTitle) {
-      successTitle.textContent = fullName
-        ? `Thank you, ${fullName}, for sharing your story.`
-        : "Thank you for sharing your story.";
+      successTitle.textContent = wasAgencyMode
+        ? `Thank you. We’ve invited ${fullName || "the guest"} personally.`
+        : fullName
+          ? `Thank you, ${fullName}, for sharing your story.`
+          : "Thank you for sharing your story.";
     }
     showSuccessState();
     setMessage(data.message || "Your application was submitted successfully.", "success");
@@ -505,5 +575,6 @@ window.addEventListener("resize", notifyParentHeight);
 websiteField?.addEventListener("blur", () => normalizeWebsiteValue(websiteField));
 
 restoreDraft();
+applyQueryPrefill();
 updateConditionalGroups();
 syncStepUI();

@@ -13,6 +13,7 @@ import pytest
 from openpyxl import load_workbook
 
 from guest_database_manager.web_interface import (
+    AGENCY_REFERRAL_SOURCE_NAME,
     ASK_MIRROR_TALK_BASE_URL_ENV_VAR,
     ASK_MIRROR_TALK_PASSWORD_ENV_VAR,
     ASK_MIRROR_TALK_USERNAME_ENV_VAR,
@@ -959,6 +960,132 @@ def test_public_intake_submission_does_not_inherit_previous_acceptance(temp_db):
     original_after = service.database.get_guest_by_id(original["id"])
     assert original_after["email_status"] is None
     assert original_after["is_processed"] == 0
+
+
+def test_public_intake_requires_self_attestation(temp_db):
+    """Guests should explicitly confirm they are applying for themselves."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="confirm that you are the guest applying for yourself"):
+        service.create_intake_submission(
+            {
+                "application_role": "self",
+                "full_name": "Amara Stone",
+                "email": "amara@example.com",
+                "profession": "Author",
+                "background": "I help people find hope and clarity after major life transitions and hard seasons.",
+                "passionate_topics": "Healing",
+                "message": "Hope",
+                "experience": "Yes - I have joined a few meaningful podcast conversations before.",
+                "additional_info": "I would love to encourage your audience with honest, grounded hope.",
+                "social_handles": "Instagram: @amarastone",
+            }
+        )
+
+
+def test_public_intake_rejects_shared_email_used_for_other_guest(temp_db):
+    """A guest should not be able to submit using an email already tied to another name."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest({"full_name": "Agency Client One", "email": "shared@example.com"})
+
+    with pytest.raises(WebInterfaceError, match="own personal or professional email address"):
+        service.create_intake_submission(
+            {
+                "application_role": "self",
+                "self_attestation": "yes",
+                "full_name": "Agency Client Two",
+                "email": "shared@example.com",
+                "profession": "Coach",
+                "background": "I work with people rebuilding their confidence after grief, burnout, and identity loss.",
+                "passionate_topics": "Resilience",
+                "message": "Healing",
+                "experience": "Yes - I have spoken on a few podcasts and community events before.",
+                "additional_info": "I would love to share a grounded message of resilience and hope.",
+                "social_handles": "Instagram: @clienttwo",
+            }
+        )
+
+
+def test_agency_referral_sends_personal_application_link(monkeypatch, temp_db):
+    """Agency submissions should trigger a guest-owned intake invitation instead of a full intake approval flow."""
+
+    sent = {}
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def send_personal_application_request_email(self, guest_name, to_email, intake_url, agency_name=""):
+            sent["guest_name"] = guest_name
+            sent["to_email"] = to_email
+            sent["intake_url"] = intake_url
+            sent["agency_name"] = agency_name
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    created_guest = service.create_intake_submission(
+        {
+            "application_role": "on_behalf",
+            "agency_name": "Bright Talent Agency",
+            "agency_email": "hello@brighttalent.example",
+            "represented_guest_name": "Amar Dhall",
+            "represented_guest_email": "amar@example.com",
+        }
+    )
+
+    assert created_guest["original_file_name"] == AGENCY_REFERRAL_SOURCE_NAME
+    assert created_guest["submission_mode"] == "agency_referral"
+    assert sent["guest_name"] == "Amar Dhall"
+    assert sent["to_email"] == "amar@example.com"
+    assert sent["agency_name"] == "Bright Talent Agency"
+    assert "full_name=Amar+Dhall" in sent["intake_url"]
+    assert "email=amar%40example.com" in sent["intake_url"]
+
+
+def test_list_guests_flags_shared_identity_patterns(temp_db):
+    """Dashboard review assist should flag reused email and shared website domains across different names."""
+    service = GuestWebService(temp_db.db_path)
+    temp_db.insert_guest(
+        {
+            "full_name": "Agency Client One",
+            "email": "shared@example.com",
+            "website": "https://shared-domain.example.com",
+            "background": "A grounded and thoughtful story about healing after burnout.",
+            "profession": "Coach",
+            "passionate_topics": "Healing",
+            "message": "Hope",
+        }
+    )
+    temp_db.insert_guest(
+        {
+            "full_name": "Agency Client Two",
+            "email": "shared@example.com",
+            "website": "https://shared-domain.example.com/about",
+            "background": "A grounded and thoughtful story about resilience after loss.",
+            "profession": "Speaker",
+            "passionate_topics": "Resilience",
+            "message": "Faith",
+        }
+    )
+
+    payload = service.list_guests()
+    guest = next(item for item in payload["guests"] if item["full_name"] == "Agency Client Two")
+
+    assert "Agency Client One" in guest["decision_support"]["identity_flags"]["email_conflicts"]
+    assert "Agency Client One" in guest["decision_support"]["identity_flags"]["host_conflicts"]
+    cautions = " ".join(guest["decision_support"]["cautions"]).lower()
+    assert "same email appears" in cautions
 
 
 def test_public_intake_submission_sends_confirmation_email_when_configured(monkeypatch, temp_db):

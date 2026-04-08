@@ -1266,6 +1266,14 @@ function renderGuestAiSummary(guest) {
     .slice(0, 3)
     .map((name) => `<span class="context-link">${escapeHtml(name)}</span>`)
     .join("");
+  const emailConflicts = (support.identity_flags?.email_conflicts || [])
+    .slice(0, 3)
+    .map((name) => `<li>Same email is also used by ${escapeHtml(name)}.</li>`)
+    .join("");
+  const hostConflicts = (support.identity_flags?.host_conflicts || [])
+    .slice(0, 3)
+    .map((name) => `<li>Website domain is also shared with ${escapeHtml(name)}.</li>`)
+    .join("");
 
   return `
     <div class="guest-ai-card">
@@ -1285,6 +1293,7 @@ function renderGuestAiSummary(guest) {
       <div class="guest-ai-grid">
         ${strengths ? `<div class="guest-ai-block"><strong>Why it could work</strong><ul>${strengths}</ul></div>` : ""}
         ${cautions ? `<div class="guest-ai-block caution"><strong>Watchouts</strong><ul>${cautions}</ul></div>` : ""}
+        ${emailConflicts || hostConflicts ? `<div class="guest-ai-block caution"><strong>Identity checks</strong><ul>${emailConflicts}${hostConflicts}</ul></div>` : ""}
       </div>
     </div>
   `;
