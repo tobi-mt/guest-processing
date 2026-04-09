@@ -346,6 +346,27 @@ p {
   line-height: 1.6;
 }
 
+.planning-advanced {
+  margin: 4px 0 8px;
+  border: 1px solid rgba(91, 70, 47, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.planning-advanced summary {
+  cursor: pointer;
+  padding: 14px 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.planning-advanced-grid {
+  padding: 0 16px 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .compact-heading {
   margin-bottom: 12px;
 }
@@ -905,6 +926,10 @@ button:disabled {
 @media (max-width: 900px) {
   .hero,
   .main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .planning-advanced-grid {
     grid-template-columns: 1fr;
   }
 

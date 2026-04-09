@@ -142,37 +142,44 @@
                   <option value="released">Released</option>
                 </select>
               </label>
-              <label>
-                Production Status
-                <select name="production_status">
-                  <option value="idea">Idea</option>
-                  <option value="recorded">Recorded</option>
-                  <option value="editing">Editing</option>
-                  <option value="ready">Ready</option>
-                  <option value="released">Released</option>
-                </select>
-              </label>
-              <label>
-                Promotion Status
-                <select name="promotion_status">
-                  <option value="unknown">Unknown</option>
-                  <option value="needs_assets">Needs Assets</option>
-                  <option value="ready">Ready</option>
-                  <option value="released">Released</option>
-                </select>
-              </label>
-              <label>
-                Priority Score
-                <input name="priority_score" type="number" min="0" max="10" step="0.5" value="0" />
-              </label>
-              <label>
-                Legacy Episode Number
-                <input name="legacy_episode_number" type="text" />
-              </label>
-              <label>
-                Riverside Status
-                <input name="riverside_status" type="text" placeholder="Processing / Restoring / blank" />
-              </label>
+              <details class="full-width planning-advanced">
+                <summary>Advanced planning controls</summary>
+                <div class="planning-advanced-grid">
+                  <label>
+                    Production Status
+                    <select name="production_status">
+                      <option value="idea">Idea</option>
+                      <option value="recorded">Recorded</option>
+                      <option value="editing">Editing</option>
+                      <option value="ready">Ready</option>
+                      <option value="released">Released</option>
+                    </select>
+                  </label>
+                  <label>
+                    Promotion Status
+                    <select name="promotion_status">
+                      <option value="unknown">Unknown</option>
+                      <option value="needs_assets">Needs Assets</option>
+                      <option value="ready">Ready</option>
+                      <option value="released">Released</option>
+                    </select>
+                  </label>
+                  <label>
+                    Priority Score
+                    <input name="priority_score" type="number" min="0" max="10" step="0.5" value="0" />
+                    <small class="field-hint">Pre-filled automatically, but you can still adjust it.</small>
+                  </label>
+                  <label>
+                    Legacy Episode Number
+                    <input name="legacy_episode_number" type="text" />
+                    <small class="field-hint">Suggested automatically from the next available episode number.</small>
+                  </label>
+                  <label class="full-width">
+                    Riverside Status
+                    <input name="riverside_status" type="text" placeholder="Processing / Restoring / blank" />
+                  </label>
+                </div>
+              </details>
               <label class="full-width">
                 Show Note / Blogpost URL
                 <input name="show_notes_url" type="url" placeholder="https://mirrortalkpodcast.com/..." />
@@ -186,7 +193,7 @@
                 Transcript
                 <textarea name="transcript_text" rows="6" placeholder="Paste the transcript here to improve title, summary, and show-notes assist."></textarea>
               </label>
-              <section class="full-width checklist-panel">
+              <section id="episode-checklist-panel" class="full-width checklist-panel hidden">
                 <div class="section-heading compact-heading">
                   <h3>Outreach Checklist</h3>
                   <p class="hero-copy section-copy">

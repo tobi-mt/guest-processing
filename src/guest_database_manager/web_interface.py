@@ -491,6 +491,16 @@ def _normalize_outreach_plan(value: Any) -> Dict[str, bool]:
     return normalized
 
 
+def _parse_priority_score(value: Any) -> float:
+    """Parse a priority score into a stable float."""
+    if value in ("", None):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @dataclass
 class GuestWebService:
     """Service layer for the direct web interface."""
@@ -499,6 +509,39 @@ class GuestWebService:
 
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
+
+    def _next_legacy_episode_number(self, current_episode_id: Any = None) -> str:
+        """Return the next numeric legacy episode number when one can be inferred."""
+        max_number = 0
+        current_id = str(current_episode_id or "").strip()
+        for episode in self.database.list_episodes():
+            if current_id and str(episode.get("id") or "").strip() == current_id:
+                continue
+            text = _normalize_text(episode.get("legacy_episode_number"))
+            if not text.isdigit():
+                continue
+            max_number = max(max_number, int(text))
+        return str(max_number + 1) if max_number >= 0 else ""
+
+    def _suggest_episode_priority_score(self, payload: Dict[str, Any]) -> float:
+        """Return a lightweight default priority score for planning records."""
+        release_status = _normalize_text(payload.get("release_status")).lower()
+        production_status = _normalize_text(payload.get("production_status")).lower()
+        promotion_status = _normalize_text(payload.get("promotion_status")).lower()
+
+        if release_status == "released" or production_status == "released":
+            return 10.0
+        if release_status == "scheduled":
+            return 8.0
+        if production_status == "ready" and promotion_status == "ready":
+            return 8.0
+        if production_status == "ready":
+            return 7.0
+        if production_status == "editing":
+            return 6.0
+        if production_status == "recorded":
+            return 5.0
+        return 3.0
 
     def list_guests(self) -> Dict[str, Any]:
         """Return all guests for the frontend."""
@@ -2108,6 +2151,18 @@ class GuestWebService:
             normalized_release_date,
             _normalize_text(payload.get("release_status")),
         )
+        normalized_production_status = _normalize_text(payload.get("production_status")) or "idea"
+        normalized_promotion_status = _normalize_text(payload.get("promotion_status")) or "unknown"
+        parsed_priority_score = _parse_priority_score(payload.get("priority_score"))
+        if parsed_priority_score <= 0:
+            parsed_priority_score = self._suggest_episode_priority_score(
+                {
+                    "release_status": normalized_release_status,
+                    "production_status": normalized_production_status,
+                    "promotion_status": normalized_promotion_status,
+                }
+            )
+        legacy_episode_number = _normalize_text(payload.get("legacy_episode_number")) or self._next_legacy_episode_number(payload.get("id"))
         episode_data = {
             "id": payload.get("id"),
             "guest_id": payload.get("guest_id"),
@@ -2122,11 +2177,11 @@ class GuestWebService:
             "recording_date": _normalize_text(payload.get("recording_date")),
             "release_date": normalized_release_date,
             "release_status": normalized_release_status,
-            "production_status": _normalize_text(payload.get("production_status")) or "idea",
-            "promotion_status": _normalize_text(payload.get("promotion_status")) or "unknown",
-            "priority_score": payload.get("priority_score") or 0,
+            "production_status": normalized_production_status,
+            "promotion_status": normalized_promotion_status,
+            "priority_score": parsed_priority_score,
             "recommendation_reason": _normalize_text(payload.get("recommendation_reason")),
-            "legacy_episode_number": _normalize_text(payload.get("legacy_episode_number")),
+            "legacy_episode_number": legacy_episode_number,
             "riverside_status": _normalize_text(payload.get("riverside_status")),
             "source_file_name": _normalize_text(payload.get("source_file_name")),
             "source_type": _normalize_text(payload.get("source_type")),

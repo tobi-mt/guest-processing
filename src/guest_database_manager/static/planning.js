@@ -16,6 +16,7 @@ const planningExportMessage = document.getElementById("planning-export-message")
 const planningWeeklySystem = document.getElementById("planning-weekly-system");
 const aiCopilotStatus = document.getElementById("planning-ai-copilot-status");
 const outreachChecklist = document.getElementById("episode-outreach-checklist");
+const checklistPanel = document.getElementById("episode-checklist-panel");
 const episodeList = document.getElementById("episode-list");
 const recommendationList = document.getElementById("recommendation-list");
 const refreshButton = document.getElementById("planning-refresh-button");
@@ -561,6 +562,51 @@ function collectOutreachPlanFromForm() {
   return plan;
 }
 
+function parseLegacyEpisodeNumber(value) {
+  const text = String(value || "").trim();
+  if (!/^\d+$/.test(text)) {
+    return null;
+  }
+  return Number.parseInt(text, 10);
+}
+
+function computeNextLegacyEpisodeNumber(episodes, currentEpisodeId = "") {
+  let maxNumber = 0;
+  (episodes || []).forEach((episode) => {
+    if (currentEpisodeId && String(episode.id || "") === String(currentEpisodeId)) {
+      return;
+    }
+    const parsed = parseLegacyEpisodeNumber(episode.legacy_episode_number);
+    if (parsed && parsed > maxNumber) {
+      maxNumber = parsed;
+    }
+  });
+  return maxNumber > 0 ? String(maxNumber + 1) : "1";
+}
+
+function suggestPriorityScoreForEpisode(episodeLike = {}) {
+  const releaseStatus = normalizeText(episodeLike.release_status);
+  const productionStatus = normalizeText(episodeLike.production_status);
+  const promotionStatus = normalizeText(episodeLike.promotion_status);
+
+  if (releaseStatus === "released") return 10;
+  if (releaseStatus === "scheduled") return 8;
+  if (productionStatus === "released") return 10;
+  if (productionStatus === "ready" && promotionStatus === "ready") return 8;
+  if (productionStatus === "ready") return 7;
+  if (productionStatus === "editing") return 6;
+  if (productionStatus === "recorded" && promotionStatus === "needs_assets") return 5;
+  if (productionStatus === "recorded") return 5;
+  return 3;
+}
+
+function showChecklistPanel(visible) {
+  if (!checklistPanel) {
+    return;
+  }
+  checklistPanel.classList.toggle("hidden", !visible);
+}
+
 function renderOutreachChecklist(planValue = null) {
   const plan = normalizeOutreachPlan(planValue);
   outreachChecklist.innerHTML = OUTREACH_STEPS.map(([key, label, description]) => `
@@ -865,13 +911,18 @@ function resetEpisodeForm() {
   episodeForm.elements.release_status.value = "unplanned";
   episodeForm.elements.production_status.value = "idea";
   episodeForm.elements.promotion_status.value = "unknown";
-  episodeForm.elements.priority_score.value = "0";
+  episodeForm.elements.priority_score.value = String(suggestPriorityScoreForEpisode({}));
+  episodeForm.elements.legacy_episode_number.value = computeNextLegacyEpisodeNumber(latestPlanningPayload.episodes || []);
   episodeSubmitButton.textContent = "Save Episode";
   episodeResetButton.hidden = true;
   renderOutreachChecklist(null);
+  showChecklistPanel(false);
 }
 
 function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } = {}) {
+  const effectiveReleaseStatus = releaseStatus || episode.release_status || "unplanned";
+  const effectiveProductionStatus = episode.production_status || "idea";
+  const effectivePromotionStatus = episode.promotion_status || "unknown";
   episodeForm.elements.id.value = episode.id || "";
   episodeForm.elements.interview_id.value = episode.interview_id || "";
   episodeForm.elements.guest_name.value = episode.guest_name || "";
@@ -883,11 +934,18 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeForm.elements.interview_date.value = formatDateForDateInput(episode.interview_date);
   episodeForm.elements.recording_date.value = formatDateForDateInput(episode.recording_date);
   episodeForm.elements.release_date.value = formatDateForDateTimeInput(releaseDate || episode.release_date);
-  episodeForm.elements.release_status.value = releaseStatus || episode.release_status || "unplanned";
-  episodeForm.elements.production_status.value = episode.production_status || "idea";
-  episodeForm.elements.promotion_status.value = episode.promotion_status || "unknown";
-  episodeForm.elements.priority_score.value = episode.priority_score ?? 0;
-  episodeForm.elements.legacy_episode_number.value = episode.legacy_episode_number || "";
+  episodeForm.elements.release_status.value = effectiveReleaseStatus;
+  episodeForm.elements.production_status.value = effectiveProductionStatus;
+  episodeForm.elements.promotion_status.value = effectivePromotionStatus;
+  episodeForm.elements.priority_score.value = Number(episode.priority_score || 0) > 0
+    ? episode.priority_score
+    : suggestPriorityScoreForEpisode({
+      release_status: effectiveReleaseStatus,
+      production_status: effectiveProductionStatus,
+      promotion_status: effectivePromotionStatus,
+    });
+  episodeForm.elements.legacy_episode_number.value = episode.legacy_episode_number
+    || computeNextLegacyEpisodeNumber(latestPlanningPayload.episodes || [], episode.id || "");
   episodeForm.elements.riverside_status.value = episode.riverside_status || "";
   episodeForm.elements.show_notes_url.value = episode.show_notes_url || "";
   episodeForm.elements.release_files_url.value = episode.release_files_url || "";
@@ -898,6 +956,7 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeSubmitButton.textContent = "Update Episode";
   episodeResetButton.hidden = false;
   renderOutreachChecklist(episode.outreach_plan);
+  showChecklistPanel(true);
   episodeForm.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -1244,7 +1303,6 @@ function renderEpisodes(episodes, totalCount) {
         <span>Transcript: ${transcriptStatusLabel(episode)}</span>
         <span>Source: ${episode.source_file_name || "Manual entry"}</span>
       </div>
-      ${renderOutreachSummary(episode.outreach_summary)}
       ${renderPromoReadiness(episode.promotion_readiness)}
       ${renderAiSchedulingCopilot(episode.ai_copilot)}
       ${renderMonthlyAngleDecision(episode)}
@@ -1588,7 +1646,6 @@ function renderRecommendations(recommendations, totalCount) {
       ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${episode.archive_overlap.message}</p></div>` : ""}
       ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}
-      ${renderOutreachSummary(episode.outreach_summary)}
       ${renderPromoReadiness(episode.promotion_readiness)}
       ${renderGuestResearchCopilot(episode.guest_research)}
       ${renderCopyAssist(episode.copy_assist)}

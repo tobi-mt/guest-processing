@@ -1766,6 +1766,35 @@ def test_planning_payload_includes_outreach_system_and_episode_summary(temp_db):
     assert "Next outreach step" in episode["outreach_summary"]["next_step"]
 
 
+def test_create_episode_prefills_priority_and_legacy_episode_number(temp_db):
+    """Planning should auto-fill a sensible next legacy number and priority when omitted."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "episode_title": "Episode Forty One",
+            "legacy_episode_number": "41",
+            "priority_score": 8,
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    created = service.create_episode(
+        {
+            "guest_name": "Amara Stone",
+            "episode_title": "A New Beginning",
+            "release_status": "unplanned",
+            "production_status": "recorded",
+            "promotion_status": "needs_assets",
+        }
+    )
+
+    assert created["legacy_episode_number"] == "42"
+    assert float(created["priority_score"]) == 5.0
+
+
 def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
     """Released episodes should not be described as too early in production."""
     service = GuestWebService(temp_db.db_path)
