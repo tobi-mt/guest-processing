@@ -18,6 +18,7 @@ from guest_database_manager.web_interface import (
     ASK_MIRROR_TALK_PASSWORD_ENV_VAR,
     ASK_MIRROR_TALK_USERNAME_ENV_VAR,
     API_TOKEN_ENV_VAR,
+    BOOKING_BASE_URL_ENV_VAR,
     BOOKING_MONTHS_AHEAD_ENV_VAR,
     EMAIL_FROM_ENV_VAR,
     EMAIL_FROM_NAME_ENV_VAR,
@@ -34,6 +35,7 @@ from guest_database_manager.web_interface import (
     EMAIL_USERNAME_ENV_VAR,
     FORM_SOURCE_NAME,
     INTAKE_SOURCE_NAME,
+    PUBLIC_INTAKE_URL_ENV_VAR,
     GuestWebRequestHandler,
     GuestWebService,
     WebInterfaceError,
@@ -1051,6 +1053,19 @@ def test_agency_referral_sends_personal_application_link(monkeypatch, temp_db):
     assert sent["agency_name"] == "Bright Talent Agency"
     assert "full_name=Amar+Dhall" in sent["intake_url"]
     assert "email=amar%40example.com" in sent["intake_url"]
+    assert sent["intake_url"].startswith("https://guest-processing-production.up.railway.app/intake?")
+
+
+def test_public_intake_link_reuses_booking_domain_when_public_url_missing(monkeypatch):
+    """Agency referral links should fall back to the hosted intake route, not the marketing page."""
+    monkeypatch.delenv(PUBLIC_INTAKE_URL_ENV_VAR, raising=False)
+    monkeypatch.setenv(BOOKING_BASE_URL_ENV_VAR, "https://mirror.example.com/book")
+
+    url = GuestWebService._public_intake_link("Dhruva Gulur", "dhruva@dhruvamd.com")
+
+    assert url.startswith("https://mirror.example.com/intake?")
+    assert "full_name=Dhruva+Gulur" in url
+    assert "email=dhruva%40dhruvamd.com" in url
 
 
 def test_list_guests_exposes_agency_submission_meta(monkeypatch, temp_db):

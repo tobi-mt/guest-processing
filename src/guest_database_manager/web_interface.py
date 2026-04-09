@@ -1491,10 +1491,19 @@ class GuestWebService:
     @staticmethod
     def _public_intake_link(full_name: str = "", email: str = "") -> str:
         """Return the guest-facing intake URL, optionally prefilled."""
-        base_url = (
-            os.environ.get(PUBLIC_INTAKE_URL_ENV_VAR, "").strip()
-            or "https://mirrortalkpodcast.com/be-our-next-guest/"
-        )
+        configured = os.environ.get(PUBLIC_INTAKE_URL_ENV_VAR, "").strip()
+        if configured:
+            base_url = configured
+        else:
+            booking_base = os.environ.get(BOOKING_BASE_URL_ENV_VAR, "").strip()
+            if booking_base:
+                normalized_booking_base = booking_base.rstrip("/")
+                if normalized_booking_base.endswith("/book"):
+                    base_url = f"{normalized_booking_base[:-len('/book')]}/intake"
+                else:
+                    base_url = f"{normalized_booking_base}/intake"
+            else:
+                base_url = "https://guest-processing-production.up.railway.app/intake"
         params = urlencode(
             {
                 key: value
