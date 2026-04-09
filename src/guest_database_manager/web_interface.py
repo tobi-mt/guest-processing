@@ -3298,11 +3298,11 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         request_path = urlsplit(self.path).path
 
-        if request_path in {"/", "/intake", "/intake.html"}:
+        if request_path in {"/", "/intake", "/intake/", "/intake.html"}:
             self._serve_static("intake.html")
             return
 
-        if request_path in {"/book", "/booking", "/book.html"}:
+        if request_path in {"/book", "/book/", "/booking", "/book.html"}:
             self._serve_static("booking.html")
             return
 
