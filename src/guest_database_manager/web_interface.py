@@ -3255,6 +3255,49 @@ class GuestWebService:
         except Exception:
             return
 
+    def resend_guest_personal_application_email(self, guest_id: int) -> Dict[str, Any]:
+        """Resend the guest-owned intake invitation for an agency referral."""
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+        if _normalize_text(guest.get("original_file_name")) != AGENCY_REFERRAL_SOURCE_NAME:
+            raise WebInterfaceError("This guest was not created through an agency referral.")
+
+        original_data = _parse_original_data(guest.get("original_data"))
+        guest_name = _normalize_text(original_data.get("represented_guest_name")) or _normalize_text(guest.get("full_name"))
+        guest_email = _normalize_text(original_data.get("represented_guest_email")) or _normalize_text(guest.get("email"))
+        agency_name = _normalize_text(original_data.get("agency_name"))
+
+        if not guest_email:
+            raise WebInterfaceError("This referral does not have a guest email yet.")
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            raise WebInterfaceError("Dashboard email is not configured on the server.")
+
+        intake_url = self._public_intake_link(guest_name, guest_email)
+        try:
+            sent = email_manager.send_personal_application_request_email(
+                guest_name,
+                guest_email,
+                intake_url,
+                agency_name,
+            )
+        except Exception as exc:
+            error_detail = str(exc).strip()
+            raise WebInterfaceError(error_detail or "The personal application email could not be sent.") from exc
+
+        if not sent:
+            error_detail = (email_manager.last_error or "").strip()
+            if error_detail:
+                raise WebInterfaceError(f"The personal application email could not be sent: {error_detail}")
+            raise WebInterfaceError("The personal application email could not be sent.")
+
+        refreshed = self.database.get_guest_by_id(guest_id)
+        if not refreshed:
+            raise WebInterfaceError("Guest not found after sending the email.")
+        return serialize_guest(refreshed)
+
     def _send_booking_confirmation_email(self, guest: Dict[str, Any], interview: Dict[str, Any]) -> None:
         """Best-effort confirmation email after a guest books a slot."""
         guest_email = _normalize_text(guest.get("email"))
@@ -3791,6 +3834,24 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 guest = self.service.retry_guest_research_with_search(guest_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, guest)
+            return
+
+        if self.path.startswith("/api/guests/") and self.path.endswith("/resend-personal-application"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            guest_id = self._extract_guest_id(self.path, suffix="/resend-personal-application")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            try:
+                guest = self.service.resend_guest_personal_application_email(guest_id)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return

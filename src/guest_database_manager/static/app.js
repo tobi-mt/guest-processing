@@ -778,6 +778,7 @@ function renderGuests(payload) {
     statusPill.classList.add(guestStatusLabel(guest));
 
     const researchButton = node.querySelector("[data-action='research']");
+    const resendPersonalApplicationButton = node.querySelector("[data-action='resend_personal_application']");
     const researchFailed = guest.guest_research?.cache_status === "failed";
     if (researchButton && researchFailed) {
       researchButton.textContent = "Retry With Search";
@@ -786,6 +787,15 @@ function renderGuests(payload) {
     if (researchButton && !guest.website && !guest.social_media_handles) {
       researchButton.disabled = true;
       researchButton.title = "Add a website or labeled social profile first so copilot research has a public source to read.";
+    }
+    if (resendPersonalApplicationButton) {
+      const isAgencyReferral = guest.submission_meta?.mode === "agency_referral";
+      if (!isAgencyReferral) {
+        resendPersonalApplicationButton.classList.add("hidden");
+      } else if (!guest.email) {
+        resendPersonalApplicationButton.disabled = true;
+        resendPersonalApplicationButton.title = "Add the guest's personal email first so Mirror Talk can resend their application link.";
+      }
     }
 
     if (!emailEnabled) {
@@ -972,6 +982,27 @@ function renderGuests(payload) {
                 : `Saved public profile research for ${guest.full_name}. Planning can now use it as copilot context.`,
               "success",
             );
+          } else if (action === "resend_personal_application") {
+            if (!confirmCriticalAction(`Resend the personal Mirror Talk application link to ${guest.full_name || guest.email || "this guest"}?`)) {
+              return;
+            }
+            activeGuestActionFeedback = {
+              guestId: guest.id,
+              text: `Resending the personal application link to ${guest.full_name || guest.email || "guest"}...`,
+              tone: "pending",
+            };
+            renderGuests(latestPayload);
+            await fetchJSON(`/api/guests/${guest.id}/resend-personal-application`, {
+              method: "POST",
+              body: JSON.stringify({}),
+            });
+            activeGuestActionFeedback = {
+              guestId: guest.id,
+              text: `Personal application link resent to ${guest.full_name || guest.email || "guest"}.`,
+              tone: "success",
+            };
+            renderGuests(latestPayload);
+            setMessage(`Resent the personal application link to ${guest.full_name || guest.email}.`, "success");
           } else if (action === "accepted_email" || action === "rejected_email") {
             activeGuestEditor = null;
             const decision = action === "accepted_email" ? "accepted" : "rejected";

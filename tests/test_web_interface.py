@@ -1115,6 +1115,79 @@ def test_list_guests_exposes_agency_submission_meta(monkeypatch, temp_db):
     }
 
 
+def test_resend_guest_personal_application_email(monkeypatch, temp_db):
+    """Agency referrals should support resending the guest-owned application link from the dashboard."""
+    sent = {}
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+            self.last_error = ""
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def send_personal_application_request_email(self, guest_name, to_email, intake_url, agency_name=""):
+            sent["guest_name"] = guest_name
+            sent["to_email"] = to_email
+            sent["intake_url"] = intake_url
+            sent["agency_name"] = agency_name
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+    monkeypatch.setenv(PUBLIC_INTAKE_URL_ENV_VAR, "https://guest-processing-production.up.railway.app/intake")
+
+    service = GuestWebService(temp_db.db_path)
+    created_guest = service.create_intake_submission(
+        {
+            "application_role": "on_behalf",
+            "agency_name": "Kay Villanueva",
+            "agency_email": "kay@example.com",
+            "represented_guest_name": "Dhruva Gulur",
+            "represented_guest_email": "dhruva@dhruvamd.com",
+        }
+    )
+    sent.clear()
+
+    resent_guest = service.resend_guest_personal_application_email(created_guest["id"])
+
+    assert resent_guest["id"] == created_guest["id"]
+    assert sent["guest_name"] == "Dhruva Gulur"
+    assert sent["to_email"] == "dhruva@dhruvamd.com"
+    assert sent["agency_name"] == "Kay Villanueva"
+    assert sent["intake_url"].startswith("https://guest-processing-production.up.railway.app/intake?")
+
+
+def test_resend_guest_personal_application_email_requires_agency_referral(monkeypatch, temp_db):
+    """The resend action should not appear as a generic email sender for normal guests."""
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Amara Stone", "email": "amara@example.com"})
+
+    with pytest.raises(WebInterfaceError, match="not created through an agency referral"):
+        service.resend_guest_personal_application_email(guest["id"])
+
+
 def test_list_guests_exposes_self_submission_meta(temp_db):
     """Dashboard payload should show direct self-application context."""
     service = GuestWebService(temp_db.db_path)
