@@ -501,6 +501,11 @@ def _parse_priority_score(value: Any) -> float:
         return 0.0
 
 
+def _clamp_priority_score(value: float) -> float:
+    """Keep editable priority scores inside the 0-10 form range."""
+    return max(0.0, min(10.0, float(value)))
+
+
 @dataclass
 class GuestWebService:
     """Service layer for the direct web interface."""
@@ -2171,6 +2176,7 @@ class GuestWebService:
                     "promotion_status": normalized_promotion_status,
                 }
             )
+        parsed_priority_score = _clamp_priority_score(parsed_priority_score)
         legacy_episode_number = _normalize_text(payload.get("legacy_episode_number")) or self._next_legacy_episode_number(payload.get("id"))
         episode_data = {
             "id": payload.get("id"),

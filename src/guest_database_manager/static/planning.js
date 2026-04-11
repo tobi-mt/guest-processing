@@ -600,6 +600,14 @@ function suggestPriorityScoreForEpisode(episodeLike = {}) {
   return 3;
 }
 
+function clampPriorityScore(value, fallback = 0) {
+  const parsed = Number.parseFloat(String(value ?? "").trim());
+  if (Number.isNaN(parsed)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(10, parsed));
+}
+
 function showChecklistPanel(visible) {
   if (!checklistPanel) {
     return;
@@ -911,7 +919,7 @@ function resetEpisodeForm() {
   episodeForm.elements.release_status.value = "unplanned";
   episodeForm.elements.production_status.value = "idea";
   episodeForm.elements.promotion_status.value = "unknown";
-  episodeForm.elements.priority_score.value = String(suggestPriorityScoreForEpisode({}));
+  episodeForm.elements.priority_score.value = String(clampPriorityScore(suggestPriorityScoreForEpisode({}), 3));
   episodeForm.elements.legacy_episode_number.value = computeNextLegacyEpisodeNumber(latestPlanningPayload.episodes || []);
   episodeSubmitButton.textContent = "Save Episode";
   episodeResetButton.hidden = true;
@@ -937,13 +945,16 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeForm.elements.release_status.value = effectiveReleaseStatus;
   episodeForm.elements.production_status.value = effectiveProductionStatus;
   episodeForm.elements.promotion_status.value = effectivePromotionStatus;
-  episodeForm.elements.priority_score.value = Number(episode.priority_score || 0) > 0
-    ? episode.priority_score
-    : suggestPriorityScoreForEpisode({
-      release_status: effectiveReleaseStatus,
-      production_status: effectiveProductionStatus,
-      promotion_status: effectivePromotionStatus,
-    });
+  const suggestedPriorityScore = suggestPriorityScoreForEpisode({
+    release_status: effectiveReleaseStatus,
+    production_status: effectiveProductionStatus,
+    promotion_status: effectivePromotionStatus,
+  });
+  episodeForm.elements.priority_score.value = String(
+    Number(episode.priority_score || 0) > 0
+      ? clampPriorityScore(episode.priority_score, suggestedPriorityScore)
+      : clampPriorityScore(suggestedPriorityScore, 3)
+  );
   episodeForm.elements.legacy_episode_number.value = episode.legacy_episode_number
     || computeNextLegacyEpisodeNumber(latestPlanningPayload.episodes || [], episode.id || "");
   episodeForm.elements.riverside_status.value = episode.riverside_status || "";
@@ -993,7 +1004,7 @@ function renderEpisodeInlineEditor(container, episode) {
           <option value="released" ${normalizeText(episode.promotion_status) === "released" ? "selected" : ""}>Released</option>
         </select>
       `)}
-      ${createFieldMarkup("Priority", `<input name="priority_score" type="number" min="0" max="10" step="0.5" value="${episode.priority_score ?? 0}" />`)}
+      ${createFieldMarkup("Priority", `<input name="priority_score" type="number" min="0" max="10" step="0.5" value="${clampPriorityScore(episode.priority_score, suggestPriorityScoreForEpisode(episode))}" />`)}
       ${createFieldMarkup("Topic", `<input name="topic" type="text" value="${episode.topic || ""}" />`, true)}
       ${createFieldMarkup("Show Note / Blogpost URL", `<input name="show_notes_url" type="url" value="${episode.show_notes_url || ""}" />`, true)}
       ${createFieldMarkup("Files URL", `<input name="release_files_url" type="url" value="${episode.release_files_url || ""}" />`, true)}
@@ -1021,6 +1032,9 @@ function renderEpisodeInlineEditor(container, episode) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(form).entries());
+    payload.priority_score = String(
+      clampPriorityScore(payload.priority_score, suggestPriorityScoreForEpisode(payload))
+    );
     saveButton.disabled = true;
     saveButton.textContent = "Saving...";
     try {
@@ -1051,6 +1065,9 @@ function renderEpisodeInlineEditor(container, episode) {
     }
 
     const payload = Object.fromEntries(new FormData(form).entries());
+    payload.priority_score = String(
+      clampPriorityScore(payload.priority_score, suggestPriorityScoreForEpisode(payload))
+    );
     payload.release_date = formatDateForDateTimeInput(recommendation.recommended_release_date);
     payload.release_status = "scheduled";
     scheduleButton.disabled = true;
@@ -1682,6 +1699,14 @@ function renderRecommendations(recommendations, totalCount) {
           ...episode,
           release_date: formatDateForDateTimeInput(episode.recommended_release_date),
           release_status: "scheduled",
+          priority_score: clampPriorityScore(
+            episode.priority_score,
+            suggestPriorityScoreForEpisode({
+              release_status: "scheduled",
+              production_status: episode.production_status,
+              promotion_status: episode.promotion_status,
+            })
+          ),
         };
         await fetchJSON(`/api/episodes/${episode.id}`, {
           method: "POST",
@@ -1861,6 +1886,9 @@ episodeForm.addEventListener("submit", async (event) => {
   const episodeId = payload.id;
   const submitButton = episodeSubmitButton;
   payload.outreach_plan = JSON.stringify(collectOutreachPlanFromForm());
+  payload.priority_score = String(
+    clampPriorityScore(payload.priority_score, suggestPriorityScoreForEpisode(payload))
+  );
   delete payload.id;
   submitButton.disabled = true;
   submitButton.textContent = episodeId ? "Saving..." : "Creating...";

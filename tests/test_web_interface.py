@@ -1883,6 +1883,24 @@ def test_create_episode_prefills_priority_and_legacy_episode_number(temp_db):
     assert float(created["priority_score"]) == 5.0
 
 
+def test_create_episode_clamps_priority_score_to_editable_range(temp_db):
+    """Editable episode priority should stay inside the planning form's 0-10 range."""
+    service = GuestWebService(temp_db.db_path)
+
+    created = service.create_episode(
+        {
+            "guest_name": "Spencer Vann",
+            "episode_title": "Spencer Vann",
+            "priority_score": 104,
+            "release_status": "unplanned",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    assert float(created["priority_score"]) == 10.0
+
+
 def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
     """Released episodes should not be described as too early in production."""
     service = GuestWebService(temp_db.db_path)
