@@ -1901,6 +1901,56 @@ def test_create_episode_clamps_priority_score_to_editable_range(temp_db):
     assert float(created["priority_score"]) == 10.0
 
 
+def test_recommendations_skip_release_dates_already_reserved_by_scheduled_episodes(temp_db):
+    """Scheduled release dates should push later recommendations onto the next free slot."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Already Scheduled",
+            "guest_email": "scheduled@example.com",
+            "episode_title": "Already Scheduled",
+            "topic": "Already Scheduled",
+            "category": "Faith",
+            "release_date": "2026-04-14 17:00:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Healing Through Honest Conversations",
+            "topic": "Healing Through Honest Conversations",
+            "category": "Mental Health",
+            "interview_date": "2026-03-01",
+            "release_status": "unplanned",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Amara Stone",
+            "guest_email": "amara@example.com",
+            "episode_title": "Renewal After Hard Seasons",
+            "topic": "Renewal After Hard Seasons",
+            "category": "Faith",
+            "interview_date": "2026-03-05",
+            "release_status": "unplanned",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    planning = service.list_planning()
+
+    recommended_dates = [item["recommended_release_date"] for item in planning["recommendations"][:2]]
+    assert "2026-04-14 17:00:00" not in recommended_dates
+    assert recommended_dates[0] == "2026-04-21 17:00:00"
+
+
 def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
     """Released episodes should not be described as too early in production."""
     service = GuestWebService(temp_db.db_path)
