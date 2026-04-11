@@ -301,7 +301,7 @@ function renderOperationsAlerts() {
     ${cleanup.length ? `
       <div class="insight-stack caution">
         <strong class="insight-label">Calendar cleanup needed</strong>
-        <p>Use the <strong>Calendar Cleanup</strong> preset below to focus only on interviews that may still be blocking dates.</p>
+        <p>Use the <strong>Booking Risks</strong> preset below to focus on interviews that may still be blocking dates.</p>
         <div class="stack-list">
           ${cleanup.map((item) => `
             <div class="mini-card">
@@ -537,30 +537,10 @@ function filterAndSortInterviews(interviews) {
     if (activeInterviewPreset === "past" && !isPast) {
       return false;
     }
-    if (activeInterviewPreset === "this_week") {
-      if (!date) return false;
-      const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-      weekStart.setHours(0, 0, 0, 0);
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 7);
-      if (!(date >= weekStart && date < weekEnd)) {
-        return false;
-      }
-      if (normalizeText(interview.status) === "cancelled") {
-        return false;
-      }
-    }
     if (activeInterviewPreset === "needs_confirmation" && normalizeText(interview.confirmation_status) !== "pending") {
       return false;
     }
-    if (activeInterviewPreset === "calendar_linked" && !normalizeText(interview.calendar_event_id)) {
-      return false;
-    }
-    if (activeInterviewPreset === "booking_risks" && !riskIds.has(Number(interview.id))) {
-      return false;
-    }
-    if (activeInterviewPreset === "calendar_cleanup" && !cleanupIds.has(Number(interview.id))) {
+    if (activeInterviewPreset === "booking_risks" && !(riskIds.has(Number(interview.id)) || cleanupIds.has(Number(interview.id)))) {
       return false;
     }
     return true;
