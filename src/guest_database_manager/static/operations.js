@@ -537,6 +537,9 @@ function filterAndSortInterviews(interviews) {
     if (activeInterviewPreset === "past" && !isPast) {
       return false;
     }
+    if (activeInterviewPreset === "past" && interview.planning_episode_id) {
+      return false;
+    }
     if (activeInterviewPreset === "needs_confirmation" && normalizeText(interview.confirmation_status) !== "pending") {
       return false;
     }
