@@ -342,6 +342,37 @@ function renderOperationsAlerts() {
   });
 }
 
+function buildBookingRiskReasonMap(alerts = {}) {
+  const reasonsById = new Map();
+  const addReason = (interviewId, reason) => {
+    const numericId = Number(interviewId);
+    if (!numericId || !reason) {
+      return;
+    }
+    const existing = reasonsById.get(numericId) || [];
+    reasonsById.set(numericId, [...existing, reason]);
+  };
+
+  (alerts.double_bookings || []).forEach((group) => {
+    const guestLabel = group.guest_name || "this guest";
+    const count = Number(group.count || 0);
+    (group.interviews || []).forEach((item) => {
+      addReason(
+        item.id,
+        count > 1
+          ? `Possible duplicate booking: ${guestLabel} currently has ${count} future interview slots reserved.`
+          : `Possible duplicate booking for ${guestLabel}.`
+      );
+    });
+  });
+
+  (alerts.calendar_cleanup || []).forEach((item) => {
+    addReason(item.id, item.reason || "This interview may still be blocking a calendar slot.");
+  });
+
+  return reasonsById;
+}
+
 function populateInterviewYearOptions(interviews) {
   const years = Array.from(
     new Set(interviews.map((interview) => getYearValue(interview.scheduled_for)).filter(Boolean)),
@@ -638,9 +669,11 @@ function renderInterviews(interviews, totalCount) {
     return;
   }
 
+  const bookingRiskReasons = buildBookingRiskReasonMap(latestOperationsPayload.booking_alerts || {});
   visibleInterviews.forEach((interview) => {
     const card = document.createElement("article");
     card.className = "operations-card";
+    const riskReasons = bookingRiskReasons.get(Number(interview.id)) || [];
     const planningButtonLabel = interview.planning_episode_id ? "Update Planning Episode" : "Move To Planning";
     const calendarButton = interview.calendar_event_id
       ? `<button type="button" class="secondary-button" data-calendar-action="push">Update Google Calendar Event</button>`
@@ -669,6 +702,12 @@ function renderInterviews(interviews, totalCount) {
         <span>Confirmation: ${formatConfirmationStatus(interview.confirmation_status)}</span>
         <span>Reminder: ${formatReminderStatus(interview.reminder_status)}</span>
       </div>
+      ${activeInterviewPreset === "booking_risks" && riskReasons.length ? `
+        <div class="operations-preview caution">
+          <strong class="insight-label">Why this is in Booking Risks</strong>
+          <ul>${riskReasons.map((reason) => `<li>${reason}</li>`).join("")}</ul>
+        </div>
+      ` : ""}
       <div class="context-links">
         <a class="context-link" href="${buildScopedLink("/dashboard", interview.guest_name || interview.guest_email)}">View Guest</a>
         <a class="context-link" href="${buildScopedLink("/planning", interview.guest_name || interview.guest_email)}">View Planning</a>
