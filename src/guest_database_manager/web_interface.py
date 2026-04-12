@@ -1227,7 +1227,12 @@ class GuestWebService:
             future_or_current = scheduled_for >= comparison_reference
             status = _normalize_text(interview.get("status")).lower()
             confirmation = _normalize_text(interview.get("confirmation_status")).lower()
-            guest_key = _normalize_text(interview.get("guest_email")) or _normalize_text(interview.get("guest_name"))
+            guest_id = _normalize_text(interview.get("guest_id"))
+            guest_name = _normalize_text(interview.get("guest_name"))
+            guest_email = _normalize_text(interview.get("guest_email"))
+            guest_key = (
+                f"id:{guest_id}" if guest_id else f"name:{guest_name}" if guest_name else f"email:{guest_email}" if guest_email else ""
+            )
 
             if future_or_current and status != "cancelled" and confirmation != "declined" and guest_key:
                 duplicate_groups.setdefault(guest_key, []).append(interview)

@@ -3914,6 +3914,31 @@ def test_operations_flag_calendar_cleanup_candidates(temp_db):
     assert "calendar slot still exists" in operations["booking_alerts"]["calendar_cleanup"][0]["reason"].lower()
 
 
+def test_operations_do_not_flag_shared_agency_email_as_duplicate_booking(temp_db):
+    """Different guests sharing an agency inbox should not look like the same booked guest."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_interview(
+        {
+            "guest_name": "Zylo Marshall",
+            "guest_email": "bunolo@thoughtleadersamerica.com",
+            "title": "Zylo Marshall and Tobi Ojekunle",
+            "scheduled_for": "2099-04-16 20:00:00",
+        }
+    )
+    service.create_interview(
+        {
+            "guest_name": "Dr. Peter Kevorkian",
+            "guest_email": "bunolo@thoughtleadersamerica.com",
+            "title": "Dr. Peter Kevorkian and Tobi Ojekunle",
+            "scheduled_for": "2099-05-07 20:00:00",
+        }
+    )
+
+    operations = service.list_operations()
+
+    assert operations["booking_alerts"]["double_bookings"] == []
+
+
 def test_web_service_can_remove_interview_from_google_calendar(monkeypatch, temp_db):
     """Operators should be able to remove stale cancelled bookings from Google Calendar."""
 
