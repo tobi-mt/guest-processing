@@ -1435,6 +1435,8 @@ function renderEpisodes(episodes, totalCount) {
             method: "POST",
             body: JSON.stringify({}),
           });
+          sendAppreciationButton.disabled = false;
+          sendAppreciationButton.textContent = "Send Thank You";
           appreciationPreviewNode.classList.remove("hidden");
           appreciationPreviewNode.innerHTML = `<p class="composer-feedback success">Thank-you email sent to ${episode.guest_name || episode.guest_email}.</p>`;
           releasePreviewNode.classList.add("hidden");
