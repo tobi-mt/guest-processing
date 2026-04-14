@@ -3679,11 +3679,11 @@ def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp
             return self.configured
 
         def get_post_interview_appreciation_template(self, guest_name):
-            assert guest_name == "Jordan Rivers"
+            assert guest_name == "Natalie Bouchard"
             return {"subject": "Thank You", "body": "We appreciate you."}
 
         def send_email(self, to_email, subject, body):
-            assert to_email == "jordan@example.com"
+            assert to_email == "natalie@example.com"
             assert subject == "Thank You"
             assert "appreciate" in body.lower()
             return True
@@ -3696,8 +3696,8 @@ def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp
     service = GuestWebService(temp_db.db_path)
     episode = service.create_episode(
         {
-            "guest_name": "Jordan Rivers",
-            "guest_email": "jordan@example.com",
+            "guest_name": "Soulful Conversation with Natalie Bouchard",
+            "guest_email": "natalie@example.com",
             "episode_title": "A Meaningful Conversation",
             "topic": "Purpose",
             "production_status": "recorded",
@@ -3706,9 +3706,10 @@ def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp
 
     preview = service.preview_episode_appreciation(episode["id"])
     assert preview["subject"] == "Thank You"
+    assert preview["body"] == "We appreciate you."
 
     sent_episode = service.send_episode_appreciation(episode["id"])
-    assert sent_episode["guest_email"] == "jordan@example.com"
+    assert sent_episode["guest_email"] == "natalie@example.com"
 
 
 def test_web_service_can_preview_and_send_released_episode_email(monkeypatch, temp_db):

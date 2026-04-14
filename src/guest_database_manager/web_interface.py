@@ -1337,6 +1337,12 @@ class GuestWebService:
         def strip_host_participants(value: str) -> str:
             if not value:
                 return ""
+            value = re.sub(
+                r"^(?:soulful conversation|mirror talk|conversation|interview)\s+with\s+",
+                "",
+                value,
+                flags=re.IGNORECASE,
+            ).strip(" -,:")
             parts = [
                 part.strip(" -,:")
                 for part in re.split(r"\s*(?:,|&|\band\b)\s*", value, flags=re.IGNORECASE)
@@ -2587,7 +2593,10 @@ class GuestWebService:
         if not interview:
             raise WebInterfaceError("Interview not found.")
 
-        guest_name = _normalize_text(interview.get("guest_name")) or "Guest"
+        guest_name = self._extract_guest_name_from_interview_title(
+            interview.get("guest_name"),
+            interview.get("title"),
+        ) or "Guest"
         email_manager = self._build_email_manager()
         template = email_manager.get_post_interview_appreciation_template(guest_name=guest_name)
         return {
@@ -2754,7 +2763,10 @@ class GuestWebService:
         if not episode:
             raise WebInterfaceError("Episode not found.")
 
-        guest_name = _normalize_text(episode.get("guest_name")) or "Guest"
+        guest_name = self._extract_guest_name_from_interview_title(
+            episode.get("guest_name"),
+            episode.get("episode_title"),
+        ) or "Guest"
         email_manager = self._build_email_manager()
         template = email_manager.get_post_interview_appreciation_template(guest_name=guest_name)
         return {
@@ -2810,7 +2822,10 @@ class GuestWebService:
         if not episode:
             raise WebInterfaceError("Episode not found.")
 
-        guest_name = _normalize_text(episode.get("guest_name")) or "Guest"
+        guest_name = self._extract_guest_name_from_interview_title(
+            episode.get("guest_name"),
+            episode.get("episode_title"),
+        ) or "Guest"
         show_notes_url = _normalize_text(episode.get("show_notes_url")) or "[Add show notes link]"
         files_url = _normalize_text(episode.get("release_files_url")) or "[Add files link]"
         email_manager = self._build_email_manager()
