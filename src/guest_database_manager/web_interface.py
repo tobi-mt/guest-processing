@@ -2536,13 +2536,14 @@ class GuestWebService:
         def sort_key(interview: Dict[str, Any]) -> tuple[Any, ...]:
             scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
             if not scheduled_for:
-                return (2, datetime.max, -int(interview.get("id") or 0))
+                return (2, float("inf"), -int(interview.get("id") or 0))
 
             comparison_reference = self._align_reference_datetime(reference, scheduled_for)
+            sort_value = scheduled_for.timestamp()
             if scheduled_for >= comparison_reference:
-                return (0, scheduled_for, int(interview.get("id") or 0))
+                return (0, sort_value, int(interview.get("id") or 0))
 
-            return (1, -scheduled_for.timestamp(), -int(interview.get("id") or 0))
+            return (1, -sort_value, -int(interview.get("id") or 0))
 
         return sorted(interviews, key=sort_key)
 

@@ -3492,6 +3492,36 @@ def test_due_weekly_reminders_follow_nearest_upcoming_order(temp_db):
     ]
 
 
+def test_sort_interviews_handles_mixed_naive_and_aware_datetimes(temp_db):
+    """Operations sorting should stay stable when calendar imports mix naive and aware datetimes."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_interview(
+        {
+            "guest_name": "Aware Guest",
+            "guest_email": "aware@example.com",
+            "title": "Aware interview",
+            "scheduled_for": "2026-04-16T18:00:00+00:00",
+            "timezone": "Europe/Berlin",
+        }
+    )
+    service.create_interview(
+        {
+            "guest_name": "Naive Guest",
+            "guest_email": "naive@example.com",
+            "title": "Naive interview",
+            "scheduled_for": "2026-04-16 20:00:00",
+            "timezone": "Europe/Berlin",
+        }
+    )
+
+    ordered = service._sort_interviews_by_upcoming_priority(
+        service.database.list_interviews(),
+        reference=datetime(2026, 4, 15, 12, 0, 0),
+    )
+
+    assert [item["guest_name"] for item in ordered] == ["Aware Guest", "Naive Guest"]
+
+
 def test_web_service_requires_interview_and_episode_basics(temp_db):
     """Operations records should validate their essential fields."""
     service = GuestWebService(temp_db.db_path)
