@@ -24,6 +24,7 @@ GENERIC_SOURCE_PATTERNS = (
     r"join facebook",
     r"login • instagram",
 )
+GENERIC_SOURCE_LABELS = {"facebook", "instagram"}
 
 STOPWORDS = {
     "about", "after", "also", "been", "being", "because", "between", "build", "coach", "community",
@@ -280,12 +281,14 @@ def _summary_from_research(topics: list[str], sources: list[dict[str, Any]]) -> 
 
 
 def _is_generic_source(source: dict[str, Any]) -> bool:
-    combined = _normalize_text(" ".join([
-        source.get("title", ""),
-        source.get("description", ""),
-        source.get("heading", ""),
-    ]))
-    return any(re.search(pattern, combined) for pattern in GENERIC_SOURCE_PATTERNS)
+    title = _normalize_text(source.get("title", ""))
+    description = _normalize_text(source.get("description", ""))
+    heading = _normalize_text(source.get("heading", ""))
+    combined = _normalize_text(" ".join([title, description, heading]))
+    if any(re.search(pattern, combined) for pattern in GENERIC_SOURCE_PATTERNS):
+        return True
+    low_signal_parts = [part for part in (title, description, heading) if part]
+    return bool(low_signal_parts) and all(part in GENERIC_SOURCE_LABELS for part in low_signal_parts)
 
 
 def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:

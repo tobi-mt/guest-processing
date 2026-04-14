@@ -429,9 +429,19 @@ function renderGuestResearchCopilot(research) {
   if (!research?.summary && !(research?.likely_topics || []).length) {
     return "";
   }
+  const isLowSignalSource = (source) => {
+    const values = [source?.title, source?.description, source?.heading]
+      .map((value) => normalizeText(value))
+      .filter(Boolean);
+    if (!values.length) {
+      return false;
+    }
+    const genericLabels = new Set(["facebook", "instagram"]);
+    return values.every((value) => genericLabels.has(value));
+  };
   const topics = (research.likely_topics || []).slice(0, 4);
   const timelySignals = (research.timely_signals || []).slice(0, 3);
-  const sources = (research.sources || []).slice(0, 3);
+  const sources = (research.sources || []).filter((source) => !isLowSignalSource(source)).slice(0, 3);
   const mode = normalizeText(research.research_mode) || "manual";
   const freshness = research.freshness || {};
   return `

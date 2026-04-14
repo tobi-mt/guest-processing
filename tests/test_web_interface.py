@@ -132,6 +132,29 @@ def test_guest_research_rejects_generic_instagram_login_page(monkeypatch):
         )
 
 
+def test_guest_research_rejects_generic_facebook_shell_page(monkeypatch):
+    """Generic Facebook shell pages should not be stored as useful guest research."""
+    monkeypatch.setattr(
+        guest_research,
+        "_fetch_page",
+        lambda url: {
+            "url": url,
+            "title": "Facebook",
+            "description": "Facebook",
+            "heading": "",
+            "text": "Facebook",
+        },
+    )
+
+    with pytest.raises(ValueError):
+        guest_research.research_guest_from_public_web(
+            {
+                "website": "",
+                "social_media_handles": "Facebook: example.profile",
+            }
+        )
+
+
 def test_web_service_can_create_and_update_guest(temp_db):
     """The service layer should write and update guests through the shared database."""
     service = GuestWebService(temp_db.db_path)

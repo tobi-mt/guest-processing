@@ -513,6 +513,17 @@ function renderResearchRecoveryLinks(guest) {
   `;
 }
 
+function isLowSignalResearchSource(source) {
+  const values = [source?.title, source?.description, source?.heading]
+    .map((value) => normalizeText(value))
+    .filter(Boolean);
+  if (!values.length) {
+    return false;
+  }
+  const genericLabels = new Set(["facebook", "instagram"]);
+  return values.every((value) => genericLabels.has(value));
+}
+
 function renderGuestCopilotSummary(guest) {
   const research = guest.guest_research;
   if (!research) {
@@ -554,6 +565,7 @@ function renderGuestCopilotSummary(guest) {
   const topics = (research.likely_topics || []).slice(0, 4).map((item) => `<span class="signal-chip good">${escapeHtml(item)}</span>`).join("");
   const signals = (research.timely_signals || []).slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   const sources = (research.sources || [])
+    .filter((source) => !isLowSignalResearchSource(source))
     .slice(0, 3)
     .map((source) => {
       const label = source.title || source.host || source.url || "Public source";
