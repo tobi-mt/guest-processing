@@ -4,6 +4,7 @@
 """Tests for the direct web interface service layer."""
 
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -3497,6 +3498,27 @@ def test_web_service_requires_interview_and_episode_basics(temp_db):
 
     with pytest.raises(WebInterfaceError):
         service.create_interview({"guest_name": "", "scheduled_for": ""})
+
+
+def test_interview_update_surfaces_calendar_event_conflict_as_user_error(monkeypatch, temp_db):
+    """Interview saves should return a readable error instead of bubbling into a 502."""
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "scheduled_for": "2026-04-20 18:00:00",
+            "calendar_event_id": "google_event_1",
+        }
+    )
+
+    def raise_conflict(payload):
+        raise sqlite3.IntegrityError("UNIQUE constraint failed: interviews.calendar_event_id")
+
+    monkeypatch.setattr(service.database, "upsert_interview", raise_conflict)
+
+    with pytest.raises(WebInterfaceError, match="already linked to another interview record"):
+        service.update_interview(interview["id"], {"guest_email": "updated@example.com"})
 
     with pytest.raises(WebInterfaceError):
         service.create_episode({"guest_name": "Jordan Rivers", "episode_title": ""})

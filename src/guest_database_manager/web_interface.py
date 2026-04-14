@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import secrets
+import sqlite3
 import tempfile
 import webbrowser
 from csv import DictWriter
@@ -1923,7 +1924,17 @@ class GuestWebService:
         if not interview_data["scheduled_for"]:
             raise WebInterfaceError("Interview date and time are required.")
 
-        interview_id, _ = self.database.upsert_interview(interview_data)
+        try:
+            interview_id, _ = self.database.upsert_interview(interview_data)
+        except sqlite3.IntegrityError as exc:
+            message = str(exc)
+            if "interviews.calendar_event_id" in message:
+                raise WebInterfaceError(
+                    "This interview could not be saved because its Google Calendar event id is already linked to another interview record."
+                ) from exc
+            raise WebInterfaceError(f"This interview could not be saved: {message}") from exc
+        except ValueError as exc:
+            raise WebInterfaceError(str(exc)) from exc
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
             raise WebInterfaceError("Interview could not be saved.")
