@@ -378,3 +378,55 @@ def test_clean_database_merges_duplicate_episode_rows(temp_db):
     assert episodes[0]["legacy_episode_number"] == "363"
     assert episodes[0]["episode_title"] == "Hello Fear, My Old Friend"
     assert episodes[0]["transcript_text"] == "A richer transcript that should be preserved."
+
+
+def test_clean_database_merges_placeholder_title_episode_with_richer_duplicate(temp_db):
+    """Cleanup should merge same-guest interview duplicates when one title is only a guest-name placeholder."""
+    import sqlite3
+
+    with sqlite3.connect(str(temp_db.db_path)) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO episodes (
+                guest_name, guest_email, episode_title, topic, interview_date, release_status, source_file_name, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                "Brent Freeman",
+                "brent@example.com",
+                "Brent Freeman",
+                "",
+                "2026-04-10",
+                "unplanned",
+                "queue.csv",
+            ),
+        )
+        first_id = cursor.lastrowid
+        cursor = conn.execute(
+            """
+            INSERT INTO episodes (
+                guest_name, guest_email, episode_title, topic, interview_date, release_status, source_file_name, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                "Brent Freeman",
+                "brent@example.com",
+                "Brent Kesler: Financial Intelligence - Mapping Out The Millionaire Mystery",
+                "",
+                "2026-04-10",
+                "unplanned",
+                "queue.csv",
+            ),
+        )
+        second_id = cursor.lastrowid
+        conn.commit()
+
+    assert first_id != second_id
+
+    result = temp_db.clean_database()
+    episodes = temp_db.list_episodes()
+
+    assert result["episodes_merged"] == 1
+    assert result["episodes_removed"] == 1
+    assert len(episodes) == 1
+    assert episodes[0]["episode_title"] == "Brent Kesler: Financial Intelligence - Mapping Out The Millionaire Mystery"

@@ -38,6 +38,13 @@ def _episode_row_text(row: Dict[str, Any], key: str) -> str:
     return str(row.get(key) or "").strip()
 
 
+def _episode_title_is_placeholder(row: Dict[str, Any]) -> bool:
+    """Treat title-as-guest-name rows as placeholders when choosing a canonical episode."""
+    guest_name = _normalized_episode_identity(row.get("guest_name"))
+    episode_title = _normalized_episode_identity(row.get("episode_title"))
+    return bool(guest_name and episode_title and guest_name == episode_title)
+
+
 def _episode_status_rank(value: str, *, kind: str) -> int:
     """Rank episode status fields so the most advanced useful state wins."""
     normalized = _normalized_episode_identity(value)
@@ -643,8 +650,10 @@ class GuestDatabase:
         for key_builder in (
             lambda row: ("legacy",) + normalized_key([row.get("legacy_episode_number")]),
             lambda row: ("guest_release",) + normalized_key([row.get("guest_name"), row.get("release_date")]),
+            lambda row: ("email_interview",) + normalized_key([row.get("guest_email"), row.get("interview_date")]),
             lambda row: ("guest_topic_interview",) + normalized_key([row.get("guest_name"), row.get("topic"), row.get("interview_date")]),
             lambda row: ("guest_title_interview",) + normalized_key([row.get("guest_name"), row.get("episode_title"), row.get("interview_date")]),
+            lambda row: ("guest_interview",) + normalized_key([row.get("guest_name"), row.get("interview_date")]),
         ):
             grouped: Dict[tuple[str, ...], List[Dict[str, Any]]] = {}
             for row in active_rows:
@@ -654,8 +663,10 @@ class GuestDatabase:
                 grouped.setdefault(key, []).append(row)
 
             duplicate_ids: set[int] = set()
-            for rows in grouped.values():
+            for key, rows in grouped.items():
                 if len(rows) > 1:
+                    if key[0] == "guest_interview" and not any(_episode_title_is_placeholder(row) for row in rows):
+                        continue
                     groups.append(rows)
                     duplicate_ids.update(int(row["id"]) for row in rows)
 
@@ -689,6 +700,8 @@ class GuestDatabase:
             score += 18
         if _episode_row_text(row, "source_file_name"):
             score += 4
+        if _episode_row_text(row, "episode_title") and not _episode_title_is_placeholder(row):
+            score += 5
         if _normalized_episode_identity(row.get("source_type")) in {"released_archive", "release_queue"}:
             score += 8
         score += _episode_status_rank(_episode_row_text(row, "release_status"), kind="release") * 3
