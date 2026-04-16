@@ -12,10 +12,11 @@ import tempfile
 import webbrowser
 from csv import DictWriter
 from base64 import b64decode
+from time import monotonic
 from email.parser import BytesParser
 from email.policy import default
 from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO, StringIO
@@ -512,9 +513,46 @@ class GuestWebService:
     """Service layer for the direct web interface."""
 
     db_path: Path
+    _payload_cache: Dict[str, tuple[float, Dict[str, Any]]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
+
+    @staticmethod
+    def _payload_cache_ttl(cache_key: str) -> float:
+        """Return a short cache TTL for expensive dashboard payloads."""
+        if cache_key == "planning_ai_copilot":
+            return 0.0
+        return 3.0
+
+    def _get_cached_payload(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """Return a recent cached payload when it is still fresh enough to reuse."""
+        ttl_seconds = self._payload_cache_ttl(cache_key)
+        if ttl_seconds <= 0:
+            return None
+        cached = self._payload_cache.get(cache_key)
+        if not cached:
+            return None
+        cached_at, payload = cached
+        if (monotonic() - cached_at) > ttl_seconds:
+            self._payload_cache.pop(cache_key, None)
+            return None
+        return dict(payload)
+
+    def _store_cached_payload(self, cache_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Remember a payload briefly so repeated first-load refreshes are lighter."""
+        ttl_seconds = self._payload_cache_ttl(cache_key)
+        if ttl_seconds > 0:
+            self._payload_cache[cache_key] = (monotonic(), dict(payload))
+        return payload
+
+    def _invalidate_payload_cache(self, *cache_keys: str) -> None:
+        """Drop stale cached page payloads after writes mutate dashboard state."""
+        if not cache_keys:
+            self._payload_cache.clear()
+            return
+        for cache_key in cache_keys:
+            self._payload_cache.pop(cache_key, None)
 
     def _next_legacy_episode_number(self, current_episode_id: Any = None) -> str:
         """Return the next numeric legacy episode number when one can be inferred."""
@@ -551,19 +589,25 @@ class GuestWebService:
 
     def list_guests(self) -> Dict[str, Any]:
         """Return all guests for the frontend."""
+        cached = self._get_cached_payload("guests")
+        if cached is not None:
+            return cached
         guests = [serialize_guest(guest) for guest in enrich_guests_with_recommendations(self.database.get_all_guests())]
         for guest in guests:
             guest["promotion_profile"] = self._build_guest_promotion_profile(guest)
-        return {
+        return self._store_cached_payload("guests", {
             "guests": guests,
             "stats": self.database.get_stats(),
             "email_stats": self.database.get_email_stats(),
             "recommendation_stats": build_guest_recommendation_stats(guests),
             "email_enabled": self._build_email_manager().is_configured(),
-        }
+        })
 
     def list_operations(self) -> Dict[str, Any]:
         """Return the current interview and episode operations data."""
+        cached = self._get_cached_payload("operations")
+        if cached is not None:
+            return cached
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         raw_interviews = self.database.list_interviews()
         interviews = [
@@ -571,7 +615,7 @@ class GuestWebService:
             for interview in self._sort_interviews_by_upcoming_priority(raw_interviews)
         ]
         reminder_candidates = [self._serialize_interview_reminder(candidate) for candidate in self.get_due_weekly_reminders()]
-        return {
+        return self._store_cached_payload("operations", {
             "stats": self.database.get_operations_stats(),
             "interviews": interviews,
             "reminder_candidates": reminder_candidates,
@@ -579,10 +623,13 @@ class GuestWebService:
             "weekly_outreach": self._build_weekly_outreach_focus(episodes),
             "weekly_system": self._build_weekly_system_payload(),
             "booking_alerts": self._build_operations_alerts(raw_interviews),
-        }
+        })
 
     def list_planning(self) -> Dict[str, Any]:
         """Return episode planning data separate from interview operations."""
+        cached = self._get_cached_payload("planning")
+        if cached is not None:
+            return cached
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
         ai_copilot = self._build_openai_scheduling_copilot()
@@ -595,7 +642,7 @@ class GuestWebService:
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
-        return {
+        return self._store_cached_payload("planning", {
             "stats": self._build_episode_stats(enriched_episodes),
             "episodes": enriched_episodes,
             "recommendations": recommendations,
@@ -612,7 +659,7 @@ class GuestWebService:
                 "current_month_context": build_month_context(datetime.now()),
             },
             "weekly_system": self._build_weekly_system_payload(),
-        }
+        })
 
     def list_planning_ai_copilot(self) -> Dict[str, Any]:
         """Return AI-enriched recommendations without blocking the base planning page load."""
@@ -1488,6 +1535,7 @@ class GuestWebService:
         """Create a guest directly from the web form."""
         guest_data = build_guest_payload(payload, source_name=source_name)
         guest_id, _ = self.database.upsert_guest(guest_data)
+        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         return serialize_guest(guest) if guest else {"id": guest_id}
 
@@ -1641,6 +1689,7 @@ class GuestWebService:
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest not found.")
+        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
         return serialize_guest(guest)
 
     def send_guest_decision_email(self, guest_id: int, status: str, custom_message: str = "") -> Dict[str, Any]:
@@ -1722,6 +1771,7 @@ class GuestWebService:
         else:
             self.database.reject_guest_with_email(guest_id, custom_message)
 
+        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
         updated_guest = self.database.get_guest_by_id(guest_id)
         if not updated_guest:
             raise WebInterfaceError("Guest not found after email send.")
@@ -1742,6 +1792,7 @@ class GuestWebService:
             )
 
         self.database.delete_guest(guest_id)
+        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
         return {"deleted": True, "id": guest_id}
 
     def update_guest(self, guest_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1781,6 +1832,7 @@ class GuestWebService:
             raise WebInterfaceError("Email address must contain '@'.")
 
         self.database.update_guest_by_id(guest_id, updated_guest)
+        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved.")
@@ -1803,6 +1855,7 @@ class GuestWebService:
         updated_guest["guest_research_updated_at"] = research.get("updated_at")
 
         self.database.update_guest_by_id(guest_id, updated_guest)
+        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved after research.")
@@ -1833,6 +1886,7 @@ class GuestWebService:
         updated_guest["guest_research_updated_at"] = research.get("updated_at")
 
         self.database.update_guest_by_id(guest_id, updated_guest)
+        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved after search-assisted research.")
@@ -1877,6 +1931,8 @@ class GuestWebService:
             self._persist_guest_research(guest, research)
             researched += 1
 
+        if researched or errors:
+            self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
         return {
             "researched": researched,
             "errors": errors[:5],
@@ -1899,6 +1955,7 @@ class GuestWebService:
                 f'Type "{interview.get("guest_name") or interview.get("title")}" to delete this interview.'
             )
         self.database.delete_interview(interview_id)
+        self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
         return {"deleted": True, "id": interview_id}
 
     def create_interview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1938,6 +1995,7 @@ class GuestWebService:
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
             raise WebInterfaceError("Interview could not be saved.")
+        self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
         return interview
 
     def update_interview(self, interview_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2240,6 +2298,7 @@ class GuestWebService:
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
             raise WebInterfaceError("Episode could not be saved.")
+        self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
         return episode
 
     def create_episode_from_interview(self, interview_id: int) -> Dict[str, Any]:
@@ -2328,6 +2387,7 @@ class GuestWebService:
             else:
                 updated += 1
 
+        self._invalidate_payload_cache("planning", "planning_ai_copilot", "operations")
         return {
             "imported": imported,
             "updated": updated,
@@ -2446,6 +2506,8 @@ class GuestWebService:
             updated_titles.append(remote_title or _normalize_text(episode.get("episode_title")))
 
         unmatched_local = max(len(local_episodes) - matched - skipped_without_title, 0)
+        if updated:
+            self._invalidate_payload_cache("planning", "planning_ai_copilot", "operations")
         return {
             "remote_episodes": len(remote_episodes),
             "matched": matched,
@@ -2485,6 +2547,7 @@ class GuestWebService:
                 f'Type "{episode.get("episode_title") or episode.get("guest_name")}" to delete this episode.'
             )
         self.database.delete_episode(episode_id)
+        self._invalidate_payload_cache("planning", "planning_ai_copilot", "operations")
         return {"deleted": True, "id": episode_id}
 
     def get_due_weekly_reminders(self, *, reference: Optional[datetime] = None) -> list[Dict[str, Any]]:

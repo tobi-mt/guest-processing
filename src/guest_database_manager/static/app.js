@@ -79,16 +79,31 @@ function confirmCriticalAction(message) {
 }
 
 async function fetchJSON(url, options = {}) {
-  const response = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
+  let lastError = null;
 
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || "Request failed");
+  for (let attempt = 0; attempt < (isReadRequest ? 2 : 1); attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Request failed");
+      }
+      return data;
+    } catch (error) {
+      lastError = error;
+      if (!isReadRequest || attempt > 0) {
+        break;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+    }
   }
-  return data;
+
+  throw lastError || new Error("Request failed");
 }
 
 async function fetchUpload(url, formData) {
@@ -1100,8 +1115,14 @@ function renderGuests(payload) {
 
 async function loadGuests() {
   try {
+    if (!latestPayload) {
+      setMessage("Loading guests...", "pending");
+    }
     const payload = await fetchJSON("/api/guests");
     renderGuests(payload);
+    if (message.classList.contains("pending")) {
+      setMessage("", "");
+    }
   } catch (error) {
     setMessage(error.message, "error");
   }

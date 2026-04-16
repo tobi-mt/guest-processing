@@ -61,24 +61,39 @@ function setOperationsTab(tabName) {
 }
 
 async function fetchJSON(url, options = {}) {
-  const response = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
+  let lastError = null;
 
-  const rawText = await response.text();
-  let data = {};
-  if (rawText) {
+  for (let attempt = 0; attempt < (isReadRequest ? 2 : 1); attempt += 1) {
     try {
-      data = JSON.parse(rawText);
+      const response = await fetch(url, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+
+      const rawText = await response.text();
+      let data = {};
+      if (rawText) {
+        try {
+          data = JSON.parse(rawText);
+        } catch (error) {
+          data = { error: rawText.trim() };
+        }
+      }
+      if (!response.ok) {
+        throw new Error(data.error || `Request failed (${response.status})`);
+      }
+      return data;
     } catch (error) {
-      data = { error: rawText.trim() };
+      lastError = error;
+      if (!isReadRequest || attempt > 0) {
+        break;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
     }
   }
-  if (!response.ok) {
-    throw new Error(data.error || `Request failed (${response.status})`);
-  }
-  return data;
+
+  throw lastError || new Error("Request failed");
 }
 
 function setMessage(node, text, tone = "") {
@@ -1239,6 +1254,9 @@ function renderOperations() {
 }
 
 async function loadOperations() {
+  if (!latestOperationsPayload.interviews?.length && !latestOperationsPayload.reminder_candidates?.length) {
+    setMessage(interviewMessage, "Loading interview operations...", "pending");
+  }
   const payload = await fetchJSON("/api/operations");
   latestOperationsPayload = payload;
   const interviews = payload.interviews || [];
@@ -1247,6 +1265,9 @@ async function loadOperations() {
   stats.interviewsConfirmed.textContent = interviews.filter((item) => item.confirmation_status === "confirmed").length;
   stats.remindersDue.textContent = payload.reminder_candidates?.length ?? 0;
   renderOperations();
+  if (interviewMessage.classList.contains("pending")) {
+    setMessage(interviewMessage, "", "");
+  }
 }
 
 interviewForm.addEventListener("submit", async (event) => {

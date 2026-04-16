@@ -168,15 +168,30 @@ function replaceEpisodeInPayload(savedEpisode) {
 }
 
 async function fetchJSON(url, options = {}) {
-  const response = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || "Request failed");
+  const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
+  let lastError = null;
+
+  for (let attempt = 0; attempt < (isReadRequest ? 2 : 1); attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Request failed");
+      }
+      return data;
+    } catch (error) {
+      lastError = error;
+      if (!isReadRequest || attempt > 0) {
+        break;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+    }
   }
-  return data;
+
+  throw lastError || new Error("Request failed");
 }
 
 async function postForm(url, formData) {
@@ -1877,6 +1892,9 @@ function applyEpisodeFocusFromUrl() {
 }
 
 async function loadPlanning() {
+  if (!latestPlanningPayload.episodes?.length && !latestPlanningPayload.recommendations?.length) {
+    setMessage(episodeMessage, "Loading planning data...", "pending");
+  }
   const payload = await fetchJSON("/api/planning");
   latestPlanningPayload = payload;
   stats.total.textContent = payload.stats.episodes_total ?? 0;
@@ -1886,6 +1904,9 @@ async function loadPlanning() {
   stats.promoReady.textContent = payload.stats.episodes_promo_ready ?? 0;
   stats.needsAssets.textContent = payload.stats.episodes_need_assets ?? 0;
   renderPlanning();
+  if (episodeMessage.classList.contains("pending")) {
+    setMessage(episodeMessage, "", "");
+  }
   applyEpisodeFocusFromUrl();
   queueMicrotask(() => {
     hydrateAiSchedulingCopilot().catch(() => {});
