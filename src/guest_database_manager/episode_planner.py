@@ -213,23 +213,23 @@ def next_release_slot(reference: datetime) -> datetime:
     return candidate
 
 
-def _reserved_release_slots(episodes: Iterable[Dict[str, Any]], *, reference: datetime) -> set[datetime]:
-    """Collect future scheduled release dates that should reserve recommendation slots."""
-    reserved: set[datetime] = set()
+def _reserved_release_slots(episodes: Iterable[Dict[str, Any]], *, reference: datetime) -> set[str]:
+    """Collect future scheduled release days that should reserve recommendation slots."""
+    reserved: set[str] = set()
     for episode in episodes:
         if _clean_text(episode.get("release_status")).lower() != "scheduled":
             continue
         scheduled_release = _parse_episode_date(episode.get("release_date"))
         if not scheduled_release or scheduled_release < reference:
             continue
-        reserved.add(scheduled_release.replace(second=0, microsecond=0))
+        reserved.add(scheduled_release.date().isoformat())
     return reserved
 
 
-def _next_available_release_slot(reference: datetime, reserved_slots: set[datetime]) -> datetime:
-    """Return the next recommendation slot that is not already reserved."""
+def _next_available_release_slot(reference: datetime, reserved_slots: set[str]) -> datetime:
+    """Return the next recommendation slot whose day is not already reserved."""
     slot = next_release_slot(reference)
-    while slot.replace(second=0, microsecond=0) in reserved_slots:
+    while slot.date().isoformat() in reserved_slots:
         slot = next_release_slot(slot + timedelta(seconds=1))
     return slot
 

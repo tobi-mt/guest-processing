@@ -1975,6 +1975,41 @@ def test_recommendations_skip_release_dates_already_reserved_by_scheduled_episod
     assert recommended_dates[0] == "2026-04-21 17:00:00"
 
 
+def test_recommendations_skip_scheduled_release_day_even_when_time_differs(temp_db):
+    """A scheduled episode should reserve its release day even if the stored time is not 17:00."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Different Time Scheduled",
+            "guest_email": "different-time@example.com",
+            "episode_title": "Different Time Scheduled",
+            "topic": "Different Time Scheduled",
+            "category": "Faith",
+            "release_date": "2026-04-14 19:00:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Healing Through Honest Conversations",
+            "topic": "Healing Through Honest Conversations",
+            "category": "Mental Health",
+            "interview_date": "2026-03-01",
+            "release_status": "unplanned",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    planning = service.list_planning()
+
+    assert planning["recommendations"][0]["recommended_release_date"] == "2026-04-21 17:00:00"
+
+
 def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
     """Released episodes should not be described as too early in production."""
     service = GuestWebService(temp_db.db_path)
