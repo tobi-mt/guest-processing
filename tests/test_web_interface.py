@@ -1246,6 +1246,47 @@ def test_list_guests_exposes_self_submission_meta(temp_db):
     }
 
 
+def test_list_guests_exposes_compact_planning_summary(temp_db):
+    """Dashboard payload should include lightweight planning context for linked guests."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+    episode = service.create_episode(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+            "episode_title": "Healing Through Honest Conversations",
+            "release_date": "2026-05-12 17:00:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    payload = service.list_guests()
+    saved_guest = next(item for item in payload["guests"] if item["id"] == guest["id"])
+
+    assert saved_guest["planning_summary"] == {
+        "episode_count": 1,
+        "open_count": 1,
+        "scheduled_count": 1,
+        "featured_episode_id": episode["id"],
+        "featured_title": "Healing Through Honest Conversations",
+        "featured_release_status": "scheduled",
+        "featured_production_status": "ready",
+        "featured_release_date": "2026-05-12 17:00:00",
+        "next_scheduled_release_date": "2026-05-12 17:00:00",
+        "summary_label": "1 linked episode · 1 scheduled · 1 still active in planning",
+    }
+
+
 def test_list_guests_flags_shared_identity_patterns(temp_db):
     """Dashboard review assist should flag reused email and shared website domains across different names."""
     service = GuestWebService(temp_db.db_path)

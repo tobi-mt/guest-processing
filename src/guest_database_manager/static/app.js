@@ -447,6 +447,65 @@ function renderPromotionProfile(guest) {
   `;
 }
 
+function formatPlanningDate(value) {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value.includes("T") ? value : value.replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+function renderGuestPlanningSummary(guest) {
+  const summary = guest.planning_summary;
+  if (!summary) {
+    return "";
+  }
+
+  const featuredTitle = summary.featured_title || "Linked episode";
+  const nextDate = summary.next_scheduled_release_date
+    ? `<li><strong>Next scheduled release</strong>: ${escapeHtml(formatPlanningDate(summary.next_scheduled_release_date))}</li>`
+    : "";
+  const featuredDate = summary.featured_release_date
+    ? `<li><strong>Stored release date</strong>: ${escapeHtml(formatPlanningDate(summary.featured_release_date))}</li>`
+    : "";
+  const featuredEpisodeLink = summary.featured_episode_id
+    ? `/planning?tab=release_planning&episode_id=${encodeURIComponent(summary.featured_episode_id)}`
+    : buildGuestScopedLink("/planning", guest);
+
+  return `
+    <section class="guest-ai-card guest-planning-card">
+      <div class="guest-ai-head">
+        <div>
+          <div class="guest-ai-title-row">
+            <strong>Planning Context</strong>
+            <span class="guest-ai-badge">${escapeHtml(summary.summary_label || "Linked planning context")}</span>
+          </div>
+          <p class="guest-ai-copy">${escapeHtml(featuredTitle)}</p>
+        </div>
+      </div>
+      <ul class="guest-planning-meta">
+        <li><strong>Release status</strong>: ${escapeHtml(summary.featured_release_status || "unplanned")}</li>
+        <li><strong>Production status</strong>: ${escapeHtml(summary.featured_production_status || "idea")}</li>
+        ${featuredDate}
+        ${nextDate}
+      </ul>
+      <div class="guest-planning-links">
+        <a class="context-link" href="${featuredEpisodeLink}">Open Linked Episode</a>
+        <a class="context-link" href="${buildGuestScopedLink("/planning", guest)}">Open In Planning</a>
+      </div>
+    </section>
+  `;
+}
+
 function buildGuestResearchSearchUrl(guest) {
   const parts = [];
   const name = String(guest.full_name || "").trim();
@@ -791,6 +850,7 @@ function renderGuests(payload) {
     const actionFeedbackNode = node.querySelector(".card-action-feedback");
     const aiSummaryNode = node.querySelector(".guest-ai-summary");
     const copilotSummaryNode = node.querySelector(".guest-copilot-summary");
+    const planningSummaryNode = node.querySelector(".guest-planning-summary");
     const promotionSummaryNode = node.querySelector(".guest-promotion-summary");
 
     node.querySelector(".guest-name").textContent = guest.full_name || "Unnamed Guest";
@@ -799,6 +859,7 @@ function renderGuests(payload) {
       guest.background || guest.additional_info || "No background added yet.";
     aiSummaryNode.innerHTML = renderGuestAiSummary(guest);
     copilotSummaryNode.innerHTML = renderGuestCopilotSummary(guest);
+    planningSummaryNode.innerHTML = renderGuestPlanningSummary(guest);
     promotionSummaryNode.innerHTML = renderPromotionProfile(guest);
 
     statusPill.textContent = guestStatusLabel(guest);

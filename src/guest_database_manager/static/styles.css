@@ -639,6 +639,10 @@ button:disabled {
   margin-top: 12px;
 }
 
+.guest-planning-summary {
+  margin-top: 12px;
+}
+
 .guest-ai-card {
   padding: 14px 16px;
   border-radius: 18px;
@@ -648,6 +652,24 @@ button:disabled {
 
 .guest-promotion-card {
   background: linear-gradient(180deg, rgba(248, 252, 249, 0.98), rgba(239, 246, 242, 0.95));
+}
+
+.guest-planning-card {
+  background: linear-gradient(180deg, rgba(247, 250, 255, 0.98), rgba(236, 242, 251, 0.95));
+}
+
+.guest-planning-meta {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--muted);
+}
+
+.guest-planning-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .guest-ai-head {

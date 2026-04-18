@@ -592,9 +592,11 @@ class GuestWebService:
         cached = self._get_cached_payload("guests")
         if cached is not None:
             return cached
+        episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         guests = [serialize_guest(guest) for guest in enrich_guests_with_recommendations(self.database.get_all_guests())]
         for guest in guests:
             guest["promotion_profile"] = self._build_guest_promotion_profile(guest)
+            guest["planning_summary"] = self._build_guest_planning_summary(guest, episodes)
         return self._store_cached_payload("guests", {
             "guests": guests,
             "stats": self.database.get_stats(),
@@ -931,6 +933,88 @@ class GuestWebService:
             "label": label,
             "strengths": strengths[:3],
             "gaps": gaps[:3],
+        }
+
+    def _episode_belongs_to_guest(self, episode: Dict[str, Any], guest: Dict[str, Any]) -> bool:
+        """Return whether a planning episode likely belongs to a given guest."""
+        guest_id = str(guest.get("id") or "").strip()
+        episode_guest_id = str(episode.get("guest_id") or "").strip()
+        if guest_id and episode_guest_id and guest_id == episode_guest_id:
+            return True
+
+        guest_email = _normalize_text(guest.get("email")).casefold()
+        episode_email = _normalize_text(episode.get("guest_email")).casefold()
+        if guest_email and episode_email and guest_email == episode_email:
+            return True
+
+        guest_host = self._website_host(guest.get("website"))
+        episode_host = self._website_host(episode.get("website"))
+        if guest_host and episode_host and guest_host == episode_host:
+            return True
+
+        return self._name_match_score(
+            episode.get("guest_name"),
+            guest.get("full_name") or guest.get("name"),
+        ) >= 85
+
+    def _build_guest_planning_summary(
+        self,
+        guest: Dict[str, Any],
+        episodes: list[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Attach compact planning context to a dashboard guest card."""
+        linked = [episode for episode in episodes if self._episode_belongs_to_guest(episode, guest)]
+        if not linked:
+            return None
+
+        def sort_key(item: Dict[str, Any]) -> tuple[datetime, int]:
+            release_date = self._parse_datetime_static(item.get("release_date"))
+            interview_date = self._parse_datetime_static(item.get("interview_date"))
+            recording_date = self._parse_datetime_static(item.get("recording_date"))
+            best_date = release_date or interview_date or recording_date or datetime.min
+            return best_date, int(item.get("id") or 0)
+
+        linked_sorted = sorted(linked, key=sort_key, reverse=True)
+        featured = linked_sorted[0]
+        open_items = [
+            item for item in linked
+            if _normalize_text(item.get("release_status")).lower() not in {"released"}
+        ]
+        scheduled_items = [
+            item for item in linked
+            if _normalize_text(item.get("release_status")).lower() == "scheduled"
+        ]
+        next_scheduled = sorted(
+            scheduled_items,
+            key=lambda item: self._parse_datetime_static(item.get("release_date")) or datetime.max,
+        )
+
+        featured_title = _normalize_text(featured.get("episode_title")) or _normalize_text(featured.get("topic")) or "Untitled episode"
+        featured_release_status = _normalize_text(featured.get("release_status")) or "unplanned"
+        featured_production_status = _normalize_text(featured.get("production_status")) or "idea"
+        featured_release_date = _normalize_text(featured.get("release_date"))
+
+        summary_lines = [f"{len(linked)} linked episode{'s' if len(linked) != 1 else ''}"]
+        if scheduled_items:
+            summary_lines.append(
+                f"{len(scheduled_items)} scheduled"
+            )
+        if open_items:
+            summary_lines.append(
+                f"{len(open_items)} still active in planning"
+            )
+
+        return {
+            "episode_count": len(linked),
+            "open_count": len(open_items),
+            "scheduled_count": len(scheduled_items),
+            "featured_episode_id": featured.get("id"),
+            "featured_title": featured_title,
+            "featured_release_status": featured_release_status,
+            "featured_production_status": featured_production_status,
+            "featured_release_date": featured_release_date,
+            "next_scheduled_release_date": _normalize_text((next_scheduled[0] if next_scheduled else {}).get("release_date")),
+            "summary_label": " · ".join(summary_lines),
         }
 
     @staticmethod
