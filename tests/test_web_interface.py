@@ -1948,6 +1948,42 @@ def test_create_episode_prefills_priority_and_legacy_episode_number(temp_db):
     assert float(created["priority_score"]) == 5.0
 
 
+def test_create_episode_prefills_legacy_number_from_released_and_scheduled_sequence_first(temp_db):
+    """Legacy autofill should prefer real release history over inflated unplanned queue values."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Released Anchor",
+            "episode_title": "Released Anchor",
+            "legacy_episode_number": "423",
+            "release_date": "2026-04-01 17:00:00",
+            "release_status": "released",
+            "production_status": "released",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Queue Noise",
+            "episode_title": "Queue Noise",
+            "legacy_episode_number": "774",
+            "release_status": "unplanned",
+            "production_status": "ready",
+        }
+    )
+
+    created = service.create_episode(
+        {
+            "guest_name": "Next Scheduled Episode",
+            "episode_title": "Next Scheduled Episode",
+            "release_status": "scheduled",
+            "release_date": "2026-04-08 17:00:00",
+            "production_status": "ready",
+        }
+    )
+
+    assert created["legacy_episode_number"] == "424"
+
+
 def test_create_episode_clamps_priority_score_to_editable_range(temp_db):
     """Editable episode priority should stay inside the planning form's 0-10 range."""
     service = GuestWebService(temp_db.db_path)

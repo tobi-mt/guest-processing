@@ -556,16 +556,42 @@ class GuestWebService:
 
     def _next_legacy_episode_number(self, current_episode_id: Any = None) -> str:
         """Return the next numeric legacy episode number when one can be inferred."""
-        max_number = 0
         current_id = str(current_episode_id or "").strip()
-        for episode in self.database.list_episodes():
-            if current_id and str(episode.get("id") or "").strip() == current_id:
-                continue
-            text = _normalize_text(episode.get("legacy_episode_number"))
-            if not text.isdigit():
-                continue
-            max_number = max(max_number, int(text))
-        return str(max_number + 1) if max_number >= 0 else ""
+        episodes = [
+            episode
+            for episode in self.database.list_episodes()
+            if not current_id or str(episode.get("id") or "").strip() != current_id
+        ]
+
+        all_numbers = {
+            int(text)
+            for text in (_normalize_text(item.get("legacy_episode_number")) for item in episodes)
+            if text.isdigit()
+        }
+
+        def extract_max(rows: list[Dict[str, Any]]) -> int | None:
+            scoped_numbers = [
+                int(text)
+                for text in (_normalize_text(item.get("legacy_episode_number")) for item in rows)
+                if text.isdigit()
+            ]
+            if not scoped_numbers:
+                return None
+            return max(scoped_numbers)
+
+        anchored_rows = [
+            episode
+            for episode in episodes
+            if _normalize_text(episode.get("release_status")).lower() in {"released", "scheduled"}
+            and _normalize_text(episode.get("release_date"))
+        ]
+        max_number = extract_max(anchored_rows)
+        if max_number is None:
+            max_number = extract_max(episodes)
+        candidate = (max_number or 0) + 1
+        while candidate in all_numbers:
+            candidate += 1
+        return str(candidate)
 
     def _suggest_episode_priority_score(self, payload: Dict[str, Any]) -> float:
         """Return a lightweight default priority score for planning records."""
