@@ -666,7 +666,7 @@ function renderInlineEditor(editorNode, guest) {
       </label>
       <label>
         Website
-        <input name="website" type="url" value="${escapeHtml(activeGuestEditor.website)}" />
+        <input name="website" type="text" inputmode="url" autocapitalize="off" spellcheck="false" value="${escapeHtml(activeGuestEditor.website)}" />
       </label>
       <label>
         Profession
