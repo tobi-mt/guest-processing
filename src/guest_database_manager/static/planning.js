@@ -1335,6 +1335,7 @@ function renderEpisodes(episodes, totalCount) {
         <span>Category: ${episode.category || "Not set"}</span>
         <span>Email: ${renderLinkedValue(episode.guest_email)}</span>
         <span>Website: ${renderLinkedValue(episode.website)}</span>
+        <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
         <span>Release: ${formatDateTime(episode.release_date)}</span>
         <span>Status: ${episode.release_status || "unplanned"} / ${episode.production_status || "idea"}</span>
         <span>Promo: ${episode.promotion_status || "unknown"}</span>
