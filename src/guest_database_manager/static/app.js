@@ -145,6 +145,9 @@ function setBulkResearchMessage(text, tone = "") {
 }
 
 function guestStatusLabel(guest) {
+  if (guest.dashboard_status_label) {
+    return guest.dashboard_status_label;
+  }
   if (guest.email_status) {
     return guest.email_status;
   }
@@ -161,11 +164,11 @@ function guestMatchesFilter(guest, filterValue) {
   }
 
   if (filterValue === "processed") {
-    return Boolean(guest.is_processed);
+    return Boolean(guest.dashboard_processed ?? guest.is_processed);
   }
 
   if (filterValue === "unprocessed") {
-    return !guest.is_processed;
+    return !Boolean(guest.dashboard_processed ?? guest.is_processed);
   }
 
   return guestStatusLabel(guest) === filterValue;
@@ -200,7 +203,7 @@ function guestMatchesSearch(guest, query) {
 function guestMatchesPreset(guest, preset) {
   const support = guest.decision_support || {};
   if (preset === "all") return true;
-  if (preset === "needs_review") return !guest.is_processed;
+  if (preset === "needs_review") return !Boolean(guest.dashboard_processed ?? guest.is_processed);
   if (preset === "ai_strong_fit") return support.suggested_decision === "approve";
   if (preset === "ai_review") return support.suggested_decision === "review";
   if (preset === "ai_risky") return support.suggested_decision === "decline";
@@ -863,7 +866,7 @@ function renderGuests(payload) {
     promotionSummaryNode.innerHTML = renderPromotionProfile(guest);
 
     statusPill.textContent = guestStatusLabel(guest);
-    statusPill.classList.add(guestStatusLabel(guest));
+    statusPill.classList.add(normalizeText(guest.dashboard_status || guestStatusLabel(guest)).replaceAll(" ", "_"));
 
     const researchButton = node.querySelector("[data-action='research']");
     const resendPersonalApplicationButton = node.querySelector("[data-action='resend_personal_application']");

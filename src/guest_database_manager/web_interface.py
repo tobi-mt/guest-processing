@@ -619,13 +619,27 @@ class GuestWebService:
         if cached is not None:
             return cached
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
+        interviews = self.database.list_interviews()
         guests = [serialize_guest(guest) for guest in enrich_guests_with_recommendations(self.database.get_all_guests())]
         for guest in guests:
             guest["promotion_profile"] = self._build_guest_promotion_profile(guest)
             guest["planning_summary"] = self._build_guest_planning_summary(guest, episodes)
+            guest["workflow_context"] = self._build_guest_workflow_context(guest, interviews, episodes)
+            guest["dashboard_processed"] = bool(guest["workflow_context"].get("dashboard_processed"))
+            guest["dashboard_status"] = guest["workflow_context"].get("dashboard_status") or (
+                "processed" if guest.get("is_processed") else "unprocessed"
+            )
+            guest["dashboard_status_label"] = guest["workflow_context"].get("dashboard_status_label") or (
+                guest.get("email_status") or ("processed" if guest.get("is_processed") else "unprocessed")
+            )
+        processed_count = sum(1 for guest in guests if guest.get("dashboard_processed"))
         return self._store_cached_payload("guests", {
             "guests": guests,
-            "stats": self.database.get_stats(),
+            "stats": {
+                "total": len(guests),
+                "processed": processed_count,
+                "unprocessed": len(guests) - processed_count,
+            },
             "email_stats": self.database.get_email_stats(),
             "recommendation_stats": build_guest_recommendation_stats(guests),
             "email_enabled": self._build_email_manager().is_configured(),
@@ -983,6 +997,23 @@ class GuestWebService:
             guest.get("full_name") or guest.get("name"),
         ) >= 85
 
+    def _interview_belongs_to_guest(self, interview: Dict[str, Any], guest: Dict[str, Any]) -> bool:
+        """Return whether an interview record likely belongs to a given guest."""
+        guest_id = str(guest.get("id") or "").strip()
+        interview_guest_id = str(interview.get("guest_id") or "").strip()
+        if guest_id and interview_guest_id and guest_id == interview_guest_id:
+            return True
+
+        guest_email = _normalize_text(guest.get("email")).casefold()
+        interview_email = _normalize_text(interview.get("guest_email")).casefold()
+        if guest_email and interview_email and guest_email == interview_email:
+            return True
+
+        return self._name_match_score(
+            interview.get("guest_name") or interview.get("title"),
+            guest.get("full_name") or guest.get("name"),
+        ) >= 85
+
     def _build_guest_planning_summary(
         self,
         guest: Dict[str, Any],
@@ -1041,6 +1072,86 @@ class GuestWebService:
             "featured_release_date": featured_release_date,
             "next_scheduled_release_date": _normalize_text((next_scheduled[0] if next_scheduled else {}).get("release_date")),
             "summary_label": " · ".join(summary_lines),
+        }
+
+    def _build_guest_workflow_context(
+        self,
+        guest: Dict[str, Any],
+        interviews: list[Dict[str, Any]],
+        episodes: list[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Summarize whether a dashboard guest is already active beyond intake review."""
+        linked_interviews = [item for item in interviews if self._interview_belongs_to_guest(item, guest)]
+        linked_episodes = [item for item in episodes if self._episode_belongs_to_guest(item, guest)]
+        reference = datetime.now(timezone.utc)
+
+        def as_reference(value: Any) -> Optional[datetime]:
+            parsed = self._parse_datetime_static(value)
+            if not parsed:
+                return None
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+
+        future_interviews = 0
+        past_interviews = 0
+        for interview in linked_interviews:
+            if _normalize_text(interview.get("status")).lower() == "cancelled":
+                continue
+            scheduled_for = as_reference(interview.get("scheduled_for"))
+            if not scheduled_for:
+                continue
+            if scheduled_for >= reference:
+                future_interviews += 1
+            else:
+                past_interviews += 1
+
+        released_episodes = sum(
+            1
+            for episode in linked_episodes
+            if _normalize_text(episode.get("release_status")).lower() == "released"
+        )
+        scheduled_episodes = sum(
+            1
+            for episode in linked_episodes
+            if _normalize_text(episode.get("release_status")).lower() == "scheduled"
+        )
+
+        if _normalize_text(guest.get("email_status")):
+            dashboard_status = _normalize_text(guest.get("email_status")).lower()
+            dashboard_status_label = _normalize_text(guest.get("email_status"))
+        elif released_episodes:
+            dashboard_status = "released_episode"
+            dashboard_status_label = "released episode"
+        elif scheduled_episodes:
+            dashboard_status = "scheduled_episode"
+            dashboard_status_label = "scheduled episode"
+        elif linked_episodes:
+            dashboard_status = "in_planning"
+            dashboard_status_label = "in planning"
+        elif future_interviews:
+            dashboard_status = "scheduled_interview"
+            dashboard_status_label = "scheduled interview"
+        elif past_interviews:
+            dashboard_status = "interviewed"
+            dashboard_status_label = "interviewed"
+        elif guest.get("is_processed"):
+            dashboard_status = "processed"
+            dashboard_status_label = "processed"
+        else:
+            dashboard_status = "unprocessed"
+            dashboard_status_label = "unprocessed"
+
+        return {
+            "interview_count": len(linked_interviews),
+            "future_interview_count": future_interviews,
+            "past_interview_count": past_interviews,
+            "planning_episode_count": len(linked_episodes),
+            "released_episode_count": released_episodes,
+            "scheduled_episode_count": scheduled_episodes,
+            "dashboard_processed": dashboard_status != "unprocessed",
+            "dashboard_status": dashboard_status,
+            "dashboard_status_label": dashboard_status_label,
         }
 
     @staticmethod

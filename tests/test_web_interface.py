@@ -1287,6 +1287,36 @@ def test_list_guests_exposes_compact_planning_summary(temp_db):
     }
 
 
+def test_list_guests_treats_interviewed_guest_as_processed_in_dashboard(temp_db):
+    """Dashboard should not keep already-interviewed guests in the unprocessed bucket."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+        }
+    )
+    service.create_interview(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Jordan Rivers and Tobi Ojekunle",
+            "scheduled_for": "2026-03-01 19:00:00",
+            "timezone": "Europe/Berlin",
+            "status": "scheduled",
+        }
+    )
+
+    payload = service.list_guests()
+    saved_guest = next(item for item in payload["guests"] if item["id"] == guest["id"])
+
+    assert saved_guest["dashboard_processed"] is True
+    assert saved_guest["dashboard_status"] == "interviewed"
+    assert payload["stats"]["processed"] == 1
+    assert payload["stats"]["unprocessed"] == 0
+
+
 def test_list_guests_flags_shared_identity_patterns(temp_db):
     """Dashboard review assist should flag reused email and shared website domains across different names."""
     service = GuestWebService(temp_db.db_path)
