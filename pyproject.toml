@@ -28,6 +28,7 @@ dependencies = [
   "xlrd>=2.0.1",
   "cryptography>=41.0.0",
   "requests>=2.31.0",
+  "pyjwt>=2.8.0",
 ]
 
 [project.urls]

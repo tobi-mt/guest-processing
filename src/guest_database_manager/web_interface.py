@@ -3348,12 +3348,31 @@ class GuestWebService:
         return reference
 
     def _build_google_calendar_client(self) -> Optional[GoogleCalendarSyncClient]:
-        """Build the Google Calendar client from environment configuration."""
+        """Build the Google Calendar client from environment configuration.
+        
+        Tries service account first (preferred), then falls back to OAuth refresh token.
+        """
+        # Try service account first (no token expiration issues)
+        service_account_file = os.environ.get("MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
+        calendar_id = os.environ.get(GOOGLE_CALENDAR_ID_ENV_VAR, "").strip()
+        
+        if service_account_file and calendar_id:
+            try:
+                from guest_database_manager.google_service_account_calendar import GoogleServiceAccountCalendarClient
+                # Wrap service account client to match the existing interface
+                return GoogleServiceAccountCalendarClient(
+                    service_account_file=service_account_file,
+                    calendar_id=calendar_id,
+                    default_timezone=os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin",
+                )
+            except Exception:
+                # Fall through to OAuth refresh token if service account fails
+                pass
+        
+        # Fallback to OAuth refresh token (original method)
         client_id = os.environ.get(GOOGLE_CLIENT_ID_ENV_VAR, "").strip()
         client_secret = os.environ.get(GOOGLE_CLIENT_SECRET_ENV_VAR, "").strip()
         refresh_token = os.environ.get(GOOGLE_REFRESH_TOKEN_ENV_VAR, "").strip()
-        calendar_id = os.environ.get(GOOGLE_CALENDAR_ID_ENV_VAR, "").strip()
-        timezone_name = os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin"
 
         if not all([client_id, client_secret, refresh_token, calendar_id]):
             return None
@@ -3363,7 +3382,7 @@ class GuestWebService:
             client_secret=client_secret,
             refresh_token=refresh_token,
             calendar_id=calendar_id,
-            default_timezone=timezone_name,
+            default_timezone=os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin",
         )
 
     @staticmethod

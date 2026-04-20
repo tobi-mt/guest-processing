@@ -8,3 +8,10 @@ venv/
 .venv/
 .DS_Store
 .idea/
+
+# Google Service Account credentials
+*service-account*.json
+service-account-base64.txt
+credentials.json
+token.pickle
+client_secret*.json
