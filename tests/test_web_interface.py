@@ -2874,6 +2874,33 @@ def test_public_booking_slots_include_month_window_metadata(monkeypatch, temp_db
     assert availability["booking_window"]["days_ahead"] >= 120
 
 
+def test_public_booking_context_handles_naive_interview_datetimes(monkeypatch, temp_db):
+    """Public booking reads should not crash when an existing interview uses a naive datetime string."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: None)
+    service.create_interview(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Jordan Rivers and Tobi Ojekunle",
+            "scheduled_for": "2099-06-11 20:00:00",
+            "timezone": "Europe/Berlin",
+            "status": "scheduled",
+        }
+    )
+
+    context = service.get_public_booking_context(token)
+    availability = service.list_public_booking_slots(token)
+
+    assert context["existing_booking"]["title"] == "Jordan Rivers and Tobi Ojekunle"
+    assert availability["existing_booking"]["title"] == "Jordan Rivers and Tobi Ojekunle"
+
+
 def test_booking_slot_buffer_only_blocks_nearby_conflicts(monkeypatch, temp_db):
     """Availability should only be blocked when an event overlaps the configured slot plus buffer."""
     service = GuestWebService(temp_db.db_path)

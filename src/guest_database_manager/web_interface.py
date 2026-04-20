@@ -2262,6 +2262,10 @@ class GuestWebService:
         reference = datetime.now(timezone.utc)
         for interview in self.database.list_interviews():
             scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+            if scheduled_for and scheduled_for.tzinfo is None:
+                scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+            elif scheduled_for:
+                scheduled_for = scheduled_for.astimezone(timezone.utc)
             if not scheduled_for or scheduled_for < reference:
                 continue
             status = _normalize_text(interview.get("status")).lower()
@@ -2303,6 +2307,10 @@ class GuestWebService:
             start = self._parse_datetime(interview.get("scheduled_for"))
             if not start:
                 continue
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            else:
+                start = start.astimezone(timezone.utc)
             end = start + duration
             busy.append((start, end))
         return busy
