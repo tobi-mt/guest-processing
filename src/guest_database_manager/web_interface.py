@@ -2269,7 +2269,8 @@ class GuestWebService:
             if not scheduled_for or scheduled_for < reference:
                 continue
             status = _normalize_text(interview.get("status")).lower()
-            if status == "cancelled":
+            confirmation_status = _normalize_text(interview.get("confirmation_status")).lower()
+            if status == "cancelled" or confirmation_status == "declined":
                 continue
             if guest_id and str(interview.get("guest_id") or "").strip() == guest_id:
                 return interview
