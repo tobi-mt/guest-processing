@@ -3947,6 +3947,65 @@ def test_web_service_can_preview_and_send_interview_cancellation(monkeypatch, te
     assert any(entry["reminder_type"] == "interview_cancellation" for entry in log_entries)
 
 
+def test_web_service_can_preview_and_send_booking_confirmation(monkeypatch, temp_db):
+    """Manual booking confirmations should send the booking email and log the action without mutating reminder status."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+            self.last_error = ""
+            self.resend_api_key = "re_test"
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def get_booking_confirmation_template(self, guest_name, scheduled_for, timezone_label, join_url):
+            assert guest_name == "Jordan Rivers"
+            assert timezone_label == "America/Toronto"
+            assert join_url == "https://riverside.fm/example"
+            return {"subject": "Your Soulful Conversation is booked", "body": "Here is your confirmation."}
+
+        def send_booking_confirmation_email(self, guest_name, to_email, scheduled_for, timezone_label, join_url):
+            assert guest_name == "Jordan Rivers"
+            assert to_email == "jordan@example.com"
+            assert timezone_label == "America/Toronto"
+            assert join_url == "https://riverside.fm/example"
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Soulful Conversation with Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Soulful Conversation with Jordan Rivers",
+            "scheduled_for": "2026-06-11 18:00:00",
+            "timezone": "America/Toronto",
+            "join_url": "https://riverside.fm/example",
+            "calendar_event_id": "calendar-event-1",
+            "confirmation_status": "pending",
+        }
+    )
+
+    preview = service.preview_interview_booking_confirmation(interview["id"])
+    assert preview["subject"] == "Your Soulful Conversation is booked"
+    assert preview["body"] == "Here is your confirmation."
+
+    sent_interview = service.send_interview_booking_confirmation(interview["id"])
+    assert sent_interview["guest_email"] == "jordan@example.com"
+    assert sent_interview["reminder_status"] == "not_scheduled"
+
+    log_entries = temp_db.get_reminder_log(interview["id"])
+    assert any(entry["reminder_type"] == "booking_confirmation" for entry in log_entries)
+
+
 def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp_db):
     """Episode records should support the post-recording appreciation workflow."""
 

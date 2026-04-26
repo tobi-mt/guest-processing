@@ -2984,6 +2984,36 @@ class GuestWebService:
             "body": template["body"],
         }
 
+    def preview_interview_booking_confirmation(self, interview_id: int) -> Dict[str, Any]:
+        """Return the booking confirmation email template for an interview."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+
+        scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+        if not scheduled_for:
+            raise WebInterfaceError("Interview date is invalid or missing.")
+
+        guest_name = self._extract_guest_name_from_interview_title(
+            interview.get("guest_name"),
+            interview.get("title"),
+        ) or "Guest"
+        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        join_url = _normalize_text(interview.get("join_url")) or self._booking_join_url()
+
+        email_manager = self._build_email_manager()
+        template = email_manager.get_booking_confirmation_template(
+            guest_name=guest_name,
+            scheduled_for=scheduled_for,
+            timezone_label=timezone_label,
+            join_url=join_url,
+        )
+        return {
+            "interview": self._serialize_interview_reminder(interview),
+            "subject": template["subject"],
+            "body": template["body"],
+        }
+
     def send_interview_reminder(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
         """Send a weekly confirmation reminder for an interview and log it."""
         interview = self.database.get_interview_by_id(interview_id)
@@ -3087,6 +3117,80 @@ class GuestWebService:
         refreshed = self.database.get_interview_by_id(interview_id)
         if not refreshed:
             raise WebInterfaceError("Interview not found after appreciation email send.")
+        return self._serialize_interview_reminder(refreshed)
+
+    def send_interview_booking_confirmation(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+        """Send the booking confirmation email and calendar invite for an interview."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+
+        guest_email = _normalize_text(interview.get("guest_email"))
+        if not guest_email:
+            raise WebInterfaceError("This interview does not have a guest email.")
+
+        scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+        if not scheduled_for:
+            raise WebInterfaceError("Interview date is invalid or missing.")
+
+        guest_name = self._extract_guest_name_from_interview_title(
+            interview.get("guest_name"),
+            interview.get("title"),
+        ) or "Guest"
+        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        join_url = _normalize_text(interview.get("join_url")) or self._booking_join_url()
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            raise WebInterfaceError("Dashboard email is not configured on the server.")
+
+        preview = self.preview_interview_booking_confirmation(interview_id)
+        resolved_subject = subject.strip() or preview["subject"]
+        resolved_body = body.strip() or preview["body"]
+
+        if subject.strip() or body.strip():
+            invite_attachment = {
+                "filename": "mirror-talk-booking.ics",
+                "content": email_manager.build_calendar_invite(
+                    guest_name=guest_name,
+                    scheduled_for=scheduled_for,
+                    timezone_label=timezone_label,
+                    join_url=join_url,
+                ),
+            }
+            sent = email_manager.send_email(
+                guest_email,
+                resolved_subject,
+                resolved_body,
+                attachments=[invite_attachment],
+            )
+        else:
+            sent = email_manager.send_booking_confirmation_email(
+                guest_name,
+                guest_email,
+                scheduled_for,
+                timezone_label,
+                join_url,
+            )
+
+        if not sent:
+            error_detail = (email_manager.last_error or "").strip()
+            if error_detail:
+                raise WebInterfaceError(f"The booking confirmation email could not be sent: {error_detail}")
+            raise WebInterfaceError("The booking confirmation email could not be sent.")
+
+        provider = "resend" if email_manager.resend_api_key else "smtp"
+        self.database.log_interview_email(
+            interview_id=interview_id,
+            email_type="booking_confirmation",
+            sent_to=guest_email,
+            status="sent",
+            provider=provider,
+            notes=resolved_subject,
+        )
+        refreshed = self.database.get_interview_by_id(interview_id)
+        if not refreshed:
+            raise WebInterfaceError("Interview not found after booking confirmation send.")
         return self._serialize_interview_reminder(refreshed)
 
     def send_interview_cancellation(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
@@ -3895,6 +3999,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, payload)
             return
 
+        if request_path.startswith("/api/interviews/") and request_path.endswith("/booking-confirmation-template"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            interview_id = self._extract_record_id(request_path[: -len("/booking-confirmation-template")], "/api/interviews/")
+            if interview_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                return
+
+            try:
+                payload = self.service.preview_interview_booking_confirmation(interview_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
         if request_path.startswith("/api/interviews/") and request_path.endswith("/cancellation-template"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -4410,6 +4533,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 payload = self._read_json_payload()
                 try:
                     interview = self.service.send_interview_reminder(
+                        interview_id,
+                        payload.get("subject", ""),
+                        payload.get("body", ""),
+                    )
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, interview)
+                return
+
+            if self.path.endswith("/send-booking-confirmation"):
+                interview_id = self._extract_record_id(self.path[: -len("/send-booking-confirmation")], "/api/interviews/")
+                if interview_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                    return
+
+                payload = self._read_json_payload()
+                try:
+                    interview = self.service.send_interview_booking_confirmation(
                         interview_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),

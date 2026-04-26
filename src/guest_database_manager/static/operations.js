@@ -695,12 +695,16 @@ function renderInterviews(interviews, totalCount) {
       : "";
     const reminderButtons = interview.guest_email
       ? `
+        <button type="button" class="ghost-button" data-interview-action="preview-booking-confirmation">Preview Booking Confirmation</button>
+        <button type="button" class="primary-button" data-interview-action="send-booking-confirmation">Send Booking Confirmation</button>
         <button type="button" class="ghost-button" data-interview-action="preview-reminder">Preview Reminder</button>
         <button type="button" class="primary-button" data-interview-action="send-reminder">Send Reminder</button>
         <button type="button" class="ghost-button" data-interview-action="preview-cancellation">Preview Cancellation</button>
         <button type="button" class="secondary-button" data-interview-action="send-cancellation">Cancel & Email</button>
       `
       : `
+        <button type="button" class="ghost-button" data-interview-action="preview-booking-confirmation" disabled>Preview Booking Confirmation</button>
+        <button type="button" class="primary-button" data-interview-action="send-booking-confirmation" disabled>Send Booking Confirmation</button>
         <button type="button" class="ghost-button" data-interview-action="preview-reminder" disabled>Preview Reminder</button>
         <button type="button" class="primary-button" data-interview-action="send-reminder" disabled>Send Reminder</button>
         <button type="button" class="ghost-button" data-interview-action="preview-cancellation" disabled>Preview Cancellation</button>
@@ -750,6 +754,8 @@ function renderInterviews(interviews, totalCount) {
     const moveToPlanningButton = card.querySelector("[data-interview-action='move-to-planning']");
     const markConfirmedButton = card.querySelector("[data-interview-action='mark-confirmed']");
     const markPendingButton = card.querySelector("[data-interview-action='mark-pending']");
+    const previewBookingConfirmationButton = card.querySelector("[data-interview-action='preview-booking-confirmation']");
+    const sendBookingConfirmationButton = card.querySelector("[data-interview-action='send-booking-confirmation']");
     const previewReminderButton = card.querySelector("[data-interview-action='preview-reminder']");
     const sendReminderButton = card.querySelector("[data-interview-action='send-reminder']");
     const previewCancellationButton = card.querySelector("[data-interview-action='preview-cancellation']");
@@ -886,6 +892,68 @@ function renderInterviews(interviews, totalCount) {
     });
 
     if (previewReminderButton) {
+      previewBookingConfirmationButton.addEventListener("click", async () => {
+        if (!interview.guest_email) {
+          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+
+        previewBookingConfirmationButton.disabled = true;
+        previewBookingConfirmationButton.textContent = "Loading...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Loading booking confirmation preview for ${interview.guest_name || "guest"}...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        try {
+          const preview = await fetchJSON(`/api/interviews/${interview.id}/booking-confirmation-template`);
+          reminderPreviewNode.classList.remove("hidden");
+          reminderPreviewNode.innerHTML = `
+            <h4>${preview.subject}</h4>
+            <p>To: ${renderLinkedValue(interview.guest_email)}</p>
+            <pre>${preview.body}</pre>
+          `;
+          activeInterviewActionFeedback = { id: interview.id, text: `Booking confirmation preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+          setMessage(interviewMessage, error.message, "error");
+        } finally {
+          previewBookingConfirmationButton.disabled = false;
+          previewBookingConfirmationButton.textContent = "Preview Booking Confirmation";
+        }
+      });
+
+      sendBookingConfirmationButton.addEventListener("click", async () => {
+        if (!interview.guest_email) {
+          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+        if (!confirmCriticalAction(`Send the booking confirmation email and calendar invite to ${interview.guest_name || interview.guest_email || "this guest"} now?`)) {
+          return;
+        }
+
+        sendBookingConfirmationButton.disabled = true;
+        sendBookingConfirmationButton.textContent = "Sending...";
+        activeInterviewActionFeedback = { id: interview.id, text: `Sending booking confirmation to ${interview.guest_name || interview.guest_email}...`, tone: "pending" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
+        try {
+          await fetchJSON(`/api/interviews/${interview.id}/send-booking-confirmation`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          reminderPreviewNode.classList.remove("hidden");
+          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Booking confirmation sent to ${interview.guest_name || interview.guest_email}, including the calendar invite.</p>`;
+          activeInterviewActionFeedback = { id: interview.id, text: `Booking confirmation sent to ${interview.guest_name || interview.guest_email}.`, tone: "success" };
+          setMessage(interviewMessage, `Booking confirmation sent to ${interview.guest_name || interview.guest_email}.`, "success");
+          await loadOperations();
+        } catch (error) {
+          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
+          renderOperations();
+          setMessage(interviewMessage, error.message, "error");
+          sendBookingConfirmationButton.disabled = false;
+          sendBookingConfirmationButton.textContent = "Send Booking Confirmation";
+        }
+      });
+
       previewReminderButton.addEventListener("click", async () => {
         if (!interview.guest_email) {
           setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
