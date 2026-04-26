@@ -2251,10 +2251,10 @@ class GuestWebService:
         """Fetch a guest by booking token and ensure the guest can still book."""
         normalized_token = _normalize_text(booking_token)
         if not normalized_token:
-            raise WebInterfaceError("Booking link is missing or invalid.")
+            raise WebInterfaceError("This booking link is missing or incomplete. Please use the personal Mirror Talk link sent to your email.")
         guest = self.database.get_guest_by_booking_token(normalized_token)
         if not guest:
-            raise WebInterfaceError("This booking link is not valid anymore.")
+            raise WebInterfaceError("This booking link has expired or is no longer active. Please reply to the Mirror Talk email and we’ll gladly send you a fresh personal link.")
         email_status = _normalize_text(guest.get("email_status")).lower()
         if email_status != "accepted":
             raise WebInterfaceError("This guest is not currently eligible to book an interview.")

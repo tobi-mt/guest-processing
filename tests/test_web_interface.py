@@ -2970,6 +2970,17 @@ def test_public_booking_context_handles_naive_interview_datetimes(monkeypatch, t
     assert availability["existing_booking"]["title"] == "Jordan Rivers and Tobi Ojekunle"
 
 
+def test_public_booking_context_invalid_token_has_recovery_message(temp_db):
+    """Expired booking links should return a warm recovery message."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError) as exc:
+        service.get_public_booking_context("not-a-real-token")
+
+    assert "expired or is no longer active" in str(exc.value)
+    assert "fresh personal link" in str(exc.value)
+
+
 def test_booking_slot_buffer_only_blocks_nearby_conflicts(monkeypatch, temp_db):
     """Availability should only be blocked when an event overlaps the configured slot plus buffer."""
     service = GuestWebService(temp_db.db_path)

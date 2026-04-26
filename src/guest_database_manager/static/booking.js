@@ -287,7 +287,7 @@ async function loadBookingPage() {
   bookingToken = params.get("token") || "";
   if (!bookingToken) {
     showInvitationState();
-    setMessage("This page is opened through a personal Mirror Talk invitation link. Please use the booking link sent to your email.", "success");
+    setMessage("This page is opened through a personal Mirror Talk invitation link. Please use the booking link sent to your email, or reply to Mirror Talk and we’ll send you a fresh one.", "success");
     return;
   }
 
