@@ -3136,6 +3136,73 @@ def test_public_booking_repairs_existing_interview_without_calendar_event(monkey
     assert sent == {"guest": "Jordan Rivers", "interview_id": existing["id"]}
 
 
+def test_public_reschedule_updates_existing_interview(monkeypatch, temp_db):
+    """A reschedule link should update the same interview record and refresh its calendar linkage."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    original_start = (datetime.now(timezone.utc) + timedelta(days=5)).replace(minute=0, second=0, microsecond=0).isoformat()
+    new_start = (datetime.now(timezone.utc) + timedelta(days=7)).replace(minute=0, second=0, microsecond=0).isoformat()
+    interview = service.create_interview(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Soulful Conversation with Jordan Rivers",
+            "scheduled_for": original_start,
+            "timezone": "Europe/Berlin",
+            "join_url": "https://riverside.fm/example",
+            "calendar_event_id": "google-event-1",
+            "status": "scheduled",
+            "confirmation_status": "reschedule_requested",
+        }
+    )
+    token = service._ensure_interview_reschedule_token(interview["id"])
+
+    monkeypatch.setattr(
+        GuestWebService,
+        "list_public_booking_slots",
+        lambda self, booking_token, limit=None: {
+            "guest_name": "Jordan Rivers",
+            "booking_timezone": "Europe/Berlin",
+            "existing_booking": service._serialize_public_booking_interview(interview),
+            "reschedule_mode": True,
+            "slots": [{"start": new_start, "end": new_start, "timezone": "Europe/Berlin"}],
+        },
+    )
+
+    class StubCalendarClient:
+        def update_event_from_interview(self, payload):
+            assert payload["id"] == interview["id"]
+            assert payload["scheduled_for"] == new_start
+            return {"id": "google-event-1", "updated": "2026-04-26T15:00:00Z"}
+
+    sent = {}
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: StubCalendarClient())
+    monkeypatch.setattr(
+        GuestWebService,
+        "_send_booking_confirmation_email",
+        lambda self, guest_payload, updated_interview: sent.update({"guest": guest_payload["full_name"], "interview_id": updated_interview["id"]}),
+    )
+
+    result = service.create_public_booking(
+        token,
+        {
+            "scheduled_for": new_start,
+            "timezone": "America/Toronto",
+            "note": "Wednesday works better",
+        },
+    )
+
+    saved = service.database.get_interview_by_id(interview["id"])
+    assert result["id"] == interview["id"]
+    assert saved["scheduled_for"] == new_start
+    assert saved["timezone"] == "America/Toronto"
+    assert saved["confirmation_status"] == "confirmed"
+    assert saved["reschedule_token"] is None
+    assert "Rescheduled through the Mirror Talk guest booking flow." in (saved["notes"] or "")
+    assert sent == {"guest": "Jordan Rivers", "interview_id": interview["id"]}
+
+
 def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):
     """Booking confirmations should include an ICS invite attachment."""
     manager = EmailManager()
@@ -4067,6 +4134,66 @@ def test_web_service_can_preview_and_send_booking_confirmation(monkeypatch, temp
 
     log_entries = temp_db.get_reminder_log(interview["id"])
     assert any(entry["reminder_type"] == "booking_confirmation" for entry in log_entries)
+
+
+def test_web_service_can_preview_and_send_reschedule_link(monkeypatch, temp_db):
+    """Reschedule emails should send through the hosted path and mark the interview as awaiting a new slot."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+            self.last_error = ""
+            self.resend_api_key = "re_test"
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def get_reschedule_link_template(self, guest_name, scheduled_for, timezone_label, reschedule_url):
+            assert guest_name == "Jordan Rivers"
+            assert timezone_label == "Europe/Berlin"
+            assert "token=" in reschedule_url
+            return {"subject": "Choose a new time", "body": "Here is your reschedule link."}
+
+        def send_reschedule_link_email(self, guest_name, to_email, scheduled_for, timezone_label, reschedule_url):
+            assert guest_name == "Jordan Rivers"
+            assert to_email == "jordan@example.com"
+            assert timezone_label == "Europe/Berlin"
+            assert "token=" in reschedule_url
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Soulful Conversation with Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Soulful Conversation with Jordan Rivers",
+            "scheduled_for": "2026-06-11 18:00:00",
+            "timezone": "Europe/Berlin",
+            "join_url": "https://riverside.fm/example",
+            "calendar_event_id": "calendar-event-1",
+            "confirmation_status": "confirmed",
+        }
+    )
+
+    preview = service.preview_interview_reschedule_link(interview["id"])
+    assert preview["subject"] == "Choose a new time"
+    assert "token=" in preview["reschedule_url"]
+
+    sent_interview = service.send_interview_reschedule_link(interview["id"])
+    assert sent_interview["confirmation_status"] == "reschedule_requested"
+
+    saved = temp_db.get_interview_by_id(interview["id"])
+    assert saved["reschedule_token"]
+    log_entries = temp_db.get_reminder_log(interview["id"])
+    assert any(entry["reminder_type"] == "reschedule_link" for entry in log_entries)
 
 
 def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp_db):

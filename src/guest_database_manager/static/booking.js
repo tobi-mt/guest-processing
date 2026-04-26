@@ -22,6 +22,7 @@ let visibleMonthKey = "";
 let availableSlots = [];
 let availableMonths = [];
 let slotTimezone = "Europe/Berlin";
+let rescheduleMode = false;
 
 function setMessage(text, tone = "") {
   bookingMessage.textContent = text;
@@ -128,10 +129,10 @@ function renderExistingBooking(existing) {
   }
   bookingExisting.classList.remove("hidden");
   bookingExisting.innerHTML = `
-    <strong>You already have a booking</strong>
+    <strong>${rescheduleMode ? "Current booking" : "You already have a booking"}</strong>
     <p>${formatSlot(existing.scheduled_for)}${existing.timezone ? ` · ${existing.timezone}` : ""}</p>
     ${existing.join_url ? `<p>Your recording link: <a href="${existing.join_url}" target="_blank" rel="noopener">${existing.join_url}</a></p>` : ""}
-    <p>If you need to reschedule, please reply to the email you received from Mirror Talk and we’ll support you directly.</p>
+    <p>${rescheduleMode ? "Choose a new date below to reschedule this conversation." : "If you need to reschedule, please reply to the email you received from Mirror Talk and we’ll support you directly."}</p>
   `;
 }
 
@@ -180,7 +181,7 @@ function renderTimeOptions(dateKey) {
       selectedSlot = slot;
       bookingForm.elements.scheduled_for.value = slot.start;
       bookingSubmit.disabled = false;
-      bookingSubmit.textContent = "Book This Slot";
+      bookingSubmit.textContent = rescheduleMode ? "Confirm New Slot" : "Book This Slot";
       renderSelectedSlot(slot);
       bookingTimes.querySelectorAll(".time-slot-button").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
@@ -254,7 +255,7 @@ function setAvailableSlots(slots, timezone, bookingWindow = {}) {
   selectedDateKey = "";
   selectedSlot = null;
   bookingSubmit.disabled = true;
-  bookingSubmit.textContent = "Book This Slot";
+  bookingSubmit.textContent = rescheduleMode ? "Confirm New Slot" : "Book This Slot";
   renderSelectedSlot(null);
 
   bookingAvailability.classList.remove("hidden");
@@ -297,17 +298,20 @@ async function loadBookingPage() {
       fetchJSON(`/api/booking/context?token=${encodeURIComponent(bookingToken)}`),
       fetchJSON(`/api/booking/availability?token=${encodeURIComponent(bookingToken)}`),
     ]);
+    rescheduleMode = Boolean(context.reschedule_mode);
     bookingTitle.textContent = `${context.guest_name}, choose your conversation slot`;
-    panelHeading.textContent = "A calm and clear booking flow for your Mirror Talk interview";
-    bookingSubtitle.textContent = `${context.guest_name}, choose the best time for your Soulful Conversation.`;
+    panelHeading.textContent = rescheduleMode ? "Choose a new time for your Soulful Conversation" : "A calm and clear booking flow for your Mirror Talk interview";
+    bookingSubtitle.textContent = rescheduleMode
+      ? `${context.guest_name}, choose the new time that works best for your Soulful Conversation.`
+      : `${context.guest_name}, choose the best time for your Soulful Conversation.`;
     bookingMeta.classList.remove("hidden");
     bookingMeta.innerHTML = `
       <p><strong>Booking timezone:</strong> ${availability.booking_timezone}</p>
       <p><strong>Email:</strong> ${context.guest_email || "Not set"}</p>
-      <p><strong>Booking flow:</strong> Once you reserve a slot, we will confirm everything on our side automatically.</p>
+      <p><strong>Booking flow:</strong> ${rescheduleMode ? "Once you choose a new slot, we will update your interview and send a fresh confirmation automatically." : "Once you reserve a slot, we will confirm everything on our side automatically."}</p>
     `;
     renderExistingBooking(context.existing_booking);
-    if (context.existing_booking) {
+    if (context.existing_booking && !rescheduleMode) {
       bookingAvailability.classList.add("hidden");
       bookingCalendarGrid.innerHTML = "";
       bookingTimes.innerHTML = "";
@@ -318,8 +322,10 @@ async function loadBookingPage() {
     if (Intl.DateTimeFormat().resolvedOptions().timeZone) {
       bookingForm.elements.timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone;
     }
-    if (context.existing_booking) {
+    if (context.existing_booking && !rescheduleMode) {
       setMessage("Your interview is already booked. If you need any change, just reply to the Mirror Talk email and we’ll help you personally.", "success");
+    } else if (rescheduleMode) {
+      setMessage("Choose a new date in the calendar, then select a time to reschedule your conversation.", "success");
     } else {
       setMessage("Choose a date in the calendar, then select a time and confirm your booking below.", "success");
     }
@@ -353,7 +359,7 @@ async function submitBooking() {
 
   bookingSubmit.disabled = true;
   bookingSubmit.textContent = "Booking...";
-  setMessage("Booking your Mirror Talk interview...", "pending");
+  setMessage(rescheduleMode ? "Rescheduling your Mirror Talk interview..." : "Booking your Mirror Talk interview...", "pending");
 
   try {
     const payload = {
@@ -369,7 +375,7 @@ async function submitBooking() {
     selectedSlot = null;
     selectedDateKey = "";
     bookingSubmit.disabled = true;
-    bookingSubmit.textContent = "Booked";
+    bookingSubmit.textContent = rescheduleMode ? "Rescheduled" : "Booked";
     renderExistingBooking(result.interview);
     bookingAvailability.classList.add("hidden");
     bookingCalendarGrid.innerHTML = "";
@@ -377,11 +383,16 @@ async function submitBooking() {
     bookingForm.classList.add("hidden");
     bookingSelectedSlot.classList.add("hidden");
     bookingSelectedSlot.innerHTML = "";
-    panelHeading.textContent = "Your Soulful Conversation is now confirmed";
-    setMessage("Your Soulful Conversation is booked. We’ve also sent you a confirmation email with the next steps.", "success");
+    panelHeading.textContent = rescheduleMode ? "Your Soulful Conversation is now rescheduled" : "Your Soulful Conversation is now confirmed";
+    setMessage(
+      rescheduleMode
+        ? "Your Soulful Conversation has been rescheduled. We’ve also sent you a fresh confirmation email with the updated invite."
+        : "Your Soulful Conversation is booked. We’ve also sent you a confirmation email with the next steps.",
+      "success"
+    );
   } catch (error) {
     bookingSubmit.disabled = false;
-    bookingSubmit.textContent = "Book This Slot";
+    bookingSubmit.textContent = rescheduleMode ? "Confirm New Slot" : "Book This Slot";
     setMessage(error.message, "error");
   }
 }

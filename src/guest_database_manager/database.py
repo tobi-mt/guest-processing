@@ -344,6 +344,10 @@ class GuestDatabase:
         calendar_event_id = str(raw_calendar_event_id).strip() if raw_calendar_event_id is not None else ""
         if not calendar_event_id:
             calendar_event_id = None
+        raw_reschedule_token = interview_data.get("reschedule_token")
+        reschedule_token = str(raw_reschedule_token).strip() if raw_reschedule_token is not None else ""
+        if not reschedule_token:
+            reschedule_token = None
 
         with sqlite3.connect(str(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
@@ -370,6 +374,8 @@ class GuestDatabase:
                 interview_data.get("calendar_source"),
                 interview_data.get("event_updated_at"),
                 interview_data.get("last_synced_at"),
+                reschedule_token,
+                interview_data.get("reschedule_token_created_at"),
                 interview_data.get("title"),
                 interview_data.get("scheduled_for"),
                 interview_data.get("timezone", "Europe/Berlin"),
@@ -386,7 +392,7 @@ class GuestDatabase:
                     """
                     UPDATE interviews SET
                         guest_id = ?, guest_name = ?, guest_email = ?, calendar_event_id = ?, calendar_source = ?,
-                        event_updated_at = ?, last_synced_at = ?, title = ?, scheduled_for = ?, timezone = ?,
+                        event_updated_at = ?, last_synced_at = ?, reschedule_token = ?, reschedule_token_created_at = ?, title = ?, scheduled_for = ?, timezone = ?,
                         join_url = ?, status = ?, confirmation_status = ?, reminder_status = ?,
                         reminder_sent_at = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
@@ -400,9 +406,9 @@ class GuestDatabase:
                 """
                 INSERT INTO interviews (
                     guest_id, guest_name, guest_email, calendar_event_id, calendar_source, event_updated_at,
-                    last_synced_at, title, scheduled_for, timezone, join_url, status, confirmation_status,
+                    last_synced_at, reschedule_token, reschedule_token_created_at, title, scheduled_for, timezone, join_url, status, confirmation_status,
                     reminder_status, reminder_sent_at, notes, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 fields,
             )
@@ -433,6 +439,17 @@ class GuestDatabase:
         with sqlite3.connect(str(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_interview_by_reschedule_token(self, reschedule_token: str) -> Optional[Dict]:
+        """Fetch a single interview by reschedule token."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM interviews WHERE reschedule_token = ? LIMIT 1",
+                (reschedule_token,),
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
 

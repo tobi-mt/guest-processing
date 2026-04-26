@@ -255,6 +255,7 @@ EXPORTABLE_FIELDS: Dict[str, list[str]] = {
         "reminder_status",
         "calendar_event_id",
         "calendar_source",
+        "reschedule_token",
     ],
     "episodes": [
         "guest_name",
@@ -2208,6 +2209,8 @@ class GuestWebService:
             "confirmation_status": _normalize_text(payload.get("confirmation_status")) or "pending",
             "reminder_status": _normalize_text(payload.get("reminder_status")) or "not_scheduled",
             "reminder_sent_at": _normalize_text(payload.get("reminder_sent_at")),
+            "reschedule_token": _normalize_text(payload.get("reschedule_token")),
+            "reschedule_token_created_at": _normalize_text(payload.get("reschedule_token_created_at")),
             "notes": _normalize_text(payload.get("notes")),
         }
 
@@ -2256,6 +2259,38 @@ class GuestWebService:
         if email_status != "accepted":
             raise WebInterfaceError("This guest is not currently eligible to book an interview.")
         return guest
+
+    def _interview_from_reschedule_token(self, booking_token: str) -> Optional[Dict[str, Any]]:
+        """Fetch an interview by a secure reschedule token."""
+        normalized_token = _normalize_text(booking_token)
+        if not normalized_token:
+            return None
+        interview = self.database.get_interview_by_reschedule_token(normalized_token)
+        if not interview:
+            return None
+        if not _normalize_text(interview.get("guest_email")):
+            raise WebInterfaceError("This interview cannot be rescheduled yet because it is missing the guest email.")
+        return interview
+
+    def _public_booking_target(self, booking_token: str) -> Dict[str, Any]:
+        """Resolve a public token into a normal booking or a reschedule flow."""
+        reschedule_interview = self._interview_from_reschedule_token(booking_token)
+        if reschedule_interview:
+            guest = None
+            guest_id = reschedule_interview.get("guest_id")
+            if guest_id:
+                guest = self.database.get_guest_by_id(int(guest_id))
+            if not guest:
+                guest = {
+                    "id": guest_id,
+                    "full_name": _normalize_text(reschedule_interview.get("guest_name")),
+                    "email": _normalize_text(reschedule_interview.get("guest_email")),
+                    "booking_override": None,
+                }
+            return {"guest": guest, "reschedule_interview": reschedule_interview, "reschedule_mode": True}
+
+        guest = self._guest_from_booking_token(booking_token)
+        return {"guest": guest, "reschedule_interview": None, "reschedule_mode": False}
 
     def _serialize_public_booking_interview(self, interview: Dict[str, Any]) -> Dict[str, Any]:
         """Return a small safe booking summary for the guest-facing page."""
@@ -2420,6 +2455,31 @@ class GuestWebService:
                 return interview
         return None
 
+    def _ensure_interview_reschedule_token(self, interview_id: int) -> str:
+        """Ensure an interview has a stable reschedule token."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+        existing_token = _normalize_text(interview.get("reschedule_token"))
+        if existing_token:
+            return existing_token
+
+        reschedule_token = secrets.token_urlsafe(24)
+        self.database.update_interview(
+            interview_id,
+            {
+                "reschedule_token": reschedule_token,
+                "reschedule_token_created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            },
+        )
+        return reschedule_token
+
+    def _reschedule_link_for_interview(self, interview_id: int) -> str:
+        """Build the public reschedule link for an interview."""
+        reschedule_token = self._ensure_interview_reschedule_token(interview_id)
+        separator = "&" if "?" in self._booking_base_url() else "?"
+        return f"{self._booking_base_url()}{separator}token={reschedule_token}"
+
     def _repair_existing_public_booking(
         self,
         guest: Dict[str, Any],
@@ -2485,7 +2545,7 @@ class GuestWebService:
         except ZoneInfoNotFoundError as exc:
             raise WebInterfaceError("Booking timezone is invalid on the server.") from exc
 
-    def _booking_busy_windows(self, *, reference: datetime, days_ahead: int) -> list[tuple[datetime, datetime]]:
+    def _booking_busy_windows(self, *, reference: datetime, days_ahead: int, exclude_interview_id: Optional[int] = None) -> list[tuple[datetime, datetime]]:
         """Return busy windows from Google Calendar and existing interviews."""
         busy: list[tuple[datetime, datetime]] = []
         client = self._build_google_calendar_client()
@@ -2502,6 +2562,8 @@ class GuestWebService:
                     busy.append((start, end))
 
         for interview in self.database.list_interviews():
+            if exclude_interview_id and int(interview.get("id") or 0) == int(exclude_interview_id):
+                continue
             status = _normalize_text(interview.get("status")).lower()
             if status == "cancelled":
                 continue
@@ -2534,27 +2596,34 @@ class GuestWebService:
 
     def get_public_booking_context(self, booking_token: str) -> Dict[str, Any]:
         """Return guest-facing booking context from a secure token."""
-        guest = self._guest_from_booking_token(booking_token)
-        existing_interview = self._find_future_interview_for_guest(guest)
+        target = self._public_booking_target(booking_token)
+        guest = target["guest"]
+        existing_interview = target["reschedule_interview"] or self._find_future_interview_for_guest(guest)
         booking_settings = self._guest_booking_settings(guest)
         return {
             "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest",
             "guest_email": _normalize_text(guest.get("email")),
             "booking_timezone": booking_settings["timezone"],
             "booking_override_active": booking_settings["has_override"],
+            "reschedule_mode": bool(target["reschedule_mode"]),
             "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
         }
 
     def list_public_booking_slots(self, booking_token: str, *, limit: Optional[int] = None) -> Dict[str, Any]:
         """Return available booking slots for a guest-facing booking link."""
-        guest = self._guest_from_booking_token(booking_token)
-        existing_interview = self._find_future_interview_for_guest(guest)
+        target = self._public_booking_target(booking_token)
+        guest = target["guest"]
+        existing_interview = target["reschedule_interview"] or self._find_future_interview_for_guest(guest)
         booking_settings = self._guest_booking_settings(guest)
         timezone_obj = booking_settings["timezone_obj"]
         reference = datetime.now(timezone.utc)
         min_notice = reference + timedelta(hours=booking_settings["min_notice_hours"])
         duration = timedelta(minutes=self._booking_duration_minutes())
-        busy_windows = self._booking_busy_windows(reference=reference, days_ahead=booking_settings["days_ahead"])
+        busy_windows = self._booking_busy_windows(
+            reference=reference,
+            days_ahead=booking_settings["days_ahead"],
+            exclude_interview_id=(existing_interview.get("id") if target["reschedule_mode"] and existing_interview else None),
+        )
         weekdays = set(booking_settings["weekdays"])
         slot_times = booking_settings["slot_times"]
 
@@ -2604,6 +2673,7 @@ class GuestWebService:
             "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest",
             "booking_timezone": booking_settings["timezone"],
             "booking_override_active": booking_settings["has_override"],
+            "reschedule_mode": bool(target["reschedule_mode"]),
             "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
             "booking_window": {
                 "months_ahead": booking_settings["months_ahead"],
@@ -2614,15 +2684,70 @@ class GuestWebService:
 
     def create_public_booking(self, booking_token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create an interview from a public booking token and selected slot."""
-        guest = self._guest_from_booking_token(booking_token)
+        target = self._public_booking_target(booking_token)
+        guest = target["guest"]
+        reschedule_interview = target["reschedule_interview"]
         scheduled_for = _normalize_text(payload.get("scheduled_for"))
         timezone_label = _normalize_text(payload.get("timezone")) or self._booking_timezone_name()
         guest_note = _normalize_text(payload.get("note"))
         if not scheduled_for:
             raise WebInterfaceError("Please choose one of the available interview slots.")
 
-        existing_interview = self._find_future_interview_for_guest(guest)
+        existing_interview = reschedule_interview or self._find_future_interview_for_guest(guest)
         if existing_interview:
+            if target["reschedule_mode"] and int(existing_interview["id"]) == int(reschedule_interview["id"]):
+                available = self.list_public_booking_slots(booking_token)
+                available_starts = {item["start"] for item in available.get("slots", [])}
+                normalized_scheduled_for = scheduled_for.replace("Z", "+00:00")
+                if normalized_scheduled_for not in available_starts:
+                    raise WebInterfaceError("That slot is no longer available. Please choose another time.")
+
+                updated = self.update_interview(
+                    int(existing_interview["id"]),
+                    {
+                        "scheduled_for": normalized_scheduled_for,
+                        "timezone": timezone_label,
+                        "join_url": _normalize_text(existing_interview.get("join_url")) or self._booking_join_url(),
+                        "status": "scheduled",
+                        "confirmation_status": "confirmed",
+                        "reschedule_token": None,
+                        "reschedule_token_created_at": None,
+                        "notes": "\n".join(
+                            part
+                            for part in [
+                                _normalize_text(existing_interview.get("notes")),
+                                "Rescheduled through the Mirror Talk guest booking flow.",
+                                f"Guest browser timezone: {timezone_label}" if timezone_label else "",
+                                guest_note,
+                            ]
+                            if part
+                        ),
+                    },
+                )
+
+                client = self._build_google_calendar_client()
+                if client is not None:
+                    try:
+                        if _normalize_text(updated.get("calendar_event_id")):
+                            event_payload = client.update_event_from_interview(updated)
+                        else:
+                            event_payload = client.create_event_from_interview(updated)
+                    except GoogleCalendarSyncError as exc:
+                        raise WebInterfaceError(str(exc)) from exc
+                    self.database.update_interview(
+                        updated["id"],
+                        {
+                            "calendar_event_id": event_payload.get("id") or updated.get("calendar_event_id"),
+                            "calendar_source": "google_calendar",
+                            "event_updated_at": event_payload.get("updated"),
+                            "last_synced_at": datetime.now().astimezone().isoformat(),
+                        },
+                    )
+                    updated = self.database.get_interview_by_id(updated["id"]) or updated
+
+                self._send_booking_confirmation_email(guest, updated)
+                return self._serialize_public_booking_interview(updated)
+
             repaired = self._repair_existing_public_booking(
                 guest,
                 existing_interview,
@@ -3154,6 +3279,37 @@ class GuestWebService:
             "body": template["body"],
         }
 
+    def preview_interview_reschedule_link(self, interview_id: int) -> Dict[str, Any]:
+        """Return the reschedule-link email template for an interview."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+
+        scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+        if not scheduled_for:
+            raise WebInterfaceError("Interview date is invalid or missing.")
+
+        guest_name = self._extract_guest_name_from_interview_title(
+            interview.get("guest_name"),
+            interview.get("title"),
+        ) or "Guest"
+        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        reschedule_url = self._reschedule_link_for_interview(interview_id)
+
+        email_manager = self._build_email_manager()
+        template = email_manager.get_reschedule_link_template(
+            guest_name=guest_name,
+            scheduled_for=scheduled_for,
+            timezone_label=timezone_label,
+            reschedule_url=reschedule_url,
+        )
+        return {
+            "interview": self._serialize_interview_reminder(interview),
+            "subject": template["subject"],
+            "body": template["body"],
+            "reschedule_url": reschedule_url,
+        }
+
     def send_interview_reminder(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
         """Send a weekly confirmation reminder for an interview and log it."""
         interview = self.database.get_interview_by_id(interview_id)
@@ -3332,6 +3488,70 @@ class GuestWebService:
         if not refreshed:
             raise WebInterfaceError("Interview not found after booking confirmation send.")
         return self._serialize_interview_reminder(refreshed)
+
+    def send_interview_reschedule_link(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+        """Send a personal reschedule link for an interview."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+
+        guest_email = _normalize_text(interview.get("guest_email"))
+        if not guest_email:
+            raise WebInterfaceError("This interview does not have a guest email.")
+
+        scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+        if not scheduled_for:
+            raise WebInterfaceError("Interview date is invalid or missing.")
+
+        guest_name = self._extract_guest_name_from_interview_title(
+            interview.get("guest_name"),
+            interview.get("title"),
+        ) or "Guest"
+        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        reschedule_url = self._reschedule_link_for_interview(interview_id)
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            raise WebInterfaceError("Dashboard email is not configured on the server.")
+
+        preview = self.preview_interview_reschedule_link(interview_id)
+        resolved_subject = subject.strip() or preview["subject"]
+        resolved_body = body.strip() or preview["body"]
+
+        if subject.strip() or body.strip():
+            sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        else:
+            sent = email_manager.send_reschedule_link_email(
+                guest_name,
+                guest_email,
+                scheduled_for,
+                timezone_label,
+                reschedule_url,
+            )
+
+        if not sent:
+            error_detail = (email_manager.last_error or "").strip()
+            if error_detail:
+                raise WebInterfaceError(f"The reschedule email could not be sent: {error_detail}")
+            raise WebInterfaceError("The reschedule email could not be sent.")
+
+        provider = "resend" if email_manager.resend_api_key else "smtp"
+        self.database.log_interview_email(
+            interview_id=interview_id,
+            email_type="reschedule_link",
+            sent_to=guest_email,
+            status="sent",
+            provider=provider,
+            notes=resolved_subject,
+        )
+        updated = self.update_interview(
+            interview_id,
+            {
+                "confirmation_status": "reschedule_requested",
+                "status": "scheduled",
+            },
+        )
+        return self._serialize_interview_reminder(updated)
 
     def send_interview_cancellation(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
         """Send a cancellation email for an interview and mark it cancelled."""
@@ -4158,6 +4378,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, payload)
             return
 
+        if request_path.startswith("/api/interviews/") and request_path.endswith("/reschedule-template"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            interview_id = self._extract_record_id(request_path[: -len("/reschedule-template")], "/api/interviews/")
+            if interview_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                return
+
+            try:
+                payload = self.service.preview_interview_reschedule_link(interview_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
         if request_path.startswith("/api/interviews/") and request_path.endswith("/cancellation-template"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -4693,6 +4932,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 payload = self._read_json_payload()
                 try:
                     interview = self.service.send_interview_booking_confirmation(
+                        interview_id,
+                        payload.get("subject", ""),
+                        payload.get("body", ""),
+                    )
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, interview)
+                return
+
+            if self.path.endswith("/send-reschedule-link"):
+                interview_id = self._extract_record_id(self.path[: -len("/send-reschedule-link")], "/api/interviews/")
+                if interview_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                    return
+
+                payload = self._read_json_payload()
+                try:
+                    interview = self.service.send_interview_reschedule_link(
                         interview_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),

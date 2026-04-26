@@ -76,6 +76,8 @@ class SchemaManager:
             calendar_source TEXT,
             event_updated_at TIMESTAMP,
             last_synced_at TIMESTAMP,
+            reschedule_token TEXT,
+            reschedule_token_created_at TIMESTAMP,
             title TEXT,
             scheduled_for TIMESTAMP NOT NULL,
             timezone TEXT DEFAULT 'Europe/Berlin',
@@ -167,6 +169,8 @@ class SchemaManager:
         ("calendar_source", "TEXT"),
         ("event_updated_at", "TIMESTAMP"),
         ("last_synced_at", "TIMESTAMP"),
+        ("reschedule_token", "TEXT"),
+        ("reschedule_token_created_at", "TIMESTAMP"),
     ]
 
     EPISODE_OPTIONAL_COLUMNS: List[Tuple[str, str]] = [

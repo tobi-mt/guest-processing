@@ -320,6 +320,36 @@ Mirror Talk Podcast"""
 
         return {"subject": subject, "body": body}
 
+    def get_reschedule_link_template(
+        self,
+        guest_name: str,
+        scheduled_for: datetime,
+        timezone_label: str,
+        reschedule_url: str,
+    ) -> Dict[str, str]:
+        """Build the email that invites a guest to choose a new interview time."""
+        localized = self._localize_datetime(scheduled_for, timezone_label)
+        subject = f"Choose a new time for your Soulful Conversation"
+        formatted_date = localized.strftime("%A %d %B, %Y")
+        formatted_time = localized.strftime("%H:%M")
+
+        body = f"""Hi {guest_name},
+
+Thank you again for your willingness to join Mirror Talk.
+
+We’re reaching out about your Soulful Conversation that had been scheduled for {formatted_date} at {formatted_time} {timezone_label}.
+
+You can choose a new time using your personal rescheduling link here:
+{reschedule_url}
+
+If the available options still do not work for you, just reply to this email and we’ll gladly find a better time together.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
+
+        return {"subject": subject, "body": body}
+
     @staticmethod
     def _localize_datetime(value: datetime, timezone_label: str) -> datetime:
         """Return a datetime rendered in the guest-facing timezone when possible."""
@@ -716,6 +746,23 @@ Mirror Talk Podcast
     ) -> bool:
         """Send a guest their own personal intake link after an agency referral."""
         template = self.get_personal_application_request_template(guest_name, intake_url, agency_name)
+        return self.send_email(to_email, template["subject"], template["body"])
+
+    def send_reschedule_link_email(
+        self,
+        guest_name: str,
+        to_email: str,
+        scheduled_for: datetime,
+        timezone_label: str,
+        reschedule_url: str,
+    ) -> bool:
+        """Send a guest their personal rescheduling link."""
+        template = self.get_reschedule_link_template(
+            guest_name,
+            scheduled_for,
+            timezone_label,
+            reschedule_url,
+        )
         return self.send_email(to_email, template["subject"], template["body"])
 
     def load_saved_config(self) -> bool:
