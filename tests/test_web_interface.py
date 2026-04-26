@@ -46,6 +46,7 @@ from guest_database_manager.web_interface import (
 from guest_database_manager.guest_research import _candidate_urls
 from guest_database_manager import guest_research
 from guest_database_manager.email_manager import EmailManager
+from guest_database_manager.episode_planner import next_release_slot
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
 
@@ -2035,6 +2036,8 @@ def test_create_episode_clamps_priority_score_to_editable_range(temp_db):
 def test_recommendations_skip_release_dates_already_reserved_by_scheduled_episodes(temp_db):
     """Scheduled release dates should push later recommendations onto the next free slot."""
     service = GuestWebService(temp_db.db_path)
+    reserved_slot = next_release_slot(datetime.now())
+    expected_slot = next_release_slot(reserved_slot + timedelta(seconds=1))
     service.create_episode(
         {
             "guest_name": "Already Scheduled",
@@ -2042,7 +2045,7 @@ def test_recommendations_skip_release_dates_already_reserved_by_scheduled_episod
             "episode_title": "Already Scheduled",
             "topic": "Already Scheduled",
             "category": "Faith",
-            "release_date": "2026-04-14 17:00:00",
+            "release_date": reserved_slot.strftime("%Y-%m-%d %H:%M:%S"),
             "release_status": "scheduled",
             "production_status": "ready",
             "promotion_status": "ready",
@@ -2078,13 +2081,16 @@ def test_recommendations_skip_release_dates_already_reserved_by_scheduled_episod
     planning = service.list_planning()
 
     recommended_dates = [item["recommended_release_date"] for item in planning["recommendations"][:2]]
-    assert "2026-04-14 17:00:00" not in recommended_dates
-    assert recommended_dates[0] == "2026-04-21 17:00:00"
+    assert reserved_slot.strftime("%Y-%m-%d %H:%M:%S") not in recommended_dates
+    assert recommended_dates[0] == expected_slot.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def test_recommendations_skip_scheduled_release_day_even_when_time_differs(temp_db):
     """A scheduled episode should reserve its release day even if the stored time is not 17:00."""
     service = GuestWebService(temp_db.db_path)
+    reserved_slot = next_release_slot(datetime.now())
+    same_day_different_time = reserved_slot.replace(hour=19, minute=0, second=0, microsecond=0)
+    expected_slot = next_release_slot(reserved_slot + timedelta(seconds=1))
     service.create_episode(
         {
             "guest_name": "Different Time Scheduled",
@@ -2092,7 +2098,7 @@ def test_recommendations_skip_scheduled_release_day_even_when_time_differs(temp_
             "episode_title": "Different Time Scheduled",
             "topic": "Different Time Scheduled",
             "category": "Faith",
-            "release_date": "2026-04-14 19:00:00",
+            "release_date": same_day_different_time.strftime("%Y-%m-%d %H:%M:%S"),
             "release_status": "scheduled",
             "production_status": "ready",
             "promotion_status": "ready",
@@ -2114,7 +2120,7 @@ def test_recommendations_skip_scheduled_release_day_even_when_time_differs(temp_
 
     planning = service.list_planning()
 
-    assert planning["recommendations"][0]["recommended_release_date"] == "2026-04-21 17:00:00"
+    assert planning["recommendations"][0]["recommended_release_date"] == expected_slot.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
@@ -3008,6 +3014,63 @@ def test_public_booking_creates_interview_calendar_event_and_confirmation(monkey
     assert saved["confirmation_status"] == "confirmed"
     assert "Booked through the Mirror Talk guest booking flow." in (saved["notes"] or "")
     assert sent == {"guest": "Jordan Rivers", "interview_id": interview["id"]}
+
+
+def test_public_booking_repairs_existing_interview_without_calendar_event(monkeypatch, temp_db):
+    """Booking confirmation should repair a matching future interview that is missing its calendar link."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+        }
+    )
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+
+    scheduled_for = (datetime.now(timezone.utc) + timedelta(days=3)).replace(minute=0, second=0, microsecond=0).isoformat()
+    existing = service.create_interview(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Jordan Rivers and Tobi Ojekunle",
+            "scheduled_for": scheduled_for,
+            "timezone": "Europe/Berlin",
+            "status": "scheduled",
+            "confirmation_status": "pending",
+        }
+    )
+
+    class StubCalendarClient:
+        def create_event_from_interview(self, interview):
+            assert interview["id"] == existing["id"]
+            return {"id": "google-event-repaired", "updated": "2026-04-26T12:00:00Z"}
+
+    sent = {}
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: StubCalendarClient())
+    monkeypatch.setattr(
+        GuestWebService,
+        "_send_booking_confirmation_email",
+        lambda self, guest_payload, interview: sent.update({"guest": guest_payload["full_name"], "interview_id": interview["id"]}),
+    )
+
+    interview = service.create_public_booking(
+        token,
+        {
+            "scheduled_for": scheduled_for,
+            "timezone": "America/Toronto",
+            "note": "Please keep this booking active",
+        },
+    )
+
+    saved = service.database.get_interview_by_id(existing["id"])
+    assert interview["id"] == existing["id"]
+    assert saved["calendar_event_id"] == "google-event-repaired"
+    assert saved["confirmation_status"] == "confirmed"
+    assert "Calendar invite repaired through the Mirror Talk guest booking flow." in (saved["notes"] or "")
+    assert sent == {"guest": "Jordan Rivers", "interview_id": existing["id"]}
 
 
 def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):

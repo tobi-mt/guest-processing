@@ -2182,6 +2182,7 @@ class GuestWebService:
     def create_interview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create or update an interview record."""
         interview_data = {
+            "id": payload.get("id"),
             "guest_id": payload.get("guest_id"),
             "guest_name": _normalize_text(payload.get("guest_name")),
             "guest_email": _normalize_text(payload.get("guest_email")),
@@ -2255,17 +2256,22 @@ class GuestWebService:
             "title": interview.get("title"),
         }
 
+    def _normalize_booking_datetime(self, value: Any) -> Optional[datetime]:
+        """Normalize a booking-related datetime into UTC for safe comparisons."""
+        parsed = self._parse_datetime(value)
+        if not parsed:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
     def _find_future_interview_for_guest(self, guest: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Return the next still-active interview for a guest, if one exists."""
         guest_id = str(guest.get("id") or "").strip()
         guest_email = _normalize_text(guest.get("email")).casefold()
         reference = datetime.now(timezone.utc)
         for interview in self.database.list_interviews():
-            scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
-            if scheduled_for and scheduled_for.tzinfo is None:
-                scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
-            elif scheduled_for:
-                scheduled_for = scheduled_for.astimezone(timezone.utc)
+            scheduled_for = self._normalize_booking_datetime(interview.get("scheduled_for"))
             if not scheduled_for or scheduled_for < reference:
                 continue
             status = _normalize_text(interview.get("status")).lower()
@@ -2277,6 +2283,64 @@ class GuestWebService:
             if guest_email and _normalize_text(interview.get("guest_email")).casefold() == guest_email:
                 return interview
         return None
+
+    def _repair_existing_public_booking(
+        self,
+        guest: Dict[str, Any],
+        interview: Dict[str, Any],
+        *,
+        scheduled_for: str,
+        timezone_label: str,
+        guest_note: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Repair a stale local booking by attaching the missing calendar event when possible."""
+        if _normalize_text(interview.get("calendar_event_id")):
+            return None
+        existing_start = self._normalize_booking_datetime(interview.get("scheduled_for"))
+        requested_start = self._normalize_booking_datetime(scheduled_for)
+        if not existing_start or not requested_start or existing_start != requested_start:
+            return None
+
+        updated_interview = self.update_interview(
+            int(interview["id"]),
+            {
+                "guest_email": _normalize_text(guest.get("email")) or _normalize_text(interview.get("guest_email")),
+                "join_url": _normalize_text(interview.get("join_url")) or self._booking_join_url(),
+                "status": "scheduled",
+                "confirmation_status": "confirmed",
+                "reminder_status": _normalize_text(interview.get("reminder_status")) or "not_scheduled",
+                "notes": "\n".join(
+                    part
+                    for part in [
+                        _normalize_text(interview.get("notes")),
+                        "Calendar invite repaired through the Mirror Talk guest booking flow.",
+                        f"Guest browser timezone: {timezone_label}" if timezone_label else "",
+                        guest_note,
+                    ]
+                    if part
+                ),
+            },
+        )
+
+        client = self._build_google_calendar_client()
+        if client is not None:
+            try:
+                created_event = client.create_event_from_interview(updated_interview)
+            except GoogleCalendarSyncError as exc:
+                raise WebInterfaceError(str(exc)) from exc
+            self.database.update_interview(
+                updated_interview["id"],
+                {
+                    "calendar_event_id": created_event.get("id"),
+                    "calendar_source": "google_calendar",
+                    "event_updated_at": created_event.get("updated"),
+                    "last_synced_at": datetime.now().astimezone().isoformat(),
+                },
+            )
+            updated_interview = self.database.get_interview_by_id(updated_interview["id"]) or updated_interview
+
+        self._send_booking_confirmation_email(guest, updated_interview)
+        return updated_interview
 
     def _booking_timezone(self) -> ZoneInfo:
         """Return the configured booking timezone object."""
@@ -2411,14 +2475,24 @@ class GuestWebService:
     def create_public_booking(self, booking_token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create an interview from a public booking token and selected slot."""
         guest = self._guest_from_booking_token(booking_token)
-        if self._find_future_interview_for_guest(guest):
-            raise WebInterfaceError("A future interview is already booked for this guest.")
-
         scheduled_for = _normalize_text(payload.get("scheduled_for"))
         timezone_label = _normalize_text(payload.get("timezone")) or self._booking_timezone_name()
         guest_note = _normalize_text(payload.get("note"))
         if not scheduled_for:
             raise WebInterfaceError("Please choose one of the available interview slots.")
+
+        existing_interview = self._find_future_interview_for_guest(guest)
+        if existing_interview:
+            repaired = self._repair_existing_public_booking(
+                guest,
+                existing_interview,
+                scheduled_for=scheduled_for,
+                timezone_label=timezone_label,
+                guest_note=guest_note,
+            )
+            if repaired:
+                return self._serialize_public_booking_interview(repaired)
+            raise WebInterfaceError("A future interview is already booked for this guest.")
 
         available = self.list_public_booking_slots(booking_token)
         available_starts = {item["start"] for item in available.get("slots", [])}
