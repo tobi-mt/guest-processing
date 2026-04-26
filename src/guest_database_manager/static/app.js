@@ -919,6 +919,7 @@ function renderGuests(payload) {
     statusPill.classList.add(normalizeText(guest.dashboard_status || guestStatusLabel(guest)).replaceAll(" ", "_"));
 
     const researchButton = node.querySelector("[data-action='research']");
+    const resendBookingLinkButton = node.querySelector("[data-action='resend_booking_link']");
     const resendPersonalApplicationButton = node.querySelector("[data-action='resend_personal_application']");
     const researchFailed = guest.guest_research?.cache_status === "failed";
     if (researchButton && researchFailed) {
@@ -928,6 +929,15 @@ function renderGuests(payload) {
     if (researchButton && !guest.website && !guest.social_media_handles) {
       researchButton.disabled = true;
       researchButton.title = "Add a website or labeled social profile first so copilot research has a public source to read.";
+    }
+    if (resendBookingLinkButton) {
+      const isAccepted = normalizeText(guest.email_status) === "accepted";
+      if (!isAccepted) {
+        resendBookingLinkButton.classList.add("hidden");
+      } else if (!guest.email) {
+        resendBookingLinkButton.disabled = true;
+        resendBookingLinkButton.title = "Add the guest's email first so Mirror Talk can resend their booking link.";
+      }
     }
     if (resendPersonalApplicationButton) {
       const isAgencyReferral = guest.submission_meta?.mode === "agency_referral";
@@ -940,10 +950,12 @@ function renderGuests(payload) {
     }
 
     if (!emailEnabled) {
-      node.querySelectorAll("[data-action='accepted_email'], [data-action='rejected_email']").forEach((button) => {
+      node
+        .querySelectorAll("[data-action='accepted_email'], [data-action='rejected_email'], [data-action='resend_booking_link'], [data-action='resend_personal_application']")
+        .forEach((button) => {
         button.disabled = true;
         button.title = "Set the dashboard SMTP or Resend environment variables on Railway to enable email sending.";
-      });
+        });
     }
 
     renderInlineEditor(editor, guest);
@@ -1150,6 +1162,27 @@ function renderGuests(payload) {
             };
             renderGuests(latestPayload);
             setMessage(`Resent the personal application link to ${guest.full_name || guest.email}.`, "success");
+          } else if (action === "resend_booking_link") {
+            if (!confirmCriticalAction(`Resend the Mirror Talk booking link to ${guest.full_name || guest.email || "this guest"}?`)) {
+              return;
+            }
+            activeGuestActionFeedback = {
+              guestId: guest.id,
+              text: `Resending the booking link to ${guest.full_name || guest.email || "guest"}...`,
+              tone: "pending",
+            };
+            renderGuests(latestPayload);
+            await fetchJSON(`/api/guests/${guest.id}/resend-booking-link`, {
+              method: "POST",
+              body: JSON.stringify({}),
+            });
+            activeGuestActionFeedback = {
+              guestId: guest.id,
+              text: `Booking link resent to ${guest.full_name || guest.email || "guest"}.`,
+              tone: "success",
+            };
+            renderGuests(latestPayload);
+            setMessage(`Resent the booking link to ${guest.full_name || guest.email}.`, "success");
           } else if (action === "accepted_email" || action === "rejected_email") {
             activeGuestEditor = null;
             const decision = action === "accepted_email" ? "accepted" : "rejected";

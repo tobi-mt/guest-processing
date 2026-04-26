@@ -449,6 +449,26 @@ Mirror Talk Podcast
 """
         return {"subject": subject, "body": body}
 
+    def get_booking_link_template(self, guest_name: str, booking_url: str) -> Dict[str, str]:
+        """Build a polished email for resending a guest's personal booking link."""
+        subject = "Your personal Mirror Talk booking link"
+        body = f"""Hi {guest_name},
+
+I’m glad to share your personal Mirror Talk booking link again.
+
+You can use it here to choose a time that suits you best:
+{booking_url}
+
+If we have already arranged a custom availability window for you, this link will reflect that automatically.
+
+If anything feels off or you need a different option, just reply to this email and we’ll gladly help.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast
+"""
+        return {"subject": subject, "body": body}
+
     def get_released_episode_template(self, guest_name: str, show_notes_url: str, files_url: str) -> Dict[str, str]:
         """Build a polished release-notification email for a guest."""
         subject = "Your Mirror Talk episode is now live"
@@ -746,6 +766,11 @@ Mirror Talk Podcast
     ) -> bool:
         """Send a guest their own personal intake link after an agency referral."""
         template = self.get_personal_application_request_template(guest_name, intake_url, agency_name)
+        return self.send_email(to_email, template["subject"], template["body"])
+
+    def send_booking_link_email(self, guest_name: str, to_email: str, booking_url: str) -> bool:
+        """Send a guest their personal booking link again."""
+        template = self.get_booking_link_template(guest_name, booking_url)
         return self.send_email(to_email, template["subject"], template["body"])
 
     def send_reschedule_link_email(

@@ -1213,6 +1213,70 @@ def test_resend_guest_personal_application_email_requires_agency_referral(monkey
         service.resend_guest_personal_application_email(guest["id"])
 
 
+def test_resend_guest_booking_link(monkeypatch, temp_db):
+    """Accepted guests should support resending their personal booking link from the dashboard."""
+    sent = {}
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+            self.last_error = ""
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def send_booking_link_email(self, guest_name, to_email, booking_url):
+            sent["guest_name"] = guest_name
+            sent["to_email"] = to_email
+            sent["booking_url"] = booking_url
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+    monkeypatch.setenv(BOOKING_BASE_URL_ENV_VAR, "https://guest-processing-production.up.railway.app/book")
+
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "David Strickel", "email": "david@example.com"})
+    service.update_guest_status(guest["id"], "accepted")
+
+    resent_guest = service.resend_guest_booking_link(guest["id"])
+
+    assert resent_guest["id"] == guest["id"]
+    assert sent["guest_name"] == "David Strickel"
+    assert sent["to_email"] == "david@example.com"
+    assert sent["booking_url"].startswith("https://guest-processing-production.up.railway.app/book?token=")
+
+
+def test_resend_guest_booking_link_requires_accepted_status(monkeypatch, temp_db):
+    """The resend booking action should stay tied to accepted guests only."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_resend(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Lina Harrow", "email": "lina@example.com"})
+
+    with pytest.raises(WebInterfaceError, match="Only accepted guests"):
+        service.resend_guest_booking_link(guest["id"])
+
+
 def test_list_guests_exposes_self_submission_meta(temp_db):
     """Dashboard payload should show direct self-application context."""
     service = GuestWebService(temp_db.db_path)

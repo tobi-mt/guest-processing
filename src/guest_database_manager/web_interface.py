@@ -4186,6 +4186,43 @@ class GuestWebService:
             raise WebInterfaceError("Guest not found after sending the email.")
         return serialize_guest(refreshed)
 
+    def resend_guest_booking_link(self, guest_id: int) -> Dict[str, Any]:
+        """Resend a guest's personal booking link from the dashboard."""
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+
+        guest_email = _normalize_text(guest.get("email"))
+        if not guest_email:
+            raise WebInterfaceError("Add the guest's email first so Mirror Talk can resend their booking link.")
+
+        email_status = _normalize_text(guest.get("email_status")).lower()
+        if email_status != "accepted":
+            raise WebInterfaceError("Only accepted guests can receive a booking link.")
+
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            raise WebInterfaceError("Dashboard email is not configured on the server.")
+
+        guest_name = _normalize_text(guest.get("full_name")) or "there"
+        booking_url = self._booking_link_for_guest(guest_id)
+        try:
+            sent = email_manager.send_booking_link_email(guest_name, guest_email, booking_url)
+        except Exception as exc:
+            error_detail = str(exc).strip()
+            raise WebInterfaceError(error_detail or "The booking link email could not be sent.") from exc
+
+        if not sent:
+            error_detail = (email_manager.last_error or "").strip()
+            if error_detail:
+                raise WebInterfaceError(f"The booking link email could not be sent: {error_detail}")
+            raise WebInterfaceError("The booking link email could not be sent.")
+
+        refreshed = self.database.get_guest_by_id(guest_id)
+        if not refreshed:
+            raise WebInterfaceError("Guest not found after sending the email.")
+        return serialize_guest(refreshed)
+
     def _send_booking_confirmation_email(self, guest: Dict[str, Any], interview: Dict[str, Any]) -> None:
         """Best-effort confirmation email after a guest books a slot."""
         guest_email = _normalize_text(guest.get("email"))
@@ -4778,6 +4815,24 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 guest = self.service.resend_guest_personal_application_email(guest_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, guest)
+            return
+
+        if self.path.startswith("/api/guests/") and self.path.endswith("/resend-booking-link"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            guest_id = self._extract_guest_id(self.path, suffix="/resend-booking-link")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            try:
+                guest = self.service.resend_guest_booking_link(guest_id)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
