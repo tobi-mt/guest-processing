@@ -140,8 +140,8 @@ class GuestDatabase:
                     faith_practice, beliefs_align, favorite_quote, passionate_topics, message_takeaway,
                     podcast_experience, additional_info, following_us, is_processed,
                     original_file_name, original_data, guest_research, guest_research_updated_at,
-                    booking_token, booking_token_created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    booking_token, booking_token_created_at, booking_override, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """, (
                 guest_data.get('full_name'), guest_data.get('full_name'), guest_data.get('email'), 
                 guest_data.get('website'), guest_data.get('social_handles'),
@@ -153,6 +153,7 @@ class GuestDatabase:
                 guest_data.get('original_file_name'), guest_data.get('original_data'),
                 guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
                 guest_data.get('booking_token'), guest_data.get('booking_token_created_at'),
+                guest_data.get('booking_override'),
             ))
             conn.commit()
             return cursor.lastrowid
@@ -253,6 +254,7 @@ class GuestDatabase:
                 guest_data.get("booking_token_created_at")
                 or existing_guest.get("booking_token_created_at")
             )
+            merged_guest["booking_override"] = guest_data.get("booking_override") or existing_guest.get("booking_override")
             self.update_guest_by_id(existing_guest["id"], merged_guest)
             return existing_guest["id"], "updated"
 
@@ -270,6 +272,7 @@ class GuestDatabase:
                     additional_info = ?, following_us = ?, is_processed = ?, email_status = ?,
                     email_sent_at = ?, skip_reason = ?, original_file_name = ?, original_data = ?,
                     guest_research = ?, guest_research_updated_at = ?, booking_token = ?, booking_token_created_at = ?,
+                    booking_override = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (
@@ -284,6 +287,7 @@ class GuestDatabase:
                 guest_data.get('original_file_name'), guest_data.get('original_data'),
                 guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
                 guest_data.get('booking_token'), guest_data.get('booking_token_created_at'),
+                guest_data.get('booking_override'),
                 guest_id
             ))
             conn.commit()

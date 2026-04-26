@@ -60,6 +60,7 @@ class SchemaManager:
             guest_research_updated_at TIMESTAMP,
             booking_token TEXT,
             booking_token_created_at TIMESTAMP,
+            booking_override TEXT,
             
             UNIQUE(name, email, full_name)
         )
@@ -159,6 +160,7 @@ class SchemaManager:
         ("guest_research_updated_at", "TIMESTAMP"),
         ("booking_token", "TEXT"),
         ("booking_token_created_at", "TIMESTAMP"),
+        ("booking_override", "TEXT"),
     ]
 
     INTERVIEW_OPTIONAL_COLUMNS: List[Tuple[str, str]] = [

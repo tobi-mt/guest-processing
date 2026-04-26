@@ -2880,6 +2880,69 @@ def test_public_booking_slots_include_month_window_metadata(monkeypatch, temp_db
     assert availability["booking_window"]["days_ahead"] >= 120
 
 
+def test_guest_booking_override_is_saved_and_serialized(temp_db):
+    """Guest-specific booking overrides should persist as structured guest metadata."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+
+    updated = service.update_guest(
+        guest["id"],
+        {
+            "full_name": "Jordan Rivers",
+            "booking_override": {
+                "timezone": "America/Phoenix",
+                "weekdays": "WE",
+                "slot_times": "10:00,14:00",
+                "days_ahead": "30",
+                "min_notice_hours": "12",
+            },
+        },
+    )
+
+    assert updated["booking_override"]["timezone"] == "America/Phoenix"
+    assert updated["booking_override"]["weekdays"] == ["WE"]
+    assert updated["booking_override"]["slot_times"] == ["10:00", "14:00"]
+    assert updated["booking_override"]["days_ahead"] == 30
+    assert updated["booking_override"]["min_notice_hours"] == 12
+
+
+def test_public_booking_uses_guest_specific_booking_override(monkeypatch, temp_db):
+    """A guest override should narrow booking availability without changing the global schedule."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    service.update_guest_status(guest["id"], "accepted")
+    service.update_guest(
+        guest["id"],
+        {
+            "full_name": "Jordan Rivers",
+            "booking_override": {
+                "timezone": "America/Phoenix",
+                "weekdays": "WE",
+                "slot_times": "10:00,14:00",
+                "days_ahead": "21",
+                "min_notice_hours": "2",
+            },
+        },
+    )
+    token = service._ensure_guest_booking_token(guest["id"])
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: None)
+
+    context = service.get_public_booking_context(token)
+    availability = service.list_public_booking_slots(token, limit=8)
+    override_tz = ZoneInfo("America/Phoenix")
+
+    assert context["booking_timezone"] == "America/Phoenix"
+    assert context["booking_override_active"] is True
+    assert availability["booking_timezone"] == "America/Phoenix"
+    assert availability["booking_override_active"] is True
+    assert availability["slots"]
+    for slot in availability["slots"]:
+        slot_local = datetime.fromisoformat(slot["start"].replace("Z", "+00:00")).astimezone(override_tz)
+        assert slot_local.weekday() == 2
+        assert slot_local.strftime("%H:%M") in {"10:00", "14:00"}
+
+
 def test_public_booking_context_handles_naive_interview_datetimes(monkeypatch, temp_db):
     """Public booking reads should not crash when an existing interview uses a naive datetime string."""
     service = GuestWebService(temp_db.db_path)

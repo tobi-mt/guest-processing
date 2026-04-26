@@ -100,6 +100,7 @@ BOOKING_DEFAULT_MONTHS_AHEAD = 3
 BOOKING_DEFAULT_BUFFER_MINUTES = 15
 BOOKING_DEFAULT_MIN_NOTICE_HOURS = 24
 BOOKING_DEFAULT_DURATION_MINUTES = 60
+BOOKING_WEEKDAY_CODE_TO_INT = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -463,6 +464,14 @@ def serialize_guest(guest: Dict[str, Any]) -> Dict[str, Any]:
         serialized.get("guest_research"),
         serialized.get("guest_research_updated_at"),
     )
+    booking_override = serialized.get("booking_override")
+    if isinstance(booking_override, str) and booking_override.strip():
+        try:
+            serialized["booking_override"] = json.loads(booking_override)
+        except (TypeError, ValueError):
+            serialized["booking_override"] = None
+    elif not isinstance(booking_override, dict):
+        serialized["booking_override"] = None
     return serialized
 
 
@@ -2044,7 +2053,11 @@ class GuestWebService:
             "original_data": current.get("original_data"),
             "guest_research": current.get("guest_research"),
             "guest_research_updated_at": current.get("guest_research_updated_at"),
+            "booking_override": current.get("booking_override"),
         }
+
+        if "booking_override" in payload:
+            updated_guest["booking_override"] = self._normalize_booking_override_payload(payload.get("booking_override"))
 
         if not updated_guest["full_name"]:
             raise WebInterfaceError("Full name is required.")
@@ -2265,6 +2278,129 @@ class GuestWebService:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
 
+    @staticmethod
+    def _normalize_booking_override_payload(value: Any) -> Optional[str]:
+        """Validate and normalize a guest-specific booking override payload."""
+        if value in ("", None, {}):
+            return None
+        payload = value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                payload = json.loads(text)
+            except (TypeError, ValueError) as exc:
+                raise WebInterfaceError("Booking override must be valid JSON.") from exc
+        if not isinstance(payload, dict):
+            raise WebInterfaceError("Booking override must be a structured object.")
+
+        timezone_name = _normalize_text(payload.get("timezone"))
+        weekdays_raw = payload.get("weekdays")
+        slot_times_raw = payload.get("slot_times")
+        min_notice_raw = _normalize_text(payload.get("min_notice_hours"))
+        days_ahead_raw = _normalize_text(payload.get("days_ahead"))
+
+        weekdays: list[str] = []
+        if isinstance(weekdays_raw, str):
+            source = [item.strip().upper() for item in weekdays_raw.split(",")]
+        elif isinstance(weekdays_raw, (list, tuple)):
+            source = [str(item).strip().upper() for item in weekdays_raw]
+        else:
+            source = []
+        for item in source:
+            if item in BOOKING_WEEKDAY_CODE_TO_INT and item not in weekdays:
+                weekdays.append(item)
+
+        slot_times: list[str] = []
+        if isinstance(slot_times_raw, str):
+            slot_source = [item.strip() for item in slot_times_raw.split(",")]
+        elif isinstance(slot_times_raw, (list, tuple)):
+            slot_source = [str(item).strip() for item in slot_times_raw]
+        else:
+            slot_source = []
+        for item in slot_source:
+            if re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", item) and item not in slot_times:
+                slot_times.append(item)
+
+        if timezone_name:
+            try:
+                ZoneInfo(timezone_name)
+            except ZoneInfoNotFoundError as exc:
+                raise WebInterfaceError("Booking override timezone is invalid.") from exc
+
+        min_notice_hours = None
+        if min_notice_raw:
+            try:
+                min_notice_hours = max(2, min(168, int(min_notice_raw)))
+            except ValueError as exc:
+                raise WebInterfaceError("Booking override min notice must be a whole number of hours.") from exc
+
+        days_ahead = None
+        if days_ahead_raw:
+            try:
+                days_ahead = max(7, min(180, int(days_ahead_raw)))
+            except ValueError as exc:
+                raise WebInterfaceError("Booking override days ahead must be a whole number of days.") from exc
+
+        if not any([timezone_name, weekdays, slot_times, min_notice_hours is not None, days_ahead is not None]):
+            return None
+
+        normalized = {
+            "timezone": timezone_name,
+            "weekdays": weekdays,
+            "slot_times": slot_times,
+            "min_notice_hours": min_notice_hours,
+            "days_ahead": days_ahead,
+        }
+        return json.dumps(normalized, separators=(",", ":"))
+
+    def _guest_booking_settings(self, guest: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve the effective booking settings for a guest, including any safe override."""
+        override_raw = guest.get("booking_override")
+        override = override_raw if isinstance(override_raw, dict) else {}
+        if isinstance(override_raw, str) and override_raw.strip():
+            try:
+                override = json.loads(override_raw)
+            except (TypeError, ValueError):
+                override = {}
+        override = override if isinstance(override, dict) else {}
+
+        timezone_name = _normalize_text(override.get("timezone")) or self._booking_timezone_name()
+        configured_weekdays = tuple(self._booking_slot_weekdays())
+        reverse_weekday_codes = {value: key for key, value in BOOKING_WEEKDAY_CODE_TO_INT.items()}
+        weekday_codes = [
+            code for code in override.get("weekdays", [])
+            if isinstance(code, str) and code in BOOKING_WEEKDAY_CODE_TO_INT
+        ]
+        weekday_values = tuple(BOOKING_WEEKDAY_CODE_TO_INT[code] for code in weekday_codes) if weekday_codes else configured_weekdays
+        weekday_codes = tuple(weekday_codes or [reverse_weekday_codes.get(value, "") for value in weekday_values if value in reverse_weekday_codes])
+
+        slot_times = tuple(
+            item for item in override.get("slot_times", [])
+            if isinstance(item, str) and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", item)
+        ) or self._booking_slot_times()
+
+        days_ahead = override.get("days_ahead")
+        if not isinstance(days_ahead, int):
+            days_ahead = self._booking_days_ahead()
+        min_notice_hours = override.get("min_notice_hours")
+        if not isinstance(min_notice_hours, int):
+            min_notice_hours = self._booking_min_notice_hours()
+
+        months_ahead = max(1, min(12, (days_ahead + 30) // 31))
+        return {
+            "timezone": timezone_name,
+            "timezone_obj": ZoneInfo(timezone_name),
+            "weekday_codes": tuple(code for code in weekday_codes if code),
+            "weekdays": tuple(weekday_values),
+            "slot_times": tuple(slot_times),
+            "days_ahead": days_ahead,
+            "months_ahead": months_ahead,
+            "min_notice_hours": min_notice_hours,
+            "has_override": bool(override),
+        }
+
     def _find_future_interview_for_guest(self, guest: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Return the next still-active interview for a guest, if one exists."""
         guest_id = str(guest.get("id") or "").strip()
@@ -2349,14 +2485,14 @@ class GuestWebService:
         except ZoneInfoNotFoundError as exc:
             raise WebInterfaceError("Booking timezone is invalid on the server.") from exc
 
-    def _booking_busy_windows(self, *, reference: datetime) -> list[tuple[datetime, datetime]]:
+    def _booking_busy_windows(self, *, reference: datetime, days_ahead: int) -> list[tuple[datetime, datetime]]:
         """Return busy windows from Google Calendar and existing interviews."""
         busy: list[tuple[datetime, datetime]] = []
         client = self._build_google_calendar_client()
         duration = timedelta(minutes=self._booking_duration_minutes())
         if client is not None:
             try:
-                events = client.list_busy_events(days_ahead=self._booking_days_ahead(), reference=reference)
+                events = client.list_busy_events(days_ahead=days_ahead, reference=reference)
             except GoogleCalendarSyncError as exc:
                 raise WebInterfaceError(str(exc)) from exc
             for event in events:
@@ -2400,10 +2536,12 @@ class GuestWebService:
         """Return guest-facing booking context from a secure token."""
         guest = self._guest_from_booking_token(booking_token)
         existing_interview = self._find_future_interview_for_guest(guest)
+        booking_settings = self._guest_booking_settings(guest)
         return {
             "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest",
             "guest_email": _normalize_text(guest.get("email")),
-            "booking_timezone": self._booking_timezone_name(),
+            "booking_timezone": booking_settings["timezone"],
+            "booking_override_active": booking_settings["has_override"],
             "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
         }
 
@@ -2411,17 +2549,18 @@ class GuestWebService:
         """Return available booking slots for a guest-facing booking link."""
         guest = self._guest_from_booking_token(booking_token)
         existing_interview = self._find_future_interview_for_guest(guest)
-        timezone_obj = self._booking_timezone()
+        booking_settings = self._guest_booking_settings(guest)
+        timezone_obj = booking_settings["timezone_obj"]
         reference = datetime.now(timezone.utc)
-        min_notice = reference + timedelta(hours=self._booking_min_notice_hours())
+        min_notice = reference + timedelta(hours=booking_settings["min_notice_hours"])
         duration = timedelta(minutes=self._booking_duration_minutes())
-        busy_windows = self._booking_busy_windows(reference=reference)
-        weekdays = set(self._booking_slot_weekdays())
-        slot_times = self._booking_slot_times()
+        busy_windows = self._booking_busy_windows(reference=reference, days_ahead=booking_settings["days_ahead"])
+        weekdays = set(booking_settings["weekdays"])
+        slot_times = booking_settings["slot_times"]
 
         slots: list[Dict[str, Any]] = []
         current_local = min_notice.astimezone(timezone_obj)
-        for day_offset in range(self._booking_days_ahead() + 1):
+        for day_offset in range(booking_settings["days_ahead"] + 1):
             candidate_day = (current_local + timedelta(days=day_offset)).date()
             weekday = datetime(candidate_day.year, candidate_day.month, candidate_day.day).weekday()
             if weekday not in weekdays:
@@ -2463,11 +2602,12 @@ class GuestWebService:
 
         return {
             "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest",
-            "booking_timezone": self._booking_timezone_name(),
+            "booking_timezone": booking_settings["timezone"],
+            "booking_override_active": booking_settings["has_override"],
             "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
             "booking_window": {
-                "months_ahead": self._booking_months_ahead(),
-                "days_ahead": self._booking_days_ahead(),
+                "months_ahead": booking_settings["months_ahead"],
+                "days_ahead": booking_settings["days_ahead"],
             },
             "slots": slots,
         }

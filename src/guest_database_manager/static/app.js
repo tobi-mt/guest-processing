@@ -424,6 +424,29 @@ function renderSubmissionMetaMarkup(meta) {
   `;
 }
 
+function renderBookingOverrideMarkup(override) {
+  if (!override || typeof override !== "object") {
+    return "";
+  }
+
+  const details = [];
+  if (override.timezone) details.push(`Booking Override Timezone: ${override.timezone}`);
+  if (Array.isArray(override.weekdays) && override.weekdays.length) details.push(`Booking Override Days: ${override.weekdays.join(", ")}`);
+  if (Array.isArray(override.slot_times) && override.slot_times.length) details.push(`Booking Override Times: ${override.slot_times.join(", ")}`);
+  if (override.min_notice_hours) details.push(`Booking Override Min Notice: ${override.min_notice_hours} hours`);
+  if (override.days_ahead) details.push(`Booking Override Window: ${override.days_ahead} days`);
+
+  if (!details.length) {
+    return "";
+  }
+
+  return `
+    <div class="submission-detail-list">
+      ${details.map((detail) => `<span>${linkifyText(detail)}</span>`).join("")}
+    </div>
+  `;
+}
+
 function renderPromotionProfile(guest) {
   const profile = guest.promotion_profile;
   if (!profile) {
@@ -746,6 +769,26 @@ function renderInlineEditor(editorNode, guest) {
         Passionate Topics
         <textarea name="passionate_topics" rows="3">${escapeHtml(activeGuestEditor.passionate_topics)}</textarea>
       </label>
+      <label>
+        Booking Override Timezone
+        <input name="booking_override_timezone" type="text" value="${escapeHtml(activeGuestEditor.booking_override_timezone)}" placeholder="e.g. America/Phoenix" />
+      </label>
+      <label>
+        Booking Override Days
+        <input name="booking_override_weekdays" type="text" value="${escapeHtml(activeGuestEditor.booking_override_weekdays)}" placeholder="e.g. WE" />
+      </label>
+      <label class="full-width">
+        Booking Override Times
+        <input name="booking_override_slot_times" type="text" value="${escapeHtml(activeGuestEditor.booking_override_slot_times)}" placeholder="e.g. 10:00,11:00,12:00,13:00,14:00" />
+      </label>
+      <label>
+        Booking Override Window (days)
+        <input name="booking_override_days_ahead" type="number" min="7" max="180" value="${escapeHtml(activeGuestEditor.booking_override_days_ahead)}" />
+      </label>
+      <label>
+        Booking Override Min Notice (hours)
+        <input name="booking_override_min_notice_hours" type="number" min="2" max="168" value="${escapeHtml(activeGuestEditor.booking_override_min_notice_hours)}" />
+      </label>
       ${editorFeedbackMarkup(activeGuestEditor.feedback)}
       <div class="inline-editor-actions full-width">
         <button type="submit" class="primary-button small-button" ${activeGuestEditor.saving ? "disabled" : ""}>
@@ -784,6 +827,13 @@ function renderInlineEditor(editorNode, guest) {
           social_handles: activeGuestEditor.social_handles,
           background: activeGuestEditor.background,
           passionate_topics: activeGuestEditor.passionate_topics,
+          booking_override: {
+            timezone: activeGuestEditor.booking_override_timezone,
+            weekdays: activeGuestEditor.booking_override_weekdays,
+            slot_times: activeGuestEditor.booking_override_slot_times,
+            days_ahead: activeGuestEditor.booking_override_days_ahead,
+            min_notice_hours: activeGuestEditor.booking_override_min_notice_hours,
+          },
         }),
       });
       activeGuestEditor = null;
@@ -1008,6 +1058,7 @@ function renderGuests(payload) {
       node.querySelector(".guest-details").insertAdjacentHTML("beforeend", renderSocialHandlesMarkup(socialHandles));
     }
     node.querySelector(".guest-details").insertAdjacentHTML("beforeend", renderSubmissionMetaMarkup(guest.submission_meta));
+    node.querySelector(".guest-details").insertAdjacentHTML("beforeend", renderBookingOverrideMarkup(guest.booking_override));
     node.querySelector(".guest-details").insertAdjacentHTML(
       "beforeend",
       `
@@ -1034,6 +1085,11 @@ function renderGuests(payload) {
               social_handles: guest.social_media_handles || "",
               background: guest.background || "",
               passionate_topics: guest.passionate_topics || "",
+              booking_override_timezone: guest.booking_override?.timezone || "",
+              booking_override_weekdays: Array.isArray(guest.booking_override?.weekdays) ? guest.booking_override.weekdays.join(",") : "",
+              booking_override_slot_times: Array.isArray(guest.booking_override?.slot_times) ? guest.booking_override.slot_times.join(",") : "",
+              booking_override_days_ahead: guest.booking_override?.days_ahead || "",
+              booking_override_min_notice_hours: guest.booking_override?.min_notice_hours || "",
               saving: false,
               feedback: null,
             };
