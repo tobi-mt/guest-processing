@@ -328,17 +328,39 @@ function validateFields(fields) {
     }
 
     if ((field.hasAttribute("required") || isConditionallyRequired) && !trimmedValue) {
-      field.reportValidity();
+      const fieldLabel = getFieldLabel(field);
+      setMessage(`Please complete ${fieldLabel} before continuing.`, "error");
+      field.classList.add("field-error");
+      field.focus({ preventScroll: true });
+      field.scrollIntoView({ behavior: "smooth", block: "center" });
       return false;
     }
 
     if (trimmedValue && !field.checkValidity()) {
-      field.reportValidity();
+      const fieldLabel = getFieldLabel(field);
+      setMessage(`Please enter a valid ${fieldLabel} before continuing.`, "error");
+      field.classList.add("field-error");
+      field.focus({ preventScroll: true });
+      field.scrollIntoView({ behavior: "smooth", block: "center" });
       return false;
     }
   }
 
   return true;
+}
+
+function getFieldLabel(field) {
+  const label = field.closest("label");
+  if (label) {
+    const clone = label.cloneNode(true);
+    clone.querySelectorAll("input, select, textarea, small").forEach((node) => node.remove());
+    const text = clone.textContent.replace(/\s+/g, " ").trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  return field.name ? field.name.replace(/_/g, " ") : "this field";
 }
 
 function validateCurrentStep() {
