@@ -677,9 +677,16 @@ def _base_episode_score(
 
     if interview_date:
         age_days = max((reference.date() - interview_date.date()).days, 0)
-        age_score = min(age_days / 14, 24)
+        freshness_bonus = 0.0
+        if 21 <= age_days <= 120:
+            freshness_bonus = 5.0
+        elif 121 <= age_days <= 180:
+            freshness_bonus = 2.5
+        age_score = min(age_days / 30, 10) + freshness_bonus
         score += age_score
-        if age_days >= 90:
+        if 21 <= age_days <= 120:
+            reasons.append("recording is still fresh enough to feel current")
+        elif age_days >= 180:
             reasons.append("has been waiting a long time")
 
     category_score, category_reason = _category_fatigue_score(episode, recent_categories)

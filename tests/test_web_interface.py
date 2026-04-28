@@ -3846,6 +3846,48 @@ def test_episode_recommendations_include_multi_week_sequence_warnings(temp_db):
     assert any(item["sequence_warnings"] for item in finance_recommendations)
 
 
+def test_episode_recommendations_do_not_overweight_recording_age(temp_db):
+    """Older recordings can help, but fresher seasonal fits should still compete strongly."""
+    service = GuestWebService(temp_db.db_path)
+
+    service.create_episode(
+        {
+            "guest_name": "Older Queue Guest",
+            "guest_email": "older@example.com",
+            "episode_title": "Steady Leadership Lessons",
+            "topic": "Leadership and discipline",
+            "category": "Business",
+            "interview_date": "2025-07-01",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Fresh Spring Guest",
+            "guest_email": "fresh@example.com",
+            "episode_title": "Renewal and Healing",
+            "topic": "Healing, renewal, and hope in spring",
+            "category": "Mental Health",
+            "interview_date": "2026-02-20",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    planning = service.list_planning()
+    fresh_recommendation = next(
+        item for item in planning["recommendations"] if item["guest_name"] == "Fresh Spring Guest"
+    )
+    older_recommendation = next(
+        item for item in planning["recommendations"] if item["guest_name"] == "Older Queue Guest"
+    )
+
+    assert fresh_recommendation["priority_score"] >= older_recommendation["priority_score"] - 6
+    assert "recording is still fresh enough to feel current" in fresh_recommendation["recommendation_reason"]
+    assert "has been waiting a long time" in older_recommendation["recommendation_reason"]
+
+
 def test_episode_recommendations_flag_archive_overlap_without_hard_blocking(temp_db):
     """Recommendations should warn when a queued episode is too close to a released archive topic."""
     service = GuestWebService(temp_db.db_path)
