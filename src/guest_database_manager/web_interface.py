@@ -79,6 +79,9 @@ ASK_MIRROR_TALK_PASSWORD_ENV_VAR = "MIRROR_TALK_ASK_PASSWORD"
 OPENAI_API_KEY_ENV_VAR = "MIRROR_TALK_OPENAI_API_KEY"
 OPENAI_MODEL_ENV_VAR = "MIRROR_TALK_OPENAI_MODEL"
 OPENAI_TIMEOUT_ENV_VAR = "MIRROR_TALK_OPENAI_TIMEOUT_SECONDS"
+OPENAI_LIVE_MONTH_SIGNALS_ENABLED_ENV_VAR = "MIRROR_TALK_LIVE_MONTH_SIGNALS_ENABLED"
+OPENAI_LIVE_MONTH_SIGNALS_TIMEOUT_ENV_VAR = "MIRROR_TALK_LIVE_MONTH_SIGNALS_TIMEOUT_SECONDS"
+OPENAI_LIVE_MONTH_SIGNALS_TTL_ENV_VAR = "MIRROR_TALK_LIVE_MONTH_SIGNALS_TTL_SECONDS"
 BOOKING_BASE_URL_ENV_VAR = "MIRROR_TALK_BOOKING_BASE_URL"
 PUBLIC_INTAKE_URL_ENV_VAR = "MIRROR_TALK_PUBLIC_INTAKE_URL"
 BOOKING_TIMEZONE_ENV_VAR = "MIRROR_TALK_BOOKING_TIMEZONE"
@@ -3946,7 +3949,26 @@ class GuestWebService:
             timeout_seconds = max(3, min(30, int(timeout_raw)))
         except ValueError:
             timeout_seconds = 12
-        return OpenAISchedulingCopilot(api_key=api_key, model=model, timeout_seconds=timeout_seconds)
+        live_enabled_raw = os.environ.get(OPENAI_LIVE_MONTH_SIGNALS_ENABLED_ENV_VAR, "true").strip().lower()
+        live_month_signals_enabled = live_enabled_raw not in {"0", "false", "no", "off"}
+        live_timeout_raw = os.environ.get(OPENAI_LIVE_MONTH_SIGNALS_TIMEOUT_ENV_VAR, "4").strip() or "4"
+        ttl_raw = os.environ.get(OPENAI_LIVE_MONTH_SIGNALS_TTL_ENV_VAR, "21600").strip() or "21600"
+        try:
+            live_timeout_seconds = max(2, min(12, int(live_timeout_raw)))
+        except ValueError:
+            live_timeout_seconds = 4
+        try:
+            live_ttl_seconds = max(300, min(86400, int(ttl_raw)))
+        except ValueError:
+            live_ttl_seconds = 21600
+        return OpenAISchedulingCopilot(
+            api_key=api_key,
+            model=model,
+            timeout_seconds=timeout_seconds,
+            live_month_signals_enabled=live_month_signals_enabled,
+            live_month_signals_timeout_seconds=live_timeout_seconds,
+            live_month_signals_ttl_seconds=live_ttl_seconds,
+        )
 
     def _build_email_manager(self) -> EmailManager:
         """Build an email manager from environment configuration for the hosted dashboard."""

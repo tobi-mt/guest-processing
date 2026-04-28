@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from time import monotonic
 from typing import Any, Dict, Iterable, List
+from urllib.parse import quote_plus
+from xml.etree import ElementTree
 
 import requests
 
@@ -16,6 +19,10 @@ MAX_RECOMMENDATIONS = 4
 MAX_RECENT_RELEASES = 5
 MAX_TEXT_CHARS = 180
 MAX_SOURCE_DETAIL_CHARS = 120
+DEFAULT_LIVE_MONTH_SIGNAL_TIMEOUT_SECONDS = 4
+DEFAULT_LIVE_MONTH_SIGNAL_TTL_SECONDS = 6 * 60 * 60
+GOOGLE_NEWS_RSS_URL = "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+_LIVE_MONTH_SIGNAL_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 
 MONTHLY_EDITORIAL_PROFILES: Dict[int, Dict[str, Any]] = {
     1: {
@@ -127,6 +134,10 @@ def build_month_context(reference: datetime) -> Dict[str, Any]:
         "observances": list(profile["observances"]),
         "christian_moments": christian_moments,
         "season": _season_label(reference.month),
+        "live_signal_status": "editorial_only",
+        "live_signal_source": "",
+        "live_signals_updated_at": "",
+        "live_headlines": [],
     }
 
 
@@ -148,6 +159,9 @@ class OpenAISchedulingCopilot:
     model: str
     base_url: str = "https://api.openai.com/v1/responses"
     timeout_seconds: int = 12
+    live_month_signals_enabled: bool = True
+    live_month_signals_timeout_seconds: int = DEFAULT_LIVE_MONTH_SIGNAL_TIMEOUT_SECONDS
+    live_month_signals_ttl_seconds: int = DEFAULT_LIVE_MONTH_SIGNAL_TTL_SECONDS
 
     def enrich_recommendations(
         self,
@@ -157,27 +171,28 @@ class OpenAISchedulingCopilot:
         released_history: Iterable[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """Return recommendations with optional AI copilot hints and explicit runtime status."""
+        month_context = self._month_context(reference)
         recommendations = [dict(item) for item in recommendations]
         if not recommendations:
             return {
                 "status": "no_candidates",
                 "message": "No recommendation candidates were available for AI review.",
                 "model": self.model,
-                "current_month_context": build_month_context(reference),
+                "current_month_context": month_context,
                 "recommendations": [],
             }
         recommendations = recommendations[:MAX_RECOMMENDATIONS]
 
         prompt_payload = {
             "reference_date": reference.strftime("%Y-%m-%d"),
-            "current_month_context": build_month_context(reference),
+            "current_month_context": month_context,
             "recommendations": [self._serialize_candidate(item) for item in recommendations],
             "recent_releases": [self._serialize_release(item) for item in list(released_history)[:MAX_RECENT_RELEASES]],
         }
         result = self._call_openai(prompt_payload)
         analyses = result.get("analyses", [])
         analysis_by_id = {int(item["id"]): item for item in analyses if str(item.get("id", "")).isdigit()}
-        fallback_analyses = self._build_grounded_fallback_analyses(recommendations, reference)
+        fallback_analyses = self._build_grounded_fallback_analyses(recommendations, month_context)
 
         enriched: list[Dict[str, Any]] = []
         for recommendation in recommendations:
@@ -245,14 +260,16 @@ class OpenAISchedulingCopilot:
             "status": status,
             "message": message,
             "model": self.model,
-            "current_month_context": build_month_context(reference),
+            "current_month_context": month_context,
             "recommendations": enriched,
         }
 
     @staticmethod
-    def _build_grounded_fallback_analyses(recommendations: list[Dict[str, Any]], reference: datetime) -> Dict[int, Dict[str, Any]]:
+    def _build_grounded_fallback_analyses(
+        recommendations: list[Dict[str, Any]],
+        month_context: Dict[str, Any],
+    ) -> Dict[int, Dict[str, Any]]:
         """Build cautious copilot notes when researched candidates exist but the model returns nothing useful."""
-        month_context = build_month_context(reference)
         fallback: Dict[int, Dict[str, Any]] = {}
         for item in recommendations:
             recommendation_id = int(item.get("id") or 0)
@@ -341,7 +358,7 @@ class OpenAISchedulingCopilot:
             "You are an editorial scheduling copilot for Mirror Talk Podcast. "
             "Use only the supplied episode metadata, guest database profile context, guest web research, current month context, and recent release history. "
             "Do not invent outside facts. If evidence is thin, say so plainly. "
-            "Match the recommended release month to relevant observances, Christian moments, and timely themes only when the guest information genuinely supports that angle. "
+            "Match the recommended release month to relevant observances, Christian moments, timely themes, and any supplied live web signals only when the guest information genuinely supports that angle. "
             "Return grounded suggestions that help with scheduling, not autopilot decisions. "
             "You must return one analysis object for every candidate id you receive. "
             "If the evidence is moderate rather than strong, still return an analysis with a lower alignment score, cautious summary, and explicit watchouts instead of skipping the candidate. "
@@ -402,6 +419,114 @@ class OpenAISchedulingCopilot:
                 if text:
                     return text
         return ""
+
+    def _month_context(self, reference: datetime) -> Dict[str, Any]:
+        """Return the current month context, optionally enriched with cached live web signals."""
+        context = build_month_context(reference)
+        live_overlay = self._fetch_live_month_signals(reference, context)
+        if not live_overlay:
+            return context
+
+        merged = dict(context)
+        merged["live_signal_status"] = live_overlay.get("status") or "live"
+        merged["live_signal_source"] = live_overlay.get("source") or "Google News RSS"
+        merged["live_signals_updated_at"] = live_overlay.get("updated_at") or ""
+        merged["live_headlines"] = list(live_overlay.get("headlines") or [])[:4]
+        return merged
+
+    def _fetch_live_month_signals(self, reference: datetime, month_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch and cache live web headlines that reinforce the current month's themes."""
+        if not self.live_month_signals_enabled:
+            return {}
+
+        cache_key = reference.strftime("%Y-%m")
+        cached = _LIVE_MONTH_SIGNAL_CACHE.get(cache_key)
+        if cached and (monotonic() - cached[0]) <= max(60, self.live_month_signals_ttl_seconds):
+            return dict(cached[1])
+
+        headlines: list[Dict[str, str]] = []
+        seen_titles: set[str] = set()
+        updated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        for query in self._live_month_signal_queries(reference, month_context):
+            if len(headlines) >= 4:
+                break
+            rss_url = GOOGLE_NEWS_RSS_URL.format(query=quote_plus(query))
+            try:
+                response = requests.get(rss_url, timeout=max(2, self.live_month_signals_timeout_seconds))
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                logger.info("Live month signal fetch skipped for query '%s': %s", query, exc)
+                continue
+
+            try:
+                root = ElementTree.fromstring(response.text)
+            except ElementTree.ParseError as exc:
+                logger.info("Live month signal feed could not be parsed for query '%s': %s", query, exc)
+                continue
+
+            for item in root.findall(".//item"):
+                title = str(item.findtext("title") or "").strip()
+                url = str(item.findtext("link") or "").strip()
+                if not title or title.lower() in seen_titles or self._is_generic_live_headline(title):
+                    continue
+                seen_titles.add(title.lower())
+                headlines.append(
+                    {
+                        "title": self._trim_text(title, 110),
+                        "url": url,
+                        "query": self._trim_text(query, 80),
+                    }
+                )
+                if len(headlines) >= 4:
+                    break
+
+        if not headlines:
+            return {}
+
+        payload = {
+            "status": "live",
+            "source": "Google News RSS",
+            "updated_at": updated_at,
+            "headlines": headlines,
+        }
+        _LIVE_MONTH_SIGNAL_CACHE[cache_key] = (monotonic(), payload)
+        return dict(payload)
+
+    @staticmethod
+    def _live_month_signal_queries(reference: datetime, month_context: Dict[str, Any]) -> list[str]:
+        """Create a short set of live-news queries for the current month."""
+        month_label = reference.strftime("%B %Y")
+        terms = []
+        if month_context.get("theme"):
+            terms.append(str(month_context["theme"]))
+        terms.extend(str(item) for item in (month_context.get("observances") or [])[:2])
+        terms.extend(str(item) for item in (month_context.get("timely_signals") or [])[:1])
+        queries: list[str] = []
+        seen: set[str] = set()
+        for term in terms:
+            cleaned = " ".join(str(term).split()).strip()
+            if not cleaned:
+                continue
+            query = f"{month_label} {cleaned}"
+            key = query.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            queries.append(query)
+        return queries[:3]
+
+    @staticmethod
+    def _is_generic_live_headline(title: str) -> bool:
+        """Filter low-signal news titles that don't help scheduling context."""
+        normalized = title.strip().lower()
+        generic_patterns = (
+            "top stories",
+            "latest news",
+            "breaking news",
+            "live updates",
+        )
+        return any(pattern in normalized for pattern in generic_patterns)
 
     @staticmethod
     def _serialize_candidate(item: Dict[str, Any]) -> Dict[str, Any]:

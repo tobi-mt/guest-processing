@@ -486,6 +486,9 @@ function renderAiCopilotStatus(statusPayload) {
   const monthContext = statusPayload?.current_month_context;
   const observances = (monthContext?.observances || []).slice(0, 3);
   const christianMoments = (monthContext?.christian_moments || []).slice(0, 2);
+  const liveHeadlines = (monthContext?.live_headlines || []).slice(0, 3);
+  const liveSource = String(monthContext?.live_signal_source || "").trim();
+  const liveUpdatedAt = monthContext?.live_signals_updated_at ? formatDateTime(monthContext.live_signals_updated_at) : "";
   aiCopilotStatus.className = `operations-preview ai-copilot-status ${tone}`.trim();
   aiCopilotStatus.innerHTML = `
     <strong class="insight-label">AI scheduling copilot</strong>
@@ -493,7 +496,8 @@ function renderAiCopilotStatus(statusPayload) {
     ${statusPayload?.message ? `<p>${escapeHtml(statusPayload.message)}</p>` : ""}
     ${statusPayload?.model ? `<p><strong>Model:</strong> ${escapeHtml(statusPayload.model)}</p>` : ""}
     ${monthContext?.month_label ? `<p><strong>Current month lens:</strong> ${escapeHtml(monthContext.month_label)} · ${escapeHtml(monthContext.theme || "")}</p>` : ""}
-    ${observances.length ? `<p><strong>Live month signals:</strong> ${observances.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
+    ${observances.length ? `<p><strong>Editorial observances:</strong> ${observances.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
+    ${liveHeadlines.length ? `<div class="insight-stack"><strong class="insight-label">Live web signals${liveSource ? ` · ${escapeHtml(liveSource)}` : ""}</strong><ul>${liveHeadlines.map((item) => `<li>${escapeHtml(item.title || item)}</li>`).join("")}</ul>${liveUpdatedAt ? `<p class="inline-muted">Updated ${escapeHtml(liveUpdatedAt)}</p>` : ""}</div>` : ""}
     ${christianMoments.length ? `<p><strong>Faith calendar:</strong> ${christianMoments.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
   `;
 }
