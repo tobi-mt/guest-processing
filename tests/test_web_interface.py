@@ -3888,6 +3888,32 @@ def test_episode_recommendations_do_not_overweight_recording_age(temp_db):
     assert "has been waiting a long time" in older_recommendation["recommendation_reason"]
 
 
+def test_episode_recommendations_do_not_present_promo_readiness_as_editorial_why_now(temp_db):
+    """Promotion readiness can help operationally without reading like the core editorial reason."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Promo Ready Guest",
+            "guest_email": "promo@example.com",
+            "episode_title": "Healing and Courage",
+            "topic": "Healing, courage, and hope",
+            "category": "Mental Health",
+            "interview_date": "2026-02-10",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    recommendation = next(
+        item for item in service.list_planning()["recommendations"] if item["guest_name"] == "Promo Ready Guest"
+    )
+
+    assert "promotion assets look ready" not in recommendation["recommendation_reason"].lower()
+    assert "release logistics are already in place" not in recommendation["recommendation_reason"].lower()
+    assert all("promotion assets" not in reason.lower() for reason in recommendation["why_now"])
+    assert recommendation["promotion_readiness"]["score"] >= 70
+
+
 def test_episode_recommendations_flag_archive_overlap_without_hard_blocking(temp_db):
     """Recommendations should warn when a queued episode is too close to a released archive topic."""
     service = GuestWebService(temp_db.db_path)

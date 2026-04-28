@@ -289,10 +289,30 @@ def _promotion_readiness_score(episode: Dict[str, Any]) -> tuple[float, str]:
     """Reward episodes that already look promotion-ready."""
     promotion_status = _clean_text(episode.get("promotion_status")).lower()
     if promotion_status in {"ready", "released"}:
-        return 14.0, "promotion assets look ready"
+        return 8.0, "release logistics are already in place"
     if promotion_status == "needs_assets":
         return -10.0, "still needs promo assets before release"
     return -2.0, "promotion readiness is still unclear"
+
+
+def _is_editorial_reason(reason: str) -> bool:
+    """Keep operational logistics from reading like editorial intelligence."""
+    normalized = _clean_text(reason).lower()
+    if not normalized:
+        return False
+    operational_phrases = {
+        "release logistics are already in place",
+        "promotion assets look ready",
+        "still needs promo assets before release",
+        "promotion readiness is still unclear",
+    }
+    return normalized not in operational_phrases
+
+
+def _editorial_readiness_strengths(readiness: Dict[str, Any]) -> List[str]:
+    """Filter readiness strengths down to the ones that help tell an editorial why-now."""
+    strengths = [str(item).strip() for item in readiness.get("strengths", []) if str(item).strip()]
+    return [item for item in strengths if "promotion assets" not in item.lower()]
 
 
 def build_promotion_readiness(episode: Dict[str, Any]) -> Dict[str, Any]:
@@ -709,7 +729,7 @@ def _base_episode_score(
 
     promotion_score, promotion_reason = _promotion_readiness_score(episode)
     score += promotion_score
-    if promotion_reason:
+    if promotion_reason and _is_editorial_reason(promotion_reason):
         reasons.append(promotion_reason)
 
     guest_score, guest_reason = _guest_recency_penalty(episode, released_history)
@@ -819,7 +839,7 @@ def build_release_recommendations(
 
             readiness = build_promotion_readiness(episode)
             if readiness["score"] >= 60:
-                why_now.extend(readiness["strengths"][:2])
+                why_now.extend(_editorial_readiness_strengths(readiness)[:2])
             else:
                 watchouts.extend(readiness["blockers"][:2])
 
