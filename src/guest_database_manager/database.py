@@ -442,6 +442,17 @@ class GuestDatabase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def get_interview_by_calendar_event_id(self, calendar_event_id: str) -> Optional[Dict]:
+        """Fetch a single interview by Google Calendar event id."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM interviews WHERE calendar_event_id = ? LIMIT 1",
+                (calendar_event_id,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def get_interview_by_reschedule_token(self, reschedule_token: str) -> Optional[Dict]:
         """Fetch a single interview by reschedule token."""
         with sqlite3.connect(str(self.db_path)) as conn:

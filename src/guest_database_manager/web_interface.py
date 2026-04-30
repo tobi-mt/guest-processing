@@ -49,6 +49,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 FORM_SOURCE_NAME = "Direct Web Entry"
 INTAKE_SOURCE_NAME = "Website Intake Questionnaire"
 AGENCY_REFERRAL_SOURCE_NAME = "Agency Referral"
+INTERVIEW_SOURCE_NAME = "Interview Operations Entry"
 ALLOWED_ORIGINS = {
     "https://www.mirrortalkpodcast.com",
     "https://mirrortalkpodcast.com",
@@ -2204,6 +2205,9 @@ class GuestWebService:
             "guest_name": _normalize_text(payload.get("guest_name")),
             "guest_email": _normalize_text(payload.get("guest_email")),
             "calendar_event_id": _normalize_text(payload.get("calendar_event_id")),
+            "calendar_source": _normalize_text(payload.get("calendar_source")),
+            "event_updated_at": _normalize_text(payload.get("event_updated_at")),
+            "last_synced_at": _normalize_text(payload.get("last_synced_at")),
             "title": _normalize_text(payload.get("title")),
             "scheduled_for": _normalize_text(payload.get("scheduled_for")),
             "timezone": _normalize_text(payload.get("timezone")) or "Europe/Berlin",
@@ -2222,6 +2226,12 @@ class GuestWebService:
         if not interview_data["scheduled_for"]:
             raise WebInterfaceError("Interview date and time are required.")
 
+        linked_guest = self._ensure_guest_record_for_interview(interview_data)
+        if linked_guest:
+            interview_data["guest_id"] = linked_guest.get("id")
+            if not interview_data["guest_email"]:
+                interview_data["guest_email"] = _normalize_text(linked_guest.get("email"))
+
         try:
             interview_id, _ = self.database.upsert_interview(interview_data)
         except sqlite3.IntegrityError as exc:
@@ -2236,8 +2246,59 @@ class GuestWebService:
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
             raise WebInterfaceError("Interview could not be saved.")
-        self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
+        self._invalidate_payload_cache("guests", "operations", "planning", "planning_ai_copilot")
         return interview
+
+    def _ensure_guest_record_for_interview(self, interview_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Link an interview to an existing guest when possible, or create a lightweight guest stub."""
+        guest_id = interview_data.get("guest_id")
+        if str(guest_id or "").isdigit():
+            existing = self.database.get_guest_by_id(int(guest_id))
+            if existing:
+                return existing
+
+        guest_name = _normalize_text(interview_data.get("guest_name"))
+        guest_email = _normalize_text(interview_data.get("guest_email"))
+        if not guest_name and not guest_email:
+            return None
+
+        email_conflict_guest: Optional[Dict[str, Any]] = None
+        if guest_name:
+            existing = self.database.get_guest_by_name(guest_name)
+            if existing:
+                return existing
+
+        if guest_email:
+            existing = self.database.find_existing_guest({"full_name": "", "email": guest_email})
+            if existing:
+                existing_name = _normalize_text(existing.get("full_name") or existing.get("name"))
+                if not guest_name or not existing_name or existing_name.casefold() == guest_name.casefold():
+                    return existing
+                email_conflict_guest = existing
+
+        guest_payload = {
+            "full_name": guest_name,
+            "email": guest_email,
+            "website": "",
+            "profession": "",
+            "background": "",
+            "social_handles": "",
+            "original_data": json.dumps(
+                {
+                    "created_from": "operations_interview",
+                    "scheduled_for": _normalize_text(interview_data.get("scheduled_for")),
+                    "shared_email_with_guest_id": email_conflict_guest.get("id") if email_conflict_guest else None,
+                },
+                ensure_ascii=False,
+            ),
+        }
+        if email_conflict_guest:
+            guest_data = build_guest_payload(guest_payload, source_name=INTERVIEW_SOURCE_NAME)
+            guest_id = self.database.insert_guest(guest_data)
+            created = {"id": guest_id}
+        else:
+            created = self.create_guest(guest_payload, source_name=INTERVIEW_SOURCE_NAME)
+        return self.database.get_guest_by_id(int(created["id"])) if str(created.get("id") or "").isdigit() else None
 
     def update_interview(self, interview_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Update an interview record."""
@@ -3761,11 +3822,14 @@ class GuestWebService:
 
         synced = []
         for event_data in normalized:
-            interview_id, action = self.database.upsert_interview(event_data)
-            interview = self.database.get_interview_by_id(interview_id)
+            existing_interview = None
+            event_id = _normalize_text(event_data.get("calendar_event_id"))
+            if event_id:
+                existing_interview = self.database.get_interview_by_calendar_event_id(event_id)
+            interview = self.create_interview(event_data)
             if interview:
                 serialized = self._serialize_interview_reminder(interview)
-                serialized["sync_action"] = action
+                serialized["sync_action"] = "updated" if existing_interview else "created"
                 synced.append(serialized)
 
         return {

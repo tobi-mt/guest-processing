@@ -1452,6 +1452,62 @@ def test_list_guests_treats_interviewed_guest_as_processed_in_dashboard(temp_db)
     assert payload["stats"]["unprocessed"] == 0
 
 
+def test_create_interview_creates_dashboard_guest_when_missing(temp_db):
+    """Operations interviews without a guest record should create a lightweight dashboard guest automatically."""
+    service = GuestWebService(temp_db.db_path)
+
+    interview = service.create_interview(
+        {
+            "guest_name": "Bishop Foreman",
+            "guest_email": "bishop@example.com",
+            "title": "Bishop Foreman and Tobi Ojekunle",
+            "scheduled_for": "2026-06-11T18:00:00+00:00",
+            "timezone": "Europe/Berlin",
+            "status": "scheduled",
+        }
+    )
+
+    payload = service.list_guests()
+    dashboard_guest = next(item for item in payload["guests"] if item["full_name"] == "Bishop Foreman")
+
+    assert interview["guest_id"] == dashboard_guest["id"]
+    assert dashboard_guest["email"] == "bishop@example.com"
+    assert dashboard_guest["original_file_name"] == "Interview Operations Entry"
+
+
+def test_google_calendar_sync_creates_dashboard_guest_when_missing(monkeypatch, temp_db):
+    """Calendar-synced interviews should also surface as dashboard guests when no guest row exists yet."""
+    service = GuestWebService(temp_db.db_path)
+
+    class StubCalendarClient:
+        def list_upcoming_events(self, **kwargs):
+            return [{"id": "evt_123"}]
+
+        def normalize_event(self, _event):
+            return {
+                "guest_name": "Calendar Guest",
+                "guest_email": "calendar@example.com",
+                "calendar_event_id": "evt_123",
+                "calendar_source": "google_calendar",
+                "title": "Calendar Guest and Tobi Ojekunle",
+                "scheduled_for": "2026-06-18T18:00:00+00:00",
+                "timezone": "Europe/Berlin",
+                "status": "scheduled",
+                "confirmation_status": "pending",
+                "reminder_status": "not_scheduled",
+            }
+
+    monkeypatch.setattr(service, "_build_google_calendar_client", lambda: StubCalendarClient())
+
+    result = service.sync_google_calendar_interviews()
+    payload = service.list_guests()
+    dashboard_guest = next(item for item in payload["guests"] if item["full_name"] == "Calendar Guest")
+
+    assert result["count"] == 1
+    assert result["interviews"][0]["guest_id"] == dashboard_guest["id"]
+    assert dashboard_guest["email"] == "calendar@example.com"
+
+
 def test_list_guests_flags_shared_identity_patterns(temp_db):
     """Dashboard review assist should flag reused email and shared website domains across different names."""
     service = GuestWebService(temp_db.db_path)
