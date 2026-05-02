@@ -75,6 +75,7 @@ GOOGLE_CLIENT_SECRET_ENV_VAR = "MIRROR_TALK_GOOGLE_CLIENT_SECRET"
 GOOGLE_REFRESH_TOKEN_ENV_VAR = "MIRROR_TALK_GOOGLE_REFRESH_TOKEN"
 GOOGLE_CALENDAR_ID_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_ID"
 GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR = "MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_FILE"
+GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR = "MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_BASE64"
 GOOGLE_CALENDAR_QUERY_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_QUERY"
 GOOGLE_CALENDAR_TIMEZONE_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_TIMEZONE"
 GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_DAYS_AHEAD"
@@ -3967,12 +3968,19 @@ class GuestWebService:
     def _build_google_calendar_client(self) -> Optional[GoogleServiceAccountCalendarClient]:
         """Build the Google Calendar client from service-account configuration only."""
         service_account_file = os.environ.get(GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR, "").strip()
+        service_account_base64 = os.environ.get(GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR, "").strip()
         calendar_id = os.environ.get(GOOGLE_CALENDAR_ID_ENV_VAR, "").strip()
 
-        if not service_account_file or not calendar_id:
+        if not calendar_id or (not service_account_file and not service_account_base64):
             return None
 
         try:
+            if service_account_base64:
+                return GoogleServiceAccountCalendarClient.from_base64(
+                    service_account_base64,
+                    calendar_id=calendar_id,
+                    default_timezone=os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin",
+                )
             return GoogleServiceAccountCalendarClient(
                 service_account_file=service_account_file,
                 calendar_id=calendar_id,

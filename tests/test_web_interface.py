@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for the direct web interface service layer."""
 
+from base64 import b64encode
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,7 @@ from guest_database_manager.web_interface import (
     EMAIL_RESEND_API_KEY_ENV_VAR,
     GOOGLE_CALENDAR_ID_ENV_VAR,
     GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR,
+    GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR,
     GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR,
     GOOGLE_CLIENT_ID_ENV_VAR,
     GOOGLE_CLIENT_SECRET_ENV_VAR,
@@ -4657,6 +4659,27 @@ def test_build_google_calendar_client_raises_clear_service_account_error(monkeyp
 
     with pytest.raises(WebInterfaceError, match="service account configuration is invalid"):
         service._build_google_calendar_client()
+
+
+def test_build_google_calendar_client_supports_base64_service_account(monkeypatch, temp_db):
+    """Railway-style base64 service-account secrets should be accepted without a file path."""
+    credentials = {
+        "client_email": "mirror-talk-service@example.iam.gserviceaccount.com",
+        "private_key": "-----BEGIN PRIVATE KEY-----\\nfake\\n-----END PRIVATE KEY-----\\n",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    monkeypatch.setenv(
+        GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR,
+        b64encode(json.dumps(credentials).encode("utf-8")).decode("ascii"),
+    )
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+
+    service = GuestWebService(temp_db.db_path)
+    client = service._build_google_calendar_client()
+
+    assert client is not None
+    assert client.calendar_id == "calendar@example.com"
+    assert client.credentials["client_email"] == credentials["client_email"]
 
 
 def test_web_service_syncs_google_calendar_with_long_horizon_by_default(monkeypatch, temp_db):

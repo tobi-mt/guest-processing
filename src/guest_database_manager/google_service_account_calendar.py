@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from base64 import b64decode
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -40,6 +41,17 @@ class GoogleServiceAccountCalendarClient:
     TOKEN_URL = "https://oauth2.googleapis.com/token"
     EVENTS_URL_TEMPLATE = "https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
     SCOPES = ["https://www.googleapis.com/auth/calendar"]
+
+    @staticmethod
+    def _validate_credentials(credentials: Dict[str, Any], *, source_label: str) -> Dict[str, Any]:
+        """Validate the basic shape of a service-account credential payload."""
+        required_fields = ["client_email", "private_key", "token_uri"]
+        missing = [field for field in required_fields if field not in credentials]
+        if missing:
+            raise GoogleCalendarServiceAccountError(
+                f"{source_label} missing required fields: {', '.join(missing)}"
+            )
+        return credentials
     
     def __init__(
         self,
@@ -67,22 +79,49 @@ class GoogleServiceAccountCalendarClient:
         
         try:
             with open(service_account_path, 'r') as f:
-                self.credentials = json.load(f)
+                credentials = json.load(f)
         except json.JSONDecodeError as exc:
             raise GoogleCalendarServiceAccountError(
                 f"Invalid JSON in service account file: {exc}"
             ) from exc
-        
-        # Validate required fields
-        required_fields = ["client_email", "private_key", "token_uri"]
-        missing = [f for f in required_fields if f not in self.credentials]
-        if missing:
-            raise GoogleCalendarServiceAccountError(
-                f"Service account file missing required fields: {', '.join(missing)}"
-            )
+        self.credentials = self._validate_credentials(credentials, source_label="Service account file")
         
         self._access_token: Optional[str] = None
         self._token_expiry: Optional[datetime] = None
+
+    @classmethod
+    def from_base64(
+        cls,
+        service_account_base64: str,
+        calendar_id: str,
+        default_timezone: str = "Europe/Berlin",
+    ) -> "GoogleServiceAccountCalendarClient":
+        """Initialize directly from a base64-encoded service-account JSON payload."""
+        try:
+            decoded = b64decode(service_account_base64)
+        except Exception as exc:
+            raise GoogleCalendarServiceAccountError(
+                f"Service account base64 could not be decoded: {exc}"
+            ) from exc
+
+        try:
+            credentials = json.loads(decoded.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise GoogleCalendarServiceAccountError(
+                f"Service account base64 did not decode to UTF-8 JSON: {exc}"
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise GoogleCalendarServiceAccountError(
+                f"Invalid JSON in service account base64 payload: {exc}"
+            ) from exc
+
+        instance = cls.__new__(cls)
+        instance.calendar_id = calendar_id
+        instance.default_timezone = default_timezone
+        instance.credentials = cls._validate_credentials(credentials, source_label="Service account base64 payload")
+        instance._access_token = None
+        instance._token_expiry = None
+        return instance
     
     def _create_signed_jwt(self) -> str:
         """Create a signed JWT for service account authentication."""
