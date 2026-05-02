@@ -28,6 +28,7 @@ from guest_database_manager.web_interface import (
     EMAIL_RESEND_API_KEY_ENV_VAR,
     GOOGLE_CALENDAR_ID_ENV_VAR,
     GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR,
+    GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR,
     GOOGLE_CLIENT_ID_ENV_VAR,
     GOOGLE_CLIENT_SECRET_ENV_VAR,
     GOOGLE_REFRESH_TOKEN_ENV_VAR,
@@ -4632,6 +4633,32 @@ def test_web_service_can_sync_google_calendar_interviews(monkeypatch, temp_db):
     assert service.list_operations()["interviews"][0]["calendar_source"] == "google_calendar"
 
 
+def test_build_google_calendar_client_ignores_oauth_without_service_account(monkeypatch, temp_db):
+    """Calendar client construction should no longer use refresh-token OAuth credentials."""
+    monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
+    monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
+    monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+
+    service = GuestWebService(temp_db.db_path)
+
+    assert service._build_google_calendar_client() is None
+
+
+def test_build_google_calendar_client_raises_clear_service_account_error(monkeypatch, temp_db):
+    """Broken service-account setup should fail clearly instead of silently falling back to OAuth."""
+    monkeypatch.setenv(GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR, "/tmp/missing-service-account.json")
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+    monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
+    monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
+    monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
+
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="service account configuration is invalid"):
+        service._build_google_calendar_client()
+
+
 def test_web_service_syncs_google_calendar_with_long_horizon_by_default(monkeypatch, temp_db):
     """Calendar sync should look far enough ahead by default for booking-safety checks."""
 
@@ -4886,11 +4913,8 @@ def test_google_calendar_sync_extracts_guest_name_from_host_and_guest_title():
 
 
 def test_operations_list_reports_calendar_sync_enabled(monkeypatch, temp_db):
-    """Operations payload should surface whether Google Calendar sync is configured."""
-    monkeypatch.setenv(GOOGLE_CLIENT_ID_ENV_VAR, "client-id")
-    monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
-    monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
-    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+    """Operations payload should surface whether service-account calendar sync is configured."""
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: object())
 
     service = GuestWebService(temp_db.db_path)
     payload = service.list_operations()

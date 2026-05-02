@@ -42,7 +42,10 @@ from guest_database_manager.guest_recommender import (
     enrich_guests_with_recommendations,
 )
 from guest_database_manager.guest_research import research_guest_from_google_search, research_guest_from_public_web
-from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
+from guest_database_manager.google_service_account_calendar import (
+    GoogleCalendarServiceAccountError,
+    GoogleServiceAccountCalendarClient,
+)
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot, build_month_context
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -71,6 +74,7 @@ GOOGLE_CLIENT_ID_ENV_VAR = "MIRROR_TALK_GOOGLE_CLIENT_ID"
 GOOGLE_CLIENT_SECRET_ENV_VAR = "MIRROR_TALK_GOOGLE_CLIENT_SECRET"
 GOOGLE_REFRESH_TOKEN_ENV_VAR = "MIRROR_TALK_GOOGLE_REFRESH_TOKEN"
 GOOGLE_CALENDAR_ID_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_ID"
+GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR = "MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_FILE"
 GOOGLE_CALENDAR_QUERY_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_QUERY"
 GOOGLE_CALENDAR_TIMEZONE_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_TIMEZONE"
 GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_DAYS_AHEAD"
@@ -568,6 +572,13 @@ class GuestWebService:
         for cache_key in cache_keys:
             self._payload_cache.pop(cache_key, None)
 
+    def _calendar_sync_enabled(self) -> bool:
+        """Return whether Google Calendar sync is configured without crashing the page on config errors."""
+        try:
+            return self._build_google_calendar_client() is not None
+        except WebInterfaceError:
+            return False
+
     def _next_legacy_episode_number(self, current_episode_id: Any = None) -> str:
         """Return the next numeric legacy episode number when one can be inferred."""
         current_id = str(current_episode_id or "").strip()
@@ -675,7 +686,7 @@ class GuestWebService:
             "stats": self.database.get_operations_stats(),
             "interviews": interviews,
             "reminder_candidates": reminder_candidates,
-            "calendar_sync_enabled": self._build_google_calendar_client() is not None,
+            "calendar_sync_enabled": self._calendar_sync_enabled(),
             "weekly_outreach": self._build_weekly_outreach_focus(episodes),
             "weekly_system": self._build_weekly_system_payload(),
             "booking_alerts": self._build_operations_alerts(raw_interviews),
@@ -2586,7 +2597,7 @@ class GuestWebService:
         if client is not None:
             try:
                 created_event = client.create_event_from_interview(updated_interview)
-            except GoogleCalendarSyncError as exc:
+            except GoogleCalendarServiceAccountError as exc:
                 raise WebInterfaceError(str(exc)) from exc
             self.database.update_interview(
                 updated_interview["id"],
@@ -2617,7 +2628,7 @@ class GuestWebService:
         if client is not None:
             try:
                 events = client.list_busy_events(days_ahead=days_ahead, reference=reference)
-            except GoogleCalendarSyncError as exc:
+            except GoogleCalendarServiceAccountError as exc:
                 raise WebInterfaceError(str(exc)) from exc
             for event in events:
                 start = self._parse_datetime((event.get("start") or {}).get("dateTime"))
@@ -2796,7 +2807,7 @@ class GuestWebService:
                             event_payload = client.update_event_from_interview(updated)
                         else:
                             event_payload = client.create_event_from_interview(updated)
-                    except GoogleCalendarSyncError as exc:
+                    except GoogleCalendarServiceAccountError as exc:
                         raise WebInterfaceError(str(exc)) from exc
                     self.database.update_interview(
                         updated["id"],
@@ -2855,7 +2866,7 @@ class GuestWebService:
         if client is not None:
             try:
                 created_event = client.create_event_from_interview(interview)
-            except GoogleCalendarSyncError as exc:
+            except GoogleCalendarServiceAccountError as exc:
                 raise WebInterfaceError(str(exc)) from exc
             self.database.update_interview(
                 interview["id"],
@@ -3809,7 +3820,7 @@ class GuestWebService:
 
         try:
             events = client.list_upcoming_events(days_ahead=days_ahead, reference=reference, query=effective_query)
-        except GoogleCalendarSyncError as exc:
+        except GoogleCalendarServiceAccountError as exc:
             raise WebInterfaceError(str(exc)) from exc
 
         normalized = [client.normalize_event(event) for event in events]
@@ -3852,7 +3863,7 @@ class GuestWebService:
 
         try:
             updated_event = client.update_event_from_interview(interview)
-        except GoogleCalendarSyncError as exc:
+        except GoogleCalendarServiceAccountError as exc:
             raise WebInterfaceError(str(exc)) from exc
 
         updates = {
@@ -3884,7 +3895,7 @@ class GuestWebService:
             client_result = client.delete_event(event_id)
             if isinstance(client_result, dict):
                 removal_result = client_result
-        except GoogleCalendarSyncError as exc:
+        except GoogleCalendarServiceAccountError as exc:
             raise WebInterfaceError(str(exc)) from exc
 
         removal_note = (
@@ -3953,43 +3964,22 @@ class GuestWebService:
             return reference.astimezone().replace(tzinfo=None)
         return reference
 
-    def _build_google_calendar_client(self) -> Optional[GoogleCalendarSyncClient]:
-        """Build the Google Calendar client from environment configuration.
-        
-        Tries service account first (preferred), then falls back to OAuth refresh token.
-        """
-        # Try service account first (no token expiration issues)
-        service_account_file = os.environ.get("MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
+    def _build_google_calendar_client(self) -> Optional[GoogleServiceAccountCalendarClient]:
+        """Build the Google Calendar client from service-account configuration only."""
+        service_account_file = os.environ.get(GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR, "").strip()
         calendar_id = os.environ.get(GOOGLE_CALENDAR_ID_ENV_VAR, "").strip()
-        
-        if service_account_file and calendar_id:
-            try:
-                from guest_database_manager.google_service_account_calendar import GoogleServiceAccountCalendarClient
-                # Wrap service account client to match the existing interface
-                return GoogleServiceAccountCalendarClient(
-                    service_account_file=service_account_file,
-                    calendar_id=calendar_id,
-                    default_timezone=os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin",
-                )
-            except Exception:
-                # Fall through to OAuth refresh token if service account fails
-                pass
-        
-        # Fallback to OAuth refresh token (original method)
-        client_id = os.environ.get(GOOGLE_CLIENT_ID_ENV_VAR, "").strip()
-        client_secret = os.environ.get(GOOGLE_CLIENT_SECRET_ENV_VAR, "").strip()
-        refresh_token = os.environ.get(GOOGLE_REFRESH_TOKEN_ENV_VAR, "").strip()
 
-        if not all([client_id, client_secret, refresh_token, calendar_id]):
+        if not service_account_file or not calendar_id:
             return None
 
-        return GoogleCalendarSyncClient(
-            client_id=client_id,
-            client_secret=client_secret,
-            refresh_token=refresh_token,
-            calendar_id=calendar_id,
-            default_timezone=os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin",
-        )
+        try:
+            return GoogleServiceAccountCalendarClient(
+                service_account_file=service_account_file,
+                calendar_id=calendar_id,
+                default_timezone=os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin",
+            )
+        except GoogleCalendarServiceAccountError as exc:
+            raise WebInterfaceError(f"Google Calendar service account configuration is invalid: {exc}") from exc
 
     @staticmethod
     def _build_ask_mirror_talk_client() -> Optional[AskMirrorTalkClient]:
