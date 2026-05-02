@@ -51,6 +51,7 @@ from guest_database_manager import guest_research
 from guest_database_manager.email_manager import EmailManager
 from guest_database_manager.episode_planner import next_release_slot
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
+from guest_database_manager.google_service_account_calendar import GoogleServiceAccountCalendarClient
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
 
 
@@ -4680,6 +4681,50 @@ def test_build_google_calendar_client_supports_base64_service_account(monkeypatc
     assert client is not None
     assert client.calendar_id == "calendar@example.com"
     assert client.credentials["client_email"] == credentials["client_email"]
+
+
+def test_service_account_calendar_client_supports_busy_event_listing(monkeypatch):
+    """Service-account calendar client should implement the booking availability interface."""
+    client = GoogleServiceAccountCalendarClient.from_base64(
+        b64encode(
+            json.dumps(
+                {
+                    "client_email": "mirror-talk-service@example.iam.gserviceaccount.com",
+                    "private_key": "-----BEGIN PRIVATE KEY-----\\nfake\\n-----END PRIVATE KEY-----\\n",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                }
+            ).encode("utf-8")
+        ).decode("ascii"),
+        calendar_id="calendar@example.com",
+    )
+
+    monkeypatch.setattr(client, "_get_access_token", lambda: "test-access-token")
+
+    class StubResponse:
+        ok = True
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {
+                "items": [
+                    {"start": {"dateTime": "2026-05-10T17:00:00+00:00"}, "end": {"dateTime": "2026-05-10T18:00:00+00:00"}},
+                    {"start": {"date": "2026-05-11"}},
+                ]
+            }
+
+    monkeypatch.setattr(
+        "guest_database_manager.google_service_account_calendar.requests.get",
+        lambda *args, **kwargs: StubResponse(),
+    )
+
+    events = client.list_busy_events(days_ahead=30)
+
+    assert len(events) == 1
+    assert events[0]["start"]["dateTime"] == "2026-05-10T17:00:00+00:00"
+    assert hasattr(client, "create_event_from_interview")
+    assert hasattr(client, "normalize_event")
 
 
 def test_web_service_syncs_google_calendar_with_long_horizon_by_default(monkeypatch, temp_db):

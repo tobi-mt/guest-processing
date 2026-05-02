@@ -12,12 +12,14 @@ from typing import Any, Dict, List, Optional
 import jwt
 import requests
 
+from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
+
 
 class GoogleCalendarServiceAccountError(Exception):
     """Raised when Google Calendar service account operations fail."""
 
 
-class GoogleServiceAccountCalendarClient:
+class GoogleServiceAccountCalendarClient(GoogleCalendarSyncClient):
     """
     Google Calendar client using Service Account authentication.
     
@@ -41,6 +43,18 @@ class GoogleServiceAccountCalendarClient:
     TOKEN_URL = "https://oauth2.googleapis.com/token"
     EVENTS_URL_TEMPLATE = "https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
     SCOPES = ["https://www.googleapis.com/auth/calendar"]
+
+    @staticmethod
+    def _raise_calendar_api_error(action_label: str, response: requests.Response) -> None:
+        """Raise a friendlier Calendar API error for the service-account flow."""
+        response_text = response.text.strip()
+        if "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in response_text or "insufficientPermissions" in response_text:
+            raise GoogleCalendarServiceAccountError(
+                f"Google Calendar service account does not have enough permissions for {action_label}."
+            )
+        raise GoogleCalendarServiceAccountError(
+            f"Google Calendar {action_label} failed: {response_text or response.status_code}"
+        )
 
     @staticmethod
     def _validate_credentials(credentials: Dict[str, Any], *, source_label: str) -> Dict[str, Any]:
@@ -215,7 +229,7 @@ class GoogleServiceAccountCalendarClient:
             query: Optional search query to filter events
             
         Returns:
-            List of calendar event dictionaries
+            List of calendar event dictionaries that look like Mirror Talk interviews
         """
         access_token = self._get_access_token()
         
@@ -262,7 +276,52 @@ class GoogleServiceAccountCalendarClient:
                 f"Invalid JSON response from Calendar API: {exc}"
             ) from exc
         
-        return payload.get("items", [])
+        items = payload.get("items", [])
+        return [
+            item
+            for item in items
+            if item.get("start", {}).get("dateTime") and self._looks_like_podcast_event(item, query=query)
+        ]
+
+    def list_busy_events(
+        self,
+        *,
+        days_ahead: int = 30,
+        reference: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch timed calendar events for booking availability checks."""
+        access_token = self._get_access_token()
+        reference = reference or datetime.now(timezone.utc)
+        time_min = reference.astimezone(timezone.utc).isoformat()
+        time_max = (reference + timedelta(days=days_ahead)).astimezone(timezone.utc).isoformat()
+
+        params = {
+            "singleEvents": "true",
+            "orderBy": "startTime",
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "maxResults": 250,
+        }
+
+        url = self.EVENTS_URL_TEMPLATE.format(calendar_id=requests.utils.quote(self.calendar_id, safe=""))
+        try:
+            response = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+                params=params,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            raise GoogleCalendarServiceAccountError(f"Could not reach Google Calendar: {exc}") from exc
+
+        if not response.ok:
+            raise GoogleCalendarServiceAccountError(
+                f"Google Calendar availability fetch failed: {response.text.strip() or response.status_code}"
+            )
+
+        payload = response.json()
+        items = payload.get("items", [])
+        return [item for item in items if item.get("start", {}).get("dateTime")]
     
     def get_event(self, event_id: str) -> Dict[str, Any]:
         """
@@ -452,13 +511,16 @@ class GoogleServiceAccountCalendarClient:
         
         return response.json()
     
-    def delete_event(self, event_id: str) -> None:
+    def delete_event(self, event_id: str) -> Dict[str, bool]:
         """
         Delete a calendar event.
         
         Args:
             event_id: The calendar event ID to delete
         """
+        if not (event_id or "").strip():
+            raise GoogleCalendarServiceAccountError("This interview is not linked to a Google Calendar event.")
+
         access_token = self._get_access_token()
         
         url = f"{self.EVENTS_URL_TEMPLATE.format(calendar_id=requests.utils.quote(self.calendar_id, safe=''))}/{event_id}"
@@ -474,10 +536,16 @@ class GoogleServiceAccountCalendarClient:
                 f"Could not reach Google Calendar: {exc}"
             ) from exc
         
-        if not response.ok and response.status_code != 404:
-            raise GoogleCalendarServiceAccountError(
-                f"Failed to delete event {event_id}: {response.text or response.status_code}"
-            )
+        if response.status_code == 410:
+            return {"deleted": False, "already_deleted": True}
+
+        if response.status_code not in {200, 204, 404}:
+            self._raise_calendar_api_error("event removal", response)
+
+        if response.status_code == 404:
+            return {"deleted": False, "already_deleted": True}
+
+        return {"deleted": True, "already_deleted": False}
 
 
 def create_client_from_env() -> Optional[GoogleServiceAccountCalendarClient]:

@@ -42,6 +42,7 @@ from guest_database_manager.guest_recommender import (
     enrich_guests_with_recommendations,
 )
 from guest_database_manager.guest_research import research_guest_from_google_search, research_guest_from_public_web
+from guest_database_manager.google_calendar_sync import GoogleCalendarSyncError
 from guest_database_manager.google_service_account_calendar import (
     GoogleCalendarServiceAccountError,
     GoogleServiceAccountCalendarClient,
@@ -110,6 +111,7 @@ BOOKING_DEFAULT_BUFFER_MINUTES = 15
 BOOKING_DEFAULT_MIN_NOTICE_HOURS = 24
 BOOKING_DEFAULT_DURATION_MINUTES = 60
 BOOKING_WEEKDAY_CODE_TO_INT = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+GOOGLE_CALENDAR_CLIENT_ERRORS = (GoogleCalendarServiceAccountError, GoogleCalendarSyncError)
 FORM_FIELDS = {
     "full_name",
     "email",
@@ -2598,7 +2600,7 @@ class GuestWebService:
         if client is not None:
             try:
                 created_event = client.create_event_from_interview(updated_interview)
-            except GoogleCalendarServiceAccountError as exc:
+            except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
                 raise WebInterfaceError(str(exc)) from exc
             self.database.update_interview(
                 updated_interview["id"],
@@ -2629,7 +2631,7 @@ class GuestWebService:
         if client is not None:
             try:
                 events = client.list_busy_events(days_ahead=days_ahead, reference=reference)
-            except GoogleCalendarServiceAccountError as exc:
+            except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
                 raise WebInterfaceError(str(exc)) from exc
             for event in events:
                 start = self._parse_datetime((event.get("start") or {}).get("dateTime"))
@@ -2808,7 +2810,7 @@ class GuestWebService:
                             event_payload = client.update_event_from_interview(updated)
                         else:
                             event_payload = client.create_event_from_interview(updated)
-                    except GoogleCalendarServiceAccountError as exc:
+                    except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
                         raise WebInterfaceError(str(exc)) from exc
                     self.database.update_interview(
                         updated["id"],
@@ -2867,7 +2869,7 @@ class GuestWebService:
         if client is not None:
             try:
                 created_event = client.create_event_from_interview(interview)
-            except GoogleCalendarServiceAccountError as exc:
+            except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
                 raise WebInterfaceError(str(exc)) from exc
             self.database.update_interview(
                 interview["id"],
@@ -3821,7 +3823,7 @@ class GuestWebService:
 
         try:
             events = client.list_upcoming_events(days_ahead=days_ahead, reference=reference, query=effective_query)
-        except GoogleCalendarServiceAccountError as exc:
+        except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
             raise WebInterfaceError(str(exc)) from exc
 
         normalized = [client.normalize_event(event) for event in events]
@@ -3864,7 +3866,7 @@ class GuestWebService:
 
         try:
             updated_event = client.update_event_from_interview(interview)
-        except GoogleCalendarServiceAccountError as exc:
+        except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
             raise WebInterfaceError(str(exc)) from exc
 
         updates = {
@@ -3896,7 +3898,7 @@ class GuestWebService:
             client_result = client.delete_event(event_id)
             if isinstance(client_result, dict):
                 removal_result = client_result
-        except GoogleCalendarServiceAccountError as exc:
+        except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
             raise WebInterfaceError(str(exc)) from exc
 
         removal_note = (
