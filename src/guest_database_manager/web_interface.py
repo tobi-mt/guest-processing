@@ -544,7 +544,7 @@ class GuestWebService:
         """Return a short cache TTL for expensive dashboard payloads."""
         if cache_key == "planning_ai_copilot":
             return 0.0
-        return 3.0
+        return 15.0
 
     def _get_cached_payload(self, cache_key: str) -> Optional[Dict[str, Any]]:
         """Return a recent cached payload when it is still fresh enough to reuse."""

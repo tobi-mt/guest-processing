@@ -56,6 +56,7 @@ let pendingEpisodeIdFromUrl = null;
 let pendingPlanningSuccessMessage = "";
 let activePlanningTab = "release_planning";
 let aiCopilotHydrationInFlight = false;
+const PLANNING_PAYLOAD_CACHE_KEY = "mirror-talk-planning-payload";
 
 const RECOMMENDATION_PAGE_SIZE = 6;
 const EPISODE_PAGE_SIZE = 10;
@@ -132,6 +133,24 @@ const EXPORT_FIELD_CONFIG = {
     ["recommendation_reason", "Recommendation Reason"],
   ],
 };
+
+function readCachedPayload(cacheKey) {
+  try {
+    const raw = window.sessionStorage.getItem(cacheKey);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (error) {
+    return null;
+  }
+}
+
+function storeCachedPayload(cacheKey, payload) {
+  try {
+    window.sessionStorage.setItem(cacheKey, JSON.stringify(payload));
+  } catch (error) {
+    // Ignore browser cache failures.
+  }
+}
 
 const stats = {
   total: document.getElementById("plan-episodes-total"),
@@ -1898,7 +1917,20 @@ function applyEpisodeFocusFromUrl() {
 
 async function loadPlanning() {
   if (!latestPlanningPayload.episodes?.length && !latestPlanningPayload.recommendations?.length) {
-    setMessage(episodeMessage, "Loading planning data...", "pending");
+    const cachedPayload = readCachedPayload(PLANNING_PAYLOAD_CACHE_KEY);
+    if (cachedPayload) {
+      latestPlanningPayload = cachedPayload;
+      stats.total.textContent = cachedPayload.stats?.episodes_total ?? 0;
+      stats.released.textContent = cachedPayload.stats?.episodes_released ?? 0;
+      stats.scheduled.textContent = cachedPayload.stats?.episodes_scheduled ?? 0;
+      stats.unreleased.textContent = cachedPayload.stats?.episodes_unreleased ?? 0;
+      stats.promoReady.textContent = cachedPayload.stats?.episodes_promo_ready ?? 0;
+      stats.needsAssets.textContent = cachedPayload.stats?.episodes_need_assets ?? 0;
+      renderPlanning();
+      setMessage(episodeMessage, "Refreshing planning data...", "pending");
+    } else {
+      setMessage(episodeMessage, "Loading planning data...", "pending");
+    }
   }
   const payload = await fetchJSON("/api/planning");
   latestPlanningPayload = payload;
@@ -1909,6 +1941,7 @@ async function loadPlanning() {
   stats.promoReady.textContent = payload.stats.episodes_promo_ready ?? 0;
   stats.needsAssets.textContent = payload.stats.episodes_need_assets ?? 0;
   renderPlanning();
+  storeCachedPayload(PLANNING_PAYLOAD_CACHE_KEY, payload);
   if (episodeMessage.classList.contains("pending")) {
     setMessage(episodeMessage, "", "");
   }

@@ -16,6 +16,7 @@ const guestLoadMoreButton = document.getElementById("guest-load-more");
 const guestPresetButtons = Array.from(document.querySelectorAll("[data-guest-preset]"));
 
 const GUEST_PAGE_SIZE = 12;
+const GUEST_PAYLOAD_CACHE_KEY = "mirror-talk-dashboard-payload";
 
 const metrics = {
   total: document.getElementById("metric-total"),
@@ -44,6 +45,24 @@ let activeGuestEditor = null;
 let activeGuestPreset = "all";
 let activeGuestActionFeedback = null;
 let visibleGuestCount = GUEST_PAGE_SIZE;
+
+function readCachedPayload(cacheKey) {
+  try {
+    const raw = window.sessionStorage.getItem(cacheKey);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (error) {
+    return null;
+  }
+}
+
+function storeCachedPayload(cacheKey, payload) {
+  try {
+    window.sessionStorage.setItem(cacheKey, JSON.stringify(payload));
+  } catch (error) {
+    // Ignore browser cache failures.
+  }
+}
 
 function buildGuestScopedLink(path, guest) {
   const query = encodeURIComponent(guest.full_name || guest.email || "");
@@ -1269,10 +1288,17 @@ function renderGuests(payload) {
 async function loadGuests() {
   try {
     if (!latestPayload) {
-      setMessage("Loading guests...", "pending");
+      const cachedPayload = readCachedPayload(GUEST_PAYLOAD_CACHE_KEY);
+      if (cachedPayload) {
+        renderGuests(cachedPayload);
+        setMessage("Refreshing guests...", "pending");
+      } else {
+        setMessage("Loading guests...", "pending");
+      }
     }
     const payload = await fetchJSON("/api/guests");
     renderGuests(payload);
+    storeCachedPayload(GUEST_PAYLOAD_CACHE_KEY, payload);
     if (message.classList.contains("pending")) {
       setMessage("", "");
     }

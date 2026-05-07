@@ -33,9 +33,28 @@ let visibleReminderCount = 8;
 let visibleInterviewCount = 10;
 let activeOperationsTab = "upcoming_interviews";
 let calendarReadOnlyMode = false;
+const OPERATIONS_PAYLOAD_CACHE_KEY = "mirror-talk-operations-payload";
 
 const REMINDER_PAGE_SIZE = 8;
 const INTERVIEW_PAGE_SIZE = 10;
+
+function readCachedPayload(cacheKey) {
+  try {
+    const raw = window.sessionStorage.getItem(cacheKey);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (error) {
+    return null;
+  }
+}
+
+function storeCachedPayload(cacheKey, payload) {
+  try {
+    window.sessionStorage.setItem(cacheKey, JSON.stringify(payload));
+  } catch (error) {
+    // Ignore browser cache failures.
+  }
+}
 
 const stats = {
   interviewsTotal: document.getElementById("ops-interviews-total"),
@@ -1392,7 +1411,19 @@ function renderOperations() {
 
 async function loadOperations() {
   if (!latestOperationsPayload.interviews?.length && !latestOperationsPayload.reminder_candidates?.length) {
-    setMessage(interviewMessage, "Loading interview operations...", "pending");
+    const cachedPayload = readCachedPayload(OPERATIONS_PAYLOAD_CACHE_KEY);
+    if (cachedPayload) {
+      latestOperationsPayload = cachedPayload;
+      const interviews = cachedPayload.interviews || [];
+      stats.interviewsTotal.textContent = cachedPayload.stats?.interviews_total ?? interviews.length ?? 0;
+      stats.interviewsPending.textContent = cachedPayload.stats?.interviews_pending_confirmation ?? 0;
+      stats.interviewsConfirmed.textContent = interviews.filter((item) => item.confirmation_status === "confirmed").length;
+      stats.remindersDue.textContent = cachedPayload.reminder_candidates?.length ?? 0;
+      renderOperations();
+      setMessage(interviewMessage, "Refreshing interview operations...", "pending");
+    } else {
+      setMessage(interviewMessage, "Loading interview operations...", "pending");
+    }
   }
   const payload = await fetchJSON("/api/operations");
   latestOperationsPayload = payload;
@@ -1402,6 +1433,7 @@ async function loadOperations() {
   stats.interviewsConfirmed.textContent = interviews.filter((item) => item.confirmation_status === "confirmed").length;
   stats.remindersDue.textContent = payload.reminder_candidates?.length ?? 0;
   renderOperations();
+  storeCachedPayload(OPERATIONS_PAYLOAD_CACHE_KEY, payload);
   if (interviewMessage.classList.contains("pending")) {
     setMessage(interviewMessage, "", "");
   }
