@@ -15,8 +15,6 @@ const askSyncAmbiguous = document.getElementById("ask-sync-ambiguous");
 const planningExportMessage = document.getElementById("planning-export-message");
 const planningWeeklySystem = document.getElementById("planning-weekly-system");
 const aiCopilotStatus = document.getElementById("planning-ai-copilot-status");
-const outreachChecklist = document.getElementById("episode-outreach-checklist");
-const checklistPanel = document.getElementById("episode-checklist-panel");
 const episodeList = document.getElementById("episode-list");
 const recommendationList = document.getElementById("recommendation-list");
 const refreshButton = document.getElementById("planning-refresh-button");
@@ -656,26 +654,6 @@ function clampPriorityScore(value, fallback = 0) {
   return Math.max(0, Math.min(10, parsed));
 }
 
-function showChecklistPanel(visible) {
-  if (!checklistPanel) {
-    return;
-  }
-  checklistPanel.classList.toggle("hidden", !visible);
-}
-
-function renderOutreachChecklist(planValue = null) {
-  const plan = normalizeOutreachPlan(planValue);
-  outreachChecklist.innerHTML = OUTREACH_STEPS.map(([key, label, description]) => `
-    <label class="checklist-item">
-      <input type="checkbox" data-outreach-key="${key}" ${plan[key] ? "checked" : ""} />
-      <span>
-        <strong>${label}</strong>
-        <small>${description}</small>
-      </span>
-    </label>
-  `).join("");
-}
-
 function renderWeeklySystemPanel(system) {
   if (!planningWeeklySystem || !system) {
     return;
@@ -690,7 +668,7 @@ function renderWeeklySystemPanel(system) {
       <strong class="insight-label">What this tab is for</strong>
       <ul>
         <li>Use this as the operating model for a normal Mirror Talk release week.</li>
-        <li>The checklist in Release Planning is where you mark each real-world step as complete for a specific episode.</li>
+        <li>Keep episode editing focused on guest, title, scheduling, and release readiness instead of campaign task tracking.</li>
         <li>The recommendation cards use this rhythm to suggest what should happen next, but they do not complete anything automatically.</li>
       </ul>
     </div>
@@ -971,8 +949,6 @@ function resetEpisodeForm() {
   episodeForm.elements.legacy_episode_number.value = computeNextLegacyEpisodeNumber(latestPlanningPayload.episodes || []);
   episodeSubmitButton.textContent = "Save Episode";
   episodeResetButton.hidden = true;
-  renderOutreachChecklist(null);
-  showChecklistPanel(false);
 }
 
 function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } = {}) {
@@ -1014,8 +990,6 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeForm.elements.notes.value = episode.notes || "";
   episodeSubmitButton.textContent = "Update Episode";
   episodeResetButton.hidden = false;
-  renderOutreachChecklist(episode.outreach_plan);
-  showChecklistPanel(true);
   episodeForm.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -2179,7 +2153,6 @@ planningTabButtons.forEach((button) => {
 renderExportFields();
 resetEpisodeForm();
 applyUrlState();
-renderOutreachChecklist(null);
 episodeForm.elements.outreach_plan.value = JSON.stringify(normalizeOutreachPlan(null));
 loadPlanning().catch((error) => {
   setMessage(episodeMessage, error.message, "error");
