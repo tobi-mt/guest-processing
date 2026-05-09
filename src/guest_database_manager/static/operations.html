@@ -52,6 +52,12 @@
             </div>
           </div>
           <button id="sync-calendar-button" class="secondary-button" type="button">Sync Google Calendar</button>
+          <div id="ai-features-card" style="margin-top: 16px; padding: 16px; background: rgba(99, 102, 241, 0.08); border-radius: 16px; border: 1px solid rgba(99, 102, 241, 0.2);">
+            <p style="margin: 0 0 8px; font-size: 0.85rem; font-weight: 600; color: var(--text);">✨ AI Features</p>
+            <div id="ai-status-indicator">
+              <span class="status-badge checking">Checking...</span>
+            </div>
+          </div>
           <a class="dashboard-link" href="/planning">Open Episode Planning</a>
           <a class="dashboard-link" href="/dashboard">Open Guest Dashboard</a>
         </div>
@@ -267,6 +273,22 @@
           </div>
         </section>
       </main>
+    </div>
+
+    <!-- AI Modal Container -->
+    <div id="ai-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="ai-modal-title">AI Result</h2>
+          <button id="ai-modal-close" class="ghost-button">✕</button>
+        </div>
+        <div id="ai-modal-body" class="modal-body"></div>
+        <div class="modal-footer">
+          <button id="ai-modal-copy" class="secondary-button">📋 Copy</button>
+          <button id="ai-modal-done" class="primary-button">Done</button>
+        </div>
+      </div>
     </div>
 
     <script src="/static/operations.js" defer></script>

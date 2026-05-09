@@ -86,6 +86,13 @@
             </div>
           </div>
 
+          <div class="insight-card" id="ai-features-card">
+            <p class="insight-title">✨ AI Features</p>
+            <div id="ai-status-indicator">
+              <span class="status-badge checking">Checking...</span>
+            </div>
+          </div>
+
           <button id="export-button" class="secondary-button" type="button">Download CSV</button>
           <button id="bulk-research-button" class="secondary-button" type="button">Research Missing Profiles</button>
           <p id="bulk-research-message" class="message" aria-live="polite"></p>
@@ -272,6 +279,9 @@
           <button data-action="edit" class="ghost-button small-button">Edit</button>
           <button data-action="copy" class="ghost-button small-button">Copy Intake</button>
           <button data-action="research" class="ghost-button small-button">Research Guest</button>
+          <button data-action="ai_email_draft" class="ai-button small-button" title="Generate AI email draft">✨ AI Email</button>
+          <button data-action="ai_questions" class="ai-button small-button" title="Generate interview questions">❓ Questions</button>
+          <button data-action="ai_analysis" class="ai-button small-button" title="Deep AI analysis">🔍 Analysis</button>
           <button data-action="resend_booking_link" class="ghost-button small-button">Resend Booking Link</button>
           <button data-action="resend_personal_application" class="ghost-button small-button">Resend Personal Application</button>
           <button data-action="accepted_email" class="primary-button small-button">Approve + Email</button>
@@ -287,6 +297,22 @@
         <div class="email-composer hidden"></div>
       </article>
     </template>
+
+    <!-- AI Modal Container -->
+    <div id="ai-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="ai-modal-title">AI Result</h2>
+          <button id="ai-modal-close" class="ghost-button">✕</button>
+        </div>
+        <div id="ai-modal-body" class="modal-body"></div>
+        <div class="modal-footer">
+          <button id="ai-modal-copy" class="secondary-button">📋 Copy</button>
+          <button id="ai-modal-done" class="primary-button">Done</button>
+        </div>
+      </div>
+    </div>
 
     <script src="/static/app.js" defer></script>
   </body>

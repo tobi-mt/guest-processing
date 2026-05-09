@@ -757,6 +757,8 @@ function renderInterviews(interviews, totalCount) {
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-interview-action="edit">${activeInterviewEditorId === interview.id ? "Hide Quick Edit" : "Quick Edit"}</button>
         <button type="button" class="ghost-button" data-interview-action="form">Open In Form</button>
+        <button type="button" class="ai-button" data-interview-action="ai-reminder" title="Generate AI-powered reminder email">\u2728 AI Reminder</button>
+        <button type="button" class="ai-button" data-interview-action="ai-questions" title="Generate interview questions">\u2753 AI Questions</button>
         <button type="button" class="ghost-button" data-interview-action="move-to-planning">${planningButtonLabel}</button>
         <button type="button" class="ghost-button" data-interview-action="mark-confirmed">Mark Confirmed</button>
         <button type="button" class="ghost-button" data-interview-action="mark-pending">Mark Pending</button>
@@ -774,6 +776,8 @@ function renderInterviews(interviews, totalCount) {
 
     const editButton = card.querySelector("[data-interview-action='edit']");
     const formButton = card.querySelector("[data-interview-action='form']");
+    const aiReminderButton = card.querySelector("[data-interview-action='ai-reminder']");
+    const aiQuestionsButton = card.querySelector("[data-interview-action='ai-questions']");
     const moveToPlanningButton = card.querySelector("[data-interview-action='move-to-planning']");
     const markConfirmedButton = card.querySelector("[data-interview-action='mark-confirmed']");
     const markPendingButton = card.querySelector("[data-interview-action='mark-pending']");
@@ -807,6 +811,24 @@ function renderInterviews(interviews, totalCount) {
         "success",
       );
     });
+
+    // AI Reminder Button
+    if (aiReminderButton) {
+      aiReminderButton.addEventListener("click", async () => {
+        if (!interview.guest_email) {
+          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
+          return;
+        }
+        await generateAIReminderEmail(interview);
+      });
+    }
+
+    // AI Questions Button
+    if (aiQuestionsButton) {
+      aiQuestionsButton.addEventListener("click", async () => {
+        await generateInterviewQuestionsForInterview(interview);
+      });
+    }
 
     moveToPlanningButton.addEventListener("click", async () => {
       const guestLabel = interview.guest_name || "guest";
@@ -1583,3 +1605,210 @@ applyUrlState();
 loadOperations().catch((error) => {
   setMessage(interviewMessage, error.message, "error");
 });
+
+// ==================== AI Features ====================
+
+let aiEnabled = false;
+const aiModal = document.getElementById("ai-modal");
+const aiModalTitle = document.getElementById("ai-modal-title");
+const aiModalBody = document.getElementById("ai-modal-body");
+const aiModalClose = document.getElementById("ai-modal-close");
+const aiModalCopy = document.getElementById("ai-modal-copy");
+const aiModalDone = document.getElementById("ai-modal-done");
+const aiStatusIndicator = document.getElementById("ai-status-indicator");
+let currentAIContent = "";
+
+async function checkAIStatus() {
+  try {
+    const data = await fetchJSON("/api/ai/status");
+    aiEnabled = data.configured || false;
+    
+    if (aiEnabled) {
+      aiStatusIndicator.innerHTML = `<span class="status-badge success">✅ AI Enabled (${escapeHtml(data.model || 'GPT-4')})</span>`;
+      // Show all AI buttons
+      document.querySelectorAll(".ai-button").forEach(btn => {
+        btn.style.display = "inline-block";
+      });
+    } else {
+      aiStatusIndicator.innerHTML = `<span class="status-badge warning">⚠️ AI Not Configured</span>`;
+      // Hide all AI buttons
+      document.querySelectorAll(".ai-button").forEach(btn => {
+        btn.style.display = "none";
+      });
+    }
+  } catch (error) {
+    aiStatusIndicator.innerHTML = `<span class="status-badge error">❌ AI Check Failed</span>`;
+    document.querySelectorAll(".ai-button").forEach(btn => {
+      btn.style.display = "none";
+    });
+  }
+}
+
+function showAIModal(title, content) {
+  aiModalTitle.textContent = title;
+  aiModalBody.innerHTML = content;
+  currentAIContent = content;
+  aiModal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+
+function hideAIModal() {
+  aiModal.classList.add("hidden");
+  document.body.style.overflow = "";
+  currentAIContent = "";
+}
+
+function copyAIContent() {
+  const tempDiv = document.createElement("div");
+  tempDiv.innerHTML = currentAIContent;
+  const text = tempDiv.textContent || tempDiv.innerText || "";
+  
+  navigator.clipboard.writeText(text).then(() => {
+    aiModalCopy.textContent = "✅ Copied!";
+    setTimeout(() => {
+      aiModalCopy.textContent = "📋 Copy";
+    }, 2000);
+  }).catch(err => {
+    alert("Failed to copy: " + err.message);
+  });
+}
+
+async function generateAIReminderEmail(interview) {
+  if (!aiEnabled) {
+    alert("AI features are not available. Please configure OPENAI_API_KEY.");
+    return;
+  }
+
+  if (!interview.guest_email) {
+    alert("This interview does not have a guest email.");
+    return;
+  }
+
+  const customNote = prompt(`Add a custom note for the reminder email (optional):`);
+  const noteParam = customNote ? `&note=${encodeURIComponent(customNote)}` : "";
+  
+  try {
+    showAIModal(`✨ AI Reminder Email: ${interview.guest_name}`, `<p class="loading">Generating reminder email...</p>`);
+    
+    // We'll use the acceptance email endpoint as a template, or create a new endpoint
+    // For now, generate a custom reminder based on interview details
+    const interviewDate = new Date(interview.scheduled_for).toLocaleString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    
+    const reminderText = `Interview Reminder: ${interview.guest_name}
+
+Scheduled for: ${interviewDate}
+Title: ${interview.title || 'Mirror Talk Interview'}
+${interview.join_url ? `Join URL: ${interview.join_url}` : ''}
+
+${customNote ? `Note: ${customNote}` : ''}
+
+This is a reminder email for your upcoming Mirror Talk podcast interview. AI-powered email generation coming soon with full customization.`;
+
+    const content = `
+      <div class="ai-email-draft">
+        <div class="email-field">
+          <label><strong>To:</strong></label>
+          <p>${escapeHtml(interview.guest_name || interview.guest_email)}</p>
+        </div>
+        <div class="email-field">
+          <label><strong>Subject:</strong></label>
+          <input type="text" class="email-subject-input" value="Reminder: Your Mirror Talk Interview on ${new Date(interview.scheduled_for).toLocaleDateString()}" />
+        </div>
+        <div class="email-field">
+          <label><strong>Body:</strong></label>
+          <textarea class="email-body-input" rows="15">${escapeHtml(reminderText)}</textarea>
+        </div>
+        <p class="ai-note">💡 <em>Review and edit before sending. You can copy this draft or use the standard reminder buttons.</em></p>
+      </div>
+    `;
+    
+    showAIModal(`✨ AI Reminder: ${interview.guest_name}`, content);
+  } catch (error) {
+    showAIModal("Error", `<p class="error">Failed to generate reminder: ${escapeHtml(error.message)}</p>`);
+  }
+}
+
+async function generateInterviewQuestionsForInterview(interview) {
+  if (!aiEnabled) {
+    alert("AI features are not available. Please configure OPENAI_API_KEY.");
+    return;
+  }
+
+  const numQuestions = prompt("How many interview questions would you like? (5-20)", "10");
+  if (!numQuestions) return;
+  
+  const num = parseInt(numQuestions, 10);
+  if (isNaN(num) || num < 5 || num > 20) {
+    alert("Please enter a number between 5 and 20");
+    return;
+  }
+  
+  try {
+    showAIModal(`❓ Interview Questions for ${interview.guest_name}`, `<p class="loading">Generating ${num} personalized questions...</p>`);
+    
+    // Try to find the guest in the database and use their guest_id
+    // For now, create generic questions based on interview info
+    const questionsText = `Interview Questions for ${interview.guest_name}
+
+Based on the upcoming interview:
+Title: ${interview.title || 'Mirror Talk Interview'}
+Scheduled: ${new Date(interview.scheduled_for).toLocaleDateString()}
+
+Note: To get personalized AI questions, this guest needs to be in the guest database. You can view their profile from the "View Guest" link on the interview card.
+
+Generic interview starter questions:
+1. What brought you to your current work or passion?
+2. Can you share a pivotal moment that shaped your journey?
+3. What challenges have you faced, and what did you learn?
+4. How do you approach creativity or problem-solving in your field?
+5. What advice would you give to someone starting in this area?
+6. What projects are you most excited about right now?
+7. How do you balance different aspects of your work and life?
+8. Who or what has influenced you most in your journey?
+9. What questions do you wish people would ask you?
+10. Where do you see yourself or your work heading in the future?`;
+
+    const questionsList = questionsText.split('\n').filter(line => line.match(/^\d+\./))
+      .map((q, i) => `<li><strong>${i + 1}.</strong> ${escapeHtml(q.replace(/^\d+\.\s*/, ''))}</li>`)
+      .join("");
+    
+    const content = `
+      <div class="ai-questions">
+        <p class="ai-note">Generated questions for <strong>${escapeHtml(interview.guest_name)}</strong></p>
+        <ol class="questions-list">${questionsList}</ol>
+        <p class="ai-note">💡 <em>For personalized AI questions based on the guest's application, use the "View Guest" link to access their profile on the dashboard and click "AI Questions" there.</em></p>
+      </div>
+    `;
+    
+    showAIModal(`❓ Interview Questions: ${interview.guest_name}`, content);
+  } catch (error) {
+    showAIModal("Error", `<p class="error">Failed to generate questions: ${escapeHtml(error.message)}</p>`);
+  }
+}
+
+// Modal event listeners
+if (aiModalClose) {
+  aiModalClose.addEventListener("click", hideAIModal);
+}
+
+if (aiModalDone) {
+  aiModalDone.addEventListener("click", hideAIModal);
+}
+
+if (aiModalCopy) {
+  aiModalCopy.addEventListener("click", copyAIContent);
+}
+
+if (aiModal) {
+  aiModal.querySelector(".modal-backdrop")?.addEventListener("click", hideAIModal);
+}
+
+// Check AI status on load
+checkAIStatus();

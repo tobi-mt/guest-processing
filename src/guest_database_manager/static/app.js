@@ -1215,6 +1215,16 @@ function renderGuests(payload) {
               feedback: null,
             };
             renderGuests(latestPayload);
+          } else if (action === "ai_email_draft") {
+            // AI Email Draft Generation
+            const emailType = guest.email_status === "accepted" ? "acceptance" : "acceptance";
+            await generateAIEmailDraft(guest.id, emailType);
+          } else if (action === "ai_questions") {
+            // AI Interview Questions Generation
+            await generateInterviewQuestions(guest.id, guest.full_name || "Guest");
+          } else if (action === "ai_analysis") {
+            // AI Guest Analysis
+            await analyzeGuestWithAI(guest.id, guest.full_name || "Guest");
           } else if (action === "delete") {
             const guestLabel = guest.full_name || "guest";
             const needsTypedConfirmation = Boolean(guest.is_processed || guest.email_status);
@@ -1559,6 +1569,226 @@ function renderGuestAiSummary(guest) {
     </div>
   `;
 }
+
+// ==================== AI Features ====================
+
+let aiEnabled = false;
+const aiModal = document.getElementById("ai-modal");
+const aiModalTitle = document.getElementById("ai-modal-title");
+const aiModalBody = document.getElementById("ai-modal-body");
+const aiModalClose = document.getElementById("ai-modal-close");
+const aiModalCopy = document.getElementById("ai-modal-copy");
+const aiModalDone = document.getElementById("ai-modal-done");
+const aiStatusIndicator = document.getElementById("ai-status-indicator");
+let currentAIContent = "";
+
+async function checkAIStatus() {
+  try {
+    const data = await fetchJSON("/api/ai/status");
+    aiEnabled = data.configured || false;
+    
+    if (aiEnabled) {
+      aiStatusIndicator.innerHTML = `<span class="status-badge success">✅ AI Enabled (${escapeHtml(data.model || 'GPT-4')})</span>`;
+      // Show all AI buttons
+      document.querySelectorAll(".ai-button").forEach(btn => {
+        btn.style.display = "inline-block";
+      });
+    } else {
+      aiStatusIndicator.innerHTML = `<span class="status-badge warning">⚠️ AI Not Configured</span>`;
+      // Hide all AI buttons
+      document.querySelectorAll(".ai-button").forEach(btn => {
+        btn.style.display = "none";
+      });
+    }
+  } catch (error) {
+    aiStatusIndicator.innerHTML = `<span class="status-badge error">❌ AI Check Failed</span>`;
+    document.querySelectorAll(".ai-button").forEach(btn => {
+      btn.style.display = "none";
+    });
+  }
+}
+
+function showAIModal(title, content) {
+  aiModalTitle.textContent = title;
+  aiModalBody.innerHTML = content;
+  currentAIContent = content;
+  aiModal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+
+function hideAIModal() {
+  aiModal.classList.add("hidden");
+  document.body.style.overflow = "";
+  currentAIContent = "";
+}
+
+function copyAIContent() {
+  const tempDiv = document.createElement("div");
+  tempDiv.innerHTML = currentAIContent;
+  const text = tempDiv.textContent || tempDiv.innerText || "";
+  
+  navigator.clipboard.writeText(text).then(() => {
+    aiModalCopy.textContent = "✅ Copied!";
+    setTimeout(() => {
+      aiModalCopy.textContent = "📋 Copy";
+    }, 2000);
+  }).catch(err => {
+    alert("Failed to copy: " + err.message);
+  });
+}
+
+async function generateAIEmailDraft(guestId, emailType) {
+  if (!aiEnabled) {
+    alert("AI features are not available. Please configure OPENAI_API_KEY.");
+    return;
+  }
+
+  const customNote = prompt(`Add a custom note to include in the ${emailType} email (optional):`);
+  const noteParam = customNote ? `&note=${encodeURIComponent(customNote)}` : "";
+  
+  try {
+    const loadingMsg = emailType === "acceptance" ? "Generating acceptance email..." : "Generating rejection email...";
+    showAIModal(`✨ ${emailType === "acceptance" ? "Acceptance" : "Rejection"} Email`, `<p class="loading">${loadingMsg}</p>`);
+    
+    const data = await fetchJSON(`/api/guests/${guestId}/ai-email-draft?type=${emailType}${noteParam}`);
+    
+    const content = `
+      <div class="ai-email-draft">
+        <div class="email-field">
+          <label><strong>To:</strong></label>
+          <p>${escapeHtml(data.guest_name)}</p>
+        </div>
+        <div class="email-field">
+          <label><strong>Subject:</strong></label>
+          <input type="text" class="email-subject-input" value="${escapeHtml(data.subject)}" />
+        </div>
+        <div class="email-field">
+          <label><strong>Body:</strong></label>
+          <textarea class="email-body-input" rows="15">${escapeHtml(data.body)}</textarea>
+        </div>
+        <p class="ai-note">💡 <em>Review and edit before sending. You can copy this draft and paste it into your email composer.</em></p>
+      </div>
+    `;
+    
+    showAIModal(`✨ AI ${emailType === "acceptance" ? "Acceptance" : "Rejection"} Email`, content);
+  } catch (error) {
+    showAIModal("Error", `<p class="error">Failed to generate email: ${escapeHtml(error.message)}</p>`);
+  }
+}
+
+async function generateInterviewQuestions(guestId, guestName) {
+  if (!aiEnabled) {
+    alert("AI features are not available. Please configure OPENAI_API_KEY.");
+    return;
+  }
+
+  const numQuestions = prompt("How many interview questions would you like? (5-20)", "10");
+  if (!numQuestions) return;
+  
+  const num = parseInt(numQuestions, 10);
+  if (isNaN(num) || num < 5 || num > 20) {
+    alert("Please enter a number between 5 and 20");
+    return;
+  }
+  
+  try {
+    showAIModal(`❓ Interview Questions for ${guestName}`, `<p class="loading">Generating ${num} personalized questions...</p>`);
+    
+    const data = await fetchJSON(`/api/guests/${guestId}/ai-interview-questions?num=${num}`);
+    
+    const questionsList = data.questions
+      .map((q, i) => `<li><strong>${i + 1}.</strong> ${escapeHtml(q)}</li>`)
+      .join("");
+    
+    const content = `
+      <div class="ai-questions">
+        <p class="ai-note">Generated ${data.num_questions} thoughtful questions for <strong>${escapeHtml(data.guest_name)}</strong></p>
+        <ol class="questions-list">${questionsList}</ol>
+        <p class="ai-note">💡 <em>These questions are tailored to the guest's background and interests. Feel free to adapt them for your interview style.</em></p>
+      </div>
+    `;
+    
+    showAIModal(`❓ Interview Questions: ${guestName}`, content);
+  } catch (error) {
+    showAIModal("Error", `<p class="error">Failed to generate questions: ${escapeHtml(error.message)}</p>`);
+  }
+}
+
+async function analyzeGuestWithAI(guestId, guestName) {
+  if (!aiEnabled) {
+    alert("AI features are not available. Please configure OPENAI_API_KEY.");
+    return;
+  }
+  
+  try {
+    showAIModal(`🔍 AI Analysis: ${guestName}`, `<p class="loading">Analyzing guest profile...</p>`);
+    
+    const data = await fetchJSON(`/api/guests/${guestId}/ai-analysis`);
+    const analysis = data.analysis;
+    
+    const themes = Array.isArray(analysis.themes) 
+      ? analysis.themes.map(t => `<li>${escapeHtml(t)}</li>`).join("")
+      : `<p>${escapeHtml(analysis.themes || "N/A")}</p>`;
+    
+    const angles = Array.isArray(analysis.conversation_angles)
+      ? analysis.conversation_angles.map(a => `<li>${escapeHtml(a)}</li>`).join("")
+      : `<p>${escapeHtml(analysis.conversation_angles || "N/A")}</p>`;
+    
+    const content = `
+      <div class="ai-analysis">
+        <div class="analysis-metric">
+          <strong>Fit Score</strong>
+          <span class="score-large">${analysis.fit_score || 5}/10</span>
+        </div>
+        <div class="analysis-section">
+          <strong>Key Themes:</strong>
+          ${Array.isArray(analysis.themes) ? `<ul>${themes}</ul>` : themes}
+        </div>
+        <div class="analysis-section">
+          <strong>Conversation Angles:</strong>
+          ${Array.isArray(analysis.conversation_angles) ? `<ul>${angles}</ul>` : angles}
+        </div>
+        ${analysis.best_timing ? `
+          <div class="analysis-section">
+            <strong>Best Timing:</strong>
+            <p>${escapeHtml(analysis.best_timing)}</p>
+          </div>
+        ` : ""}
+        ${analysis.concerns ? `
+          <div class="analysis-section caution">
+            <strong>Potential Concerns:</strong>
+            <p>${escapeHtml(analysis.concerns)}</p>
+          </div>
+        ` : ""}
+        <p class="ai-note">💡 <em>This analysis is based on the guest's application. Use it to guide your decision and interview prep.</em></p>
+      </div>
+    `;
+    
+    showAIModal(`🔍 Deep Analysis: ${guestName}`, content);
+  } catch (error) {
+    showAIModal("Error", `<p class="error">Failed to analyze guest: ${escapeHtml(error.message)}</p>`);
+  }
+}
+
+// Modal event listeners
+if (aiModalClose) {
+  aiModalClose.addEventListener("click", hideAIModal);
+}
+
+if (aiModalDone) {
+  aiModalDone.addEventListener("click", hideAIModal);
+}
+
+if (aiModalCopy) {
+  aiModalCopy.addEventListener("click", copyAIContent);
+}
+
+if (aiModal) {
+  aiModal.querySelector(".modal-backdrop")?.addEventListener("click", hideAIModal);
+}
+
+// Check AI status on load
+checkAIStatus();
 
 applyUrlState();
 loadGuests();
