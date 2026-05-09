@@ -49,6 +49,15 @@ from guest_database_manager.google_service_account_calendar import (
 )
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot, build_month_context
 
+# Import new AI assistant features
+try:
+    from guest_database_manager.ai_assistant import AIAssistant, FollowUpManager
+    AI_ASSISTANT_AVAILABLE = True
+except ImportError:
+    AIAssistant = None
+    FollowUpManager = None
+    AI_ASSISTANT_AVAILABLE = False
+
 STATIC_DIR = Path(__file__).parent / "static"
 FORM_SOURCE_NAME = "Direct Web Entry"
 INTAKE_SOURCE_NAME = "Website Intake Questionnaire"
@@ -4334,6 +4343,141 @@ class GuestWebService:
         except Exception:
             return
 
+    # ==================== AI Assistant Features ====================
+
+    def _get_ai_assistant(self) -> Optional[AIAssistant]:
+        """Get AI assistant instance if available and configured."""
+        if not AI_ASSISTANT_AVAILABLE or AIAssistant is None:
+            return None
+        
+        api_key = os.getenv("OPENAI_API_KEY") or os.getenv(OPENAI_API_KEY_ENV_VAR)
+        if not api_key:
+            return None
+        
+        model = os.getenv(OPENAI_MODEL_ENV_VAR, "gpt-4o-mini")
+        return AIAssistant(api_key=api_key, model=model)
+
+    def generate_ai_email_draft(self, guest_id: int, email_type: str, custom_note: str = "") -> Dict[str, Any]:
+        """Generate AI-powered email draft for acceptance/rejection."""
+        ai_assistant = self._get_ai_assistant()
+        if not ai_assistant:
+            raise WebInterfaceError("AI features are not available. Please configure OPENAI_API_KEY.")
+        
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+        
+        email_type_normalized = _normalize_text(email_type).lower()
+        
+        try:
+            if email_type_normalized == "acceptance":
+                draft = ai_assistant.generate_acceptance_email(guest, custom_message=custom_note if custom_note else None)
+            elif email_type_normalized == "rejection":
+                draft = ai_assistant.generate_rejection_email(guest, custom_message=custom_note if custom_note else None)
+            else:
+                raise WebInterfaceError("Email type must be 'acceptance' or 'rejection'.")
+            
+            if not draft:
+                raise WebInterfaceError("AI email generation failed. Please try again.")
+            
+            # Generate subject line
+            guest_name = _normalize_text(guest.get("full_name")) or "there"
+            subject = ai_assistant.suggest_email_subject(email_type_normalized, guest_name)
+            
+            return {
+                "guest_id": guest_id,
+                "email_type": email_type_normalized,
+                "subject": subject,
+                "body": draft,
+                "guest_name": guest_name
+            }
+        
+        except Exception as exc:
+            error_msg = str(exc).strip()
+            raise WebInterfaceError(f"AI email generation error: {error_msg}") from exc
+
+    def generate_interview_questions(self, guest_id: int, num_questions: int = 10) -> Dict[str, Any]:
+        """Generate AI-powered personalized interview questions."""
+        ai_assistant = self._get_ai_assistant()
+        if not ai_assistant:
+            raise WebInterfaceError("AI features are not available. Please configure OPENAI_API_KEY.")
+        
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+        
+        try:
+            questions = ai_assistant.generate_interview_questions(guest, num_questions=num_questions)
+            
+            if not questions:
+                raise WebInterfaceError("AI question generation failed. Please try again.")
+            
+            return {
+                "guest_id": guest_id,
+                "guest_name": _normalize_text(guest.get("full_name")) or "Unknown",
+                "num_questions": len(questions),
+                "questions": questions
+            }
+        
+        except Exception as exc:
+            error_msg = str(exc).strip()
+            raise WebInterfaceError(f"AI question generation error: {error_msg}") from exc
+
+    def analyze_guest_with_ai(self, guest_id: int) -> Dict[str, Any]:
+        """Get AI-powered deep analysis of a guest."""
+        ai_assistant = self._get_ai_assistant()
+        if not ai_assistant:
+            raise WebInterfaceError("AI features are not available. Please configure OPENAI_API_KEY.")
+        
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+        
+        try:
+            analysis = ai_assistant.research_guest_from_text(guest)
+            
+            if not analysis:
+                raise WebInterfaceError("AI analysis failed. Please try again.")
+            
+            return {
+                "guest_id": guest_id,
+                "guest_name": _normalize_text(guest.get("full_name")) or "Unknown",
+                "analysis": analysis
+            }
+        
+        except Exception as exc:
+            error_msg = str(exc).strip()
+            raise WebInterfaceError(f"AI analysis error: {error_msg}") from exc
+
+    def list_guests_needing_followup(self, days_threshold: int = 7) -> Dict[str, Any]:
+        """List guests who need follow-up emails."""
+        if not AI_ASSISTANT_AVAILABLE or FollowUpManager is None:
+            raise WebInterfaceError("AI features are not available.")
+        
+        try:
+            followup_mgr = FollowUpManager(str(self.db_path))
+            guests_list = followup_mgr.get_guests_needing_follow_up(days_threshold)
+            
+            return {
+                "days_threshold": days_threshold,
+                "count": len(guests_list),
+                "guests": [serialize_guest(g) for g in guests_list]
+            }
+        
+        except Exception as exc:
+            error_msg = str(exc).strip()
+            raise WebInterfaceError(f"Follow-up check error: {error_msg}") from exc
+
+    def get_ai_status(self) -> Dict[str, Any]:
+        """Check if AI features are available and configured."""
+        ai_assistant = self._get_ai_assistant()
+        
+        return {
+            "available": AI_ASSISTANT_AVAILABLE,
+            "configured": ai_assistant is not None,
+            "model": os.getenv(OPENAI_MODEL_ENV_VAR, "gpt-4o-mini") if ai_assistant else None
+        }
+
 
 class GuestWebRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the direct web interface."""
@@ -4589,6 +4733,96 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 payload = self.service.preview_episode_release_email(episode_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        # AI Assistant API endpoints
+        if request_path == "/api/ai/status":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            
+            self._send_json(HTTPStatus.OK, self.service.get_ai_status())
+            return
+
+        if request_path.startswith("/api/guests/") and request_path.endswith("/ai-email-draft"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            guest_id = self._extract_record_id(request_path[:-len("/ai-email-draft")], "/api/guests/")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            query = self._query_params(self.path)
+            email_type = query.get("type", "acceptance")
+            custom_note = query.get("note", "")
+
+            try:
+                payload = self.service.generate_ai_email_draft(guest_id, email_type, custom_note)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if request_path.startswith("/api/guests/") and request_path.endswith("/ai-interview-questions"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            guest_id = self._extract_record_id(request_path[:-len("/ai-interview-questions")], "/api/guests/")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            query = self._query_params(self.path)
+            num_questions = int(query.get("num", "10"))
+
+            try:
+                payload = self.service.generate_interview_questions(guest_id, num_questions)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if request_path.startswith("/api/guests/") and request_path.endswith("/ai-analysis"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            guest_id = self._extract_record_id(request_path[:-len("/ai-analysis")], "/api/guests/")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            try:
+                payload = self.service.analyze_guest_with_ai(guest_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if request_path == "/api/ai/followups":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            query = self._query_params(self.path)
+            days_threshold = int(query.get("days", "7"))
+
+            try:
+                payload = self.service.list_guests_needing_followup(days_threshold)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
