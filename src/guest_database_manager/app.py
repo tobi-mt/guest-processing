@@ -4,17 +4,30 @@
 """Streamlit application for Guest Database Manager."""
 
 import io
+import logging
+import os
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+logger = logging.getLogger(__name__)
+
 try:
     from guest_database_manager.constants import DEFAULT_DB_PATH
     from guest_database_manager.database import GuestDatabase
     from guest_database_manager.email_manager import EmailManager, get_common_smtp_configs
+    from guest_database_manager.performance_optimizer import (
+        initialize_performance_optimizations,
+        invalidate_cache,
+        cached_query,
+        PaginatedQuery
+    )
+    from guest_database_manager.ai_assistant import AIAssistant, FollowUpManager
+    from guest_database_manager.guest_recommender import score_guest
 except ImportError as exc:
     if "No module named 'guest_database_manager'" not in str(exc) and "attempted relative import" not in str(exc):
         raise
@@ -22,6 +35,24 @@ except ImportError as exc:
     from constants import DEFAULT_DB_PATH
     from database import GuestDatabase
     from email_manager import EmailManager, get_common_smtp_configs
+    try:
+        from performance_optimizer import (
+            initialize_performance_optimizations,
+            invalidate_cache,
+            cached_query,
+            PaginatedQuery
+        )
+        from ai_assistant import AIAssistant, FollowUpManager
+        from guest_recommender import score_guest
+    except ImportError:
+        # Fallback if modules aren't available
+        initialize_performance_optimizations = lambda x: None
+        invalidate_cache = lambda x=None: None
+        cached_query = lambda x, y=300: lambda f: f
+        PaginatedQuery = None
+        AIAssistant = None
+        FollowUpManager = None
+        score_guest = None
 
 
 def setup_page_config() -> None:
@@ -32,9 +63,15 @@ def setup_page_config() -> None:
 
 
 def initialize_database() -> GuestDatabase:
-    """Initialize the database connection."""
+    """Initialize the database connection and performance optimizations."""
     if "database" not in st.session_state:
         st.session_state.database = GuestDatabase(DEFAULT_DB_PATH)
+        # Initialize performance optimizations
+        try:
+            initialize_performance_optimizations(str(DEFAULT_DB_PATH))
+            logger.info("Performance optimizations initialized")
+        except Exception as e:
+            logger.warning(f"Could not initialize performance optimizations: {e}")
     return st.session_state.database
 
 
@@ -43,6 +80,23 @@ def initialize_email_manager() -> EmailManager:
     if "email_manager" not in st.session_state:
         st.session_state.email_manager = EmailManager()
     return st.session_state.email_manager
+
+
+def initialize_ai_assistant() -> Optional[AIAssistant]:
+    """Initialize AI assistant if API key is available."""
+    if "ai_assistant" not in st.session_state:
+        if AIAssistant is not None:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if api_key:
+                st.session_state.ai_assistant = AIAssistant(api_key=api_key)
+                st.session_state.ai_enabled = True
+            else:
+                st.session_state.ai_assistant = None
+                st.session_state.ai_enabled = False
+        else:
+            st.session_state.ai_assistant = None
+            st.session_state.ai_enabled = False
+    return st.session_state.ai_assistant
 
 
 def display_sidebar_stats(db: GuestDatabase) -> None:
@@ -827,21 +881,52 @@ def main() -> None:
     # Initialize database and email manager
     db = initialize_database()
     email_manager = display_email_config()
+    ai_assistant = initialize_ai_assistant()
+    
+    # Show AI status in sidebar
+    with st.sidebar:
+        st.markdown("---")
+        if st.session_state.get("ai_enabled", False):
+            st.success("✨ AI Features: **Enabled**")
+        else:
+            st.info("💡 AI Features: **Disabled**")
+            with st.expander("Enable AI Features"):
+                st.write("Set `OPENAI_API_KEY` environment variable to enable:")
+                st.code("export OPENAI_API_KEY='your-key-here'")
 
     # Display sidebar stats
     display_sidebar_stats(db)
 
     # Main content tabs
-    tab1, tab2, tab3 = st.tabs(["📁 Upload", "👥 Manage Guests", "📈 Analytics"])
+    tabs = ["📁 Upload", "👥 Manage Guests", "📈 Analytics"]
+    
+    # Add Smart Features tab if AI is enabled
+    if st.session_state.get("ai_enabled", False):
+        tabs.append("✨ Smart Features")
+    
+    tab_objects = st.tabs(tabs)
 
-    with tab1:
+    with tab_objects[0]:  # Upload
         upload_file_section(db)
 
-    with tab2:
+    with tab_objects[1]:  # Manage Guests
         display_guest_table(db, email_manager)
 
-    with tab3:
+    with tab_objects[2]:  # Analytics
         display_analytics(db)
+    
+    # Smart Features tab (if AI enabled)
+    if len(tab_objects) > 3:
+        with tab_objects[3]:
+            try:
+                from guest_database_manager.smart_features import display_smart_features
+                display_smart_features(db, ai_assistant)
+            except ImportError:
+                try:
+                    from smart_features import display_smart_features
+                    display_smart_features(db, ai_assistant)
+                except ImportError:
+                    st.error("Smart features module not available")
 
     # Footer
     st.markdown("---")
