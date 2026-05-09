@@ -1434,7 +1434,14 @@ function renderOperations() {
 async function loadOperations() {
   if (!latestOperationsPayload.interviews?.length && !latestOperationsPayload.reminder_candidates?.length) {
     const cachedPayload = readCachedPayload(OPERATIONS_PAYLOAD_CACHE_KEY);
-    if (cachedPayload) {
+    // Only use cache if it has meaningful data (not all zeros)
+    const hasData = cachedPayload && (
+      (cachedPayload.stats?.interviews_total ?? 0) > 0 ||
+      (cachedPayload.interviews?.length ?? 0) > 0 ||
+      (cachedPayload.reminder_candidates?.length ?? 0) > 0
+    );
+    
+    if (hasData) {
       latestOperationsPayload = cachedPayload;
       const interviews = cachedPayload.interviews || [];
       stats.interviewsTotal.textContent = cachedPayload.stats?.interviews_total ?? interviews.length ?? 0;

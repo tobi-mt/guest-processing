@@ -1299,7 +1299,13 @@ async function loadGuests() {
   try {
     if (!latestPayload) {
       const cachedPayload = readCachedPayload(GUEST_PAYLOAD_CACHE_KEY);
-      if (cachedPayload) {
+      // Only use cache if it has meaningful data (not all zeros)
+      const hasData = cachedPayload && (
+        (cachedPayload.stats?.total ?? 0) > 0 ||
+        (cachedPayload.guests?.length ?? 0) > 0
+      );
+      
+      if (hasData) {
         renderGuests(cachedPayload);
         setMessage("Refreshing guests...", "pending");
       } else {

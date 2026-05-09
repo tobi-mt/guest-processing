@@ -1892,7 +1892,14 @@ function applyEpisodeFocusFromUrl() {
 async function loadPlanning() {
   if (!latestPlanningPayload.episodes?.length && !latestPlanningPayload.recommendations?.length) {
     const cachedPayload = readCachedPayload(PLANNING_PAYLOAD_CACHE_KEY);
-    if (cachedPayload) {
+    // Only use cache if it has meaningful data (not all zeros)
+    const hasData = cachedPayload && (
+      (cachedPayload.stats?.episodes_total ?? 0) > 0 ||
+      (cachedPayload.episodes?.length ?? 0) > 0 ||
+      (cachedPayload.recommendations?.length ?? 0) > 0
+    );
+    
+    if (hasData) {
       latestPlanningPayload = cachedPayload;
       stats.total.textContent = cachedPayload.stats?.episodes_total ?? 0;
       stats.released.textContent = cachedPayload.stats?.episodes_released ?? 0;
