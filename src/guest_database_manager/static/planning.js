@@ -191,6 +191,7 @@ async function fetchJSON(url, options = {}) {
   for (let attempt = 0; attempt < (isReadRequest ? 2 : 1); attempt += 1) {
     try {
       const response = await fetch(url, {
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         ...options,
       });
@@ -214,6 +215,7 @@ async function fetchJSON(url, options = {}) {
 async function postForm(url, formData) {
   const response = await fetch(url, {
     method: "POST",
+    credentials: "same-origin",
     body: formData,
   });
   const data = await response.json();
@@ -226,6 +228,7 @@ async function postForm(url, formData) {
 async function downloadExport(payload) {
   const response = await fetch("/api/exports", {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });

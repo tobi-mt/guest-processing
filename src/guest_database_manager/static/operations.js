@@ -86,6 +86,7 @@ async function fetchJSON(url, options = {}) {
   for (let attempt = 0; attempt < (isReadRequest ? 2 : 1); attempt += 1) {
     try {
       const response = await fetch(url, {
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         ...options,
       });
