@@ -9,6 +9,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.web_interface import run_web_interface

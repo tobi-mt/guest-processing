@@ -14,6 +14,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 try:

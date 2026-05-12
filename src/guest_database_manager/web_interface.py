@@ -25,7 +25,11 @@ from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from dotenv import load_dotenv
 from openpyxl import Workbook
+
+# Load environment variables from .env file
+load_dotenv()
 
 from guest_database_manager.ask_mirror_talk_client import AskMirrorTalkClient, AskMirrorTalkClientError
 from guest_database_manager.constants import DEFAULT_DB_PATH
