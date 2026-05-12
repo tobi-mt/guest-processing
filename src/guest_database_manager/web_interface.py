@@ -4018,7 +4018,7 @@ class GuestWebService:
     def _build_openai_scheduling_copilot() -> Optional[OpenAISchedulingCopilot]:
         """Build the optional OpenAI scheduling copilot from environment configuration."""
         api_key = os.environ.get(OPENAI_API_KEY_ENV_VAR, "").strip()
-        model = os.environ.get(OPENAI_MODEL_ENV_VAR, "").strip() or "gpt-5"
+        model = os.environ.get(OPENAI_MODEL_ENV_VAR, "").strip() or "gpt-4o-mini"
         if not api_key:
             return None
         timeout_raw = os.environ.get(OPENAI_TIMEOUT_ENV_VAR, "12").strip() or "12"
