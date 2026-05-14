@@ -56,11 +56,61 @@ const getUserFriendlyError = perfUtils.getUserFriendlyError || ((error) => {
   return error.message || String(error);
 });
 
-const requestDeduplicator = new RequestDeduplicator();
-const loadingManager = new LoadingStateManager();
-const smartCache = new SmartCache({ maxSize: 100, defaultTTL: 5 * 60 * 1000 });
-const keyboardManager = new KeyboardShortcutManager();
-const optimisticManager = new OptimisticUpdateManager();
+const requestDeduplicator = (() => {
+  try {
+    return new RequestDeduplicator();
+  } catch (error) {
+    console.error("Dashboard init warning: RequestDeduplicator unavailable", error);
+    return { dedupe: (_key, requestFn) => requestFn() };
+  }
+})();
+
+const loadingManager = (() => {
+  try {
+    return new LoadingStateManager();
+  } catch (error) {
+    console.error("Dashboard init warning: LoadingStateManager unavailable", error);
+    return {
+      wrap: async (_element, asyncFn, _options = {}) => asyncFn(),
+    };
+  }
+})();
+
+const smartCache = (() => {
+  try {
+    return new SmartCache({ maxSize: 100, defaultTTL: 5 * 60 * 1000 });
+  } catch (error) {
+    console.error("Dashboard init warning: SmartCache unavailable", error);
+    return { prune: () => {} };
+  }
+})();
+
+const keyboardManager = (() => {
+  try {
+    return new KeyboardShortcutManager();
+  } catch (error) {
+    console.error("Dashboard init warning: KeyboardShortcutManager unavailable", error);
+    return {
+      register: (_shortcut, _handler, _description = "") => {},
+      enable: () => {},
+      getShortcuts: () => [],
+    };
+  }
+})();
+
+const optimisticManager = (() => {
+  try {
+    return new OptimisticUpdateManager();
+  } catch (error) {
+    console.error("Dashboard init warning: OptimisticUpdateManager unavailable", error);
+    return {
+      apply: async (_id, optimisticFn, actualFn, _rollbackFn) => {
+        optimisticFn();
+        return actualFn();
+      },
+    };
+  }
+})();
 
 const metrics = {
   total: document.getElementById("metric-total"),
