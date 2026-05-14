@@ -4583,27 +4583,38 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._serve_static("intake.html")
             return
 
+        if request_path in {"/dashboard-login", "/login"}:
+            if self._is_authorized_dashboard_request():
+                query = self._query_params(self.path)
+                next_path = _normalize_text(query.get("next")) or "/dashboard"
+                if not next_path.startswith("/"):
+                    next_path = "/dashboard"
+                self._redirect(next_path)
+                return
+            self._serve_static("dashboard-login.html")
+            return
+
         if request_path in {"/book", "/book/", "/booking", "/book.html"}:
             self._serve_static("booking.html")
             return
 
         if request_path in {"/dashboard", "/index.html"}:
             if not self._is_authorized_dashboard_request():
-                self._send_basic_auth_challenge()
+                self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
                 return
             self._serve_static("index.html", set_session_cookie=True)
             return
 
         if request_path in {"/operations", "/operations.html"}:
             if not self._is_authorized_dashboard_request():
-                self._send_basic_auth_challenge()
+                self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
                 return
             self._serve_static("operations.html", set_session_cookie=True)
             return
 
         if request_path in {"/planning", "/planning.html"}:
             if not self._is_authorized_dashboard_request():
-                self._send_basic_auth_challenge()
+                self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
                 return
             self._serve_static("planning.html", set_session_cookie=True)
             return
@@ -4926,6 +4937,51 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/api/dashboard/login":
+            payload = self._read_json_payload()
+            provided_username = _normalize_text(payload.get("username"))
+            provided_password = _normalize_text(payload.get("password"))
+            redirect_to = _normalize_text(payload.get("next")) or "/dashboard"
+            if not redirect_to.startswith("/"):
+                redirect_to = "/dashboard"
+
+            configured_username = os.environ.get(DASHBOARD_USERNAME_ENV_VAR, "").strip()
+            configured_password = os.environ.get(DASHBOARD_PASSWORD_ENV_VAR, "").strip()
+            auth_required = bool(configured_username or configured_password)
+
+            if auth_required and (
+                not secrets.compare_digest(provided_username, configured_username)
+                or not secrets.compare_digest(provided_password, configured_password)
+            ):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Invalid dashboard credentials"})
+                return
+
+            response = json.dumps({"ok": True, "redirect_to": redirect_to}, ensure_ascii=False).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self._send_cors_headers(self.headers.get("Origin"))
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(response)))
+            cookie = self._build_dashboard_session_cookie()
+            if cookie:
+                self.send_header("Set-Cookie", cookie)
+            self.end_headers()
+            self.wfile.write(response)
+            return
+
+        if self.path == "/api/dashboard/logout":
+            response = json.dumps({"ok": True}, ensure_ascii=False).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self._send_cors_headers(self.headers.get("Origin"))
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(response)))
+            self.send_header(
+                "Set-Cookie",
+                "dashboard_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+            )
+            self.end_headers()
+            self.wfile.write(response)
+            return
+
         if self.path == "/api/guests":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -5665,17 +5721,33 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self._send_cors_headers(self.headers.get("Origin"))
         self.send_header("Content-Type", content_type or "application/octet-stream")
+        # Avoid stale dashboard bundles on Railway edge caches after deploys.
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         if set_session_cookie:
-            session_secret = self.__class__._session_secret
-            if session_secret:
-                host = self.headers.get("Host", "")
-                is_secure = not (host.startswith("127.0.0.1") or host.startswith("localhost"))
-                cookie = f"dashboard_session={session_secret}; HttpOnly; SameSite=Strict; Path=/"
-                if is_secure:
-                    cookie += "; Secure"
+            cookie = self._build_dashboard_session_cookie()
+            if cookie:
                 self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(safe_path.read_bytes())
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _build_dashboard_session_cookie(self) -> str:
+        session_secret = self.__class__._session_secret
+        if not session_secret:
+            return ""
+        host = self.headers.get("Host", "")
+        is_secure = not (host.startswith("127.0.0.1") or host.startswith("localhost"))
+        cookie = f"dashboard_session={session_secret}; HttpOnly; SameSite=Strict; Path=/"
+        if is_secure:
+            cookie += "; Secure"
+        return cookie
 
     def _send_json(self, status: HTTPStatus, payload: Dict[str, Any]) -> None:
         response = json.dumps(payload, ensure_ascii=False).encode("utf-8")
