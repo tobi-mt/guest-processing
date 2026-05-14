@@ -209,11 +209,17 @@ async function fetchTemplate(url, payload) {
 }
 
 function setMessage(text, tone = "") {
+  if (!message) {
+    return;
+  }
   message.textContent = text;
   message.className = `message ${tone}`.trim();
 }
 
 function setImportMessage(text, tone = "") {
+  if (!importMessage) {
+    return;
+  }
   importMessage.textContent = text;
   importMessage.className = `message ${tone}`.trim();
 }
@@ -933,23 +939,45 @@ function renderInlineEditor(editorNode, guest) {
 function renderGuests(payload) {
   latestPayload = payload;
   emailEnabled = Boolean(payload.email_enabled);
-  metrics.total.textContent = payload.stats.total ?? 0;
-  metrics.processed.textContent = payload.stats.processed ?? 0;
-  metrics.unprocessed.textContent = payload.stats.unprocessed ?? 0;
+  if (metrics.total) {
+    metrics.total.textContent = payload.stats.total ?? 0;
+  }
+  if (metrics.processed) {
+    metrics.processed.textContent = payload.stats.processed ?? 0;
+  }
+  if (metrics.unprocessed) {
+    metrics.unprocessed.textContent = payload.stats.unprocessed ?? 0;
+  }
 
   const accepted = payload.email_stats.accepted_emails ?? 0;
   const rejected = payload.email_stats.rejected_emails ?? 0;
   const skipped = payload.email_stats.skipped_guests ?? 0;
   const decided = accepted + rejected + skipped;
 
-  insights.accepted.textContent = accepted;
-  insights.rejected.textContent = rejected;
-  insights.skipped.textContent = skipped;
-  insights.acceptanceRate.textContent = decided ? `${Math.round((accepted / decided) * 100)}%` : "0%";
-  recommendationInsights.strongFits.textContent = payload.recommendation_stats?.strong_fits ?? 0;
-  recommendationInsights.reviewQueue.textContent = payload.recommendation_stats?.review_queue ?? 0;
-  recommendationInsights.highRisk.textContent = payload.recommendation_stats?.high_risk ?? 0;
-  recommendationInsights.averageScore.textContent = payload.recommendation_stats?.average_score ?? 0;
+  if (insights.accepted) {
+    insights.accepted.textContent = accepted;
+  }
+  if (insights.rejected) {
+    insights.rejected.textContent = rejected;
+  }
+  if (insights.skipped) {
+    insights.skipped.textContent = skipped;
+  }
+  if (insights.acceptanceRate) {
+    insights.acceptanceRate.textContent = decided ? `${Math.round((accepted / decided) * 100)}%` : "0%";
+  }
+  if (recommendationInsights.strongFits) {
+    recommendationInsights.strongFits.textContent = payload.recommendation_stats?.strong_fits ?? 0;
+  }
+  if (recommendationInsights.reviewQueue) {
+    recommendationInsights.reviewQueue.textContent = payload.recommendation_stats?.review_queue ?? 0;
+  }
+  if (recommendationInsights.highRisk) {
+    recommendationInsights.highRisk.textContent = payload.recommendation_stats?.high_risk ?? 0;
+  }
+  if (recommendationInsights.averageScore) {
+    recommendationInsights.averageScore.textContent = payload.recommendation_stats?.average_score ?? 0;
+  }
 
   const filteredGuests = sortGuests(
     payload.guests.filter((guest) => {
@@ -1378,7 +1406,7 @@ async function loadGuests() {
     const payload = await fetchJSON("/api/guests");
     renderGuests(payload);
     storeCachedPayload(GUEST_PAYLOAD_CACHE_KEY, payload);
-    if (message.classList.contains("pending")) {
+    if (message && message.classList.contains("pending")) {
       setMessage("", "");
     }
   } catch (error) {
@@ -1386,6 +1414,7 @@ async function loadGuests() {
   }
 }
 
+if (form) {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(form);
@@ -1412,7 +1441,9 @@ form.addEventListener("submit", async (event) => {
     setMessage(error.userMessage || error.message, "error");
   }
 });
+}
 
+if (importForm) {
 importForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(importForm);
@@ -1442,7 +1473,9 @@ importForm.addEventListener("submit", async (event) => {
     submitButton.textContent = "Import File";
   }
 });
+}
 
+if (refreshButton) {
 refreshButton.addEventListener("click", async () => {
   await loadingManager.wrap(
     refreshButton,
@@ -1450,10 +1483,13 @@ refreshButton.addEventListener("click", async () => {
     { loadingText: "Refreshing...", successText: "✓ Refreshed" }
   );
 });
+}
 
+if (exportButton) {
 exportButton.addEventListener("click", () => {
   window.location.href = "/api/export";
 });
+}
 
 if (bulkResearchButton) {
   bulkResearchButton.addEventListener("click", async () => {
@@ -1505,12 +1541,14 @@ if (bulkResearchButton) {
   });
 }
 
+if (decisionFilter) {
 decisionFilter.addEventListener("change", () => {
   visibleGuestCount = GUEST_PAGE_SIZE;
   if (latestPayload) {
     renderGuests(latestPayload);
   }
 });
+}
 
 // Debounce search input for better performance
 const debouncedSearch = debounce(() => {
@@ -1520,20 +1558,26 @@ const debouncedSearch = debounce(() => {
   }
 }, 300);
 
-guestSearch.addEventListener("input", debouncedSearch);
+if (guestSearch) {
+  guestSearch.addEventListener("input", debouncedSearch);
+}
 
+if (guestSort) {
 guestSort.addEventListener("change", () => {
   if (latestPayload) {
     renderGuests(latestPayload);
   }
 });
+}
 
+if (guestLoadMoreButton) {
 guestLoadMoreButton.addEventListener("click", () => {
   visibleGuestCount += GUEST_PAGE_SIZE;
   if (latestPayload) {
     renderGuests(latestPayload);
   }
 });
+}
 
 guestPresetButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -1661,6 +1705,9 @@ const aiStatusIndicator = document.getElementById("ai-status-indicator");
 let currentAIContent = "";
 
 async function checkAIStatus() {
+  if (!aiStatusIndicator) {
+    return;
+  }
   try {
     const data = await fetchJSON("/api/ai/status");
     aiEnabled = data.configured || false;
@@ -1952,5 +1999,9 @@ console.log('  • Request deduplication prevents duplicate API calls');
 console.log('  • Smart caching reduces server load');
 console.log('  • Keyboard shortcuts enabled (press Shift+/ for help)');
 
-applyUrlState();
-loadGuests();
+try {
+  applyUrlState();
+  loadGuests();
+} catch (error) {
+  console.error('Dashboard startup failed before loading guests:', error);
+}
