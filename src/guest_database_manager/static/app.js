@@ -18,6 +18,25 @@ const guestPresetButtons = Array.from(document.querySelectorAll("[data-guest-pre
 const GUEST_PAGE_SIZE = 12;
 const GUEST_PAYLOAD_CACHE_KEY = "mirror-talk-dashboard-payload";
 
+// Initialize performance utilities
+const { 
+  debounce, 
+  throttle, 
+  RequestDeduplicator, 
+  LoadingStateManager,
+  SmartCache,
+  KeyboardShortcutManager,
+  OptimisticUpdateManager,
+  retryWithBackoff,
+  getUserFriendlyError
+} = window.PerformanceUtils || {};
+
+const requestDeduplicator = new RequestDeduplicator();
+const loadingManager = new LoadingStateManager();
+const smartCache = new SmartCache({ maxSize: 100, defaultTTL: 5 * 60 * 1000 });
+const keyboardManager = new KeyboardShortcutManager();
+const optimisticManager = new OptimisticUpdateManager();
+
 const metrics = {
   total: document.getElementById("metric-total"),
   processed: document.getElementById("metric-processed"),
@@ -99,10 +118,24 @@ function confirmCriticalAction(message) {
 
 async function fetchJSON(url, options = {}) {
   const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
-  let lastError = null;
+  
+  // Deduplicate GET requests
+  if (isReadRequest && requestDeduplicator) {
+    const cacheKey = `${url}_${JSON.stringify(options)}`;
+    return requestDeduplicator.dedupe(cacheKey, async () => {
+      return await fetchJSONInternal(url, options);
+    });
+  }
+  
+  return await fetchJSONInternal(url, options);
+}
 
-  for (let attempt = 0; attempt < (isReadRequest ? 2 : 1); attempt += 1) {
-    try {
+async function fetchJSONInternal(url, options = {}) {
+  const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
+  
+  // Use retry with backoff for better reliability
+  return await retryWithBackoff(
+    async () => {
       const response = await fetch(url, {
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
@@ -111,19 +144,22 @@ async function fetchJSON(url, options = {}) {
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || "Request failed");
+        const error = new Error(data.error || "Request failed");
+        error.status = response.status;
+        error.userMessage = getUserFriendlyError(error);
+        throw error;
       }
       return data;
-    } catch (error) {
-      lastError = error;
-      if (!isReadRequest || attempt > 0) {
-        break;
+    },
+    {
+      maxRetries: isReadRequest ? 2 : 1,
+      baseDelay: 350,
+      shouldRetry: (error, attempt) => {
+        // Retry on network errors and 5xx server errors
+        return isReadRequest && (!error.status || error.status >= 500);
       }
-      await new Promise((resolve) => window.setTimeout(resolve, 350));
     }
-  }
-
-  throw lastError || new Error("Request failed");
+  );
 }
 
 async function fetchUpload(url, formData) {
@@ -1330,23 +1366,25 @@ form.addEventListener("submit", async (event) => {
   const formData = new FormData(form);
   const payload = Object.fromEntries(formData.entries());
   const submitButton = form.querySelector("button[type='submit']");
-  submitButton.disabled = true;
-  submitButton.textContent = "Saving...";
+  
   setMessage("Saving guest...", "pending");
 
   try {
-    await fetchJSON("/api/guests", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    form.reset();
-    setMessage("Guest saved directly to the database.", "success");
-    await loadGuests();
+    await loadingManager.wrap(
+      submitButton,
+      async () => {
+        await fetchJSON("/api/guests", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        form.reset();
+        setMessage("Guest saved directly to the database.", "success");
+        await loadGuests();
+      },
+      { loadingText: "Saving...", successText: "✓ Saved" }
+    );
   } catch (error) {
-    setMessage(error.message, "error");
-  } finally {
-    submitButton.disabled = false;
-    submitButton.textContent = "Save Guest";
+    setMessage(error.userMessage || error.message, "error");
   }
 });
 
@@ -1381,7 +1419,11 @@ importForm.addEventListener("submit", async (event) => {
 });
 
 refreshButton.addEventListener("click", async () => {
-  await loadGuests();
+  await loadingManager.wrap(
+    refreshButton,
+    () => loadGuests(),
+    { loadingText: "Refreshing...", successText: "✓ Refreshed" }
+  );
 });
 
 exportButton.addEventListener("click", () => {
@@ -1445,12 +1487,15 @@ decisionFilter.addEventListener("change", () => {
   }
 });
 
-guestSearch.addEventListener("input", () => {
+// Debounce search input for better performance
+const debouncedSearch = debounce(() => {
   visibleGuestCount = GUEST_PAGE_SIZE;
   if (latestPayload) {
     renderGuests(latestPayload);
   }
-});
+}, 300);
+
+guestSearch.addEventListener("input", debouncedSearch);
 
 guestSort.addEventListener("change", () => {
   if (latestPayload) {
@@ -1797,6 +1842,86 @@ if (aiModal) {
 
 // Check AI status on load
 checkAIStatus();
+
+// Set up keyboard shortcuts for power users
+if (keyboardManager) {
+  // Refresh data
+  keyboardManager.register('meta+r', (e) => {
+    e.preventDefault();
+    refreshButton.click();
+  }, 'Refresh guest list');
+  
+  // Search focus
+  keyboardManager.register('meta+f', (e) => {
+    e.preventDefault();
+    guestSearch.focus();
+    guestSearch.select();
+  }, 'Focus search box');
+  
+  keyboardManager.register('/', (e) => {
+    const target = e.target;
+    if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
+      e.preventDefault();
+      guestSearch.focus();
+    }
+  }, 'Quick search (/)');
+  
+  // View presets
+  keyboardManager.register('1', () => {
+    const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'all');
+    if (btn) btn.click();
+  }, 'Show all guests (1)');
+  
+  keyboardManager.register('2', () => {
+    const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'needs_review');
+    if (btn) btn.click();
+  }, 'Show needs review (2)');
+  
+  keyboardManager.register('3', () => {
+    const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'ai_strong_fit');
+    if (btn) btn.click();
+  }, 'Show AI strong fits (3)');
+  
+  keyboardManager.register('4', () => {
+    const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'accepted');
+    if (btn) btn.click();
+  }, 'Show accepted guests (4)');
+  
+  // Close modal
+  keyboardManager.register('escape', () => {
+    if (aiModal && !aiModal.classList.contains('hidden')) {
+      hideAIModal();
+    }
+  }, 'Close modal (Esc)');
+  
+  // Show keyboard shortcuts help
+  keyboardManager.register('shift+/', () => {
+    const shortcuts = keyboardManager.getShortcuts();
+    const shortcutList = shortcuts
+      .map(s => `<li><kbd>${escapeHtml(s.shortcut)}</kbd> — ${escapeHtml(s.description)}</li>`)
+      .join('');
+    showAIModal(
+      '⌨️ Keyboard Shortcuts',
+      `<div class="shortcuts-help"><ul>${shortcutList}</ul></div>`
+    );
+  }, 'Show keyboard shortcuts (Shift+?)');
+  
+  keyboardManager.enable();
+}
+
+// Automatically prune expired cache entries periodically
+if (smartCache) {
+  setInterval(() => {
+    smartCache.prune();
+  }, 5 * 60 * 1000); // Every 5 minutes
+}
+
+// Provide visual feedback when app is ready
+console.log('✓ Mirror Talk Dashboard ready with performance optimizations');
+console.log('  • Debounced search for faster filtering');
+console.log('  • Request deduplication prevents duplicate API calls');
+console.log('  • Smart caching reduces server load');
+console.log('  • Keyboard shortcuts enabled (press Shift+/ for help)');
 
 applyUrlState();
 loadGuests();

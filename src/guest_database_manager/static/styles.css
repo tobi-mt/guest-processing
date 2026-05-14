@@ -1337,3 +1337,272 @@ button:disabled {
     text-align: center;
   }
 }
+
+/* ==================== Performance & UX Enhancements ==================== */
+
+/* Loading States */
+button.loading {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+
+button.loading::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  color: inherit;
+  opacity: 0.7;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Smooth transitions for interactive elements */
+.guest-card,
+.panel,
+.hero-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.guest-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 24px 72px rgba(61, 40, 18, 0.15);
+}
+
+/* Better focus states for accessibility */
+input:focus,
+textarea:focus,
+select:focus,
+button:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Keyboard shortcut help styles */
+.shortcuts-help ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.shortcuts-help li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 10px;
+}
+
+.shortcuts-help kbd {
+  display: inline-block;
+  padding: 4px 10px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(244, 237, 225, 0.9));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05), inset 0 -1px 1px rgba(0, 0, 0, 0.1);
+  min-width: 32px;
+  text-align: center;
+}
+
+/* Optimistic update feedback */
+.updating {
+  opacity: 0.7;
+  pointer-events: none;
+  position: relative;
+}
+
+.updating::after {
+  content: '↻';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 1.2rem;
+  animation: spin 1s linear infinite;
+}
+
+/* Enhanced error messages */
+.message.error {
+  animation: shake 0.4s ease;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+  20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+
+/* Success feedback */
+.message.success {
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Smoother page transitions */
+.guest-list {
+  animation: fadeIn 0.4s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Better loading skeleton for search results */
+.guest-list.loading .guest-card {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Enhanced button click feedback */
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Improved preset chip active state */
+.preset-chip.active {
+  animation: chipActivate 0.3s ease;
+}
+
+@keyframes chipActivate {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+/* Better visual hierarchy for cards */
+.guest-ai-card {
+  transition: all 0.2s ease;
+}
+
+.guest-ai-card:hover {
+  box-shadow: 0 4px 12px rgba(91, 70, 47, 0.12);
+}
+
+/* Responsive performance improvements */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Network status indicator */
+.network-status {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 12px 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  font-size: 0.85rem;
+  font-weight: 600;
+  z-index: 1000;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.network-status.hidden {
+  opacity: 0;
+  transform: translateY(20px);
+  pointer-events: none;
+}
+
+.network-status.offline {
+  background: rgba(143, 45, 31, 0.12);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.network-status.online {
+  background: rgba(20, 90, 74, 0.14);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Scroll performance optimization */
+.guest-list {
+  will-change: contents;
+  contain: layout style paint;
+}
+
+.guest-card {
+  contain: layout style paint;
+}
+
+/* Better empty state */
+.guest-list:empty::after {
+  content: 'No guests found matching your filters.';
+  display: block;
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Tooltip for keyboard shortcuts hints */
+[data-shortcut-hint]::after {
+  content: attr(data-shortcut-hint);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  background: rgba(45, 36, 26, 0.95);
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 1000;
+}
+
+[data-shortcut-hint]:hover::after {
+  opacity: 1;
+}

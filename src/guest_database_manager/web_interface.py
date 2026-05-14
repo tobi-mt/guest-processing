@@ -595,8 +595,13 @@ class GuestWebService:
         except WebInterfaceError:
             return False
 
-    def _next_legacy_episode_number(self, current_episode_id: Any = None) -> str:
-        """Return the next numeric legacy episode number when one can be inferred."""
+    def _next_legacy_episode_number(self, current_episode_id: Any = None, target_release_date: str = "") -> str:
+        """Return the next numeric legacy episode number when one can be inferred.
+        
+        Args:
+            current_episode_id: Episode ID to exclude from calculations (when editing)
+            target_release_date: Release date of the episode being created (ISO format)
+        """
         current_id = str(current_episode_id or "").strip()
         episodes = [
             episode
@@ -620,15 +625,38 @@ class GuestWebService:
                 return None
             return max(scoped_numbers)
 
-        anchored_rows = [
+        # Use target date or today as reference for date-aware filtering
+        reference_date = _normalize_text(target_release_date) or datetime.now(timezone.utc).date().isoformat()
+        
+        # Find episodes with dates on or before the target date (date-aware filtering)
+        # This ensures future scheduled episodes don't affect numbering for current releases
+        relevant_episodes = [
             episode
             for episode in episodes
-            if _normalize_text(episode.get("release_status")).lower() in {"released", "scheduled"}
-            and _normalize_text(episode.get("release_date"))
+            if _normalize_text(episode.get("release_date"))
+            and _normalize_text(episode.get("legacy_episode_number")).isdigit()
+            and _normalize_text(episode.get("release_status")).lower() in {"released", "scheduled"}
+            and _normalize_text(episode.get("release_date")) <= reference_date
         ]
-        max_number = extract_max(anchored_rows)
+        
+        # Find the latest episode by date among those on or before the target date
+        max_number = None
+        if relevant_episodes:
+            try:
+                # Sort by release date to find the most recent
+                relevant_episodes.sort(
+                    key=lambda ep: _normalize_text(ep.get("release_date")),
+                    reverse=True
+                )
+                latest = relevant_episodes[0]
+                max_number = int(_normalize_text(latest.get("legacy_episode_number")))
+            except (ValueError, IndexError):
+                pass
+        
+        # Fallback to any episodes if no date-anchored episodes found
         if max_number is None:
             max_number = extract_max(episodes)
+        
         candidate = (max_number or 0) + 1
         while candidate in all_numbers:
             candidate += 1
@@ -2917,7 +2945,10 @@ class GuestWebService:
                 }
             )
         parsed_priority_score = _clamp_priority_score(parsed_priority_score)
-        legacy_episode_number = _normalize_text(payload.get("legacy_episode_number")) or self._next_legacy_episode_number(payload.get("id"))
+        legacy_episode_number = _normalize_text(payload.get("legacy_episode_number")) or self._next_legacy_episode_number(
+            payload.get("id"),
+            normalized_release_date
+        )
         episode_data = {
             "id": payload.get("id"),
             "guest_id": payload.get("guest_id"),
