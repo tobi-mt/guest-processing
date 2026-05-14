@@ -18,18 +18,43 @@ const guestPresetButtons = Array.from(document.querySelectorAll("[data-guest-pre
 const GUEST_PAGE_SIZE = 12;
 const GUEST_PAYLOAD_CACHE_KEY = "mirror-talk-dashboard-payload";
 
-// Initialize performance utilities
-const { 
-  debounce, 
-  throttle, 
-  RequestDeduplicator, 
-  LoadingStateManager,
-  SmartCache,
-  KeyboardShortcutManager,
-  OptimisticUpdateManager,
-  retryWithBackoff,
-  getUserFriendlyError
-} = window.PerformanceUtils || {};
+// Initialize performance utilities with safe fallbacks so dashboard data
+// still loads even if performance-utils.js fails to initialize.
+const perfUtils = window.PerformanceUtils || {};
+const debounce = perfUtils.debounce || ((fn) => fn);
+const throttle = perfUtils.throttle || ((fn) => fn);
+const RequestDeduplicator = perfUtils.RequestDeduplicator || class {
+  async dedupe(_key, requestFn) {
+    return requestFn();
+  }
+};
+const LoadingStateManager = perfUtils.LoadingStateManager || class {
+  async wrap(_element, asyncFn, _options = {}) {
+    return asyncFn();
+  }
+};
+const SmartCache = perfUtils.SmartCache || class {
+  constructor(_options = {}) {}
+  prune() {}
+};
+const KeyboardShortcutManager = perfUtils.KeyboardShortcutManager || class {
+  register(_shortcut, _handler, _description = "") {}
+  enable() {}
+  getShortcuts() {
+    return [];
+  }
+};
+const OptimisticUpdateManager = perfUtils.OptimisticUpdateManager || class {
+  async apply(_id, optimisticFn, actualFn, _rollbackFn) {
+    optimisticFn();
+    return actualFn();
+  }
+};
+const retryWithBackoff = perfUtils.retryWithBackoff || (async (fn) => fn());
+const getUserFriendlyError = perfUtils.getUserFriendlyError || ((error) => {
+  if (!error) return "An unknown error occurred";
+  return error.message || String(error);
+});
 
 const requestDeduplicator = new RequestDeduplicator();
 const loadingManager = new LoadingStateManager();
@@ -1840,73 +1865,77 @@ if (aiModal) {
   aiModal.querySelector(".modal-backdrop")?.addEventListener("click", hideAIModal);
 }
 
-// Check AI status on load
-checkAIStatus();
+try {
+  // Check AI status on load
+  checkAIStatus();
 
-// Set up keyboard shortcuts for power users
-if (keyboardManager) {
-  // Refresh data
-  keyboardManager.register('meta+r', (e) => {
-    e.preventDefault();
-    refreshButton.click();
-  }, 'Refresh guest list');
-  
-  // Search focus
-  keyboardManager.register('meta+f', (e) => {
-    e.preventDefault();
-    guestSearch.focus();
-    guestSearch.select();
-  }, 'Focus search box');
-  
-  keyboardManager.register('/', (e) => {
-    const target = e.target;
-    if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
+  // Set up keyboard shortcuts for power users
+  if (keyboardManager) {
+    // Refresh data
+    keyboardManager.register('meta+r', (e) => {
+      e.preventDefault();
+      refreshButton.click();
+    }, 'Refresh guest list');
+    
+    // Search focus
+    keyboardManager.register('meta+f', (e) => {
       e.preventDefault();
       guestSearch.focus();
-    }
-  }, 'Quick search (/)');
-  
-  // View presets
-  keyboardManager.register('1', () => {
-    const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'all');
-    if (btn) btn.click();
-  }, 'Show all guests (1)');
-  
-  keyboardManager.register('2', () => {
-    const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'needs_review');
-    if (btn) btn.click();
-  }, 'Show needs review (2)');
-  
-  keyboardManager.register('3', () => {
-    const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'ai_strong_fit');
-    if (btn) btn.click();
-  }, 'Show AI strong fits (3)');
-  
-  keyboardManager.register('4', () => {
-    const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'accepted');
-    if (btn) btn.click();
-  }, 'Show accepted guests (4)');
-  
-  // Close modal
-  keyboardManager.register('escape', () => {
-    if (aiModal && !aiModal.classList.contains('hidden')) {
-      hideAIModal();
-    }
-  }, 'Close modal (Esc)');
-  
-  // Show keyboard shortcuts help
-  keyboardManager.register('shift+/', () => {
-    const shortcuts = keyboardManager.getShortcuts();
-    const shortcutList = shortcuts
-      .map(s => `<li><kbd>${escapeHtml(s.shortcut)}</kbd> — ${escapeHtml(s.description)}</li>`)
-      .join('');
-    showAIModal(
-      '⌨️ Keyboard Shortcuts',
-      `<div class="shortcuts-help"><ul>${shortcutList}</ul></div>`
-    );
-  }, 'Show keyboard shortcuts (Shift+?)');
-  
-  keyboardManager.enable();
+      guestSearch.select();
+    }, 'Focus search box');
+    
+    keyboardManager.register('/', (e) => {
+      const target = e.target;
+      if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        guestSearch.focus();
+      }
+    }, 'Quick search (/)');
+    
+    // View presets
+    keyboardManager.register('1', () => {
+      const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'all');
+      if (btn) btn.click();
+    }, 'Show all guests (1)');
+    
+    keyboardManager.register('2', () => {
+      const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'needs_review');
+      if (btn) btn.click();
+    }, 'Show needs review (2)');
+    
+    keyboardManager.register('3', () => {
+      const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'ai_strong_fit');
+      if (btn) btn.click();
+    }, 'Show AI strong fits (3)');
+    
+    keyboardManager.register('4', () => {
+      const btn = guestPresetButtons.find(b => b.dataset.guestPreset === 'accepted');
+      if (btn) btn.click();
+    }, 'Show accepted guests (4)');
+    
+    // Close modal
+    keyboardManager.register('escape', () => {
+      if (aiModal && !aiModal.classList.contains('hidden')) {
+        hideAIModal();
+      }
+    }, 'Close modal (Esc)');
+    
+    // Show keyboard shortcuts help
+    keyboardManager.register('shift+/', () => {
+      const shortcuts = keyboardManager.getShortcuts();
+      const shortcutList = shortcuts
+        .map(s => `<li><kbd>${escapeHtml(s.shortcut)}</kbd> — ${escapeHtml(s.description)}</li>`)
+        .join('');
+      showAIModal(
+        '⌨️ Keyboard Shortcuts',
+        `<div class="shortcuts-help"><ul>${shortcutList}</ul></div>`
+      );
+    }, 'Show keyboard shortcuts (Shift+?)');
+    
+    keyboardManager.enable();
+  }
+} catch (error) {
+  console.error('Dashboard initialization warning:', error);
 }
 
 // Automatically prune expired cache entries periodically

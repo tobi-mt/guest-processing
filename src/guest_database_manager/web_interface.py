@@ -76,6 +76,7 @@ ALLOWED_ORIGINS = {
 API_TOKEN_ENV_VAR = "MIRROR_TALK_INTAKE_API_TOKEN"
 DASHBOARD_USERNAME_ENV_VAR = "MIRROR_TALK_DASHBOARD_USERNAME"
 DASHBOARD_PASSWORD_ENV_VAR = "MIRROR_TALK_DASHBOARD_PASSWORD"
+DASHBOARD_SESSION_SECRET_ENV_VAR = "MIRROR_TALK_DASHBOARD_SESSION_SECRET"
 EMAIL_SMTP_SERVER_ENV_VAR = "MIRROR_TALK_SMTP_SERVER"
 EMAIL_SMTP_PORT_ENV_VAR = "MIRROR_TALK_SMTP_PORT"
 EMAIL_USERNAME_ENV_VAR = "MIRROR_TALK_SMTP_USERNAME"
@@ -5829,7 +5830,8 @@ def create_web_server(
     """Create the HTTP server for the direct web interface."""
     server = ThreadingHTTPServer((host, port), GuestWebRequestHandler)
     GuestWebRequestHandler.service = GuestWebService(Path(db_path))
-    GuestWebRequestHandler._session_secret = secrets.token_urlsafe(32)
+    configured_secret = os.environ.get(DASHBOARD_SESSION_SECRET_ENV_VAR, "").strip()
+    GuestWebRequestHandler._session_secret = configured_secret or secrets.token_urlsafe(32)
     return server
 
 
