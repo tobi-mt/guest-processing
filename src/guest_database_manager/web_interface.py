@@ -557,7 +557,9 @@ class GuestWebService:
         """Return a short cache TTL for expensive dashboard payloads."""
         if cache_key == "planning_ai_copilot":
             return 0.0
-        return 15.0
+        # Increased from 15s to 5 minutes for better performance
+        # The enrichment process is expensive, so we cache longer
+        return 300.0
 
     def _get_cached_payload(self, cache_key: str) -> Optional[Dict[str, Any]]:
         """Return a recent cached payload when it is still fresh enough to reuse."""
@@ -682,16 +684,36 @@ class GuestWebService:
             return 5.0
         return 3.0
 
-    def list_guests(self) -> Dict[str, Any]:
-        """Return all guests for the frontend."""
-        cached = self._get_cached_payload("guests")
+    def list_guests(self, skip_expensive_enrichment: bool = False) -> Dict[str, Any]:
+        """Return all guests for the frontend.
+        
+        Args:
+            skip_expensive_enrichment: If True, skip AI scoring and heavy processing
+                                       for faster responses (used after quick saves)
+        """
+        cache_key = "guests" if not skip_expensive_enrichment else "guests_lite"
+        cached = self._get_cached_payload(cache_key)
         if cached is not None:
             return cached
+        
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         interviews = self.database.list_interviews()
-        guests = [serialize_guest(guest) for guest in enrich_guests_with_recommendations(self.database.get_all_guests())]
+        
+        # Get raw guests first
+        raw_guests = self.database.get_all_guests()
+        
+        # Conditionally apply expensive AI enrichment
+        if skip_expensive_enrichment:
+            # Fast path: skip AI scoring
+            guests = [serialize_guest(guest) for guest in raw_guests]
+        else:
+            # Full path: include AI recommendations
+            guests = [serialize_guest(guest) for guest in enrich_guests_with_recommendations(raw_guests)]
+        
+        # Build guest context (optimized to reuse episodes/interviews lists)
         for guest in guests:
-            guest["promotion_profile"] = self._build_guest_promotion_profile(guest)
+            if not skip_expensive_enrichment:
+                guest["promotion_profile"] = self._build_guest_promotion_profile(guest)
             guest["planning_summary"] = self._build_guest_planning_summary(guest, episodes)
             guest["workflow_context"] = self._build_guest_workflow_context(guest, interviews, episodes)
             guest["dashboard_processed"] = bool(guest["workflow_context"].get("dashboard_processed"))
@@ -701,8 +723,10 @@ class GuestWebService:
             guest["dashboard_status_label"] = guest["workflow_context"].get("dashboard_status_label") or (
                 guest.get("email_status") or ("processed" if guest.get("is_processed") else "unprocessed")
             )
+        
         processed_count = sum(1 for guest in guests if guest.get("dashboard_processed"))
-        return self._store_cached_payload("guests", {
+        
+        result = {
             "guests": guests,
             "stats": {
                 "total": len(guests),
@@ -710,9 +734,22 @@ class GuestWebService:
                 "unprocessed": len(guests) - processed_count,
             },
             "email_stats": self.database.get_email_stats(),
-            "recommendation_stats": build_guest_recommendation_stats(guests),
             "email_enabled": self._build_email_manager().is_configured(),
-        })
+        }
+        
+        # Only include recommendation stats if we did the expensive enrichment
+        if not skip_expensive_enrichment:
+            result["recommendation_stats"] = build_guest_recommendation_stats(guests)
+        else:
+            # Provide dummy stats for lite mode
+            result["recommendation_stats"] = {
+                "strong_fits": 0,
+                "review_queue": 0,
+                "high_risk": 0,
+                "average_score": 0,
+            }
+        
+        return self._store_cached_payload(cache_key, result)
 
     def list_operations(self) -> Dict[str, Any]:
         """Return the current interview and episode operations data."""
@@ -1825,7 +1862,10 @@ class GuestWebService:
         """Create a guest directly from the web form."""
         guest_data = build_guest_payload(payload, source_name=source_name)
         guest_id, _ = self.database.upsert_guest(guest_data)
-        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
+        # Don't invalidate full cache on single guest save - let it expire naturally
+        # This prevents expensive re-enrichment of ALL guests on every save
+        # Only invalidate planning caches as they're more time-sensitive
+        self._invalidate_payload_cache("planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         return serialize_guest(guest) if guest else {"id": guest_id}
 
@@ -1979,7 +2019,8 @@ class GuestWebService:
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest not found.")
-        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
+        # Don't invalidate guests cache - let it expire naturally for better performance
+        self._invalidate_payload_cache("planning", "planning_ai_copilot")
         return serialize_guest(guest)
 
     def send_guest_decision_email(self, guest_id: int, status: str, custom_message: str = "") -> Dict[str, Any]:
@@ -2061,7 +2102,7 @@ class GuestWebService:
         else:
             self.database.reject_guest_with_email(guest_id, custom_message)
 
-        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
+        self._invalidate_payload_cache("planning", "planning_ai_copilot")
         updated_guest = self.database.get_guest_by_id(guest_id)
         if not updated_guest:
             raise WebInterfaceError("Guest not found after email send.")
@@ -2082,7 +2123,8 @@ class GuestWebService:
             )
 
         self.database.delete_guest(guest_id)
-        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
+        # Invalidate all caches on delete since list changes
+        self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         return {"deleted": True, "id": guest_id}
 
     def update_guest(self, guest_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2126,7 +2168,8 @@ class GuestWebService:
             raise WebInterfaceError("Email address must contain '@'.")
 
         self.database.update_guest_by_id(guest_id, updated_guest)
-        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
+        # Don't invalidate guests cache on simple edits - let it expire naturally
+        self._invalidate_payload_cache("planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved.")
@@ -2149,7 +2192,7 @@ class GuestWebService:
         updated_guest["guest_research_updated_at"] = research.get("updated_at")
 
         self.database.update_guest_by_id(guest_id, updated_guest)
-        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
+        self._invalidate_payload_cache("planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved after research.")
@@ -2180,7 +2223,7 @@ class GuestWebService:
         updated_guest["guest_research_updated_at"] = research.get("updated_at")
 
         self.database.update_guest_by_id(guest_id, updated_guest)
-        self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
+        self._invalidate_payload_cache("planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved after search-assisted research.")
@@ -2226,7 +2269,8 @@ class GuestWebService:
             researched += 1
 
         if researched or errors:
-            self._invalidate_payload_cache("guests", "planning", "planning_ai_copilot")
+            # Only invalidate on bulk research since multiple guests changed
+            self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         return {
             "researched": researched,
             "errors": errors[:5],
@@ -2301,7 +2345,8 @@ class GuestWebService:
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
             raise WebInterfaceError("Interview could not be saved.")
-        self._invalidate_payload_cache("guests", "operations", "planning", "planning_ai_copilot")
+        # Interview changes don't require guest cache invalidation
+        self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
         return interview
 
     def _ensure_guest_record_for_interview(self, interview_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -4569,7 +4614,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
-            self._send_json(HTTPStatus.OK, self.service.list_guests())
+            # Support optional skip_enrichment query param for faster responses after saves
+            query = self._query_params(self.path)
+            skip_enrichment = query.get("skip_enrichment", "").lower() == "true"
+            self._send_json(HTTPStatus.OK, self.service.list_guests(skip_expensive_enrichment=skip_enrichment))
             return
 
         if request_path == "/api/booking/context":
