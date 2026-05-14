@@ -1651,31 +1651,6 @@ function renderEpisodes(episodes, totalCount) {
 
 function renderRecommendations(recommendations, totalCount) {
   recommendationList.innerHTML = "";
-  
-  // Show loading state during AI copilot hydration
-  if (aiCopilotHydrationInFlight && latestPlanningPayload.ai_scheduling_enabled) {
-    updateResultsMeta(
-      recommendationResultsMeta,
-      0,
-      0,
-      "AI copilot is analyzing top candidates...",
-      "Base recommendations are being enriched with AI insights"
-    );
-    recommendationList.innerHTML = `
-      <div class="operations-card">
-        <div style="text-align: center; padding: 2rem;">
-          <div class="loading" style="margin: 0 auto 1rem;"></div>
-          <p><strong>AI Copilot Analyzing</strong></p>
-          <p style="color: var(--text-secondary); margin-top: 0.5rem;">
-            Enriching top ${totalCount > 4 ? '4' : totalCount} recommendation${totalCount === 1 ? '' : 's'} with monthly themes, timing insights, and contextual analysis.
-          </p>
-        </div>
-      </div>
-    `;
-    recommendationLoadMoreButton.classList.add("hidden");
-    return;
-  }
-  
   updateResultsMeta(
     recommendationResultsMeta,
     recommendations.length,
@@ -1901,7 +1876,8 @@ async function hydrateAiSchedulingCopilot() {
   }
   aiCopilotHydrationInFlight = true;
   
-  // Show loading state
+  // Update status message only, don't re-render the whole page
+  const originalStatus = latestPlanningPayload.ai_copilot_status;
   latestPlanningPayload.ai_copilot_status = {
     status: "loading",
     message: "AI copilot is analyzing top candidates and enriching with monthly context...",
