@@ -1,3 +1,12 @@
+(() => {
+  try {
+    const probe = new Image();
+    probe.src = `/api/client-beacon?source=dashboard_app&phase=app_js_top&t=${Date.now()}`;
+  } catch (error) {
+    // Ignore telemetry failures.
+  }
+})();
+
 const form = document.getElementById("guest-form");
 const importForm = document.getElementById("import-form");
 const importMessage = document.getElementById("import-message");
