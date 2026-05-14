@@ -4564,6 +4564,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the direct web interface."""
 
     service: GuestWebService
+    _session_secret: str = ""  # Set at server start; validated via dashboard_session cookie
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         origin = self.headers.get("Origin")
@@ -4589,21 +4590,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             if not self._is_authorized_dashboard_request():
                 self._send_basic_auth_challenge()
                 return
-            self._serve_static("index.html")
+            self._serve_static("index.html", set_session_cookie=True)
             return
 
         if request_path in {"/operations", "/operations.html"}:
             if not self._is_authorized_dashboard_request():
                 self._send_basic_auth_challenge()
                 return
-            self._serve_static("operations.html")
+            self._serve_static("operations.html", set_session_cookie=True)
             return
 
         if request_path in {"/planning", "/planning.html"}:
             if not self._is_authorized_dashboard_request():
                 self._send_basic_auth_challenge()
                 return
-            self._serve_static("planning.html")
+            self._serve_static("planning.html", set_session_cookie=True)
             return
 
         if request_path.startswith("/static/"):
@@ -5646,7 +5647,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
         return fields, files
 
-    def _serve_static(self, relative_path: str) -> None:
+    def _serve_static(self, relative_path: str, set_session_cookie: bool = False) -> None:
         safe_path = (STATIC_DIR / relative_path).resolve()
         if not safe_path.is_file() or STATIC_DIR.resolve() not in safe_path.parents and safe_path != STATIC_DIR.resolve():
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "Static file not found"})
@@ -5656,6 +5657,15 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self._send_cors_headers(self.headers.get("Origin"))
         self.send_header("Content-Type", content_type or "application/octet-stream")
+        if set_session_cookie:
+            session_secret = self.__class__._session_secret
+            if session_secret:
+                host = self.headers.get("Host", "")
+                is_secure = not (host.startswith("127.0.0.1") or host.startswith("localhost"))
+                cookie = f"dashboard_session={session_secret}; HttpOnly; SameSite=Strict; Path=/"
+                if is_secure:
+                    cookie += "; Secure"
+                self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(safe_path.read_bytes())
 
@@ -5752,6 +5762,17 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         return f"{parts.scheme}://{parts.netloc}"
 
     def _is_authorized_dashboard_request(self) -> bool:
+        # Accept a previously issued session cookie so that JavaScript fetch()
+        # calls (which don't automatically forward HTTP Basic Auth credentials)
+        # still authenticate correctly after the user has logged in via the browser.
+        session_secret = self.__class__._session_secret
+        if session_secret:
+            cookie_header = self.headers.get("Cookie", "")
+            for part in cookie_header.split(";"):
+                name, _, value = part.strip().partition("=")
+                if name.strip() == "dashboard_session" and secrets.compare_digest(value.strip(), session_secret):
+                    return True
+
         configured_username = os.environ.get(DASHBOARD_USERNAME_ENV_VAR, "").strip()
         configured_password = os.environ.get(DASHBOARD_PASSWORD_ENV_VAR, "").strip()
 
@@ -5808,6 +5829,7 @@ def create_web_server(
     """Create the HTTP server for the direct web interface."""
     server = ThreadingHTTPServer((host, port), GuestWebRequestHandler)
     GuestWebRequestHandler.service = GuestWebService(Path(db_path))
+    GuestWebRequestHandler._session_secret = secrets.token_urlsafe(32)
     return server
 
 
