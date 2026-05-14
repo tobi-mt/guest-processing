@@ -140,6 +140,17 @@ let activeGuestPreset = "all";
 let activeGuestActionFeedback = null;
 let visibleGuestCount = GUEST_PAGE_SIZE;
 
+function emitClientBeacon(phase) {
+  try {
+    const probe = new Image();
+    probe.src = `/api/client-beacon?source=dashboard_app&phase=${encodeURIComponent(phase)}&t=${Date.now()}`;
+  } catch (error) {
+    // Never block dashboard on telemetry.
+  }
+}
+
+emitClientBeacon("app_js_evaluated");
+
 function readCachedPayload(cacheKey) {
   try {
     const raw = window.sessionStorage.getItem(cacheKey);
@@ -1437,6 +1448,7 @@ function renderGuests(payload) {
 }
 
 async function loadGuests() {
+  emitClientBeacon("loadGuests_enter");
   try {
     if (!latestPayload) {
       const cachedPayload = readCachedPayload(GUEST_PAYLOAD_CACHE_KEY);
@@ -1454,12 +1466,14 @@ async function loadGuests() {
       }
     }
     const payload = await fetchJSON("/api/guests");
+    emitClientBeacon("loadGuests_api_ok");
     renderGuests(payload);
     storeCachedPayload(GUEST_PAYLOAD_CACHE_KEY, payload);
     if (message && message.classList.contains("pending")) {
       setMessage("", "");
     }
   } catch (error) {
+    emitClientBeacon("loadGuests_error");
     setMessage(error.message, "error");
   }
 }
@@ -2050,8 +2064,10 @@ console.log('  • Smart caching reduces server load');
 console.log('  • Keyboard shortcuts enabled (press Shift+/ for help)');
 
 try {
+  emitClientBeacon("startup_try_enter");
   applyUrlState();
   loadGuests();
 } catch (error) {
+  emitClientBeacon("startup_try_error");
   console.error('Dashboard startup failed before loading guests:', error);
 }

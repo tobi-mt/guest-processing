@@ -4613,6 +4613,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._serve_static(relative_path)
             return
 
+        if request_path == "/api/client-beacon":
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self._send_cors_headers(self.headers.get("Origin"))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+
         if request_path == "/api/guests":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})

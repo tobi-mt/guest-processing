@@ -314,6 +314,12 @@
       </div>
     </div>
 
+    <script>
+      (() => {
+        const probe = new Image();
+        probe.src = `/api/client-beacon?source=dashboard_inline&phase=html_ready&t=${Date.now()}`;
+      })();
+    </script>
     <script src="/static/performance-utils.js"></script>
     <script src="/static/app.js" defer></script>
   </body>
