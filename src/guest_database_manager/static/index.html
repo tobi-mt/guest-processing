@@ -317,7 +317,7 @@
     <script>
       (() => {
         const probe = new Image();
-        probe.src = `/api/client-beacon?source=dashboard_inline&phase=html_ready&t=${Date.now()}`;
+        probe.src = `/api/client-beacon/dashboard_inline_html_ready?t=${Date.now()}`;
 
         window.addEventListener("error", (event) => {
           const message = encodeURIComponent(event.message || "unknown_error");
@@ -325,13 +325,13 @@
           const line = Number(event.lineno || 0);
           const col = Number(event.colno || 0);
           const errProbe = new Image();
-          errProbe.src = `/api/client-beacon?source=dashboard_inline&phase=window_error&msg=${message}&file=${file}&line=${line}&col=${col}&t=${Date.now()}`;
+          errProbe.src = `/api/client-beacon/dashboard_inline_window_error?msg=${message}&file=${file}&line=${line}&col=${col}&t=${Date.now()}`;
         });
 
         window.addEventListener("unhandledrejection", (event) => {
           const reason = encodeURIComponent(String(event.reason || "unknown_rejection"));
           const rejProbe = new Image();
-          rejProbe.src = `/api/client-beacon?source=dashboard_inline&phase=unhandled_rejection&reason=${reason}&t=${Date.now()}`;
+          rejProbe.src = `/api/client-beacon/dashboard_inline_unhandled_rejection?reason=${reason}&t=${Date.now()}`;
         });
       })();
     </script>
@@ -339,8 +339,8 @@
     <script
       src="/static/app.js"
       defer
-      onload="(function(){var i=new Image();i.src='/api/client-beacon?source=dashboard_inline&phase=appjs_tag_loaded&t='+Date.now();})();"
-      onerror="(function(){var i=new Image();i.src='/api/client-beacon?source=dashboard_inline&phase=appjs_tag_error&t='+Date.now();})();"
+      onload="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_loaded?t='+Date.now();})();"
+      onerror="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_error?t='+Date.now();})();"
     ></script>
   </body>
 </html>

@@ -1,7 +1,7 @@
 (() => {
   try {
     const probe = new Image();
-    probe.src = `/api/client-beacon?source=dashboard_app&phase=app_js_top&t=${Date.now()}`;
+    probe.src = `/api/client-beacon/dashboard_app_js_top?t=${Date.now()}`;
   } catch (error) {
     // Ignore telemetry failures.
   }
@@ -30,44 +30,44 @@ const GUEST_PAYLOAD_CACHE_KEY = "mirror-talk-dashboard-payload";
 // Initialize performance utilities with safe fallbacks so dashboard data
 // still loads even if performance-utils.js fails to initialize.
 const perfUtils = window.PerformanceUtils || {};
-const debounce = perfUtils.debounce || ((fn) => fn);
-const throttle = perfUtils.throttle || ((fn) => fn);
-const RequestDeduplicator = perfUtils.RequestDeduplicator || class {
+const debounceUtil = perfUtils.debounce || ((fn) => fn);
+const throttleUtil = perfUtils.throttle || ((fn) => fn);
+const RequestDeduplicatorCtor = perfUtils.RequestDeduplicator || class {
   async dedupe(_key, requestFn) {
     return requestFn();
   }
 };
-const LoadingStateManager = perfUtils.LoadingStateManager || class {
+const LoadingStateManagerCtor = perfUtils.LoadingStateManager || class {
   async wrap(_element, asyncFn, _options = {}) {
     return asyncFn();
   }
 };
-const SmartCache = perfUtils.SmartCache || class {
+const SmartCacheCtor = perfUtils.SmartCache || class {
   constructor(_options = {}) {}
   prune() {}
 };
-const KeyboardShortcutManager = perfUtils.KeyboardShortcutManager || class {
+const KeyboardShortcutManagerCtor = perfUtils.KeyboardShortcutManager || class {
   register(_shortcut, _handler, _description = "") {}
   enable() {}
   getShortcuts() {
     return [];
   }
 };
-const OptimisticUpdateManager = perfUtils.OptimisticUpdateManager || class {
+const OptimisticUpdateManagerCtor = perfUtils.OptimisticUpdateManager || class {
   async apply(_id, optimisticFn, actualFn, _rollbackFn) {
     optimisticFn();
     return actualFn();
   }
 };
-const retryWithBackoff = perfUtils.retryWithBackoff || (async (fn) => fn());
-const getUserFriendlyError = perfUtils.getUserFriendlyError || ((error) => {
+const retryWithBackoffFn = perfUtils.retryWithBackoff || (async (fn) => fn());
+const getUserFriendlyErrorFn = perfUtils.getUserFriendlyError || ((error) => {
   if (!error) return "An unknown error occurred";
   return error.message || String(error);
 });
 
 const requestDeduplicator = (() => {
   try {
-    return new RequestDeduplicator();
+    return new RequestDeduplicatorCtor();
   } catch (error) {
     console.error("Dashboard init warning: RequestDeduplicator unavailable", error);
     return { dedupe: (_key, requestFn) => requestFn() };
@@ -76,7 +76,7 @@ const requestDeduplicator = (() => {
 
 const loadingManager = (() => {
   try {
-    return new LoadingStateManager();
+    return new LoadingStateManagerCtor();
   } catch (error) {
     console.error("Dashboard init warning: LoadingStateManager unavailable", error);
     return {
@@ -87,7 +87,7 @@ const loadingManager = (() => {
 
 const smartCache = (() => {
   try {
-    return new SmartCache({ maxSize: 100, defaultTTL: 5 * 60 * 1000 });
+    return new SmartCacheCtor({ maxSize: 100, defaultTTL: 5 * 60 * 1000 });
   } catch (error) {
     console.error("Dashboard init warning: SmartCache unavailable", error);
     return { prune: () => {} };
@@ -96,7 +96,7 @@ const smartCache = (() => {
 
 const keyboardManager = (() => {
   try {
-    return new KeyboardShortcutManager();
+    return new KeyboardShortcutManagerCtor();
   } catch (error) {
     console.error("Dashboard init warning: KeyboardShortcutManager unavailable", error);
     return {
@@ -109,7 +109,7 @@ const keyboardManager = (() => {
 
 const optimisticManager = (() => {
   try {
-    return new OptimisticUpdateManager();
+    return new OptimisticUpdateManagerCtor();
   } catch (error) {
     console.error("Dashboard init warning: OptimisticUpdateManager unavailable", error);
     return {
@@ -152,7 +152,7 @@ let visibleGuestCount = GUEST_PAGE_SIZE;
 function emitClientBeacon(phase) {
   try {
     const probe = new Image();
-    probe.src = `/api/client-beacon?source=dashboard_app&phase=${encodeURIComponent(phase)}&t=${Date.now()}`;
+    probe.src = `/api/client-beacon/dashboard_app_${encodeURIComponent(phase)}?t=${Date.now()}`;
   } catch (error) {
     // Never block dashboard on telemetry.
   }
@@ -229,7 +229,7 @@ async function fetchJSONInternal(url, options = {}) {
   const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
   
   // Use retry with backoff for better reliability
-  return await retryWithBackoff(
+  return await retryWithBackoffFn(
     async () => {
       const response = await fetch(url, {
         credentials: "same-origin",
@@ -241,7 +241,7 @@ async function fetchJSONInternal(url, options = {}) {
       if (!response.ok) {
         const error = new Error(data.error || "Request failed");
         error.status = response.status;
-        error.userMessage = getUserFriendlyError(error);
+        error.userMessage = getUserFriendlyErrorFn(error);
         throw error;
       }
       return data;
@@ -1624,7 +1624,7 @@ decisionFilter.addEventListener("change", () => {
 }
 
 // Debounce search input for better performance
-const debouncedSearch = debounce(() => {
+const debouncedSearch = debounceUtil(() => {
   visibleGuestCount = GUEST_PAGE_SIZE;
   if (latestPayload) {
     renderGuests(latestPayload);

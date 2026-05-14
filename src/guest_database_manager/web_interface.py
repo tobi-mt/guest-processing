@@ -4624,7 +4624,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._serve_static(relative_path)
             return
 
-        if request_path == "/api/client-beacon":
+        if request_path.startswith("/api/client-beacon"):
             self.send_response(HTTPStatus.NO_CONTENT)
             self._send_cors_headers(self.headers.get("Origin"))
             self.send_header("Cache-Control", "no-store")
