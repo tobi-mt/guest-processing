@@ -239,16 +239,21 @@ class OpenAISchedulingCopilot:
             status = "active"
             if fallback_analysis_count > 0 and model_analysis_count > 0:
                 message = (
-                    f"AI copilot enriched {enriched_count} recommendation{'s' if enriched_count != 1 else ''}; "
-                    f"{model_analysis_count} came directly from the model and {fallback_analysis_count} used grounded copilot fallback notes."
+                    f"AI copilot enriched {enriched_count}/{len(recommendations)} top recommendation{'s' if len(recommendations) != 1 else ''}; "
+                    f"{model_analysis_count} with OpenAI analysis, {fallback_analysis_count} with grounded fallback. "
+                    f"Only top {MAX_RECOMMENDATIONS} candidates get AI enrichment to manage API costs."
                 )
             elif fallback_analysis_count > 0:
                 message = (
-                    f"AI copilot produced grounded fallback guidance for {fallback_analysis_count} researched recommendation"
-                    f"{'s' if fallback_analysis_count != 1 else ''} using current-month context and saved evidence."
+                    f"AI copilot provided grounded fallback guidance for {fallback_analysis_count}/{len(recommendations)} researched recommendation"
+                    f"{'s' if fallback_analysis_count != 1 else ''} using current-month context and saved evidence. "
+                    f"Limit: {MAX_RECOMMENDATIONS} candidates for cost efficiency."
                 )
             else:
-                message = f"AI copilot enriched {enriched_count} recommendation{'s' if enriched_count != 1 else ''} using guest profiles, web research, and current-month context."
+                message = (
+                    f"AI copilot enriched {enriched_count}/{len(recommendations)} top recommendation{'s' if len(recommendations) != 1 else ''} "
+                    f"with monthly themes and timing insights. Limited to {MAX_RECOMMENDATIONS} candidates to manage OpenAI API costs."
+                )
         elif result.get("status") == "fallback":
             status = "fallback"
             message = str(result.get("message") or "AI copilot fell back to deterministic planning.")

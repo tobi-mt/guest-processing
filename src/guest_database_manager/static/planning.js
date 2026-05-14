@@ -1246,6 +1246,13 @@ function filterRecommendations(recommendations) {
   const sortMode = recommendationSort.value || "score";
 
   const filtered = recommendations.filter((episode) => {
+    // IMPORTANT: Exclude released episodes from Scheduling Intelligence
+    // They should never appear in recommendations
+    const releaseStatus = normalizeText(episode.release_status);
+    if (releaseStatus === "released") {
+      return false;
+    }
+    
     const haystack = [
       episode.guest_name,
       episode.guest_email,
@@ -1644,6 +1651,31 @@ function renderEpisodes(episodes, totalCount) {
 
 function renderRecommendations(recommendations, totalCount) {
   recommendationList.innerHTML = "";
+  
+  // Show loading state during AI copilot hydration
+  if (aiCopilotHydrationInFlight && latestPlanningPayload.ai_scheduling_enabled) {
+    updateResultsMeta(
+      recommendationResultsMeta,
+      0,
+      0,
+      "AI copilot is analyzing top candidates...",
+      "Base recommendations are being enriched with AI insights"
+    );
+    recommendationList.innerHTML = `
+      <div class="operations-card">
+        <div style="text-align: center; padding: 2rem;">
+          <div class="loading" style="margin: 0 auto 1rem;"></div>
+          <p><strong>AI Copilot Analyzing</strong></p>
+          <p style="color: var(--text-secondary); margin-top: 0.5rem;">
+            Enriching top ${totalCount > 4 ? '4' : totalCount} recommendation${totalCount === 1 ? '' : 's'} with monthly themes, timing insights, and contextual analysis.
+          </p>
+        </div>
+      </div>
+    `;
+    recommendationLoadMoreButton.classList.add("hidden");
+    return;
+  }
+  
   updateResultsMeta(
     recommendationResultsMeta,
     recommendations.length,
@@ -1701,9 +1733,27 @@ function renderRecommendations(recommendations, totalCount) {
       <div class="operations-actions">
         <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
         <button type="button" class="secondary-button" data-recommendation-action="edit">Review In Form</button>
-        <button type="button" class="ghost-button" data-recommendation-action="pin-angle" ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}>Pin Angle</button>
-        <button type="button" class="ghost-button" data-recommendation-action="reject-angle" ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}>Reject Angle</button>
-        <button type="button" class="ghost-button" data-recommendation-action="clear-angle" ${episode.ai_monthly_angle_state ? "" : "disabled"}>Clear Angle Review</button>
+        <button 
+          type="button" 
+          class="ghost-button" 
+          data-recommendation-action="pin-angle" 
+          ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}
+          ${episode.ai_copilot?.monthly_theme ? "" : 'title="AI copilot analysis not available for this episode"'}
+        >Pin Angle</button>
+        <button 
+          type="button" 
+          class="ghost-button" 
+          data-recommendation-action="reject-angle" 
+          ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}
+          ${episode.ai_copilot?.monthly_theme ? "" : 'title="AI copilot analysis not available for this episode"'}
+        >Reject Angle</button>
+        <button 
+          type="button" 
+          class="ghost-button" 
+          data-recommendation-action="clear-angle" 
+          ${episode.ai_monthly_angle_state ? "" : "disabled"}
+          ${episode.ai_monthly_angle_state ? "" : 'title="No angle review to clear"'}
+        >Clear Angle Review</button>
       </div>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
     `;
@@ -1850,6 +1900,14 @@ async function hydrateAiSchedulingCopilot() {
     return;
   }
   aiCopilotHydrationInFlight = true;
+  
+  // Show loading state
+  latestPlanningPayload.ai_copilot_status = {
+    status: "loading",
+    message: "AI copilot is analyzing top candidates and enriching with monthly context...",
+  };
+  renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
+  
   try {
     const payload = await fetchJSON("/api/planning/ai-copilot");
     if (payload?.ai_scheduling_enabled) {
@@ -1865,7 +1923,7 @@ async function hydrateAiSchedulingCopilot() {
     console.warn("AI scheduling copilot hydration failed:", error);
     latestPlanningPayload.ai_copilot_status = {
       status: "fallback",
-      message: "AI scheduling copilot request failed after the deterministic plan had already loaded.",
+      message: "AI scheduling copilot request failed. Showing base recommendations without AI enrichment.",
     };
     renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
   } finally {

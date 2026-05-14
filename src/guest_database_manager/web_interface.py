@@ -800,9 +800,10 @@ class GuestWebService:
             "ai_copilot_status": {
                 "status": "configured" if ai_copilot is not None else "not_configured",
                 "message": (
-                    "AI copilot is configured and will hydrate recommendation cards after the base planning view loads."
+                    f"Base recommendation algorithm returned {len(recommendations)} candidate{'s' if len(recommendations) != 1 else ''}. "
+                    f"AI copilot will analyze the top 4 with monthly context and timing insights."
                     if ai_copilot is not None
-                    else "AI copilot is not configured on this deployment."
+                    else "AI copilot is not configured. Showing base recommendations from priority scoring algorithm."
                 ),
                 "current_month_context": build_month_context(datetime.now()),
             },
