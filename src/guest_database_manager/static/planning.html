@@ -446,6 +446,25 @@
       </main>
     </div>
 
+    <!-- Schedule Modal -->
+    <div id="schedule-modal" class="modal hidden" role="dialog" aria-labelledby="schedule-modal-title">
+      <div class="modal-content">
+        <h2 id="schedule-modal-title">Schedule Episode for Release</h2>
+        <form id="schedule-form">
+          <input type="hidden" name="episode_id" />
+          <label>
+            <span>Release Date & Time</span>
+            <input name="release_date" type="datetime-local" required />
+          </label>
+          <div class="modal-actions">
+            <button type="submit" class="primary-button">Confirm Schedule</button>
+            <button type="button" class="ghost-button" data-modal-action="cancel">Cancel</button>
+          </div>
+        </form>
+        <p class="message" data-schedule-modal-message aria-live="polite"></p>
+      </div>
+    </div>
+
     <script src="/static/performance-utils.js"></script>
     <script src="/static/planning.js" defer></script>
   </body>

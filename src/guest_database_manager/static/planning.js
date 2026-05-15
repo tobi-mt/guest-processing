@@ -36,6 +36,9 @@ const episodeLoadMoreButton = document.getElementById("episode-load-more");
 const episodePresetButtons = Array.from(document.querySelectorAll("[data-episode-preset]"));
 const planningTabButtons = Array.from(document.querySelectorAll("[data-planning-tab]"));
 const planningTabPanels = Array.from(document.querySelectorAll("[data-planning-panel]"));
+const scheduleModal = document.getElementById("schedule-modal");
+const scheduleForm = document.getElementById("schedule-form");
+const scheduleModalMessage = document.querySelector("[data-schedule-modal-message]");
 
 let latestPlanningPayload = {
   stats: {},
@@ -1305,6 +1308,20 @@ function filterRecommendations(recommendations) {
   return filtered;
 }
 
+function openScheduleModal(episode) {
+  scheduleForm.elements.episode_id.value = episode.id;
+  scheduleForm.elements.release_date.value = formatDateForDateTimeInput(episode.release_date);
+  scheduleForm.elements.release_date.focus();
+  setMessage(scheduleModalMessage, "", "");
+  scheduleModal.classList.remove("hidden");
+}
+
+function closeScheduleModal() {
+  scheduleModal.classList.add("hidden");
+  scheduleForm.reset();
+  setMessage(scheduleModalMessage, "", "");
+}
+
 function renderEpisodes(episodes, totalCount) {
   episodeList.innerHTML = "";
   updateResultsMeta(
@@ -1326,6 +1343,7 @@ function renderEpisodes(episodes, totalCount) {
 
   visibleEpisodes.forEach((episode) => {
     const isReleased = normalizeText(episode.release_status) === "released";
+    const isScheduled = normalizeText(episode.release_status) === "scheduled";
     const hasEmail = Boolean(episode.guest_email);
     const hasShowNotes = Boolean(normalizeText(episode.show_notes_url));
     const hasFilesLink = Boolean(normalizeText(episode.release_files_url));
@@ -1365,6 +1383,12 @@ function renderEpisodes(episodes, totalCount) {
       <div class="operations-actions">
         <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
         <button type="button" class="ghost-button" data-episode-action="form">Open In Form</button>
+        ${!isReleased ? `
+          ${!isScheduled ? `<button type="button" class="secondary-button" data-episode-action="schedule">Schedule for Release</button>` : `
+            <button type="button" class="secondary-button" data-episode-action="reschedule">Change Release Date</button>
+            <button type="button" class="ghost-button" data-episode-action="unschedule">Unschedule</button>
+          `}
+        ` : ""}
         <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${hasEmail ? "" : "disabled"}>Preview Thank You</button>
         <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${hasEmail ? "" : "disabled"}>Send Thank You</button>
         <button type="button" class="ghost-button" data-episode-action="preview-release-email" ${hasEmail ? "" : "disabled"}>Preview Release Email</button>
@@ -1379,6 +1403,9 @@ function renderEpisodes(episodes, totalCount) {
 
     const editButton = card.querySelector("[data-episode-action='edit']");
     const formButton = card.querySelector("[data-episode-action='form']");
+    const scheduleButton = card.querySelector("[data-episode-action='schedule']");
+    const rescheduleButton = card.querySelector("[data-episode-action='reschedule']");
+    const unscheduleButton = card.querySelector("[data-episode-action='unschedule']");
     const previewAppreciationButton = card.querySelector("[data-episode-action='preview-appreciation']");
     const sendAppreciationButton = card.querySelector("[data-episode-action='send-appreciation']");
     const previewReleaseButton = card.querySelector("[data-episode-action='preview-release-email']");
@@ -1400,6 +1427,54 @@ function renderEpisodes(episodes, totalCount) {
         "success",
       );
     });
+    if (scheduleButton) {
+      scheduleButton.addEventListener("click", () => {
+        openScheduleModal(episode);
+      });
+    }
+    if (rescheduleButton) {
+      rescheduleButton.addEventListener("click", () => {
+        openScheduleModal(episode);
+      });
+    }
+    if (unscheduleButton) {
+      unscheduleButton.addEventListener("click", async () => {
+        if (!confirmCriticalAction(`Unschedule ${episode.episode_title || "this episode"}?`)) {
+          return;
+        }
+        unscheduleButton.disabled = true;
+        unscheduleButton.textContent = "Unscheduling...";
+        activeEpisodeActionFeedback = {
+          id: episode.id,
+          text: `Unscheduling ${episode.episode_title || "episode"}...`,
+          tone: "pending",
+        };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+        try {
+          await fetchJSON(`/api/episodes/${episode.id}`, {
+            method: "POST",
+            body: JSON.stringify({
+              release_status: "unplanned",
+              release_date: null,
+            }),
+          });
+          activeEpisodeActionFeedback = {
+            id: episode.id,
+            text: `Unscheduled ${episode.episode_title || "episode"}.`,
+            tone: "success",
+          };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+          setMessage(episodeMessage, `Unscheduled ${episode.episode_title || "episode"}.`, "success");
+          await loadPlanning();
+        } catch (error) {
+          activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
+          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+          setMessage(episodeMessage, error.message, "error");
+          unscheduleButton.disabled = false;
+          unscheduleButton.textContent = "Unschedule";
+        }
+      });
+    }
     if (activeEpisodeEditorId === episode.id) {
       editorNode.classList.remove("hidden");
       renderEpisodeInlineEditor(editorNode, episode);
@@ -2198,6 +2273,47 @@ renderExportFields();
 resetEpisodeForm();
 applyUrlState();
 episodeForm.elements.outreach_plan.value = JSON.stringify(normalizeOutreachPlan(null));
+
+// Schedule modal event listener
+scheduleForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const episodeId = scheduleForm.elements.episode_id.value;
+  const releaseDate = scheduleForm.elements.release_date.value;
+  
+  if (!episodeId || !releaseDate) {
+    setMessage(scheduleModalMessage, "Please select a date and time.", "error");
+    return;
+  }
+  
+  const submitButton = scheduleForm.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  submitButton.textContent = "Scheduling...";
+  setMessage(scheduleModalMessage, "Scheduling episode...", "pending");
+  
+  try {
+    await fetchJSON(`/api/episodes/${episodeId}`, {
+      method: "POST",
+      body: JSON.stringify({
+        release_date: releaseDate,
+        release_status: "scheduled",
+      }),
+    });
+    
+    setMessage(episodeMessage, `Scheduled for ${formatDateTime(releaseDate)}.`, "success");
+    closeScheduleModal();
+    await loadPlanning();
+  } catch (error) {
+    setMessage(scheduleModalMessage, error.message, "error");
+    submitButton.disabled = false;
+    submitButton.textContent = "Confirm Schedule";
+  }
+});
+
+// Close modal when cancel button is clicked
+document.querySelector("[data-modal-action='cancel']").addEventListener("click", () => {
+  closeScheduleModal();
+});
+
 loadPlanning().catch((error) => {
   setMessage(episodeMessage, error.message, "error");
 });
