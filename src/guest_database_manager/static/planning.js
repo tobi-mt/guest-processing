@@ -636,6 +636,141 @@ function computeNextLegacyEpisodeNumber(episodes, currentEpisodeId = "") {
   return maxNumber > 0 ? String(maxNumber + 1) : "1";
 }
 
+function compareEpisodeSequence(left, right, preferredDateField = "release_date") {
+  const leftPrimary = parseDate(left?.[preferredDateField]);
+  const rightPrimary = parseDate(right?.[preferredDateField]);
+  if (leftPrimary && rightPrimary) {
+    return leftPrimary - rightPrimary;
+  }
+  if (leftPrimary && !rightPrimary) {
+    return -1;
+  }
+  if (!leftPrimary && rightPrimary) {
+    return 1;
+  }
+
+  const leftFallback = parseDate(left?.release_date) || parseDate(left?.recommended_release_date) || parseDate(left?.interview_date);
+  const rightFallback = parseDate(right?.release_date) || parseDate(right?.recommended_release_date) || parseDate(right?.interview_date);
+  if (leftFallback && rightFallback) {
+    return leftFallback - rightFallback;
+  }
+  if (leftFallback && !rightFallback) {
+    return -1;
+  }
+  if (!leftFallback && rightFallback) {
+    return 1;
+  }
+
+  return Number(left?.id || 0) - Number(right?.id || 0);
+}
+
+function buildEpisodeNumberMap(episodes, recommendations) {
+  const episodeNumberMap = new Map();
+  const byId = new Map();
+  const register = (episode, { mergeWithExisting = false } = {}) => {
+    if (!episode?.id) {
+      return;
+    }
+    const key = String(episode.id);
+    if (!byId.has(key)) {
+      byId.set(key, episode);
+      return;
+    }
+    if (!mergeWithExisting) {
+      return;
+    }
+
+    const existing = byId.get(key) || {};
+    // Preserve canonical episode fields, only fill gaps from recommendation rows.
+    byId.set(key, {
+      ...episode,
+      ...existing,
+    });
+  };
+
+  (episodes || []).forEach((episode) => register(episode));
+  (recommendations || []).forEach((episode) => register(episode, { mergeWithExisting: true }));
+
+  const allEpisodes = Array.from(byId.values());
+  const released = allEpisodes
+    .filter((episode) => normalizeText(episode.release_status) === "released")
+    .sort((left, right) => compareEpisodeSequence(left, right, "release_date"));
+
+  let nextNumber = 0;
+  released.forEach((episode, index) => {
+    const parsedLegacy = parseLegacyEpisodeNumber(episode.legacy_episode_number);
+    const number = parsedLegacy || index + 1;
+    nextNumber = Math.max(nextNumber, number);
+    episodeNumberMap.set(String(episode.id), {
+      number,
+      label: `Episode #${number} (Actual)`,
+    });
+  });
+
+  const scheduled = allEpisodes
+    .filter((episode) => normalizeText(episode.release_status) === "scheduled")
+    .sort((left, right) => compareEpisodeSequence(left, right, "release_date"));
+  scheduled.forEach((episode) => {
+    if (episodeNumberMap.has(String(episode.id))) {
+      return;
+    }
+    nextNumber += 1;
+    episodeNumberMap.set(String(episode.id), {
+      number: nextNumber,
+      label: `Episode #${nextNumber} (Prospective)`,
+    });
+  });
+
+  const queuedCandidates = allEpisodes
+    .filter((episode) => !["released", "scheduled"].includes(normalizeText(episode.release_status)))
+    .sort((left, right) => {
+      const byDate = compareEpisodeSequence(left, right, "recommended_release_date");
+      if (byDate !== 0) {
+        return byDate;
+      }
+      return Number(right.priority_score || 0) - Number(left.priority_score || 0);
+    });
+  queuedCandidates.forEach((episode) => {
+    if (episodeNumberMap.has(String(episode.id))) {
+      return;
+    }
+    nextNumber += 1;
+    episodeNumberMap.set(String(episode.id), {
+      number: nextNumber,
+      label: `Episode #${nextNumber} (Queued)`,
+    });
+  });
+
+  if (episodeNumberMap.size < allEpisodes.length) {
+    allEpisodes
+      .filter((episode) => episode?.id && !episodeNumberMap.has(String(episode.id)))
+      .sort((left, right) => {
+        const byPriority = Number(right?.priority_score || 0) - Number(left?.priority_score || 0);
+        if (byPriority !== 0) {
+          return byPriority;
+        }
+        return String(left?.id || "").localeCompare(String(right?.id || ""));
+      })
+      .forEach((episode) => {
+        nextNumber += 1;
+        episodeNumberMap.set(String(episode.id), {
+          number: nextNumber,
+          label: `Episode #${nextNumber} (Queued)`,
+        });
+      });
+  }
+
+  return episodeNumberMap;
+}
+
+function getEpisodeNumberLabel(episode, episodeNumberMap) {
+  if (!episode?.id) {
+    return "Episode #TBD";
+  }
+  const entry = episodeNumberMap.get(String(episode.id));
+  return entry?.label || "Episode #TBD";
+}
+
 function suggestPriorityScoreForEpisode(episodeLike = {}) {
   const releaseStatus = normalizeText(episodeLike.release_status);
   const productionStatus = normalizeText(episodeLike.production_status);
@@ -1322,7 +1457,7 @@ function closeScheduleModal() {
   setMessage(scheduleModalMessage, "", "");
 }
 
-function renderEpisodes(episodes, totalCount) {
+function renderEpisodes(episodes, totalCount, episodeNumberMap) {
   episodeList.innerHTML = "";
   updateResultsMeta(
     episodeResultsMeta,
@@ -1344,6 +1479,7 @@ function renderEpisodes(episodes, totalCount) {
   visibleEpisodes.forEach((episode) => {
     const isReleased = normalizeText(episode.release_status) === "released";
     const isScheduled = normalizeText(episode.release_status) === "scheduled";
+    const episodeNumberLabel = getEpisodeNumberLabel(episode, episodeNumberMap);
     const hasEmail = Boolean(episode.guest_email);
     const hasShowNotes = Boolean(normalizeText(episode.show_notes_url));
     const hasFilesLink = Boolean(normalizeText(episode.release_files_url));
@@ -1356,6 +1492,7 @@ function renderEpisodes(episodes, totalCount) {
       <p>${episode.guest_name || "Guest not set"}</p>
       ${renderEpisodeBadges(episode)}
       <div class="operations-meta">
+        <span>${episodeNumberLabel}</span>
         <span>Topic: ${episode.topic || "Not set"}</span>
         <span>Category: ${episode.category || "Not set"}</span>
         <span>Email: ${renderLinkedValue(episode.guest_email)}</span>
@@ -1724,7 +1861,7 @@ function renderEpisodes(episodes, totalCount) {
   }
 }
 
-function renderRecommendations(recommendations, totalCount) {
+function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
   recommendationList.innerHTML = "";
   updateResultsMeta(
     recommendationResultsMeta,
@@ -1746,12 +1883,14 @@ function renderRecommendations(recommendations, totalCount) {
   visibleRecommendations.forEach((episode, index) => {
     const signals = deriveRecommendationSignals(episode);
     const insights = splitRecommendationInsights(episode.recommendation_reason);
+    const episodeNumberLabel = getEpisodeNumberLabel(episode, episodeNumberMap);
     const card = document.createElement("article");
     card.className = "operations-card recommendation-card";
     card.innerHTML = `
       <h3>#${index + 1} ${episode.episode_title || episode.topic || "Untitled episode"}</h3>
       <p>${episode.guest_name || "Guest not set"}</p>
       <div class="operations-meta">
+        <span>${episodeNumberLabel}</span>
         <span>Recommended Slot: ${formatDateTime(episode.recommended_release_date)}</span>
         <span>Score: ${episode.priority_score ?? 0}</span>
         <span>Category: ${episode.category || "Not set"}</span>
@@ -1934,6 +2073,7 @@ function renderPlanning() {
   const episodes = latestPlanningPayload.episodes || [];
   const recommendations = latestPlanningPayload.recommendations || [];
   const categories = latestPlanningPayload.available_categories || [];
+  const episodeNumberMap = buildEpisodeNumberMap(episodes, recommendations);
 
   updatePresetButtons(recommendationPresetButtons, activeRecommendationPreset, "recommendationPreset");
   updatePresetButtons(episodePresetButtons, activeEpisodePreset, "episodePreset");
@@ -1941,8 +2081,8 @@ function renderPlanning() {
   renderCategoryOptions(categories);
   renderWeeklySystemPanel(latestPlanningPayload.weekly_system);
   renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
-  renderRecommendations(filterRecommendations(recommendations), recommendations.length);
-  renderEpisodes(filterEpisodes(episodes), episodes.length);
+  renderRecommendations(filterRecommendations(recommendations), recommendations.length, episodeNumberMap);
+  renderEpisodes(filterEpisodes(episodes), episodes.length, episodeNumberMap);
 }
 
 async function hydrateAiSchedulingCopilot() {
