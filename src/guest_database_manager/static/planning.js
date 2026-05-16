@@ -685,6 +685,7 @@ function buildEpisodeNumberMap(episodes, recommendations) {
     byId.set(key, {
       ...episode,
       ...existing,
+      release_status: existing.release_status || episode.release_status,
     });
   };
 
@@ -750,25 +751,6 @@ function buildEpisodeNumberMap(episodes, recommendations) {
       label: `Episode #${nextNumber} (${isScheduled ? "Prospective" : "Queued"})`,
     });
   });
-
-  if (episodeNumberMap.size < allEpisodes.length) {
-    allEpisodes
-      .filter((episode) => episode?.id && !episodeNumberMap.has(String(episode.id)))
-      .sort((left, right) => {
-        const byPriority = Number(right?.priority_score || 0) - Number(left?.priority_score || 0);
-        if (byPriority !== 0) {
-          return byPriority;
-        }
-        return String(left?.id || "").localeCompare(String(right?.id || ""));
-      })
-      .forEach((episode) => {
-        nextNumber += 1;
-        episodeNumberMap.set(String(episode.id), {
-          number: nextNumber,
-          label: `Episode #${nextNumber} (Queued)`,
-        });
-      });
-  }
 
   return episodeNumberMap;
 }
