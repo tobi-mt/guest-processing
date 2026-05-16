@@ -698,9 +698,8 @@ function buildEpisodeNumberMap(episodes, recommendations) {
 
   let nextNumber = 0;
   released.forEach((episode, index) => {
-    const parsedLegacy = parseLegacyEpisodeNumber(episode.legacy_episode_number);
-    const number = parsedLegacy || index + 1;
-    nextNumber = Math.max(nextNumber, number);
+    const number = index + 1;
+    nextNumber = number;
     episodeNumberMap.set(String(episode.id), {
       number,
       label: `Episode #${number} (Actual)`,
