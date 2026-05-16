@@ -706,37 +706,48 @@ function buildEpisodeNumberMap(episodes, recommendations) {
     });
   });
 
-  const scheduled = allEpisodes
-    .filter((episode) => normalizeText(episode.release_status) === "scheduled")
-    .sort((left, right) => compareEpisodeSequence(left, right, "release_date"));
-  scheduled.forEach((episode) => {
-    if (episodeNumberMap.has(String(episode.id))) {
-      return;
-    }
-    nextNumber += 1;
-    episodeNumberMap.set(String(episode.id), {
-      number: nextNumber,
-      label: `Episode #${nextNumber} (Prospective)`,
-    });
-  });
-
-  const queuedCandidates = allEpisodes
-    .filter((episode) => !["released", "scheduled"].includes(normalizeText(episode.release_status)))
+  const futureEpisodes = allEpisodes
+    .filter((episode) => normalizeText(episode.release_status) !== "released")
     .sort((left, right) => {
-      const byDate = compareEpisodeSequence(left, right, "recommended_release_date");
-      if (byDate !== 0) {
-        return byDate;
+      const leftProjectedDate = parseDate(left?.release_date)
+        || parseDate(left?.recommended_release_date)
+        || parseDate(left?.interview_date);
+      const rightProjectedDate = parseDate(right?.release_date)
+        || parseDate(right?.recommended_release_date)
+        || parseDate(right?.interview_date);
+
+      if (leftProjectedDate && rightProjectedDate) {
+        if (leftProjectedDate.getTime() !== rightProjectedDate.getTime()) {
+          return leftProjectedDate - rightProjectedDate;
+        }
+      } else if (leftProjectedDate && !rightProjectedDate) {
+        return -1;
+      } else if (!leftProjectedDate && rightProjectedDate) {
+        return 1;
       }
-      return Number(right.priority_score || 0) - Number(left.priority_score || 0);
+
+      const leftIsScheduled = normalizeText(left?.release_status) === "scheduled";
+      const rightIsScheduled = normalizeText(right?.release_status) === "scheduled";
+      if (leftIsScheduled !== rightIsScheduled) {
+        return leftIsScheduled ? -1 : 1;
+      }
+
+      const byPriority = Number(right?.priority_score || 0) - Number(left?.priority_score || 0);
+      if (byPriority !== 0) {
+        return byPriority;
+      }
+
+      return Number(left?.id || 0) - Number(right?.id || 0);
     });
-  queuedCandidates.forEach((episode) => {
+  futureEpisodes.forEach((episode) => {
     if (episodeNumberMap.has(String(episode.id))) {
       return;
     }
+    const isScheduled = normalizeText(episode.release_status) === "scheduled";
     nextNumber += 1;
     episodeNumberMap.set(String(episode.id), {
       number: nextNumber,
-      label: `Episode #${nextNumber} (Queued)`,
+      label: `Episode #${nextNumber} (${isScheduled ? "Prospective" : "Queued"})`,
     });
   });
 
