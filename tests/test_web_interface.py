@@ -4474,6 +4474,21 @@ def test_web_service_can_preview_and_send_reschedule_link(monkeypatch, temp_db):
     assert any(entry["reminder_type"] == "reschedule_link" for entry in log_entries)
 
 
+def test_reschedule_email_template_clarifies_old_slot_is_not_still_booked():
+    """Reschedule copy should make it clear the referenced date is the old slot, not the new confirmed booking."""
+    manager = EmailManager()
+
+    template = manager.get_reschedule_link_template(
+        "Dhruva Gulur",
+        datetime(2026, 5, 20, 19, 0, tzinfo=timezone.utc),
+        "America/Denver",
+        "https://guest-processing-production.up.railway.app/book?token=test-token",
+    )
+
+    assert "previous Soulful Conversation slot" in template["body"]
+    assert "You are not currently booked for a new interview time yet." in template["body"]
+
+
 def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp_db):
     """Episode records should support the post-recording appreciation workflow."""
 

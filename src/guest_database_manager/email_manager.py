@@ -337,7 +337,9 @@ Mirror Talk Podcast"""
 
 Thank you again for your willingness to join Mirror Talk.
 
-We’re reaching out about your Soulful Conversation that had been scheduled for {formatted_date} at {formatted_time} {timezone_label}.
+Your previous Soulful Conversation slot on {formatted_date} at {formatted_time} {timezone_label} is no longer active.
+
+You are not currently booked for a new interview time yet.
 
 You can choose a new time using your personal rescheduling link here:
 {reschedule_url}
