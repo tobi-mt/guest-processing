@@ -125,6 +125,22 @@ BOOKING_DEFAULT_BUFFER_MINUTES = 15
 BOOKING_DEFAULT_MIN_NOTICE_HOURS = 24
 BOOKING_DEFAULT_DURATION_MINUTES = 60
 BOOKING_WEEKDAY_CODE_TO_INT = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+BOOKING_TIMEZONE_ALIASES = {
+    "MST": "America/Denver",
+    "MDT": "America/Denver",
+    "MT": "America/Denver",
+    "PST": "America/Los_Angeles",
+    "PDT": "America/Los_Angeles",
+    "PT": "America/Los_Angeles",
+    "CST": "America/Chicago",
+    "CDT": "America/Chicago",
+    "CT": "America/Chicago",
+    "EST": "America/New_York",
+    "EDT": "America/New_York",
+    "ET": "America/New_York",
+    "GMT": "Etc/UTC",
+    "UTC": "Etc/UTC",
+}
 GOOGLE_CALENDAR_CLIENT_ERRORS = (GoogleCalendarServiceAccountError, GoogleCalendarSyncError)
 FORM_FIELDS = {
     "full_name",
@@ -2480,6 +2496,21 @@ class GuestWebService:
         return parsed.astimezone(timezone.utc)
 
     @staticmethod
+    def _resolve_booking_timezone_name(value: Any) -> Optional[str]:
+        """Resolve timezone aliases and validate an IANA timezone for booking configuration."""
+        timezone_name = _normalize_text(value)
+        if not timezone_name:
+            return None
+        alias = BOOKING_TIMEZONE_ALIASES.get(timezone_name.upper())
+        if alias:
+            timezone_name = alias
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise WebInterfaceError("Booking override timezone is invalid.") from exc
+        return timezone_name
+
+    @staticmethod
     def _normalize_booking_override_payload(value: Any) -> Optional[str]:
         """Validate and normalize a guest-specific booking override payload."""
         if value in ("", None, {}):
@@ -2496,7 +2527,7 @@ class GuestWebService:
         if not isinstance(payload, dict):
             raise WebInterfaceError("Booking override must be a structured object.")
 
-        timezone_name = _normalize_text(payload.get("timezone"))
+        timezone_name = GuestWebService._resolve_booking_timezone_name(payload.get("timezone"))
         weekdays_raw = payload.get("weekdays")
         slot_times_raw = payload.get("slot_times")
         min_notice_raw = _normalize_text(payload.get("min_notice_hours"))
@@ -2523,12 +2554,6 @@ class GuestWebService:
         for item in slot_source:
             if re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", item) and item not in slot_times:
                 slot_times.append(item)
-
-        if timezone_name:
-            try:
-                ZoneInfo(timezone_name)
-            except ZoneInfoNotFoundError as exc:
-                raise WebInterfaceError("Booking override timezone is invalid.") from exc
 
         min_notice_hours = None
         if min_notice_raw:
@@ -2567,7 +2592,7 @@ class GuestWebService:
                 override = {}
         override = override if isinstance(override, dict) else {}
 
-        timezone_name = _normalize_text(override.get("timezone")) or self._booking_timezone_name()
+        timezone_name = self._resolve_booking_timezone_name(override.get("timezone")) or self._booking_timezone_name()
         configured_weekdays = tuple(self._booking_slot_weekdays())
         reverse_weekday_codes = {value: key for key, value in BOOKING_WEEKDAY_CODE_TO_INT.items()}
         weekday_codes = [
