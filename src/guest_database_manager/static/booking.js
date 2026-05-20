@@ -128,9 +128,13 @@ function renderExistingBooking(existing) {
     return;
   }
   bookingExisting.classList.remove("hidden");
+  const guestTimezoneNote = existing.timezone && existing.timezone !== slotTimezone
+    ? `<p class="muted">Guest local timezone captured at booking: ${existing.timezone}</p>`
+    : "";
   bookingExisting.innerHTML = `
     <strong>${rescheduleMode ? "Current booking" : "You already have a booking"}</strong>
-    <p>${formatSlot(existing.scheduled_for)}${existing.timezone ? ` · ${existing.timezone}` : ""}</p>
+    <p>${formatSlot(existing.scheduled_for)} · ${slotTimezone}</p>
+    ${guestTimezoneNote}
     ${existing.join_url ? `<p>Your recording link: <a href="${existing.join_url}" target="_blank" rel="noopener">${existing.join_url}</a></p>` : ""}
     <p>${rescheduleMode ? "Choose a new date below to reschedule this conversation." : "If you need to reschedule, please reply to the email you received from Mirror Talk and we’ll support you directly."}</p>
   `;
@@ -305,6 +309,7 @@ async function loadBookingPage() {
       ? `${context.guest_name}, choose the new time that works best for your Soulful Conversation.`
       : `${context.guest_name}, choose the best time for your Soulful Conversation.`;
     bookingMeta.classList.remove("hidden");
+    slotTimezone = availability.booking_timezone || "Europe/Berlin";
     bookingMeta.innerHTML = `
       <p><strong>Booking timezone:</strong> ${availability.booking_timezone}</p>
       <p><strong>Email:</strong> ${context.guest_email || "Not set"}</p>
