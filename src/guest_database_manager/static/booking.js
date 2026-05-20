@@ -43,15 +43,27 @@ function showInvitationState() {
 }
 
 async function fetchJSON(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 20000);
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
+    signal: controller.signal,
     ...options,
   });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || "Request failed");
+  try {
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Request failed");
+    }
+    return data;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("This request took too long. Please refresh and try again.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-  return data;
 }
 
 function formatSlot(dateText) {

@@ -82,12 +82,16 @@ function setOperationsTab(tabName) {
 async function fetchJSON(url, options = {}) {
   const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
   let lastError = null;
+  const requestTimeoutMs = isReadRequest ? 20000 : 30000;
 
   for (let attempt = 0; attempt < (isReadRequest ? 2 : 1); attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const response = await fetch(url, {
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         ...options,
       });
 
@@ -103,9 +107,15 @@ async function fetchJSON(url, options = {}) {
       if (!response.ok) {
         throw new Error(data.error || `Request failed (${response.status})`);
       }
+      window.clearTimeout(timeoutId);
       return data;
     } catch (error) {
-      lastError = error;
+      window.clearTimeout(timeoutId);
+      if (error.name === "AbortError") {
+        lastError = new Error("This request took too long. Please refresh and try again.");
+      } else {
+        lastError = error;
+      }
       if (!isReadRequest || attempt > 0) {
         break;
       }
@@ -249,6 +259,18 @@ function actionFeedbackMarkup(feedback) {
     return "";
   }
   return `<p class="composer-feedback ${feedback.tone || ""}">${feedback.text}</p>`;
+}
+
+function renderSkeletonCards(container, count = 3) {
+  if (!container) return;
+  container.innerHTML = Array.from({ length: count }).map(() => `
+    <article class="operations-card skeleton-card" aria-hidden="true">
+      <div class="skeleton-line medium"></div>
+      <div class="skeleton-line short"></div>
+      <div class="skeleton-line long"></div>
+      <div class="skeleton-line long"></div>
+    </article>
+  `).join("");
 }
 
 function renderWeeklyOutreachPanel() {
@@ -734,16 +756,29 @@ function renderInterviews(interviews, totalCount) {
         <button type="button" class="ghost-button" data-interview-action="preview-cancellation" disabled>Preview Cancellation</button>
         <button type="button" class="secondary-button" data-interview-action="send-cancellation" disabled>Cancel & Email</button>
       `;
+    const confirmationTone = normalizeText(interview.confirmation_status) === "confirmed"
+      ? "success"
+      : normalizeText(interview.confirmation_status) === "pending"
+        ? "pending"
+        : "warning";
+    const reminderTone = normalizeText(interview.reminder_status) === "sent" ? "success" : "pending";
+    const statusTone = normalizeText(interview.status) === "cancelled" ? "warning" : "success";
     card.innerHTML = `
-      <h3>${interview.guest_name || "Unnamed guest"}</h3>
-      <p>${interview.title || "Mirror Talk interview"}</p>
+      <div class="card-header-row">
+        <div>
+          <h3>${interview.guest_name || "Unnamed guest"}</h3>
+          <p>${interview.title || "Mirror Talk interview"}</p>
+        </div>
+        <div class="card-status-chips">
+          <span class="status-chip ${statusTone}">${formatInterviewStatus(interview.status)}</span>
+          <span class="status-chip ${confirmationTone}">${formatConfirmationStatus(interview.confirmation_status)}</span>
+          <span class="status-chip ${reminderTone}">${formatReminderStatus(interview.reminder_status)}</span>
+        </div>
+      </div>
       <div class="operations-meta">
         <span>Scheduled: ${formatDateTime(interview.scheduled_for)}</span>
-        <span>Status: ${formatInterviewStatus(interview.status)}</span>
         <span>Email: ${renderLinkedValue(interview.guest_email)}</span>
         <span>Join: ${renderLinkedValue(interview.join_url)}</span>
-        <span>Confirmation: ${formatConfirmationStatus(interview.confirmation_status)}</span>
-        <span>Reminder: ${formatReminderStatus(interview.reminder_status)}</span>
       </div>
       ${activeInterviewPreset === "booking_risks" && riskReasons.length ? `
         <div class="operations-preview caution">
@@ -756,19 +791,28 @@ function renderInterviews(interviews, totalCount) {
         <a class="context-link" href="${buildScopedLink("/planning", interview.guest_name || interview.guest_email)}">View Planning</a>
       </div>
       <div class="operations-actions">
-        <button type="button" class="secondary-button" data-interview-action="edit">${activeInterviewEditorId === interview.id ? "Hide Quick Edit" : "Quick Edit"}</button>
-        <button type="button" class="ghost-button" data-interview-action="form">Open In Form</button>
-        <button type="button" class="ai-button" data-interview-action="ai-reminder" title="Generate AI-powered reminder email">\u2728 AI Reminder</button>
-        <button type="button" class="ai-button" data-interview-action="ai-questions" title="Generate interview questions">\u2753 AI Questions</button>
-        <button type="button" class="ghost-button" data-interview-action="move-to-planning">${planningButtonLabel}</button>
-        <button type="button" class="ghost-button" data-interview-action="mark-confirmed">Mark Confirmed</button>
-        <button type="button" class="ghost-button" data-interview-action="mark-pending">Mark Pending</button>
-        <button type="button" class="ghost-button" data-interview-action="mark-cancelled">Mark Cancelled</button>
-        ${reminderButtons}
-        <button type="button" class="ghost-button" data-interview-action="mark-reminder-unsent">Reminder Not Sent</button>
-        ${calendarButton}
-        ${interview.calendar_event_id ? `<button type="button" class="ghost-button danger-button" data-calendar-action="remove" ${calendarReadOnlyMode ? "disabled title=\"Google Calendar removal is unavailable with the current token permissions.\"" : ""}>Remove From Google Calendar</button>` : ""}
-        <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
+        <div class="action-group">
+          <span class="action-group-label">Core Actions</span>
+          <button type="button" class="secondary-button" data-interview-action="edit">${activeInterviewEditorId === interview.id ? "Hide Quick Edit" : "Quick Edit"}</button>
+          <button type="button" class="ghost-button" data-interview-action="form">Open In Form</button>
+          <button type="button" class="ghost-button" data-interview-action="move-to-planning">${planningButtonLabel}</button>
+          <button type="button" class="ghost-button" data-interview-action="mark-confirmed">Mark Confirmed</button>
+          <button type="button" class="ghost-button" data-interview-action="mark-pending">Mark Pending</button>
+        </div>
+        <div class="action-group">
+          <span class="action-group-label">Communication</span>
+          <button type="button" class="ai-button" data-interview-action="ai-reminder" title="Generate AI-powered reminder email">\u2728 AI Reminder</button>
+          <button type="button" class="ai-button" data-interview-action="ai-questions" title="Generate interview questions">\u2753 AI Questions</button>
+          ${reminderButtons}
+          <button type="button" class="ghost-button" data-interview-action="mark-reminder-unsent">Reminder Not Sent</button>
+        </div>
+        <div class="action-group">
+          <span class="action-group-label">Calendar & Record</span>
+          <button type="button" class="ghost-button" data-interview-action="mark-cancelled">Mark Cancelled</button>
+          ${calendarButton}
+          ${interview.calendar_event_id ? `<button type="button" class="ghost-button danger-button" data-calendar-action="remove" ${calendarReadOnlyMode ? "disabled title=\"Google Calendar removal is unavailable with the current token permissions.\"" : ""}>Remove From Google Calendar</button>` : ""}
+          <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
+        </div>
       </div>
       <div class="card-action-feedback">${activeInterviewActionFeedback.id === interview.id ? actionFeedbackMarkup(activeInterviewActionFeedback) : ""}</div>
       <div class="inline-editor hidden" data-interview-editor></div>
@@ -1434,6 +1478,8 @@ function renderOperations() {
 
 async function loadOperations() {
   if (!latestOperationsPayload.interviews?.length && !latestOperationsPayload.reminder_candidates?.length) {
+    renderSkeletonCards(interviewList, 4);
+    renderSkeletonCards(reminderList, 2);
     const cachedPayload = readCachedPayload(OPERATIONS_PAYLOAD_CACHE_KEY);
     // Only use cache if it has meaningful data (not all zeros)
     const hasData = cachedPayload && (

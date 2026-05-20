@@ -190,21 +190,31 @@ function replaceEpisodeInPayload(savedEpisode) {
 async function fetchJSON(url, options = {}) {
   const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
   let lastError = null;
+  const requestTimeoutMs = isReadRequest ? 20000 : 30000;
 
   for (let attempt = 0; attempt < (isReadRequest ? 2 : 1); attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const response = await fetch(url, {
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         ...options,
       });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Request failed");
       }
+      window.clearTimeout(timeoutId);
       return data;
     } catch (error) {
-      lastError = error;
+      window.clearTimeout(timeoutId);
+      if (error.name === "AbortError") {
+        lastError = new Error("This request took too long. Please refresh and try again.");
+      } else {
+        lastError = error;
+      }
       if (!isReadRequest || attempt > 0) {
         break;
       }
@@ -410,6 +420,19 @@ function actionFeedbackMarkup(feedback) {
     return "";
   }
   return `<p class="composer-feedback ${feedback.tone || ""}">${feedback.text}</p>`;
+}
+
+function renderSkeletonCards(container, count = 3, withRecommendationTone = false) {
+  if (!container) return;
+  const cardClass = withRecommendationTone ? "operations-card recommendation-card skeleton-card" : "operations-card skeleton-card";
+  container.innerHTML = Array.from({ length: count }).map(() => `
+    <article class="${cardClass}" aria-hidden="true">
+      <div class="skeleton-line medium"></div>
+      <div class="skeleton-line short"></div>
+      <div class="skeleton-line long"></div>
+      <div class="skeleton-line long"></div>
+    </article>
+  `).join("");
 }
 
 function deriveRecommendationSignals(episode) {
@@ -1477,11 +1500,21 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     const hasFilesLink = Boolean(normalizeText(episode.release_files_url));
     const releaseEmailReady = hasEmail && isReleased && hasShowNotes && hasFilesLink;
     const releaseActionLabel = releaseEmailReady ? "Send Release Email" : "Prepare Release Email";
+    const releaseTone = isReleased ? "success" : isScheduled ? "pending" : "warning";
     const card = document.createElement("article");
     card.className = "operations-card";
     card.innerHTML = `
-      <h3>${episode.episode_title || "Untitled episode"}</h3>
-      <p>${episode.guest_name || "Guest not set"}</p>
+      <div class="card-header-row">
+        <div>
+          <h3>${episode.episode_title || "Untitled episode"}</h3>
+          <p>${episode.guest_name || "Guest not set"}</p>
+        </div>
+        <div class="card-status-chips">
+          <span class="status-chip ${releaseTone}">${episode.release_status || "unplanned"}</span>
+          <span class="status-chip">${episode.production_status || "idea"}</span>
+          <span class="status-chip">${episode.promotion_status || "unknown"}</span>
+        </div>
+      </div>
       ${renderEpisodeBadges(episode)}
       <div class="operations-meta">
         <span>${episodeNumberLabel}</span>
@@ -1510,19 +1543,25 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
         <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
       </div>
       <div class="operations-actions">
-        <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
-        <button type="button" class="ghost-button" data-episode-action="form">Open In Form</button>
-        ${!isReleased ? `
-          ${!isScheduled ? `<button type="button" class="secondary-button" data-episode-action="schedule">Schedule for Release</button>` : `
-            <button type="button" class="secondary-button" data-episode-action="reschedule">Change Release Date</button>
-            <button type="button" class="ghost-button" data-episode-action="unschedule">Unschedule</button>
-          `}
-        ` : ""}
-        <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${hasEmail ? "" : "disabled"}>Preview Thank You</button>
-        <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${hasEmail ? "" : "disabled"}>Send Thank You</button>
-        <button type="button" class="ghost-button" data-episode-action="preview-release-email" ${hasEmail ? "" : "disabled"}>Preview Release Email</button>
-        <button type="button" class="secondary-button" data-episode-action="send-release-email" ${hasEmail ? "" : "disabled"}>${releaseActionLabel}</button>
-        <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
+        <div class="action-group">
+          <span class="action-group-label">Core Actions</span>
+          <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
+          <button type="button" class="ghost-button" data-episode-action="form">Open In Form</button>
+          ${!isReleased ? `
+            ${!isScheduled ? `<button type="button" class="secondary-button" data-episode-action="schedule">Schedule for Release</button>` : `
+              <button type="button" class="secondary-button" data-episode-action="reschedule">Change Release Date</button>
+              <button type="button" class="ghost-button" data-episode-action="unschedule">Unschedule</button>
+            `}
+          ` : ""}
+        </div>
+        <div class="action-group">
+          <span class="action-group-label">Guest Email Flow</span>
+          <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${hasEmail ? "" : "disabled"}>Preview Thank You</button>
+          <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${hasEmail ? "" : "disabled"}>Send Thank You</button>
+          <button type="button" class="ghost-button" data-episode-action="preview-release-email" ${hasEmail ? "" : "disabled"}>Preview Release Email</button>
+          <button type="button" class="secondary-button" data-episode-action="send-release-email" ${hasEmail ? "" : "disabled"}>${releaseActionLabel}</button>
+          <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
+        </div>
       </div>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
       <div class="operations-preview hidden" data-episode-appreciation-preview></div>
@@ -1879,12 +1918,20 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
     const card = document.createElement("article");
     card.className = "operations-card recommendation-card";
     card.innerHTML = `
-      <h3>#${index + 1} ${episode.episode_title || episode.topic || "Untitled episode"}</h3>
-      <p>${episode.guest_name || "Guest not set"}</p>
+      <div class="card-header-row">
+        <div>
+          <h3>#${index + 1} ${episode.episode_title || episode.topic || "Untitled episode"}</h3>
+          <p>${episode.guest_name || "Guest not set"}</p>
+        </div>
+        <div class="card-status-chips">
+          <span class="status-chip pending">Score ${episode.priority_score ?? 0}</span>
+          <span class="status-chip">${episode.production_status || "idea"}</span>
+          <span class="status-chip">${episode.promotion_status || "unknown"}</span>
+        </div>
+      </div>
       <div class="operations-meta">
         <span>${episodeNumberLabel}</span>
         <span>Recommended Slot: ${formatDateTime(episode.recommended_release_date)}</span>
-        <span>Score: ${episode.priority_score ?? 0}</span>
         <span>Category: ${episode.category || "Not set"}</span>
         <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
         <span>Production: ${episode.production_status || "idea"}</span>
@@ -1912,29 +1959,35 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
         <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
       </div>
       <div class="operations-actions">
-        <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
-        <button type="button" class="secondary-button" data-recommendation-action="edit">Review In Form</button>
-        <button 
-          type="button" 
-          class="ghost-button" 
-          data-recommendation-action="pin-angle" 
-          ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}
-          ${episode.ai_copilot?.monthly_theme ? "" : 'title="AI copilot analysis not available for this episode"'}
-        >Pin Angle</button>
-        <button 
-          type="button" 
-          class="ghost-button" 
-          data-recommendation-action="reject-angle" 
-          ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}
-          ${episode.ai_copilot?.monthly_theme ? "" : 'title="AI copilot analysis not available for this episode"'}
-        >Reject Angle</button>
-        <button 
-          type="button" 
-          class="ghost-button" 
-          data-recommendation-action="clear-angle" 
-          ${episode.ai_monthly_angle_state ? "" : "disabled"}
-          ${episode.ai_monthly_angle_state ? "" : 'title="No angle review to clear"'}
-        >Clear Angle Review</button>
+        <div class="action-group">
+          <span class="action-group-label">Release Decision</span>
+          <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
+          <button type="button" class="secondary-button" data-recommendation-action="edit">Review In Form</button>
+        </div>
+        <div class="action-group">
+          <span class="action-group-label">Monthly Angle Review</span>
+          <button 
+            type="button" 
+            class="ghost-button" 
+            data-recommendation-action="pin-angle" 
+            ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}
+            ${episode.ai_copilot?.monthly_theme ? "" : 'title="AI copilot analysis not available for this episode"'}
+          >Pin Angle</button>
+          <button 
+            type="button" 
+            class="ghost-button" 
+            data-recommendation-action="reject-angle" 
+            ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}
+            ${episode.ai_copilot?.monthly_theme ? "" : 'title="AI copilot analysis not available for this episode"'}
+          >Reject Angle</button>
+          <button 
+            type="button" 
+            class="ghost-button" 
+            data-recommendation-action="clear-angle" 
+            ${episode.ai_monthly_angle_state ? "" : "disabled"}
+            ${episode.ai_monthly_angle_state ? "" : 'title="No angle review to clear"'}
+          >Clear Angle Review</button>
+        </div>
       </div>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
     `;
@@ -2135,6 +2188,8 @@ function applyEpisodeFocusFromUrl() {
 
 async function loadPlanning() {
   if (!latestPlanningPayload.episodes?.length && !latestPlanningPayload.recommendations?.length) {
+    renderSkeletonCards(episodeList, 4);
+    renderSkeletonCards(recommendationList, 3, true);
     const cachedPayload = readCachedPayload(PLANNING_PAYLOAD_CACHE_KEY);
     // Only use cache if it has meaningful data (not all zeros)
     const hasData = cachedPayload && (

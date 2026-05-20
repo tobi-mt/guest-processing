@@ -50,6 +50,50 @@
   border-radius: 20px;
   background: var(--panel-strong);
 }
+.card-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  border: 1px solid rgba(91, 70, 47, 0.14);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--text);
+}
+
+.status-chip.success {
+  color: #145a4a;
+  border-color: rgba(20, 90, 74, 0.28);
+  background: rgba(223, 242, 234, 0.72);
+}
+
+.status-chip.pending {
+  color: #7a4d18;
+  border-color: rgba(176, 126, 45, 0.32);
+  background: rgba(255, 242, 223, 0.76);
+}
+
+.status-chip.warning {
+  color: #9c2f2f;
+  border-color: rgba(156, 47, 47, 0.3);
+  background: rgba(255, 234, 234, 0.8);
+}
 
 .operations-card.selected {
   border-color: rgba(20, 90, 74, 0.22);
@@ -243,6 +287,27 @@
   margin-top: 14px;
 }
 
+.action-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.action-group + .action-group {
+  padding-top: 8px;
+  border-top: 1px dashed rgba(91, 70, 47, 0.14);
+}
+
+.action-group-label {
+  width: 100%;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .operations-preview {
   margin-top: 14px;
   padding: 16px;
@@ -379,6 +444,45 @@
   margin: 0 0 14px;
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.skeleton-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, rgba(255, 255, 255, 0) 30%, rgba(255, 255, 255, 0.5) 50%, rgba(255, 255, 255, 0) 70%);
+  transform: translateX(-100%);
+  animation: skeleton-shimmer 1.25s infinite;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(91, 70, 47, 0.12);
+  margin-top: 10px;
+}
+
+.skeleton-line.short {
+  width: 38%;
+}
+
+.skeleton-line.medium {
+  width: 62%;
+}
+
+.skeleton-line.long {
+  width: 90%;
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 .top-spaced {
