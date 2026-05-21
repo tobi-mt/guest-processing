@@ -23,6 +23,7 @@ const operationsWeeklyOutreach = document.getElementById("operations-weekly-outr
 const operationsAlerts = document.getElementById("operations-alerts");
 const operationsTabButtons = Array.from(document.querySelectorAll("[data-operations-tab]"));
 const operationsTabPanels = Array.from(document.querySelectorAll("[data-operations-panel]"));
+const IS_FILE_PROTOCOL = window.location.protocol === "file:";
 
 let latestOperationsPayload = { interviews: [], reminder_candidates: [], stats: {} };
 let activeReminderPreset = "all";
@@ -173,8 +174,22 @@ async function downloadSystemBackup() {
 }
 
 function setMessage(node, text, tone = "") {
+  if (!node) return;
   node.textContent = text;
   node.className = `message ${tone}`.trim();
+}
+
+function enforceHostedMode() {
+  if (!IS_FILE_PROTOCOL) {
+    return false;
+  }
+  const warning = "This page is opened as a local file, so interactive actions are unavailable. Please use the live app URL (for example: https://.../operations).";
+  setMessage(interviewMessage, warning, "error");
+  setMessage(reminderMessage, warning, "error");
+  document.querySelectorAll("button, input, select, textarea").forEach((element) => {
+    element.disabled = true;
+  });
+  return true;
 }
 
 function confirmCriticalAction(message) {
@@ -1722,9 +1737,11 @@ operationsTabButtons.forEach((button) => {
 
 resetInterviewForm();
 applyUrlState();
-loadOperations().catch((error) => {
-  setMessage(interviewMessage, error.message, "error");
-});
+if (!enforceHostedMode()) {
+  loadOperations().catch((error) => {
+    setMessage(interviewMessage, error.message, "error");
+  });
+}
 
 // ==================== AI Features ====================
 
@@ -1931,4 +1948,6 @@ if (aiModal) {
 }
 
 // Check AI status on load
-checkAIStatus();
+if (!IS_FILE_PROTOCOL) {
+  checkAIStatus();
+}

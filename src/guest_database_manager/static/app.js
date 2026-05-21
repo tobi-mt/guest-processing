@@ -23,6 +23,7 @@ const guestSort = document.getElementById("guest-sort");
 const guestResultsMeta = document.getElementById("guest-results-meta");
 const guestLoadMoreButton = document.getElementById("guest-load-more");
 const guestPresetButtons = Array.from(document.querySelectorAll("[data-guest-preset]"));
+const IS_FILE_PROTOCOL = window.location.protocol === "file:";
 
 const GUEST_PAGE_SIZE = 12;
 const GUEST_PAYLOAD_CACHE_KEY = "mirror-talk-dashboard-payload";
@@ -2073,10 +2074,19 @@ console.log('  • Smart caching reduces server load');
 console.log('  • Keyboard shortcuts enabled (press Shift+/ for help)');
 
 try {
-  emitClientBeacon("startup_try_enter");
-  applyUrlState();
-  loadGuests();
+  if (IS_FILE_PROTOCOL) {
+    setMessage("This page is opened as a local file, so dashboard actions are disabled. Please use the live app URL (for example: https://.../dashboard).", "error");
+    document.querySelectorAll("button, input, select, textarea").forEach((element) => {
+      element.disabled = true;
+    });
+  } else {
+    emitClientBeacon("startup_try_enter");
+    applyUrlState();
+    loadGuests();
+  }
 } catch (error) {
-  emitClientBeacon("startup_try_error");
+  if (!IS_FILE_PROTOCOL) {
+    emitClientBeacon("startup_try_error");
+  }
   console.error('Dashboard startup failed before loading guests:', error);
 }

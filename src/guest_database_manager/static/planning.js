@@ -39,6 +39,7 @@ const planningTabPanels = Array.from(document.querySelectorAll("[data-planning-p
 const scheduleModal = document.getElementById("schedule-modal");
 const scheduleForm = document.getElementById("schedule-form");
 const scheduleModalMessage = document.querySelector("[data-schedule-modal-message]");
+const IS_FILE_PROTOCOL = window.location.protocol === "file:";
 
 let latestPlanningPayload = {
   stats: {},
@@ -264,8 +265,22 @@ async function downloadExport(payload) {
 }
 
 function setMessage(node, text, tone = "") {
+  if (!node) return;
   node.textContent = text;
   node.className = `message ${tone}`.trim();
+}
+
+function enforceHostedMode() {
+  if (!IS_FILE_PROTOCOL) {
+    return false;
+  }
+  const warning = "This page is opened as a local file, so interactive planning actions are unavailable. Please use the live app URL (for example: https://.../planning).";
+  setMessage(episodeMessage, warning, "error");
+  setMessage(planningExportMessage, warning, "error");
+  document.querySelectorAll("button, input, select, textarea").forEach((element) => {
+    element.disabled = true;
+  });
+  return true;
 }
 
 function confirmCriticalAction(message) {
@@ -2501,6 +2516,8 @@ document.querySelector("[data-modal-action='cancel']").addEventListener("click",
   closeScheduleModal();
 });
 
-loadPlanning().catch((error) => {
-  setMessage(episodeMessage, error.message, "error");
-});
+if (!enforceHostedMode()) {
+  loadPlanning().catch((error) => {
+    setMessage(episodeMessage, error.message, "error");
+  });
+}
