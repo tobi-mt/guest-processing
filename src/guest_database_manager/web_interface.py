@@ -10,6 +10,7 @@ import secrets
 import sqlite3
 import tempfile
 import webbrowser
+import zipfile
 from csv import DictWriter
 from base64 import b64decode
 from time import monotonic
@@ -994,6 +995,75 @@ class GuestWebService:
             workbook_bytes,
             f"mirror-talk-{normalized_list}.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    def export_system_backup(self) -> tuple[bytes, str, str]:
+        """Create a full downloadable backup archive of the live system data."""
+        timestamp = datetime.now(timezone.utc)
+        timestamp_slug = timestamp.strftime("%Y%m%d-%H%M%SZ")
+
+        guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
+        interviews = self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
+        episodes = self.database.list_episodes()
+        recommendations = build_release_recommendations(episodes, reference=datetime.now())
+
+        guest_csv = self._records_to_csv(guests, list(EXPORTABLE_FIELDS["guests"]))
+        interview_csv = self._records_to_csv(interviews, list(EXPORTABLE_FIELDS["interviews"]))
+        episode_csv = self._records_to_csv(episodes, list(EXPORTABLE_FIELDS["episodes"]))
+        recommendation_csv = self._records_to_csv(recommendations, list(EXPORTABLE_FIELDS["recommendations"]))
+
+        db_snapshot_bytes = b""
+        with tempfile.TemporaryDirectory(prefix="mirror-talk-backup-") as temp_dir:
+            snapshot_path = Path(temp_dir) / f"guest_database_snapshot_{timestamp_slug}.db"
+            source = sqlite3.connect(str(self.db_path))
+            destination = sqlite3.connect(str(snapshot_path))
+            try:
+                source.backup(destination)
+            finally:
+                destination.close()
+                source.close()
+            db_snapshot_bytes = snapshot_path.read_bytes()
+
+        manifest = {
+            "backup_generated_at_utc": timestamp.isoformat().replace("+00:00", "Z"),
+            "database_path": str(self.db_path),
+            "counts": {
+                "guests": len(guests),
+                "interviews": len(interviews),
+                "episodes": len(episodes),
+                "recommendations": len(recommendations),
+            },
+            "includes": [
+                "database/guest_database_snapshot.db",
+                "exports/guests.csv",
+                "exports/interviews.csv",
+                "exports/episodes.csv",
+                "exports/recommendations.csv",
+                "exports/guests.json",
+                "exports/interviews.json",
+                "exports/episodes.json",
+                "exports/recommendations.json",
+                "manifest.json",
+            ],
+        }
+
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            archive.writestr("database/guest_database_snapshot.db", db_snapshot_bytes)
+            archive.writestr("exports/guests.csv", guest_csv.encode("utf-8"))
+            archive.writestr("exports/interviews.csv", interview_csv.encode("utf-8"))
+            archive.writestr("exports/episodes.csv", episode_csv.encode("utf-8"))
+            archive.writestr("exports/recommendations.csv", recommendation_csv.encode("utf-8"))
+            archive.writestr("exports/guests.json", json.dumps(guests, ensure_ascii=False, indent=2))
+            archive.writestr("exports/interviews.json", json.dumps(interviews, ensure_ascii=False, indent=2))
+            archive.writestr("exports/episodes.json", json.dumps(episodes, ensure_ascii=False, indent=2))
+            archive.writestr("exports/recommendations.json", json.dumps(recommendations, ensure_ascii=False, indent=2))
+
+        return (
+            zip_buffer.getvalue(),
+            f"mirror-talk-backup-{timestamp_slug}.zip",
+            "application/zip",
         )
 
     def _records_for_export(self, list_name: str) -> list[Dict[str, Any]]:
@@ -4701,6 +4771,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "Use POST for flexible exports"})
             return
 
+        if request_path == "/api/system/backup":
+            self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "Use POST to generate a full backup archive"})
+            return
+
         if request_path == "/api/operations":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -5114,6 +5188,23 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_file(HTTPStatus.OK, content, filename=filename, content_type=content_type)
+            return
+
+        if self.path == "/api/system/backup":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            try:
+                content, filename, content_type = self.service.export_system_backup()
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            except Exception as exc:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Backup generation failed: {exc}"})
                 return
 
             self._send_file(HTTPStatus.OK, content, filename=filename, content_type=content_type)

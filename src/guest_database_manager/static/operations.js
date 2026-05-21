@@ -18,6 +18,7 @@ const interviewLoadMoreButton = document.getElementById("interview-load-more");
 const interviewPresetButtons = Array.from(document.querySelectorAll("[data-interview-preset]"));
 const refreshButton = document.getElementById("operations-refresh-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
+const backupDataButton = document.getElementById("backup-data-button");
 const operationsWeeklyOutreach = document.getElementById("operations-weekly-outreach");
 const operationsAlerts = document.getElementById("operations-alerts");
 const operationsTabButtons = Array.from(document.querySelectorAll("[data-operations-tab]"));
@@ -124,6 +125,51 @@ async function fetchJSON(url, options = {}) {
   }
 
   throw lastError || new Error("Request failed");
+}
+
+async function downloadSystemBackup() {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 120000);
+  try {
+    const response = await fetch("/api/system/backup", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let errorText = "Backup request failed";
+      try {
+        const payload = await response.json();
+        errorText = payload.error || errorText;
+      } catch (error) {
+        // Ignore JSON parse errors and keep default message.
+      }
+      throw new Error(errorText);
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename=\"([^\"]+)\"/i);
+    const filename = (match && match[1]) ? match[1] : `mirror-talk-backup-${new Date().toISOString().replaceAll(":", "-")}.zip`;
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+    return filename;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Backup is taking longer than expected. Please try again.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 function setMessage(node, text, tone = "") {
@@ -1584,6 +1630,26 @@ syncCalendarButton.addEventListener("click", async () => {
     syncCalendarButton.textContent = "Sync Google Calendar";
   }
 });
+
+if (backupDataButton) {
+  backupDataButton.addEventListener("click", async () => {
+    if (!confirmCriticalAction("Create and download a full backup ZIP now? This includes database snapshots and export files.")) {
+      return;
+    }
+    backupDataButton.disabled = true;
+    backupDataButton.textContent = "Creating Backup...";
+    setMessage(interviewMessage, "Generating secure full backup archive...", "pending");
+    try {
+      const filename = await downloadSystemBackup();
+      setMessage(interviewMessage, `Backup ready and downloaded: ${filename}`, "success");
+    } catch (error) {
+      setMessage(interviewMessage, error.message, "error");
+    } finally {
+      backupDataButton.disabled = false;
+      backupDataButton.textContent = "Backup All Data";
+    }
+  });
+}
 
 [reminderSearchInput, interviewSearchInput, interviewYearFilter, interviewConfirmationFilter, interviewSort].forEach((node) => {
   node.addEventListener("input", () => {
