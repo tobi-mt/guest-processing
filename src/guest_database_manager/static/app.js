@@ -149,6 +149,9 @@ let activeGuestEditor = null;
 let activeGuestPreset = "all";
 let activeGuestActionFeedback = null;
 let visibleGuestCount = GUEST_PAGE_SIZE;
+let payloadHasFullEnrichment = false;
+let fullHydrationInFlight = false;
+const AI_HEAVY_PRESETS = new Set(["ai_strong_fit", "ai_review", "ai_risky"]);
 
 function emitClientBeacon(phase) {
   try {
@@ -237,8 +240,15 @@ async function fetchJSONInternal(url, options = {}) {
         headers: { "Content-Type": "application/json" },
         ...options,
       });
-
-      const data = await response.json();
+      const rawText = await response.text();
+      let data = {};
+      if (rawText) {
+        try {
+          data = JSON.parse(rawText);
+        } catch (error) {
+          data = { error: rawText.trim() };
+        }
+      }
       if (!response.ok) {
         const error = new Error(data.error || "Request failed");
         error.status = response.status;
@@ -371,6 +381,12 @@ function guestMatchesPreset(guest, preset) {
   if (preset === "rejected") return guestStatusLabel(guest) === "rejected";
   if (preset === "no_email") return !normalizeText(guest.email);
   return true;
+}
+
+function hasFullEnrichment(payload) {
+  const guests = payload?.guests || [];
+  if (!guests.length) return false;
+  return guests.some((guest) => Boolean(guest.promotion_profile) || Boolean(guest.guest_recommendation_support?.score));
 }
 
 function guestSortRank(guest) {
@@ -1475,10 +1491,30 @@ async function loadGuests() {
         setMessage("Loading guests...", "pending");
       }
     }
-    const payload = await fetchJSON("/api/guests");
+    const needsFullForPreset = AI_HEAVY_PRESETS.has(activeGuestPreset);
+    const payload = await fetchJSON(needsFullForPreset ? "/api/guests" : "/api/guests?skip_enrichment=true");
     emitClientBeacon("loadGuests_api_ok");
+    payloadHasFullEnrichment = hasFullEnrichment(payload);
     renderGuests(payload);
     storeCachedPayload(GUEST_PAYLOAD_CACHE_KEY, payload);
+    if (!payloadHasFullEnrichment && !fullHydrationInFlight) {
+      fullHydrationInFlight = true;
+      window.setTimeout(async () => {
+        try {
+          const enrichedPayload = await fetchJSON("/api/guests");
+          payloadHasFullEnrichment = hasFullEnrichment(enrichedPayload);
+          if (payloadHasFullEnrichment && AI_HEAVY_PRESETS.has(activeGuestPreset)) {
+            renderGuests(enrichedPayload);
+          }
+          latestPayload = enrichedPayload;
+          storeCachedPayload(GUEST_PAYLOAD_CACHE_KEY, enrichedPayload);
+        } catch (error) {
+          // Keep lite mode if enriched hydration fails.
+        } finally {
+          fullHydrationInFlight = false;
+        }
+      }, 20);
+    }
     if (message && message.classList.contains("pending")) {
       setMessage("", "");
     }
@@ -1654,7 +1690,7 @@ guestLoadMoreButton.addEventListener("click", () => {
 }
 
 guestPresetButtons.forEach((button) => {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     activeGuestPreset = button.dataset.guestPreset || "all";
     visibleGuestCount = GUEST_PAGE_SIZE;
     if (activeGuestPreset === "accepted" || activeGuestPreset === "rejected") {
@@ -1663,6 +1699,11 @@ guestPresetButtons.forEach((button) => {
       decisionFilter.value = "unprocessed";
     } else {
       decisionFilter.value = "all";
+    }
+    if (AI_HEAVY_PRESETS.has(activeGuestPreset) && !payloadHasFullEnrichment) {
+      setMessage("Loading full AI context for this view...", "pending");
+      await loadGuests();
+      return;
     }
     if (latestPayload) {
       renderGuests(latestPayload);

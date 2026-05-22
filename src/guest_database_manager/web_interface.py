@@ -5894,7 +5894,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _send_cors_headers(self, origin: Optional[str]) -> None:
         if origin in ALLOWED_ORIGINS:
