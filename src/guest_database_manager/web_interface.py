@@ -798,12 +798,16 @@ class GuestWebService:
             return cached
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
+        
+        # Build guest lookup indexes ONCE for O(1) lookups instead of O(n) per episode
+        guest_indexes = self._build_guest_lookup_indexes(guests)
+        
         ai_copilot = self._build_openai_scheduling_copilot()
         enriched_episodes = []
         for episode in episodes:
             enriched = dict(episode)
-            enriched["guest_profile_context"] = self._match_guest_profile_context(enriched, guests)
-            enriched["guest_research"] = self._match_guest_research(enriched, guests)
+            enriched["guest_profile_context"] = self._match_guest_profile_context_with_indexes(enriched, guest_indexes)
+            enriched["guest_research"] = self._match_guest_research_with_indexes(enriched, guest_indexes)
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
@@ -1462,6 +1466,71 @@ class GuestWebService:
             return 70
         return 0
 
+    def _build_guest_lookup_indexes(self, guests: list[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build O(1) lookup indexes for guests to avoid repeated linear searches."""
+        email_index: Dict[str, Dict[str, Any]] = {}
+        website_index: Dict[str, list[Dict[str, Any]]] = {}
+        
+        for guest in guests:
+            # Index by email (case-insensitive)
+            email = _normalize_text(guest.get("email")).casefold()
+            if email:
+                email_index[email] = guest
+            
+            # Index by website host
+            host = self._website_host(guest.get("website"))
+            if host:
+                if host not in website_index:
+                    website_index[host] = []
+                website_index[host].append(guest)
+        
+        return {
+            "email_index": email_index,
+            "website_index": website_index,
+            "all_guests": guests,
+        }
+
+    def _find_matching_guest_with_indexes(
+        self, episode: Dict[str, Any], guest_indexes: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Find the best matching guest using pre-built indexes for O(1) lookups."""
+        email_key = _normalize_text(episode.get("guest_email")).casefold()
+        website_host = self._website_host(episode.get("website"))
+        episode_name = episode.get("guest_name")
+        
+        email_index = guest_indexes["email_index"]
+        website_index = guest_indexes["website_index"]
+        all_guests = guest_indexes["all_guests"]
+
+        # Fast O(1) email lookup
+        if email_key and email_key in email_index:
+            return email_index[email_key]
+
+        # Fast O(1) website host lookup
+        if website_host and website_host in website_index:
+            host_matches = website_index[website_host]
+            if len(host_matches) == 1:
+                return host_matches[0]
+
+        # Name matching - still need to check all guests, but only if no email/website match
+        scored_matches: list[tuple[int, Dict[str, Any]]] = []
+        for guest in all_guests:
+            guest_name = guest.get("full_name") or guest.get("name")
+            score = self._name_match_score(episode_name, guest_name)
+            if score > 0:
+                scored_matches.append((score, guest))
+
+        if not scored_matches:
+            return None
+
+        scored_matches.sort(key=lambda item: (item[0], int(item[1].get("id") or 0)), reverse=True)
+        best_score = scored_matches[0][0]
+        best_matches = [guest for score, guest in scored_matches if score == best_score]
+        if best_score >= 85 and len(best_matches) == 1:
+            return best_matches[0]
+
+        return None
+
     def _find_matching_guest(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Find the best matching guest for an episode by stable identifiers, then safe name variants."""
         email_key = _normalize_text(episode.get("guest_email")).casefold()
@@ -1602,9 +1671,36 @@ class GuestWebService:
             return None
         return research
 
+    def _match_guest_research_with_indexes(self, episode: Dict[str, Any], guest_indexes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Attach guest research to planning records using pre-built indexes."""
+        matched_guest = self._find_matching_guest_with_indexes(episode, guest_indexes)
+        if not matched_guest:
+            return None
+        research = self._decorate_research_payload(
+            self._research_payload(matched_guest.get("guest_research")),
+            matched_guest.get("guest_research_updated_at"),
+        )
+        if research and research.get("cache_status") == "failed":
+            return None
+        return research
+
     def _match_guest_profile_context(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Attach compact guest profile context from the Mirror Talk database."""
         matched_guest = self._find_matching_guest(episode, guests)
+        if matched_guest is None:
+            return None
+
+        return {
+            "profession": _normalize_text(matched_guest.get("profession")),
+            "background": _normalize_text(matched_guest.get("background")),
+            "faith_practice": _normalize_text(matched_guest.get("faith_practice")),
+            "core_values": _normalize_text(matched_guest.get("core_values")),
+            "passionate_topics": _normalize_text(matched_guest.get("passionate_topics")),
+        }
+
+    def _match_guest_profile_context_with_indexes(self, episode: Dict[str, Any], guest_indexes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Attach compact guest profile context using pre-built indexes."""
+        matched_guest = self._find_matching_guest_with_indexes(episode, guest_indexes)
         if matched_guest is None:
             return None
 

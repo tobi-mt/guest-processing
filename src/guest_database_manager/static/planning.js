@@ -2254,121 +2254,136 @@ async function loadPlanning() {
   });
 }
 
-episodeForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const payload = Object.fromEntries(new FormData(episodeForm).entries());
-  const episodeId = payload.id;
-  const submitButton = episodeSubmitButton;
-  payload.outreach_plan = JSON.stringify(collectOutreachPlanFromForm());
-  payload.priority_score = String(
-    clampPriorityScore(payload.priority_score, suggestPriorityScoreForEpisode(payload))
-  );
-  delete payload.id;
-  submitButton.disabled = true;
-  submitButton.textContent = episodeId ? "Saving..." : "Creating...";
-  setMessage(episodeMessage, episodeId ? "Saving episode changes..." : "Saving episode...", "pending");
-  try {
-    await fetchJSON(episodeId ? `/api/episodes/${episodeId}` : "/api/episodes", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    resetEpisodeForm();
-    setMessage(episodeMessage, episodeId ? "Episode updated." : "Episode saved.", "success");
-    await loadPlanning();
-  } catch (error) {
-    setMessage(episodeMessage, error.message, "error");
-  } finally {
-    submitButton.disabled = false;
-    submitButton.textContent = episodeId ? "Update Episode" : "Save Episode";
-  }
-});
-
-episodeResetButton.addEventListener("click", () => {
-  resetEpisodeForm();
-  setMessage(episodeMessage, "Back to creating a new episode.", "success");
-});
-
-episodeImportForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const formData = new FormData(episodeImportForm);
-  const submitButton = episodeImportForm.querySelector("button[type='submit']");
-  submitButton.disabled = true;
-  submitButton.textContent = "Importing...";
-  setMessage(episodeImportMessage, "Importing episode CSV...", "pending");
-  try {
-    const result = await postForm("/api/episodes/import", formData);
-    episodeImportForm.reset();
-    setMessage(
-      episodeImportMessage,
-      `Episode import finished. New: ${result.imported}, Updated: ${result.updated}.`,
-      "success",
+if (episodeForm && episodeSubmitButton) {
+  episodeForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(episodeForm).entries());
+    const episodeId = payload.id;
+    const submitButton = episodeSubmitButton;
+    payload.outreach_plan = JSON.stringify(collectOutreachPlanFromForm());
+    payload.priority_score = String(
+      clampPriorityScore(payload.priority_score, suggestPriorityScoreForEpisode(payload))
     );
-    await loadPlanning();
-  } catch (error) {
-    setMessage(episodeImportMessage, error.message, "error");
-  } finally {
-    submitButton.disabled = false;
-    submitButton.textContent = "Import Episode CSV";
-  }
-});
+    delete payload.id;
+    submitButton.disabled = true;
+    submitButton.textContent = episodeId ? "Saving..." : "Creating...";
+    setMessage(episodeMessage, episodeId ? "Saving episode changes..." : "Saving episode...", "pending");
+    try {
+      await fetchJSON(episodeId ? `/api/episodes/${episodeId}` : "/api/episodes", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      resetEpisodeForm();
+      setMessage(episodeMessage, episodeId ? "Episode updated." : "Episode saved.", "success");
+      await loadPlanning();
+    } catch (error) {
+      console.error("Episode save error:", error);
+      setMessage(episodeMessage, error.message || "Failed to save episode", "error");
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = episodeId ? "Update Episode" : "Save Episode";
+    }
+  });
+} else {
+  console.error("Episode form or submit button not found in DOM");
+}
 
-askSyncForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const payload = Object.fromEntries(new FormData(askSyncForm).entries());
-  payload.overwrite_existing = Boolean(askSyncForm.elements.overwrite_existing.checked);
-  const submitButton = askSyncForm.querySelector("button[type='submit']");
-  submitButton.disabled = true;
-  submitButton.textContent = "Syncing...";
-  setMessage(askSyncMessage, "Syncing Ask Mirror Talk transcripts...", "pending");
-  try {
-    const result = await fetchJSON("/api/ask-mirror-talk/sync", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    const summary = [
-      `Updated ${result.updated} episode${result.updated === 1 ? "" : "s"}`,
-      `${result.matched} matched`,
-      `${result.unmatched_local} unmatched`,
-    ].join(" · ");
-    setMessage(askSyncMessage, summary, "success");
-    renderAskSyncBreakdown(result);
-    await loadPlanning();
-  } catch (error) {
-    setMessage(askSyncMessage, error.message, "error");
-    renderAskSyncBreakdown(null);
-  } finally {
-    submitButton.disabled = false;
-    submitButton.textContent = "Sync Matching Transcripts";
-  }
-});
+if (episodeResetButton) {
+  episodeResetButton.addEventListener("click", () => {
+    resetEpisodeForm();
+    setMessage(episodeMessage, "Back to creating a new episode.", "success");
+  });
+}
 
-planningExportForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const selectedFields = Array.from(
-    planningExportForm.querySelectorAll("input[name='fields']:checked"),
-    (input) => input.value,
-  );
-  const submitButton = planningExportForm.querySelector("button[type='submit']");
-  submitButton.disabled = true;
-  submitButton.textContent = "Preparing...";
-  setMessage(planningExportMessage, "Preparing export...", "pending");
-  try {
-    await downloadExport({
-      list_name: exportListName.value,
-      format: planningExportForm.elements.format.value,
-      fields: selectedFields,
-    });
-    setMessage(planningExportMessage, "Export is downloading.", "success");
-  } catch (error) {
-    setMessage(planningExportMessage, error.message, "error");
-  } finally {
-    submitButton.disabled = false;
-    submitButton.textContent = "Export Selected Fields";
-  }
-});
+if (episodeImportForm) {
+  episodeImportForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(episodeImportForm);
+    const submitButton = episodeImportForm.querySelector("button[type='submit']");
+    submitButton.disabled = true;
+    submitButton.textContent = "Importing...";
+    setMessage(episodeImportMessage, "Importing episode CSV...", "pending");
+    try {
+      const result = await postForm("/api/episodes/import", formData);
+      episodeImportForm.reset();
+      setMessage(
+        episodeImportMessage,
+        `Episode import finished. New: ${result.imported}, Updated: ${result.updated}.`,
+        "success",
+      );
+      await loadPlanning();
+    } catch (error) {
+      console.error("Episode import error:", error);
+      setMessage(episodeImportMessage, error.message || "Failed to import episodes", "error");
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = "Import Episode CSV";
+    }
+  });
+}
 
-exportListName.addEventListener("change", renderExportFields);
-refreshButton.addEventListener("click", async () => {
+if (askSyncForm) {
+  askSyncForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(askSyncForm).entries());
+    payload.overwrite_existing = Boolean(askSyncForm.elements.overwrite_existing.checked);
+    const submitButton = askSyncForm.querySelector("button[type='submit']");
+    submitButton.disabled = true;
+    submitButton.textContent = "Syncing...";
+    setMessage(askSyncMessage, "Syncing Ask Mirror Talk transcripts...", "pending");
+    try {
+      const result = await fetchJSON("/api/ask-mirror-talk/sync", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const summary = [
+        `Updated ${result.updated} episode${result.updated === 1 ? "" : "s"}`,
+        `${result.matched} matched`,
+        `${result.unmatched_local} unmatched`,
+      ].join(" · ");
+      setMessage(askSyncMessage, summary, "success");
+      renderAskSyncBreakdown(result);
+      await loadPlanning();
+    } catch (error) {
+      console.error("Ask sync error:", error);
+      setMessage(askSyncMessage, error.message || "Failed to sync transcripts", "error");
+      renderAskSyncBreakdown(null);
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = "Sync Matching Transcripts";
+    }
+  });
+}
+
+if (planningExportForm) {
+  planningExportForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const selectedFields = Array.from(
+      planningExportForm.querySelectorAll("input[name='fields']:checked"),
+      (input) => input.value,
+    );
+    const submitButton = planningExportForm.querySelector("button[type='submit']");
+    submitButton.disabled = true;
+    submitButton.textContent = "Preparing...";
+    setMessage(planningExportMessage, "Preparing export...", "pending");
+    try {
+      await downloadExport({
+        list_name: exportListName.value,
+        format: planningExportForm.elements.format.value,
+        fields: selectedFields,
+      });
+      setMessage(planningExportMessage, "Export is downloading.", "success");
+    } catch (error) {
+      console.error("Export error:", error);
+      setMessage(planningExportMessage, error.message || "Failed to export", "error");
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = "Export Selected Fields";
+    }
+  });
+}
+
+if (exportListName) {
   refreshButton.disabled = true;
   refreshButton.textContent = "Refreshing...";
   setMessage(episodeMessage, "Refreshing planning data...", "pending");
@@ -2485,47 +2500,55 @@ applyUrlState();
 episodeForm.elements.outreach_plan.value = JSON.stringify(normalizeOutreachPlan(null));
 
 // Schedule modal event listener
-scheduleForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const episodeId = scheduleForm.elements.episode_id.value;
-  const releaseDate = scheduleForm.elements.release_date.value;
-  
-  if (!episodeId || !releaseDate) {
-    setMessage(scheduleModalMessage, "Please select a date and time.", "error");
-    return;
-  }
-  
-  const submitButton = scheduleForm.querySelector("button[type='submit']");
-  submitButton.disabled = true;
-  submitButton.textContent = "Scheduling...";
-  setMessage(scheduleModalMessage, "Scheduling episode...", "pending");
-  
-  try {
-    await fetchJSON(`/api/episodes/${episodeId}`, {
-      method: "POST",
-      body: JSON.stringify({
-        release_date: releaseDate,
-        release_status: "scheduled",
-      }),
-    });
+if (scheduleForm) {
+  scheduleForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const episodeId = scheduleForm.elements.episode_id.value;
+    const releaseDate = scheduleForm.elements.release_date.value;
     
-    setMessage(episodeMessage, `Scheduled for ${formatDateTime(releaseDate)}.`, "success");
-    closeScheduleModal();
-    await loadPlanning();
-  } catch (error) {
-    setMessage(scheduleModalMessage, error.message, "error");
-    submitButton.disabled = false;
-    submitButton.textContent = "Confirm Schedule";
-  }
-});
+    if (!episodeId || !releaseDate) {
+      setMessage(scheduleModalMessage, "Please select a date and time.", "error");
+      return;
+    }
+    
+    const submitButton = scheduleForm.querySelector("button[type='submit']");
+    submitButton.disabled = true;
+    submitButton.textContent = "Scheduling...";
+    setMessage(scheduleModalMessage, "Scheduling episode...", "pending");
+    
+    try {
+      await fetchJSON(`/api/episodes/${episodeId}`, {
+        method: "POST",
+        body: JSON.stringify({
+          release_date: releaseDate,
+          release_status: "scheduled",
+        }),
+      });
+      
+      setMessage(episodeMessage, `Scheduled for ${formatDateTime(releaseDate)}.`, "success");
+      closeScheduleModal();
+      await loadPlanning();
+    } catch (error) {
+      console.error("Schedule error:", error);
+      setMessage(scheduleModalMessage, error.message || "Failed to schedule episode", "error");
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = "Confirm Schedule";
+    }
+  });
+}
 
 // Close modal when cancel button is clicked
-document.querySelector("[data-modal-action='cancel']").addEventListener("click", () => {
-  closeScheduleModal();
-});
+const modalCancelButton = document.querySelector("[data-modal-action='cancel']");
+if (modalCancelButton) {
+  modalCancelButton.addEventListener("click", () => {
+    closeScheduleModal();
+  });
+}
 
 if (!enforceHostedMode()) {
   loadPlanning().catch((error) => {
-    setMessage(episodeMessage, error.message, "error");
+    console.error("Planning load error:", error);
+    setMessage(episodeMessage, error.message || "Failed to load planning data", "error");
   });
 }
