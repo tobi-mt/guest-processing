@@ -3380,6 +3380,27 @@ class GuestWebService:
         except AskMirrorTalkClientError as exc:
             raise WebInterfaceError(str(exc)) from exc
 
+        # Build indexes for O(1) lookups instead of O(n*m) nested loops
+        # With 528 local episodes and 1000 remote episodes, this reduces from 528,000 to ~1,528 operations
+        remote_by_title_key: Dict[str, Dict[str, Any]] = {}
+        remote_with_guest_tokens: Dict[str, list[Dict[str, Any]]] = {}
+        
+        for remote_episode in remote_episodes:
+            # Index by normalized title for exact matches
+            title_key = self._episode_match_key(remote_episode.get("title"))
+            if title_key:
+                remote_by_title_key[title_key] = remote_episode
+            
+            # Index by person tokens in title and description for guest name matching
+            remote_title_tokens = set(self._word_tokens(remote_episode.get("title")))
+            remote_description_tokens = set(self._word_tokens(remote_episode.get("description")))
+            all_tokens = remote_title_tokens | remote_description_tokens
+            
+            for token in all_tokens:
+                if token not in remote_with_guest_tokens:
+                    remote_with_guest_tokens[token] = []
+                remote_with_guest_tokens[token].append(remote_episode)
+
         local_episodes = self.database.list_episodes()
         updated = 0
         matched = 0
@@ -3396,18 +3417,33 @@ class GuestWebService:
         used_remote_ids: set[Any] = set()
 
         for episode in local_episodes:
-            if not self._episode_match_key(episode.get("episode_title")) and not self._person_tokens(episode.get("guest_name")):
+            local_title_key = self._episode_match_key(episode.get("episode_title"))
+            guest_tokens = self._person_tokens(episode.get("guest_name"))
+            
+            if not local_title_key and not guest_tokens:
                 skipped_without_title += 1
                 continue
 
             candidates: list[tuple[int, str, Dict[str, Any]]] = []
-            for remote_episode in remote_episodes:
-                remote_id = remote_episode.get("id")
-                if remote_id in used_remote_ids:
-                    continue
-                score, method = self._score_ask_episode_match(episode, remote_episode)
-                if score > 0:
-                    candidates.append((score, method, remote_episode))
+            
+            # Fast exact title match lookup O(1)
+            if local_title_key and local_title_key in remote_by_title_key:
+                remote_episode = remote_by_title_key[local_title_key]
+                if remote_episode.get("id") not in used_remote_ids:
+                    candidates.append((1000, "title", remote_episode))
+            
+            # Fast guest name token lookup - only check episodes with matching tokens
+            if guest_tokens and not candidates:
+                potential_matches: set[int] = set()
+                for token in guest_tokens:
+                    if token in remote_with_guest_tokens:
+                        for remote_episode in remote_with_guest_tokens[token]:
+                            remote_id = remote_episode.get("id")
+                            if remote_id not in used_remote_ids and remote_id not in potential_matches:
+                                potential_matches.add(remote_id)
+                                score, method = self._score_ask_episode_match(episode, remote_episode)
+                                if score > 0:
+                                    candidates.append((score, method, remote_episode))
 
             if not candidates:
                 continue
