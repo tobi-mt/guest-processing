@@ -818,13 +818,10 @@ class GuestWebService:
         
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
         
-        if compact:
-            print(f"[PLANNING] Compacting episodes and recommendations...", file=sys.stderr, flush=True)
         response_episodes = [self._summarize_episode_for_list(episode) for episode in enriched_episodes] if compact else enriched_episodes
         response_recommendations = [self._summarize_episode_for_list(episode) for episode in recommendations] if compact else recommendations
-        print(f"[PLANNING] Building final response payload...", file=sys.stderr, flush=True)
         
-        result = self._store_cached_payload(cache_key, {
+        return self._store_cached_payload(cache_key, {
             "stats": self._build_episode_stats(enriched_episodes),
             "episodes": response_episodes,
             "recommendations": response_recommendations,
