@@ -833,9 +833,10 @@ class GuestWebService:
         
         # Filter out recommendations for episodes without a corresponding guest in the database
         # This prevents recommending imported episodes where the guest doesn't exist
+        # STRICT FILTERING: Only allow exact email or website matches, no fuzzy name matching
         filtered_recommendations = []
         for rec in recommendations:
-            matched_guest = self._find_matching_guest_with_indexes(rec, guest_indexes)
+            matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
             if matched_guest:
                 filtered_recommendations.append(rec)
         
@@ -886,9 +887,10 @@ class GuestWebService:
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
         
         # Filter out recommendations for episodes without a corresponding guest in the database
+        # STRICT FILTERING: Only allow exact email or website matches, no fuzzy name matching
         filtered_recommendations = []
         for rec in recommendations:
-            matched_guest = self._find_matching_guest_with_indexes(rec, guest_indexes)
+            matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
             if matched_guest:
                 filtered_recommendations.append(rec)
         
@@ -916,9 +918,10 @@ class GuestWebService:
             if auto_researched_count:
                 recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
                 # Re-filter after regenerating recommendations
+                # STRICT FILTERING: Only allow exact email or website matches
                 filtered_recommendations = []
                 for rec in recommendations:
-                    matched_guest = self._find_matching_guest_with_indexes(rec, guest_indexes)
+                    matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
                     if matched_guest:
                         filtered_recommendations.append(rec)
         
@@ -1137,9 +1140,10 @@ class GuestWebService:
             recommendations = build_release_recommendations(episodes, reference=datetime.now())
             
             # Filter out recommendations for episodes without a corresponding guest
+            # STRICT FILTERING: Only allow exact email or website matches
             filtered = []
             for rec in recommendations:
-                matched_guest = self._find_matching_guest_with_indexes(rec, guest_indexes)
+                matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
                 if matched_guest:
                     filtered.append(rec)
             return filtered
@@ -1591,6 +1595,33 @@ class GuestWebService:
         if best_score >= 85 and len(best_matches) == 1:
             return best_matches[0]
 
+        return None
+
+    def _find_matching_guest_strict(
+        self, episode: Dict[str, Any], guest_indexes: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Strict guest matching - only exact email or website matches, no fuzzy name matching.
+        
+        This is used for filtering recommendations to ensure we only show episodes
+        where we have high confidence the guest exists in our database.
+        """
+        email_key = _normalize_text(episode.get("guest_email")).casefold()
+        website_host = self._website_host(episode.get("website"))
+        
+        email_index = guest_indexes["email_index"]
+        website_index = guest_indexes["website_index"]
+
+        # Only allow exact email match
+        if email_key and email_key in email_index:
+            return email_index[email_key]
+
+        # Only allow exact website match if there's exactly one guest with that website
+        if website_host and website_host in website_index:
+            host_matches = website_index[website_host]
+            if len(host_matches) == 1:
+                return host_matches[0]
+
+        # No fuzzy name matching - return None if no exact match found
         return None
 
     def _find_matching_guest(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
