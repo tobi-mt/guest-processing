@@ -831,8 +831,16 @@ class GuestWebService:
         
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
         
+        # Filter out recommendations for episodes without a corresponding guest in the database
+        # This prevents recommending imported episodes where the guest doesn't exist
+        filtered_recommendations = []
+        for rec in recommendations:
+            matched_guest = self._find_matching_guest_with_indexes(rec, guest_indexes)
+            if matched_guest:
+                filtered_recommendations.append(rec)
+        
         response_episodes = [self._summarize_episode_for_list(episode) for episode in enriched_episodes] if compact else enriched_episodes
-        response_recommendations = [self._summarize_episode_for_list(episode) for episode in recommendations] if compact else recommendations
+        response_recommendations = [self._summarize_episode_for_list(episode) for episode in filtered_recommendations] if compact else filtered_recommendations
         
         return self._store_cached_payload(cache_key, {
             "stats": self._build_episode_stats(enriched_episodes),
@@ -862,6 +870,10 @@ class GuestWebService:
 
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
+        
+        # Build guest indexes for filtering recommendations
+        guest_indexes = self._build_guest_lookup_indexes(guests)
+        
         enriched_episodes = []
         for episode in episodes:
             enriched = dict(episode)
@@ -872,10 +884,18 @@ class GuestWebService:
             enriched_episodes.append(enriched)
 
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
+        
+        # Filter out recommendations for episodes without a corresponding guest in the database
+        filtered_recommendations = []
+        for rec in recommendations:
+            matched_guest = self._find_matching_guest_with_indexes(rec, guest_indexes)
+            if matched_guest:
+                filtered_recommendations.append(rec)
+        
         auto_researched_count = 0
         candidate_ids = {
             item.get("id")
-            for item in recommendations[:AI_AUTORESEARCH_CANDIDATE_LIMIT]
+            for item in filtered_recommendations[:AI_AUTORESEARCH_CANDIDATE_LIMIT]
             if item.get("id") is not None
         }
         if candidate_ids:
@@ -895,9 +915,16 @@ class GuestWebService:
                         auto_researched_count += 1
             if auto_researched_count:
                 recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
-        ai_diagnostics = self._build_ai_candidate_diagnostics(recommendations)
+                # Re-filter after regenerating recommendations
+                filtered_recommendations = []
+                for rec in recommendations:
+                    matched_guest = self._find_matching_guest_with_indexes(rec, guest_indexes)
+                    if matched_guest:
+                        filtered_recommendations.append(rec)
+        
+        ai_diagnostics = self._build_ai_candidate_diagnostics(filtered_recommendations)
         ai_result = ai_scheduling_client.enrich_recommendations(
-            recommendations,
+            filtered_recommendations,
             reference=datetime.now(),
             released_history=[
                 item for item in enriched_episodes
@@ -1105,7 +1132,17 @@ class GuestWebService:
             return self.database.list_episodes()
         if list_name == "recommendations":
             episodes = self.database.list_episodes()
-            return build_release_recommendations(episodes, reference=datetime.now())
+            guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
+            guest_indexes = self._build_guest_lookup_indexes(guests)
+            recommendations = build_release_recommendations(episodes, reference=datetime.now())
+            
+            # Filter out recommendations for episodes without a corresponding guest
+            filtered = []
+            for rec in recommendations:
+                matched_guest = self._find_matching_guest_with_indexes(rec, guest_indexes)
+                if matched_guest:
+                    filtered.append(rec)
+            return filtered
         raise WebInterfaceError("That list cannot be exported.")
 
     @staticmethod
