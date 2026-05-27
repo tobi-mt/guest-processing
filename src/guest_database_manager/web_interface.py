@@ -607,6 +607,8 @@ class GuestWebService:
             return
         for cache_key in cache_keys:
             self._payload_cache.pop(cache_key, None)
+            if cache_key == "planning":
+                self._payload_cache.pop("planning_compact", None)
 
     def _calendar_sync_enabled(self) -> bool:
         """Return whether Google Calendar sync is configured without crashing the page on config errors."""
@@ -791,9 +793,10 @@ class GuestWebService:
             "booking_alerts": self._build_operations_alerts(raw_interviews),
         })
 
-    def list_planning(self) -> Dict[str, Any]:
+    def list_planning(self, compact: bool = False) -> Dict[str, Any]:
         """Return episode planning data separate from interview operations."""
-        cached = self._get_cached_payload("planning")
+        cache_key = "planning_compact" if compact else "planning"
+        cached = self._get_cached_payload(cache_key)
         if cached is not None:
             return cached
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
@@ -812,10 +815,12 @@ class GuestWebService:
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
-        return self._store_cached_payload("planning", {
+        response_episodes = [self._summarize_episode_for_list(episode) for episode in enriched_episodes] if compact else enriched_episodes
+        response_recommendations = [self._summarize_episode_for_list(episode) for episode in recommendations] if compact else recommendations
+        return self._store_cached_payload(cache_key, {
             "stats": self._build_episode_stats(enriched_episodes),
-            "episodes": enriched_episodes,
-            "recommendations": recommendations,
+            "episodes": response_episodes,
+            "recommendations": response_recommendations,
             "available_categories": self.database.list_episode_categories(),
             "ask_sync_enabled": self._build_ask_mirror_talk_client() is not None,
             "ai_scheduling_enabled": ai_copilot is not None,
@@ -891,7 +896,10 @@ class GuestWebService:
                 "current_month_context": ai_result.get("current_month_context"),
                 "diagnostics": ai_diagnostics,
             },
-            "recommendations": ai_result.get("recommendations", recommendations),
+            "recommendations": [
+                self._summarize_episode_for_list(episode)
+                for episode in ai_result.get("recommendations", recommendations)
+            ],
         }
 
     @staticmethod
@@ -1868,6 +1876,25 @@ class GuestWebService:
         normalized["outreach_plan"] = _normalize_outreach_plan(normalized.get("outreach_plan"))
         normalized["outreach_summary"] = self._build_episode_outreach_summary(normalized)
         return normalized
+
+    def _summarize_episode_for_list(self, episode: Dict[str, Any]) -> Dict[str, Any]:
+        """Return an episode payload suitable for large list views."""
+        summarized = dict(episode)
+        transcript_text = _normalize_text(summarized.get("transcript_text"))
+        summarized["transcript_available"] = bool(transcript_text)
+        if transcript_text:
+            summarized["transcript_text"] = ""
+            summarized["transcript_omitted"] = True
+        else:
+            summarized["transcript_omitted"] = False
+        return summarized
+
+    def get_episode(self, episode_id: int) -> Dict[str, Any]:
+        """Return one full episode record for editing."""
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode not found.")
+        return self._normalize_episode_record(episode)
 
     @staticmethod
     def _episode_match_key(value: Any) -> str:
@@ -4882,7 +4909,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
-            self._send_json(HTTPStatus.OK, self.service.list_planning())
+            query = self._query_params(self.path)
+            compact = query.get("compact", "").lower() == "true"
+            self._send_json(HTTPStatus.OK, self.service.list_planning(compact=compact))
             return
 
         if request_path == "/api/planning/ai-copilot":
@@ -5032,6 +5061,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 payload = self.service.preview_episode_release_email(episode_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if request_path.startswith("/api/episodes/"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            episode_id = self._extract_record_id(request_path, "/api/episodes/")
+            if episode_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                return
+
+            try:
+                payload = self.service.get_episode(episode_id)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return

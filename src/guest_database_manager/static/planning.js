@@ -58,6 +58,7 @@ let pendingEpisodeIdFromUrl = null;
 let pendingPlanningSuccessMessage = "";
 let activePlanningTab = "release_planning";
 let aiCopilotHydrationInFlight = false;
+let planningRefreshInFlight = false;
 const PLANNING_PAYLOAD_CACHE_KEY = "mirror-talk-planning-payload";
 
 const RECOMMENDATION_PAGE_SIZE = 6;
@@ -184,8 +185,53 @@ function replaceEpisodeInPayload(savedEpisode) {
     return;
   }
   const replaceById = (item) => (String(item.id || "") === String(savedEpisode.id) ? { ...item, ...savedEpisode } : item);
-  latestPlanningPayload.episodes = (latestPlanningPayload.episodes || []).map(replaceById);
-  latestPlanningPayload.recommendations = (latestPlanningPayload.recommendations || []).map(replaceById);
+  const episodes = latestPlanningPayload.episodes || [];
+  const recommendations = latestPlanningPayload.recommendations || [];
+  latestPlanningPayload.episodes = episodes.some((item) => String(item.id || "") === String(savedEpisode.id))
+    ? episodes.map(replaceById)
+    : [{ ...savedEpisode }, ...episodes];
+  latestPlanningPayload.recommendations = recommendations.map(replaceById);
+}
+
+function cleanEpisodePayloadForSave(payload) {
+  const cleaned = { ...payload };
+  if (cleaned.transcript_omitted && !cleaned.transcript_text) {
+    delete cleaned.transcript_text;
+  }
+  delete cleaned.transcript_omitted;
+  delete cleaned.transcript_available;
+  return cleaned;
+}
+
+function updatePlanningStats(payload) {
+  if (!payload?.stats) return;
+  stats.total.textContent = payload.stats.episodes_total ?? 0;
+  stats.released.textContent = payload.stats.episodes_released ?? 0;
+  stats.scheduled.textContent = payload.stats.episodes_scheduled ?? 0;
+  stats.unreleased.textContent = payload.stats.episodes_unreleased ?? 0;
+  stats.promoReady.textContent = payload.stats.episodes_promo_ready ?? 0;
+  stats.needsAssets.textContent = payload.stats.episodes_need_assets ?? 0;
+}
+
+function refreshPlanningQuietly() {
+  if (planningRefreshInFlight) return;
+  planningRefreshInFlight = true;
+  window.setTimeout(async () => {
+    try {
+      const payload = await fetchJSON("/api/planning?compact=true");
+      latestPlanningPayload = payload;
+      updatePlanningStats(payload);
+      storeCachedPayload(PLANNING_PAYLOAD_CACHE_KEY, payload);
+      const mainFormEditing = Boolean(episodeForm?.elements?.id?.value);
+      if (!activeEpisodeEditorId && !mainFormEditing) {
+        renderPlanning();
+      }
+    } catch (error) {
+      console.warn("Quiet planning refresh failed:", error);
+    } finally {
+      planningRefreshInFlight = false;
+    }
+  }, 20);
 }
 
 async function fetchJSON(url, options = {}) {
@@ -387,13 +433,17 @@ function transcriptExpectedSoon(episode) {
 }
 
 function transcriptStatusLabel(episode) {
-  if (episode.transcript_text) {
+  if (episode.transcript_text || episode.transcript_available) {
     return "Available";
   }
   if (transcriptExpectedSoon(episode)) {
     return "Missing";
   }
   return "Not expected yet";
+}
+
+function episodeHasTranscript(episode) {
+  return Boolean(episode.transcript_text || episode.transcript_available);
 }
 
 function getEpisodeYear(episode) {
@@ -421,9 +471,19 @@ function updatePresetButtons(buttons, activeValue, dataName) {
   });
 }
 
-function focusEpisodeEditor(episode, successMessage = "") {
+async function hydrateEpisodeForEditing(episode) {
+  if (!episode?.transcript_omitted) {
+    return episode;
+  }
+  const fullEpisode = await fetchJSON(`/api/episodes/${episode.id}`);
+  replaceEpisodeInPayload(fullEpisode);
+  return fullEpisode;
+}
+
+async function focusEpisodeEditor(episode, successMessage = "") {
   setPlanningTab("release_planning");
-  loadEpisodeIntoForm(episode);
+  const fullEpisode = await hydrateEpisodeForEditing(episode);
+  loadEpisodeIntoForm(fullEpisode);
   if (successMessage) {
     setMessage(episodeMessage, successMessage, "success");
   }
@@ -1239,10 +1299,11 @@ function renderEpisodeInlineEditor(container, episode) {
     saveButton.disabled = true;
     saveButton.textContent = "Saving...";
     try {
-      await fetchJSON(`/api/episodes/${episode.id}`, {
+      const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      replaceEpisodeInPayload(savedEpisode);
       activeEpisodeFeedback = {
         id: episode.id,
         text: `Saved ${payload.episode_title || "episode"}.`,
@@ -1250,7 +1311,8 @@ function renderEpisodeInlineEditor(container, episode) {
       };
       setMessage(episodeMessage, `Updated ${payload.episode_title || "episode"}.`, "success");
       activeEpisodeEditorId = episode.id;
-      await loadPlanning();
+      renderPlanning();
+      refreshPlanningQuietly();
     } catch (error) {
       setMessage(messageNode, error.message, "error");
       saveButton.disabled = false;
@@ -1275,10 +1337,11 @@ function renderEpisodeInlineEditor(container, episode) {
     scheduleButton.textContent = "Scheduling...";
 
     try {
-      await fetchJSON(`/api/episodes/${episode.id}`, {
+      const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      replaceEpisodeInPayload(savedEpisode);
       activeEpisodeFeedback = {
         id: episode.id,
         text: `Scheduled for ${formatDateTime(recommendation.recommended_release_date)}.`,
@@ -1290,7 +1353,8 @@ function renderEpisodeInlineEditor(container, episode) {
         "success",
       );
       activeEpisodeEditorId = episode.id;
-      await loadPlanning();
+      renderPlanning();
+      refreshPlanningQuietly();
     } catch (error) {
       setMessage(messageNode, error.message, "error");
       scheduleButton.disabled = false;
@@ -1360,10 +1424,10 @@ function filterEpisodes(episodes) {
     if (productionStatus && normalizeText(episode.production_status) !== productionStatus) {
       return false;
     }
-    if (transcriptStatus === "has_transcript" && !episode.transcript_text) {
+    if (transcriptStatus === "has_transcript" && !episodeHasTranscript(episode)) {
       return false;
     }
-    if (transcriptStatus === "missing_transcript" && (episode.transcript_text || !transcriptExpectedSoon(episode))) {
+    if (transcriptStatus === "missing_transcript" && (episodeHasTranscript(episode) || !transcriptExpectedSoon(episode))) {
       return false;
     }
     if (activeEpisodePreset === "ready_to_schedule") {
@@ -1606,12 +1670,27 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     const actionFeedbackNode = card.querySelector(".card-action-feedback");
     const appreciationPreviewNode = card.querySelector("[data-episode-appreciation-preview]");
     const releasePreviewNode = card.querySelector("[data-episode-release-preview]");
-    editButton.addEventListener("click", () => {
-      activeEpisodeEditorId = activeEpisodeEditorId === episode.id ? null : episode.id;
+    editButton.addEventListener("click", async () => {
+      if (activeEpisodeEditorId === episode.id) {
+        activeEpisodeEditorId = null;
+        renderPlanning();
+        return;
+      }
+      activeEpisodeEditorId = episode.id;
+      if (episode.transcript_omitted) {
+        activeEpisodeFeedback = { id: episode.id, text: "Loading full episode details...", tone: "pending" };
+        renderPlanning();
+        try {
+          await hydrateEpisodeForEditing(episode);
+        } catch (error) {
+          activeEpisodeFeedback = { id: episode.id, text: error.message, tone: "error" };
+        }
+      }
       renderPlanning();
     });
-    formButton.addEventListener("click", () => {
-      loadEpisodeIntoForm(episode);
+    formButton.addEventListener("click", async () => {
+      const fullEpisode = await hydrateEpisodeForEditing(episode);
+      loadEpisodeIntoForm(fullEpisode);
       setMessage(
         episodeMessage,
         `Loaded ${episode.episode_title || episode.guest_name || "episode"} into the main form. You can finish the details here or send the thank-you email when ready.`,
@@ -1642,13 +1721,14 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
         };
         actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
         try {
-          await fetchJSON(`/api/episodes/${episode.id}`, {
+          const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
             method: "POST",
             body: JSON.stringify({
               release_status: "unplanned",
               release_date: null,
             }),
           });
+          replaceEpisodeInPayload(savedEpisode);
           activeEpisodeActionFeedback = {
             id: episode.id,
             text: `Unscheduled ${episode.episode_title || "episode"}.`,
@@ -1656,7 +1736,8 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
           };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
           setMessage(episodeMessage, `Unscheduled ${episode.episode_title || "episode"}.`, "success");
-          await loadPlanning();
+          renderPlanning();
+          refreshPlanningQuietly();
         } catch (error) {
           activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
@@ -1805,7 +1886,8 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
 
         if (!releaseEmailReady) {
           setPlanningTab("release_planning");
-          loadEpisodeIntoForm(episode);
+          const fullEpisode = await hydrateEpisodeForEditing(episode);
+          loadEpisodeIntoForm(fullEpisode);
           if (!isReleased) {
             setMessage(
               episodeMessage,
@@ -1890,13 +1972,16 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
       activeEpisodeActionFeedback = { id: episode.id, text: `Deleting ${label}...`, tone: "pending" };
       actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
       try {
-        await fetchJSON(`/api/episodes/${episode.id}`, {
+        const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
           method: "DELETE",
           body: JSON.stringify({ confirm_label: typedLabel }),
         });
+        latestPlanningPayload.episodes = (latestPlanningPayload.episodes || []).filter((item) => String(item.id || "") !== String(episode.id));
+        latestPlanningPayload.recommendations = (latestPlanningPayload.recommendations || []).filter((item) => String(item.id || "") !== String(episode.id));
         activeEpisodeActionFeedback = { id: episode.id, text: `${label} deleted.`, tone: "success" };
         setMessage(episodeMessage, `Deleted ${label}.`, "success");
-        await loadPlanning();
+        renderPlanning();
+        refreshPlanningQuietly();
       } catch (error) {
         activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
         actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
@@ -2043,10 +2128,11 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
             })
           ),
         };
-        await fetchJSON(`/api/episodes/${episode.id}`, {
+        const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
           method: "POST",
-          body: JSON.stringify(payload),
+          body: JSON.stringify(cleanEpisodePayloadForSave(payload)),
         });
+        replaceEpisodeInPayload(savedEpisode);
         activeEpisodeActionFeedback = {
           id: episode.id,
           text: `Scheduled for ${formatDateTime(episode.recommended_release_date)}.`,
@@ -2057,7 +2143,8 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
           `Scheduled ${episode.episode_title || episode.guest_name || "episode"} for ${formatDateTime(episode.recommended_release_date)}.`,
           "success",
         );
-        await loadPlanning();
+        renderPlanning();
+        refreshPlanningQuietly();
       } catch (error) {
         activeEpisodeActionFeedback = { id: episode.id, text: error.message, tone: "error" };
         actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
@@ -2066,9 +2153,10 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
         scheduleButton.textContent = "Use Recommended Slot";
       }
     });
-    editButton.addEventListener("click", () => {
+    editButton.addEventListener("click", async () => {
       setPlanningTab("release_planning");
-      loadEpisodeIntoForm(episode, {
+      const fullEpisode = await hydrateEpisodeForEditing(episode);
+      loadEpisodeIntoForm(fullEpisode, {
         releaseDate: episode.recommended_release_date,
         releaseStatus: "scheduled",
       });
@@ -2174,7 +2262,15 @@ async function hydrateAiSchedulingCopilot() {
     }
     if (payload?.ai_scheduling_enabled && Array.isArray(payload.recommendations) && payload.recommendations.length) {
       latestPlanningPayload.recommendations = payload.recommendations;
-      renderPlanning();
+      if (activePlanningTab === "scheduling_intelligence" && !activeEpisodeEditorId && !episodeForm?.elements?.id?.value) {
+        const episodeNumberMap = buildEpisodeNumberMap(latestPlanningPayload.episodes || [], latestPlanningPayload.recommendations || []);
+        renderRecommendations(
+          filterRecommendations(latestPlanningPayload.recommendations || []),
+          (latestPlanningPayload.recommendations || []).length,
+          episodeNumberMap,
+        );
+      }
+      renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
     } else {
       renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
     }
@@ -2190,7 +2286,7 @@ async function hydrateAiSchedulingCopilot() {
   }
 }
 
-function applyEpisodeFocusFromUrl() {
+async function applyEpisodeFocusFromUrl() {
   if (!pendingEpisodeIdFromUrl) {
     return;
   }
@@ -2201,7 +2297,8 @@ function applyEpisodeFocusFromUrl() {
     return;
   }
   setPlanningTab("release_planning");
-  loadEpisodeIntoForm(episode);
+  const fullEpisode = await hydrateEpisodeForEditing(episode);
+  loadEpisodeIntoForm(fullEpisode);
   if (pendingPlanningSuccessMessage) {
     setMessage(episodeMessage, pendingPlanningSuccessMessage, "success");
   }
@@ -2223,32 +2320,24 @@ async function loadPlanning() {
     
     if (hasData) {
       latestPlanningPayload = cachedPayload;
-      stats.total.textContent = cachedPayload.stats?.episodes_total ?? 0;
-      stats.released.textContent = cachedPayload.stats?.episodes_released ?? 0;
-      stats.scheduled.textContent = cachedPayload.stats?.episodes_scheduled ?? 0;
-      stats.unreleased.textContent = cachedPayload.stats?.episodes_unreleased ?? 0;
-      stats.promoReady.textContent = cachedPayload.stats?.episodes_promo_ready ?? 0;
-      stats.needsAssets.textContent = cachedPayload.stats?.episodes_need_assets ?? 0;
+      updatePlanningStats(cachedPayload);
       renderPlanning();
       setMessage(episodeMessage, "Refreshing planning data...", "pending");
     } else {
       setMessage(episodeMessage, "Loading planning data...", "pending");
     }
   }
-  const payload = await fetchJSON("/api/planning");
+  const payload = await fetchJSON("/api/planning?compact=true");
   latestPlanningPayload = payload;
-  stats.total.textContent = payload.stats.episodes_total ?? 0;
-  stats.released.textContent = payload.stats.episodes_released ?? 0;
-  stats.scheduled.textContent = payload.stats.episodes_scheduled ?? 0;
-  stats.unreleased.textContent = payload.stats.episodes_unreleased ?? 0;
-  stats.promoReady.textContent = payload.stats.episodes_promo_ready ?? 0;
-  stats.needsAssets.textContent = payload.stats.episodes_need_assets ?? 0;
+  updatePlanningStats(payload);
   renderPlanning();
   storeCachedPayload(PLANNING_PAYLOAD_CACHE_KEY, payload);
   if (episodeMessage.classList.contains("pending")) {
     setMessage(episodeMessage, "", "");
   }
-  applyEpisodeFocusFromUrl();
+  applyEpisodeFocusFromUrl().catch((error) => {
+    setMessage(episodeMessage, error.message, "error");
+  });
   queueMicrotask(() => {
     hydrateAiSchedulingCopilot().catch(() => {});
   });
@@ -2269,13 +2358,15 @@ if (episodeForm && episodeSubmitButton) {
     submitButton.textContent = episodeId ? "Saving..." : "Creating...";
     setMessage(episodeMessage, episodeId ? "Saving episode changes..." : "Saving episode...", "pending");
     try {
-      await fetchJSON(episodeId ? `/api/episodes/${episodeId}` : "/api/episodes", {
+      const savedEpisode = await fetchJSON(episodeId ? `/api/episodes/${episodeId}` : "/api/episodes", {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      replaceEpisodeInPayload(savedEpisode);
       resetEpisodeForm();
       setMessage(episodeMessage, episodeId ? "Episode updated." : "Episode saved.", "success");
-      await loadPlanning();
+      renderPlanning();
+      refreshPlanningQuietly();
     } catch (error) {
       console.error("Episode save error:", error);
       setMessage(episodeMessage, error.message || "Failed to save episode", "error");
@@ -2383,19 +2474,21 @@ if (planningExportForm) {
   });
 }
 
-if (exportListName) {
-  refreshButton.disabled = true;
-  refreshButton.textContent = "Refreshing...";
-  setMessage(episodeMessage, "Refreshing planning data...", "pending");
-  try {
-    await loadPlanning();
-  } catch (error) {
-    setMessage(episodeMessage, error.message, "error");
-  } finally {
-    refreshButton.disabled = false;
-    refreshButton.textContent = "Refresh";
-  }
-});
+if (refreshButton) {
+  refreshButton.addEventListener("click", async () => {
+    refreshButton.disabled = true;
+    refreshButton.textContent = "Refreshing...";
+    setMessage(episodeMessage, "Refreshing planning data...", "pending");
+    try {
+      await loadPlanning();
+    } catch (error) {
+      setMessage(episodeMessage, error.message, "error");
+    } finally {
+      refreshButton.disabled = false;
+      refreshButton.textContent = "Refresh";
+    }
+  });
+}
 
 [
   recommendationSearchInput,
@@ -2517,17 +2610,19 @@ if (scheduleForm) {
     setMessage(scheduleModalMessage, "Scheduling episode...", "pending");
     
     try {
-      await fetchJSON(`/api/episodes/${episodeId}`, {
+      const savedEpisode = await fetchJSON(`/api/episodes/${episodeId}`, {
         method: "POST",
         body: JSON.stringify({
           release_date: releaseDate,
           release_status: "scheduled",
         }),
       });
+      replaceEpisodeInPayload(savedEpisode);
       
       setMessage(episodeMessage, `Scheduled for ${formatDateTime(releaseDate)}.`, "success");
       closeScheduleModal();
-      await loadPlanning();
+      renderPlanning();
+      refreshPlanningQuietly();
     } catch (error) {
       console.error("Schedule error:", error);
       setMessage(scheduleModalMessage, error.message || "Failed to schedule episode", "error");
