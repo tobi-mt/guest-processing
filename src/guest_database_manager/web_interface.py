@@ -365,13 +365,26 @@ def _normalize_episode_release_status(release_date: str, release_status: str) ->
     """Treat dated future episodes as scheduled unless explicitly released."""
     normalized_status = _normalize_text(release_status).lower()
     normalized_date = _normalize_text(release_date)
+    
+    # If explicitly marked as released, respect that (unless date is in future)
     if normalized_status == "released":
         parsed_release = GuestWebService._parse_datetime_static(normalized_date)
         if parsed_release and parsed_release > datetime.now():
             return "scheduled"
         return "released"
+    
+    # If there's a release date, determine status based on whether it's past or future
     if normalized_date:
+        parsed_release = GuestWebService._parse_datetime_static(normalized_date)
+        if parsed_release:
+            # Past dates should be treated as released
+            if parsed_release <= datetime.now():
+                return "released"
+            # Future dates should be scheduled
+            return "scheduled"
+        # If we can't parse the date, treat it as scheduled for safety
         return "scheduled"
+    
     return normalized_status or "unplanned"
 
 
