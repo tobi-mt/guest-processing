@@ -795,46 +795,28 @@ class GuestWebService:
 
     def list_planning(self, compact: bool = False) -> Dict[str, Any]:
         """Return episode planning data separate from interview operations."""
-        import sys
         cache_key = "planning_compact" if compact else "planning"
         cached = self._get_cached_payload(cache_key)
         if cached is not None:
-            print(f"[PLANNING] Returning cached payload (compact={compact})", file=sys.stderr, flush=True)
             return cached
         
-        print(f"[PLANNING] Loading episodes from database...", file=sys.stderr, flush=True)
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
-        print(f"[PLANNING] Loaded {len(episodes)} episodes", file=sys.stderr, flush=True)
-        
-        print(f"[PLANNING] Loading guests from database...", file=sys.stderr, flush=True)
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
-        print(f"[PLANNING] Loaded {len(guests)} guests", file=sys.stderr, flush=True)
         
         # Build guest lookup indexes ONCE for O(1) lookups instead of O(n) per episode
-        print(f"[PLANNING] Building guest lookup indexes...", file=sys.stderr, flush=True)
         guest_indexes = self._build_guest_lookup_indexes(guests)
-        print(f"[PLANNING] Indexes built", file=sys.stderr, flush=True)
         
-        print(f"[PLANNING] Initializing AI copilot...", file=sys.stderr, flush=True)
         ai_copilot = self._build_openai_scheduling_copilot()
-        print(f"[PLANNING] AI copilot: {ai_copilot is not None}", file=sys.stderr, flush=True)
-        
         enriched_episodes = []
-        print(f"[PLANNING] Enriching {len(episodes)} episodes...", file=sys.stderr, flush=True)
-        for idx, episode in enumerate(episodes):
-            if idx % 10 == 0:
-                print(f"[PLANNING] Processing episode {idx+1}/{len(episodes)}", file=sys.stderr, flush=True)
+        for episode in episodes:
             enriched = dict(episode)
             enriched["guest_profile_context"] = self._match_guest_profile_context_with_indexes(enriched, guest_indexes)
             enriched["guest_research"] = self._match_guest_research_with_indexes(enriched, guest_indexes)
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
             enriched_episodes.append(enriched)
-        print(f"[PLANNING] All episodes enriched", file=sys.stderr, flush=True)
         
-        print(f"[PLANNING] Building release recommendations...", file=sys.stderr, flush=True)
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
-        print(f"[PLANNING] Generated {len(recommendations)} recommendations", file=sys.stderr, flush=True)
         
         if compact:
             print(f"[PLANNING] Compacting episodes and recommendations...", file=sys.stderr, flush=True)
@@ -861,9 +843,6 @@ class GuestWebService:
             },
             "weekly_system": self._build_weekly_system_payload(),
         })
-        
-        print(f"[PLANNING] Response payload complete, returning data", file=sys.stderr, flush=True)
-        return result
 
     def list_planning_ai_copilot(self) -> Dict[str, Any]:
         """Return AI-enriched recommendations without blocking the base planning page load."""
@@ -1915,6 +1894,12 @@ class GuestWebService:
             summarized["transcript_omitted"] = True
         else:
             summarized["transcript_omitted"] = False
+        
+        # Remove other large text fields to reduce payload size
+        for field in ["recommendation_reason", "show_notes", "promotional_copy"]:
+            if field in summarized and len(str(summarized.get(field, ""))) > 500:
+                summarized[field] = str(summarized[field])[:500] + "..."
+        
         return summarized
 
     def get_episode(self, episode_id: int) -> Dict[str, Any]:

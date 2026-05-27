@@ -237,7 +237,8 @@ function refreshPlanningQuietly() {
 async function fetchJSON(url, options = {}) {
   const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
   let lastError = null;
-  const requestTimeoutMs = isReadRequest ? 20000 : 30000;
+  // Increased timeout for large datasets (528 episodes) - 60s for reads, 45s for writes
+  const requestTimeoutMs = isReadRequest ? 60000 : 45000;
 
   for (let attempt = 0; attempt < (isReadRequest ? 2 : 1); attempt += 1) {
     const controller = new AbortController();
