@@ -834,11 +834,15 @@ class GuestWebService:
         # Filter out recommendations for episodes without a corresponding guest in the database
         # This prevents recommending imported episodes where the guest doesn't exist
         # STRICT FILTERING: Only allow exact email or website matches, no fuzzy name matching
+        # Also: Replace episode's potentially incorrect guest_name with the actual guest's name from DB
         filtered_recommendations = []
         for rec in recommendations:
             matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
             if matched_guest:
-                filtered_recommendations.append(rec)
+                # Create a copy and update with the correct guest name from the database
+                enriched_rec = dict(rec)
+                enriched_rec["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
+                filtered_recommendations.append(enriched_rec)
         
         response_episodes = [self._summarize_episode_for_list(episode) for episode in enriched_episodes] if compact else enriched_episodes
         response_recommendations = [self._summarize_episode_for_list(episode) for episode in filtered_recommendations] if compact else filtered_recommendations
@@ -888,11 +892,15 @@ class GuestWebService:
         
         # Filter out recommendations for episodes without a corresponding guest in the database
         # STRICT FILTERING: Only allow exact email or website matches, no fuzzy name matching
+        # Also: Replace episode's potentially incorrect guest_name with the actual guest's name from DB
         filtered_recommendations = []
         for rec in recommendations:
             matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
             if matched_guest:
-                filtered_recommendations.append(rec)
+                # Create a copy and update with the correct guest name from the database
+                enriched_rec = dict(rec)
+                enriched_rec["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
+                filtered_recommendations.append(enriched_rec)
         
         auto_researched_count = 0
         candidate_ids = {
@@ -919,11 +927,15 @@ class GuestWebService:
                 recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
                 # Re-filter after regenerating recommendations
                 # STRICT FILTERING: Only allow exact email or website matches
+                # Also: Replace episode's potentially incorrect guest_name with actual guest's name from DB
                 filtered_recommendations = []
                 for rec in recommendations:
                     matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
                     if matched_guest:
-                        filtered_recommendations.append(rec)
+                        # Create a copy and update with the correct guest name from the database
+                        enriched_rec = dict(rec)
+                        enriched_rec["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
+                        filtered_recommendations.append(enriched_rec)
         
         ai_diagnostics = self._build_ai_candidate_diagnostics(filtered_recommendations)
         ai_result = ai_scheduling_client.enrich_recommendations(
@@ -1141,11 +1153,15 @@ class GuestWebService:
             
             # Filter out recommendations for episodes without a corresponding guest
             # STRICT FILTERING: Only allow exact email or website matches
+            # Also: Replace episode's potentially incorrect guest_name with actual guest's name from DB
             filtered = []
             for rec in recommendations:
                 matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
                 if matched_guest:
-                    filtered.append(rec)
+                    # Create a copy and update with the correct guest name from the database
+                    enriched_rec = dict(rec)
+                    enriched_rec["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
+                    filtered.append(enriched_rec)
             return filtered
         raise WebInterfaceError("That list cannot be exported.")
 
