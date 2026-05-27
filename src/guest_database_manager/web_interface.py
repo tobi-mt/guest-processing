@@ -827,6 +827,12 @@ class GuestWebService:
             enriched["guest_research"] = self._match_guest_research_with_indexes(enriched, guest_indexes)
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
+            
+            # Replace episode's potentially incorrect guest_name with actual guest's name from DB
+            matched_guest = self._find_matching_guest_with_indexes(enriched, guest_indexes)
+            if matched_guest:
+                enriched["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
+            
             enriched_episodes.append(enriched)
         
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
@@ -882,10 +888,16 @@ class GuestWebService:
         enriched_episodes = []
         for episode in episodes:
             enriched = dict(episode)
-            enriched["guest_profile_context"] = self._match_guest_profile_context(enriched, guests)
-            enriched["guest_research"] = self._match_guest_research(enriched, guests)
+            enriched["guest_profile_context"] = self._match_guest_profile_context_with_indexes(enriched, guest_indexes)
+            enriched["guest_research"] = self._match_guest_research_with_indexes(enriched, guest_indexes)
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
+            
+            # Replace episode's potentially incorrect guest_name with actual guest's name from DB
+            matched_guest = self._find_matching_guest_with_indexes(enriched, guest_indexes)
+            if matched_guest:
+                enriched["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
+            
             enriched_episodes.append(enriched)
 
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
