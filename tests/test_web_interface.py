@@ -2022,6 +2022,99 @@ def test_web_service_can_move_completed_interview_into_planning(temp_db):
     assert operations["interviews"][0]["planning_episode_id"] == created_episode["id"]
 
 
+def test_web_service_can_move_dashboard_guest_into_planning_without_interview(temp_db):
+    """Dashboard guests should recover into planning even when the operations row is gone."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Dr Mike Ronsisvalle",
+            "email": "mike@example.com",
+            "website": "https://example.com",
+            "profession": "Clinical psychologist",
+            "passionate_topics": "Faith, healing, and emotional health",
+            "email_status": "accepted",
+        }
+    )
+
+    episode = service.create_episode_from_guest(guest["id"])
+
+    assert episode["guest_id"] == guest["id"]
+    assert episode["interview_id"] in ("", None)
+    assert episode["guest_name"] == "Dr Mike Ronsisvalle"
+    assert episode["guest_email"] == "mike@example.com"
+    assert episode["website"] == "https://example.com"
+    assert episode["episode_title"] == "Soulful Conversation with Dr Mike Ronsisvalle"
+    assert episode["topic"] == "Faith, healing, and emotional health"
+    assert episode["production_status"] == "recorded"
+    assert episode["promotion_status"] == "needs_assets"
+    assert episode["source_type"] == "dashboard_handoff"
+    assert episode["handoff_ready_for_planning"] is True
+
+
+def test_dashboard_guest_to_planning_handoff_refreshes_existing_episode(temp_db):
+    """Repeating the dashboard handoff should refresh instead of duplicating planning rows."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+    existing = service.create_episode(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Already Planned Title",
+            "topic": "Existing Topic",
+            "release_date": "2026-08-01",
+            "production_status": "editing",
+            "promotion_status": "ready",
+        }
+    )
+
+    refreshed = service.create_episode_from_guest(guest["id"])
+    planning = service.list_planning()
+
+    assert refreshed["id"] == existing["id"]
+    assert refreshed["episode_title"] == "Already Planned Title"
+    assert refreshed["topic"] == "Existing Topic"
+    assert refreshed["release_date"] == "2026-08-01"
+    assert refreshed["production_status"] == "editing"
+    assert refreshed["promotion_status"] == "ready"
+    assert len(planning["episodes"]) == 1
+
+
+def test_dashboard_guest_to_planning_handoff_does_not_match_email_only(temp_db):
+    """Shared agency inboxes should not attach one guest to another guest's episode."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Agency Client One",
+            "guest_email": "agency@example.com",
+            "episode_title": "Existing Agency Client",
+            "topic": "Existing Topic",
+            "production_status": "editing",
+        }
+    )
+    guest = service.create_guest(
+        {
+            "full_name": "Agency Client Two",
+            "email": "agency@example.com",
+            "website": "https://client-two.example.com",
+            "email_status": "accepted",
+        }
+    )
+
+    created = service.create_episode_from_guest(guest["id"])
+    planning = service.list_planning()
+
+    assert created["guest_name"] == "Agency Client Two"
+    assert created["guest_id"] == guest["id"]
+    assert len(planning["episodes"]) == 2
+
+
 def test_interview_to_planning_handoff_strips_host_name_from_guest(temp_db):
     """Interview handoff should keep only the guest name when the title includes the host."""
     service = GuestWebService(temp_db.db_path)

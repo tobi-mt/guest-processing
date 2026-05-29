@@ -3443,6 +3443,88 @@ class GuestWebService:
         normalized_episode["handoff_ready_for_planning"] = True
         return normalized_episode
 
+    def create_episode_from_guest(self, guest_id: int) -> Dict[str, Any]:
+        """Create or refresh a planning episode directly from a dashboard guest."""
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+
+        guest_name = _normalize_text(guest.get("full_name") or guest.get("name"))
+        if not guest_name:
+            raise WebInterfaceError("This guest does not have a name yet.")
+
+        guest_email = _normalize_text(guest.get("email"))
+        guest_id_text = str(guest_id)
+        normalized_guest_name = _normalize_text(guest_name).casefold()
+        normalized_guest_email = guest_email.casefold()
+        linked_episode = None
+        for episode in self.database.list_episodes():
+            episode_guest_id = _normalize_text(episode.get("guest_id"))
+            episode_email = _normalize_text(episode.get("guest_email")).casefold()
+            episode_name = _normalize_text(episode.get("guest_name")).casefold()
+            if episode_guest_id and episode_guest_id == guest_id_text:
+                linked_episode = episode
+                break
+            # Agency inboxes can be reused for multiple people, so email alone is
+            # not strong enough to safely attach an existing planning record.
+            if normalized_guest_name and normalized_guest_email and episode_name == normalized_guest_name and episode_email == normalized_guest_email:
+                linked_episode = episode
+                break
+            if normalized_guest_name and episode_name == normalized_guest_name:
+                linked_episode = episode
+                break
+
+        topic = (
+            _normalize_text((linked_episode or {}).get("topic"))
+            or _normalize_text(guest.get("passionate_topics"))
+            or _normalize_text(guest.get("profession"))
+            or _normalize_text(guest.get("background"))
+        )
+        handoff_note = (
+            "Created from the dashboard because no operations interview record was available. "
+            "Please confirm the interview date and production details before release planning."
+        )
+        existing_notes = _normalize_text((linked_episode or {}).get("notes"))
+
+        episode_payload = {
+            "id": linked_episode.get("id") if linked_episode else None,
+            "guest_id": guest_id,
+            "interview_id": (linked_episode or {}).get("interview_id"),
+            "guest_name": _normalize_text((linked_episode or {}).get("guest_name")) or guest_name,
+            "guest_email": _normalize_text((linked_episode or {}).get("guest_email")) or guest_email,
+            "website": _normalize_text((linked_episode or {}).get("website")) or _normalize_text(guest.get("website")),
+            "episode_title": _normalize_text((linked_episode or {}).get("episode_title")) or f"Soulful Conversation with {guest_name}",
+            "topic": topic,
+            "category": _normalize_text((linked_episode or {}).get("category")),
+            "interview_date": _normalize_text((linked_episode or {}).get("interview_date")),
+            "recording_date": _normalize_text((linked_episode or {}).get("recording_date")),
+            "release_date": _normalize_text((linked_episode or {}).get("release_date")),
+            "release_status": _normalize_text((linked_episode or {}).get("release_status")) or "unplanned",
+            "production_status": _normalize_text((linked_episode or {}).get("production_status")) or "recorded",
+            "promotion_status": _normalize_text((linked_episode or {}).get("promotion_status")) or "needs_assets",
+            "priority_score": (linked_episode or {}).get("priority_score") or 0,
+            "recommendation_reason": _normalize_text((linked_episode or {}).get("recommendation_reason")),
+            "legacy_episode_number": _normalize_text((linked_episode or {}).get("legacy_episode_number")),
+            "riverside_status": _normalize_text((linked_episode or {}).get("riverside_status")),
+            "source_file_name": _normalize_text((linked_episode or {}).get("source_file_name")) or "Dashboard",
+            "source_type": _normalize_text((linked_episode or {}).get("source_type")) or "dashboard_handoff",
+            "show_notes_url": _normalize_text((linked_episode or {}).get("show_notes_url")),
+            "release_files_url": _normalize_text((linked_episode or {}).get("release_files_url")),
+            "transcript_text": _normalize_text((linked_episode or {}).get("transcript_text")),
+            "outreach_plan": _normalize_outreach_plan((linked_episode or {}).get("outreach_plan")),
+            "ai_monthly_angle_state": _normalize_text((linked_episode or {}).get("ai_monthly_angle_state")),
+            "ai_monthly_angle_theme": _normalize_text((linked_episode or {}).get("ai_monthly_angle_theme")),
+            "notes": existing_notes or handoff_note,
+        }
+
+        episode = self.create_episode(episode_payload)
+        if not episode:
+            raise WebInterfaceError("Planning episode could not be created.")
+        normalized_episode = self._normalize_episode_record(episode)
+        normalized_episode["handoff_ready_for_planning"] = True
+        normalized_episode["dashboard_handoff"] = True
+        return normalized_episode
+
     def import_episode_file(self, filename: str, content: bytes) -> Dict[str, int]:
         """Import released-history or not-yet-released episode CSV data."""
         suffix = Path(filename).suffix.lower()
@@ -5722,6 +5804,24 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.OK, guest)
+            return
+
+        if self.path.startswith("/api/guests/") and self.path.endswith("/move-to-planning"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            guest_id = self._extract_guest_id(self.path, suffix="/move-to-planning")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+
+            try:
+                episode = self.service.create_episode_from_guest(guest_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+
+            self._send_json(HTTPStatus.OK, episode)
             return
 
         if self.path.startswith("/api/guests/") and not self.path.endswith("/email-decision") and not self.path.endswith("/email-template"):

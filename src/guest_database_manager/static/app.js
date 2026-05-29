@@ -208,7 +208,10 @@ function actionFeedbackMarkup(feedback) {
     return "";
   }
 
-  return `<p class="composer-feedback ${feedback.tone || ""}">${escapeHtml(feedback.text)}</p>`;
+  const linkMarkup = feedback.link
+    ? ` <a href="${escapeHtml(feedback.link)}">${escapeHtml(feedback.linkLabel || "Open")}</a>`
+    : "";
+  return `<p class="composer-feedback ${feedback.tone || ""}">${escapeHtml(feedback.text)}${linkMarkup}</p>`;
 }
 
 function confirmCriticalAction(message) {
@@ -1118,6 +1121,7 @@ function renderGuests(payload) {
     const researchButton = node.querySelector("[data-action='research']");
     const resendBookingLinkButton = node.querySelector("[data-action='resend_booking_link']");
     const resendPersonalApplicationButton = node.querySelector("[data-action='resend_personal_application']");
+    const moveToPlanningButton = node.querySelector("[data-action='move_to_planning']");
     const researchFailed = guest.guest_research?.cache_status === "failed";
     if (researchButton && researchFailed) {
       researchButton.textContent = "Retry With Search";
@@ -1143,6 +1147,18 @@ function renderGuests(payload) {
       } else if (!guest.email) {
         resendPersonalApplicationButton.disabled = true;
         resendPersonalApplicationButton.title = "Add the guest's personal email first so Mirror Talk can resend their application link.";
+      }
+    }
+    if (moveToPlanningButton) {
+      const hasPlanningRecord = Number(guest.workflow_context?.planning_episode_count || 0) > 0;
+      const isDecidedGuest = ["accepted", "processed"].includes(normalizeText(guest.email_status || guest.dashboard_status));
+      if (hasPlanningRecord) {
+        moveToPlanningButton.textContent = "Refresh Planning";
+        moveToPlanningButton.title = "Refresh the existing planning episode from this dashboard profile without creating a duplicate.";
+      } else if (!isDecidedGuest) {
+        moveToPlanningButton.classList.add("hidden");
+      } else {
+        moveToPlanningButton.title = "Create a planning episode directly from this guest profile when no operations interview record is available.";
       }
     }
 
@@ -1380,6 +1396,32 @@ function renderGuests(payload) {
             };
             renderGuests(latestPayload);
             setMessage(`Resent the booking link to ${guest.full_name || guest.email}.`, "success");
+          } else if (action === "move_to_planning") {
+            const hasPlanningRecord = Number(guest.workflow_context?.planning_episode_count || 0) > 0;
+            const actionLabel = hasPlanningRecord ? "Refresh the existing planning episode for" : "Create a planning episode for";
+            if (!confirmCriticalAction(`${actionLabel} ${guest.full_name || guest.email || "this guest"}?`)) {
+              return;
+            }
+            activeGuestActionFeedback = {
+              guestId: guest.id,
+              text: `Preparing ${guest.full_name || "guest"} for Planning...`,
+              tone: "pending",
+            };
+            renderGuests(latestPayload);
+            const episode = await fetchJSON(`/api/guests/${guest.id}/move-to-planning`, {
+              method: "POST",
+              body: JSON.stringify({}),
+            });
+            const planningLink = `/planning?guest_id=${encodeURIComponent(guest.id)}&episode_id=${encodeURIComponent(episode.id || "")}`;
+            activeGuestActionFeedback = {
+              guestId: guest.id,
+              text: `${guest.full_name || "Guest"} is ready in Planning. Open the planning page to confirm the interview date and release details.`,
+              tone: "success",
+              link: planningLink,
+              linkLabel: "Open Planning",
+            };
+            renderGuests(latestPayload);
+            setMessage(`${guest.full_name || "Guest"} is ready in Planning.`, "success");
           } else if (action === "accepted_email" || action === "rejected_email") {
             activeGuestEditor = null;
             const decision = action === "accepted_email" ? "accepted" : "rejected";
