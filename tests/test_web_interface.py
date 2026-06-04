@@ -833,7 +833,7 @@ def test_planning_matches_guest_on_safe_name_variant(temp_db):
     )
 
     planning = service.list_planning()
-    episode = next(item for item in planning["recommendations"] if item["guest_name"] == "Jordan Rivers")
+    episode = next(item for item in planning["recommendations"] if item["guest_name"] == "Jordan A Rivers")
 
     assert episode["guest_profile_context"]["profession"] == "Coach"
     assert episode["guest_research"]["likely_topics"] == ["Healing"]
@@ -864,8 +864,8 @@ def test_episode_monthly_angle_review_state_is_persisted(temp_db):
     assert updated["ai_monthly_angle_theme"] == "Renewal after hard seasons"
 
 
-def test_planning_keeps_ambiguous_name_matches_unlinked(temp_db):
-    """Planning should skip guest research when multiple guests would match the same short name equally well."""
+def test_planning_keeps_ambiguous_name_matches_out_of_recommendations(temp_db):
+    """Planning should not recommend a name-only episode when multiple guests match equally well."""
     service = GuestWebService(temp_db.db_path)
     service.create_guest(
         {
@@ -892,10 +892,7 @@ def test_planning_keeps_ambiguous_name_matches_unlinked(temp_db):
     )
 
     planning = service.list_planning()
-    episode = next(item for item in planning["recommendations"] if item["guest_name"] == "Jordan Rivers")
-
-    assert episode["guest_profile_context"] is None
-    assert episode["guest_research"] is None
+    assert planning["recommendations"] == []
 
 
 def test_bulk_research_guests_skips_cached_and_missing_profiles(monkeypatch, temp_db):
@@ -1951,6 +1948,81 @@ def test_create_episode_with_release_date_defaults_to_scheduled(temp_db):
     assert episode["release_status"] == "scheduled"
 
 
+def test_next_legacy_episode_number_ignores_future_polluted_numbers(temp_db):
+    """Episode numbering should not jump through future/imported queue ranges."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Released Anchor",
+            "guest_email": "anchor@example.com",
+            "episode_title": "Released Anchor",
+            "release_date": "2026-05-26T17:00",
+            "release_status": "released",
+            "production_status": "released",
+            "legacy_episode_number": "302",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Future Polluted Row",
+            "guest_email": "future@example.com",
+            "episode_title": "Future Polluted Row",
+            "release_date": "2026-12-29T17:00",
+            "release_status": "scheduled",
+            "legacy_episode_number": "773",
+        }
+    )
+
+    episode = service.create_episode(
+        {
+            "guest_name": "Next Real Release",
+            "guest_email": "next@example.com",
+            "episode_title": "Next Real Release",
+            "release_date": "2026-06-02T17:00",
+            "release_status": "scheduled",
+        }
+    )
+
+    assert episode["legacy_episode_number"] == "303"
+
+
+def test_next_legacy_episode_number_uses_latest_release_date_not_highest_old_number(temp_db):
+    """A high old import number should not outrank the latest chronological release."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Old Polluted Row",
+            "guest_email": "old@example.com",
+            "episode_title": "Old Polluted Row",
+            "release_date": "2024-01-02T17:00",
+            "release_status": "released",
+            "legacy_episode_number": "773",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Current Anchor",
+            "guest_email": "current@example.com",
+            "episode_title": "Current Anchor",
+            "release_date": "2026-05-26T17:00",
+            "release_status": "released",
+            "legacy_episode_number": "302",
+        }
+    )
+
+    episode = service.create_episode(
+        {
+            "guest_name": "Next Current Release",
+            "guest_email": "next-current@example.com",
+            "episode_title": "Next Current Release",
+            "release_date": "2026-06-02T17:00",
+            "release_status": "scheduled",
+        }
+    )
+
+    assert episode["legacy_episode_number"] == "303"
+
+
 def test_web_service_can_delete_interview_and_episode(temp_db):
     """Operations records should be removable through the web service."""
     service = GuestWebService(temp_db.db_path)
@@ -2179,6 +2251,93 @@ def test_release_recommendations_skip_already_scheduled_episodes(temp_db):
 
     assert len(recommendations) == 1
     assert recommendations[0]["guest_name"] == "Needs A Slot"
+
+
+def test_scheduling_intelligence_does_not_rewrite_shared_email_guest_names(temp_db):
+    """Shared agency inboxes must not turn one guest's episode into another guest's card."""
+    service = GuestWebService(temp_db.db_path)
+    jonathan = service.create_guest(
+        {
+            "full_name": "Jonathan Robinson",
+            "email": "agency@example.com",
+            "website": "https://jonathan.example.com",
+        }
+    )
+    valid_guest = service.create_guest(
+        {
+            "full_name": "Amina Hart",
+            "email": "amina@example.com",
+            "website": "https://amina.example.com",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Mark Robinson",
+            "guest_email": "agency@example.com",
+            "episode_title": "Black On Madison Avenue",
+            "topic": "Black On Madison Avenue",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_id": valid_guest["id"],
+            "guest_name": "Amina Hart",
+            "guest_email": "amina@example.com",
+            "episode_title": "Healing With Courage",
+            "topic": "Healing With Courage",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    recommendations = service.list_planning()["recommendations"]
+
+    assert jonathan["full_name"] == "Jonathan Robinson"
+    assert [item["guest_name"] for item in recommendations] == ["Amina Hart"]
+    assert all(item["episode_title"] != "Black On Madison Avenue" for item in recommendations)
+
+
+def test_scheduling_intelligence_suppresses_released_duplicate_queue_rows(temp_db):
+    """A stale open row should not be recommended when the same release is already archived."""
+    service = GuestWebService(temp_db.db_path)
+    mark = service.create_guest(
+        {
+            "full_name": "Mark Robinson",
+            "email": "mark@example.com",
+            "website": "https://mark.example.com",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_id": mark["id"],
+            "guest_name": "Mark Robinson",
+            "guest_email": "mark@example.com",
+            "episode_title": "Black On Madison Avenue",
+            "topic": "Black On Madison Avenue",
+            "release_date": "2026-03-01T17:00",
+            "release_status": "released",
+            "production_status": "released",
+            "promotion_status": "released",
+            "legacy_episode_number": "302",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_id": mark["id"],
+            "guest_name": "Mark Robinson",
+            "guest_email": "mark@example.com",
+            "episode_title": "Black On Madison Avenue",
+            "topic": "Black On Madison Avenue",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    recommendations = service.list_planning()["recommendations"]
+
+    assert recommendations == []
 
 
 def test_planning_payload_includes_grounded_editorial_assist(temp_db):

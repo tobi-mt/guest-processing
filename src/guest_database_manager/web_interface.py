@@ -631,69 +631,42 @@ class GuestWebService:
             return False
 
     def _next_legacy_episode_number(self, current_episode_id: Any = None, target_release_date: str = "") -> str:
-        """Return the next numeric legacy episode number when one can be inferred.
-        
-        Args:
-            current_episode_id: Episode ID to exclude from calculations (when editing)
-            target_release_date: Release date of the episode being created (ISO format)
-        """
+        """Return the next episode number from date-credible release history."""
         current_id = str(current_episode_id or "").strip()
         episodes = [
             episode
             for episode in self.database.list_episodes()
             if not current_id or str(episode.get("id") or "").strip() != current_id
         ]
+        reference_dt = self._parse_datetime_static(target_release_date) if _normalize_text(target_release_date) else None
+        reference_dt = reference_dt or datetime.now(timezone.utc).replace(tzinfo=None)
 
-        all_numbers = {
-            int(text)
-            for text in (_normalize_text(item.get("legacy_episode_number")) for item in episodes)
-            if text.isdigit()
-        }
+        credible_rows: list[tuple[datetime, int, Dict[str, Any]]] = []
+        for episode in episodes:
+            number_text = _normalize_text(episode.get("legacy_episode_number"))
+            if not number_text.isdigit():
+                continue
+            release_dt = self._parse_datetime_static(episode.get("release_date"))
+            if not release_dt or release_dt > reference_dt:
+                continue
+            release_status = _normalize_text(episode.get("release_status")).lower()
+            source_type = _normalize_text(episode.get("source_type")).lower()
+            if release_status not in {"released", "scheduled"} and source_type != "released_archive":
+                continue
+            credible_rows.append((release_dt, int(number_text), episode))
 
-        def extract_max(rows: list[Dict[str, Any]]) -> int | None:
-            scoped_numbers = [
-                int(text)
-                for text in (_normalize_text(item.get("legacy_episode_number")) for item in rows)
-                if text.isdigit()
-            ]
-            if not scoped_numbers:
-                return None
-            return max(scoped_numbers)
+        if not credible_rows:
+            return ""
 
-        # Use target date or today as reference for date-aware filtering
-        reference_date = _normalize_text(target_release_date) or datetime.now(timezone.utc).date().isoformat()
-        
-        # Find episodes with dates on or before the target date (date-aware filtering)
-        # This ensures future scheduled episodes don't affect numbering for current releases
-        relevant_episodes = [
-            episode
-            for episode in episodes
-            if _normalize_text(episode.get("release_date"))
-            and _normalize_text(episode.get("legacy_episode_number")).isdigit()
-            and _normalize_text(episode.get("release_status")).lower() in {"released", "scheduled"}
-            and _normalize_text(episode.get("release_date")) <= reference_date
-        ]
-        
-        # Find the latest episode by date among those on or before the target date
-        max_number = None
-        if relevant_episodes:
-            try:
-                # Sort by release date to find the most recent
-                relevant_episodes.sort(
-                    key=lambda ep: _normalize_text(ep.get("release_date")),
-                    reverse=True
-                )
-                latest = relevant_episodes[0]
-                max_number = int(_normalize_text(latest.get("legacy_episode_number")))
-            except (ValueError, IndexError):
-                pass
-        
-        # Fallback to any episodes if no date-anchored episodes found
-        if max_number is None:
-            max_number = extract_max(episodes)
-        
-        candidate = (max_number or 0) + 1
-        while candidate in all_numbers:
+        credible_rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        latest_date = credible_rows[0][0].date()
+        latest_number = credible_rows[0][1]
+        candidate = latest_number + 1
+
+        # Only skip numbers already used in the same date-aware release history.
+        # This avoids jumping through polluted future/import ranges.
+        scoped_numbers = {number for release_dt, number, _episode in credible_rows if release_dt.date() <= latest_date}
+        while candidate in scoped_numbers:
             candidate += 1
         return str(candidate)
 
@@ -1562,49 +1535,85 @@ class GuestWebService:
 
     def _build_guest_lookup_indexes(self, guests: list[Dict[str, Any]]) -> Dict[str, Any]:
         """Build O(1) lookup indexes for guests to avoid repeated linear searches."""
-        email_index: Dict[str, Dict[str, Any]] = {}
+        guest_id_index: Dict[str, Dict[str, Any]] = {}
+        email_index: Dict[str, list[Dict[str, Any]]] = {}
         website_index: Dict[str, list[Dict[str, Any]]] = {}
         
         for guest in guests:
+            guest_id = _normalize_text(guest.get("id"))
+            if guest_id:
+                guest_id_index[guest_id] = guest
+
             # Index by email (case-insensitive)
             email = _normalize_text(guest.get("email")).casefold()
             if email:
-                email_index[email] = guest
+                email_index.setdefault(email, []).append(guest)
             
             # Index by website host
             host = self._website_host(guest.get("website"))
             if host:
-                if host not in website_index:
-                    website_index[host] = []
-                website_index[host].append(guest)
+                website_index.setdefault(host, []).append(guest)
         
         return {
+            "guest_id_index": guest_id_index,
             "email_index": email_index,
             "website_index": website_index,
             "all_guests": guests,
         }
 
+    def _guest_name_compatible(self, episode: Dict[str, Any], guest: Dict[str, Any], *, minimum_score: int = 85) -> bool:
+        """Return whether an episode name safely points at a specific guest."""
+        episode_name = _normalize_text(episode.get("guest_name"))
+        guest_name = _normalize_text(guest.get("full_name") or guest.get("name"))
+        if not episode_name or not guest_name:
+            return True
+        return self._name_match_score(episode_name, guest_name) >= minimum_score
+
+    def _unique_compatible_guest(
+        self,
+        episode: Dict[str, Any],
+        candidates: list[Dict[str, Any]],
+        *,
+        require_name_when_many: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """Pick one safe guest from identity candidates without crossing agency/shared inbox wires."""
+        if not candidates:
+            return None
+        if len(candidates) == 1 and (not require_name_when_many or self._guest_name_compatible(episode, candidates[0])):
+            return candidates[0]
+        compatible = [guest for guest in candidates if self._guest_name_compatible(episode, guest)]
+        if len(compatible) == 1:
+            return compatible[0]
+        return None
+
     def _find_matching_guest_with_indexes(
         self, episode: Dict[str, Any], guest_indexes: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Find the best matching guest using pre-built indexes for O(1) lookups."""
+        episode_guest_id = _normalize_text(episode.get("guest_id"))
         email_key = _normalize_text(episode.get("guest_email")).casefold()
         website_host = self._website_host(episode.get("website"))
         episode_name = episode.get("guest_name")
         
+        guest_id_index = guest_indexes["guest_id_index"]
         email_index = guest_indexes["email_index"]
         website_index = guest_indexes["website_index"]
         all_guests = guest_indexes["all_guests"]
 
-        # Fast O(1) email lookup
+        if episode_guest_id and episode_guest_id in guest_id_index:
+            return guest_id_index[episode_guest_id]
+
+        # Fast email lookup, but avoid shared agency inbox collisions.
         if email_key and email_key in email_index:
-            return email_index[email_key]
+            matched = self._unique_compatible_guest(episode, email_index[email_key])
+            if matched:
+                return matched
 
         # Fast O(1) website host lookup
         if website_host and website_host in website_index:
-            host_matches = website_index[website_host]
-            if len(host_matches) == 1:
-                return host_matches[0]
+            matched = self._unique_compatible_guest(episode, website_index[website_host])
+            if matched:
+                return matched
 
         # Name matching - still need to check all guests, but only if no email/website match
         scored_matches: list[tuple[int, Dict[str, Any]]] = []
@@ -1628,28 +1637,44 @@ class GuestWebService:
     def _find_matching_guest_strict(
         self, episode: Dict[str, Any], guest_indexes: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """Strict guest matching - only exact email or website matches, no fuzzy name matching.
+        """Strict guest matching for recommendations without fuzzy cross-guest rewrites.
         
         This is used for filtering recommendations to ensure we only show episodes
         where we have high confidence the guest exists in our database.
         """
+        episode_guest_id = _normalize_text(episode.get("guest_id"))
         email_key = _normalize_text(episode.get("guest_email")).casefold()
         website_host = self._website_host(episode.get("website"))
         
+        guest_id_index = guest_indexes["guest_id_index"]
         email_index = guest_indexes["email_index"]
         website_index = guest_indexes["website_index"]
 
-        # Only allow exact email match
+        if episode_guest_id and episode_guest_id in guest_id_index:
+            return guest_id_index[episode_guest_id]
+
+        # Allow exact email only when it points to one name-compatible guest.
         if email_key and email_key in email_index:
-            return email_index[email_key]
+            matched = self._unique_compatible_guest(episode, email_index[email_key])
+            if matched:
+                return matched
 
-        # Only allow exact website match if there's exactly one guest with that website
+        # Allow exact website only when it points to one name-compatible guest.
         if website_host and website_host in website_index:
-            host_matches = website_index[website_host]
-            if len(host_matches) == 1:
-                return host_matches[0]
+            matched = self._unique_compatible_guest(episode, website_index[website_host])
+            if matched:
+                return matched
 
-        # No fuzzy name matching - return None if no exact match found
+        if not email_key and not website_host:
+            scored_matches: list[tuple[int, Dict[str, Any]]] = []
+            for guest in guest_indexes["all_guests"]:
+                score = self._name_match_score(episode.get("guest_name"), guest.get("full_name") or guest.get("name"))
+                if score >= 95:
+                    scored_matches.append((score, guest))
+            scored_matches.sort(key=lambda item: (item[0], int(item[1].get("id") or 0)), reverse=True)
+            if scored_matches and len([item for item in scored_matches if item[0] == scored_matches[0][0]]) == 1:
+                return scored_matches[0][1]
+
         return None
 
     def _find_matching_guest(self, episode: Dict[str, Any], guests: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

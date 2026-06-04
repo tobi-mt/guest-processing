@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import StringIO
@@ -224,6 +225,55 @@ def _reserved_release_slots(episodes: Iterable[Dict[str, Any]], *, reference: da
             continue
         reserved.add(scheduled_release.date().isoformat())
     return reserved
+
+
+def _episode_identity_text(value: Any) -> str:
+    """Normalize episode identity text for duplicate recommendation suppression."""
+    return re.sub(r"\s+", " ", _clean_text(value).casefold()).strip()
+
+
+def _episode_release_identity_keys(episode: Dict[str, Any]) -> set[tuple[str, str, str]]:
+    """Return stable-ish guest/title keys that identify the same release."""
+    guest = _episode_identity_text(episode.get("guest_name"))
+    email = _episode_identity_text(episode.get("guest_email"))
+    title = _episode_identity_text(episode.get("episode_title"))
+    topic = _episode_identity_text(episode.get("topic"))
+    source = _episode_identity_text(episode.get("source_file_name"))
+    legacy_number = _episode_identity_text(episode.get("legacy_episode_number"))
+
+    keys: set[tuple[str, str, str]] = set()
+    if legacy_number:
+        keys.add(("legacy", legacy_number, ""))
+    if guest and title:
+        keys.add(("guest_title", guest, title))
+    if guest and topic:
+        keys.add(("guest_topic", guest, topic))
+    if email and title:
+        keys.add(("email_title", email, title))
+    if source and guest and title:
+        keys.add(("source_guest_title", source, f"{guest}|{title}"))
+    return keys
+
+
+def _build_non_queue_identity_keys(episodes: Iterable[Dict[str, Any]]) -> set[tuple[str, str, str]]:
+    """Collect identities already represented by released or scheduled records."""
+    keys: set[tuple[str, str, str]] = set()
+    for episode in episodes:
+        release_status = _clean_text(episode.get("release_status")).lower()
+        if release_status not in {"released", "scheduled"}:
+            continue
+        keys.update(_episode_release_identity_keys(episode))
+    return keys
+
+
+def _is_duplicate_of_released_or_scheduled(
+    episode: Dict[str, Any],
+    non_queue_identity_keys: set[tuple[str, str, str]],
+) -> bool:
+    """Return whether an open queue row is already represented by a non-queue release."""
+    if not non_queue_identity_keys:
+        return False
+    return bool(_episode_release_identity_keys(episode) & non_queue_identity_keys)
 
 
 def _next_available_release_slot(reference: datetime, reserved_slots: set[str]) -> datetime:
@@ -760,6 +810,11 @@ def build_release_recommendations(
     queue = [
         episode for episode in episodes
         if _clean_text(episode.get("release_status")).lower() not in {"released", "scheduled"}
+    ]
+    non_queue_identity_keys = _build_non_queue_identity_keys(episodes)
+    queue = [
+        episode for episode in queue
+        if not _is_duplicate_of_released_or_scheduled(episode, non_queue_identity_keys)
     ]
     if not queue:
         return []
