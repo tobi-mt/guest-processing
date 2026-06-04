@@ -327,12 +327,26 @@ def _month_theme_score(episode: Dict[str, Any], slot_date: datetime) -> tuple[fl
     topic = _clean_text(episode.get("topic")).lower()
     title = _clean_text(episode.get("episode_title")).lower()
     category = _clean_text(episode.get("category")).lower()
-    haystack = " ".join([title, topic, category])
+    notes = _clean_text(episode.get("notes")).lower()
+    recommendation_reason = _clean_text(episode.get("recommendation_reason")).lower()
+    guest_research = _guest_research_payload(episode.get("guest_research"))
+    research_topics = " ".join(
+        _clean_text(item).lower()
+        for item in guest_research.get("likely_topics", [])
+        if _clean_text(item)
+    )
+    research_signals = " ".join(
+        _clean_text(item).lower()
+        for item in guest_research.get("timely_signals", [])
+        if _clean_text(item)
+    )
+    haystack = " ".join([title, topic, category, notes, recommendation_reason, research_topics, research_signals])
     keywords = SEASONAL_THEME_KEYWORDS.get(slot_date.month, ())
     matched = [keyword for keyword in keywords if keyword in haystack]
     if not matched:
         return 0.0, "", []
-    return 8.0, f"fits the seasonal focus for {slot_date.strftime('%B')}", matched
+    score = 12.0 + min(6.0, float(len(set(matched)) * 2))
+    return score, f"fits the seasonal focus for {slot_date.strftime('%B')}", matched
 
 
 def _promotion_readiness_score(episode: Dict[str, Any]) -> tuple[float, str]:

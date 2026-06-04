@@ -3335,7 +3335,7 @@ class GuestWebService:
         self._send_booking_confirmation_email(guest, interview)
         return self._serialize_public_booking_interview(interview)
 
-    def create_episode(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def create_episode(self, payload: Dict[str, Any], *, renumber_sequence: bool = True) -> Dict[str, Any]:
         """Create or update an episode record."""
         normalized_release_date = _normalize_text(payload.get("release_date"))
         normalized_release_status = _normalize_episode_release_status(
@@ -3354,10 +3354,16 @@ class GuestWebService:
                 }
             )
         parsed_priority_score = _clamp_priority_score(parsed_priority_score)
-        legacy_episode_number = _normalize_text(payload.get("legacy_episode_number")) or self._next_legacy_episode_number(
-            payload.get("id"),
-            normalized_release_date
-        )
+        requested_legacy_episode_number = _normalize_text(payload.get("legacy_episode_number"))
+        if requested_legacy_episode_number:
+            legacy_episode_number = requested_legacy_episode_number
+        elif normalized_release_status == "scheduled":
+            # Save the row first, then sequence all future scheduled rows together.
+            # This avoids upsert collisions with later planned episodes that already
+            # have the would-be next number.
+            legacy_episode_number = ""
+        else:
+            legacy_episode_number = self._next_legacy_episode_number(payload.get("id"), normalized_release_date)
         episode_data = {
             "id": payload.get("id"),
             "guest_id": payload.get("guest_id"),
@@ -3398,8 +3404,67 @@ class GuestWebService:
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
             raise WebInterfaceError("Episode could not be saved.")
+        if renumber_sequence:
+            self._renumber_future_scheduled_episodes()
+            episode = self.database.get_episode_by_id(episode_id) or episode
         self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
         return episode
+
+    def _renumber_future_scheduled_episodes(self) -> None:
+        """Keep future scheduled episode numbers sequential as release dates change."""
+        episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
+        reference = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        future_scheduled: list[tuple[datetime, Dict[str, Any]]] = []
+        for episode in episodes:
+            if _normalize_text(episode.get("release_status")).lower() != "scheduled":
+                continue
+            release_dt = self._parse_datetime_static(episode.get("release_date"))
+            if not release_dt or release_dt < reference:
+                continue
+            future_scheduled.append((release_dt, episode))
+
+        if not future_scheduled:
+            return
+
+        future_scheduled.sort(key=lambda item: (item[0], int(item[1].get("id") or 0)))
+        first_future_date = future_scheduled[0][0]
+        scheduled_ids = {str(episode.get("id") or "") for _release_dt, episode in future_scheduled}
+
+        anchors: list[tuple[datetime, int]] = []
+        for episode in episodes:
+            if str(episode.get("id") or "") in scheduled_ids:
+                continue
+            number_text = _normalize_text(episode.get("legacy_episode_number"))
+            if not number_text.isdigit():
+                continue
+            release_dt = self._parse_datetime_static(episode.get("release_date"))
+            if not release_dt or release_dt >= first_future_date:
+                continue
+            release_status = _normalize_text(episode.get("release_status")).lower()
+            source_type = _normalize_text(episode.get("source_type")).lower()
+            if release_status not in {"released", "scheduled"} and source_type != "released_archive":
+                continue
+            anchors.append((release_dt, int(number_text)))
+
+        if not anchors:
+            return
+
+        anchors.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        next_number = anchors[0][1] + 1
+        changed = False
+        for _release_dt, episode in future_scheduled:
+            desired = str(next_number)
+            next_number += 1
+            if _normalize_text(episode.get("legacy_episode_number")) == desired:
+                continue
+            updated = dict(episode)
+            updated["legacy_episode_number"] = desired
+            self.database.upsert_episode(updated)
+            changed = True
+
+        if changed:
+            self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
 
     def create_episode_from_interview(self, interview_id: int) -> Dict[str, Any]:
         """Create or refresh a planning episode from a completed interview."""

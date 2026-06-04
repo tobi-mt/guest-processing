@@ -49,7 +49,7 @@ from guest_database_manager.web_interface import (
 from guest_database_manager.guest_research import _candidate_urls
 from guest_database_manager import guest_research
 from guest_database_manager.email_manager import EmailManager
-from guest_database_manager.episode_planner import next_release_slot
+from guest_database_manager.episode_planner import build_release_recommendations, next_release_slot
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
 from guest_database_manager.google_service_account_calendar import GoogleServiceAccountCalendarClient
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
@@ -2023,6 +2023,90 @@ def test_next_legacy_episode_number_uses_latest_release_date_not_highest_old_num
     assert episode["legacy_episode_number"] == "303"
 
 
+def test_future_scheduled_episode_numbers_adjust_when_earlier_slot_is_added(temp_db):
+    """Scheduling a new earlier release should renumber future planned episodes in order."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Released Anchor",
+            "guest_email": "anchor@example.com",
+            "episode_title": "Released Anchor",
+            "release_date": "2026-06-02T17:00",
+            "release_status": "released",
+            "production_status": "released",
+            "legacy_episode_number": "302",
+        }
+    )
+    later = service.create_episode(
+        {
+            "guest_name": "Later Scheduled",
+            "guest_email": "later@example.com",
+            "episode_title": "Later Scheduled",
+            "release_date": "2026-06-16T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "legacy_episode_number": "999",
+        }
+    )
+
+    earlier = service.create_episode(
+        {
+            "guest_name": "Earlier Scheduled",
+            "guest_email": "earlier@example.com",
+            "episode_title": "Earlier Scheduled",
+            "release_date": "2026-06-09T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+        }
+    )
+    refreshed_later = service.get_episode(later["id"])
+
+    assert earlier["legacy_episode_number"] == "303"
+    assert refreshed_later["legacy_episode_number"] == "304"
+
+
+def test_future_scheduled_episode_numbers_adjust_when_episode_is_rescheduled(temp_db):
+    """Moving a planned release earlier should resequence the future schedule."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Released Anchor",
+            "guest_email": "anchor@example.com",
+            "episode_title": "Released Anchor",
+            "release_date": "2026-06-02T17:00",
+            "release_status": "released",
+            "production_status": "released",
+            "legacy_episode_number": "302",
+        }
+    )
+    first = service.create_episode(
+        {
+            "guest_name": "First Scheduled",
+            "guest_email": "first@example.com",
+            "episode_title": "First Scheduled",
+            "release_date": "2026-06-09T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+        }
+    )
+    second = service.create_episode(
+        {
+            "guest_name": "Second Scheduled",
+            "guest_email": "second@example.com",
+            "episode_title": "Second Scheduled",
+            "release_date": "2026-06-16T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+        }
+    )
+
+    moved_second = service.update_episode(second["id"], {"release_date": "2026-06-05T17:00", "release_status": "scheduled"})
+    refreshed_first = service.get_episode(first["id"])
+
+    assert moved_second["legacy_episode_number"] == "303"
+    assert refreshed_first["legacy_episode_number"] == "304"
+
+
 def test_web_service_can_delete_interview_and_episode(temp_db):
     """Operations records should be removable through the web service."""
     service = GuestWebService(temp_db.db_path)
@@ -2338,6 +2422,41 @@ def test_scheduling_intelligence_suppresses_released_duplicate_queue_rows(temp_d
     recommendations = service.list_planning()["recommendations"]
 
     assert recommendations == []
+
+
+def test_release_recommendations_use_guest_research_for_seasonal_fit():
+    """Seasonal intelligence should use saved research topics, not only literal title words."""
+    recommendations = build_release_recommendations(
+        [
+            {
+                "guest_name": "Research Fit Guest",
+                "guest_email": "research@example.com",
+                "episode_title": "A Grounded Conversation",
+                "topic": "Personal story",
+                "category": "Personal Development",
+                "production_status": "ready",
+                "promotion_status": "ready",
+                "guest_research": {
+                    "likely_topics": ["men's health", "fatherhood", "wellness"],
+                    "timely_signals": ["public work centers emotional health for men"],
+                },
+            },
+            {
+                "guest_name": "Generic Ready Guest",
+                "guest_email": "generic@example.com",
+                "episode_title": "A Practical Business Conversation",
+                "topic": "Business systems and operations",
+                "category": "Business",
+                "production_status": "ready",
+                "promotion_status": "ready",
+            },
+        ],
+        reference=datetime(2026, 6, 4, 12, 0, 0),
+    )
+
+    assert recommendations[0]["guest_name"] == "Research Fit Guest"
+    assert recommendations[0]["seasonal_fit"]["month"] == "June"
+    assert "men" in recommendations[0]["seasonal_fit"]["matched_keywords"]
 
 
 def test_planning_payload_includes_grounded_editorial_assist(temp_db):
