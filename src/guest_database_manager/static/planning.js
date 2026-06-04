@@ -203,6 +203,15 @@ function cleanEpisodePayloadForSave(payload) {
   return cleaned;
 }
 
+function validateEpisodePayloadForSave(payload) {
+  if (!String(payload.guest_name || "").trim()) {
+    throw new Error("Please add the guest name before saving this episode.");
+  }
+  if (!String(payload.episode_title || "").trim()) {
+    throw new Error("Please add the episode title before saving this episode.");
+  }
+}
+
 function updatePlanningStats(payload) {
   if (!payload?.stats) return;
   stats.total.textContent = payload.stats.episodes_total ?? 0;
@@ -1236,10 +1245,10 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
 function renderEpisodeInlineEditor(container, episode) {
   container.innerHTML = `
     <div class="inline-editor-title">Quick Edit Episode</div>
-    <form class="inline-editor-form" data-inline-episode-form>
+    <form class="inline-editor-form" data-inline-episode-form novalidate>
       ${createFieldMarkup("Episode Title", `<input name="episode_title" type="text" value="${episode.episode_title || ""}" required />`, true)}
       ${createFieldMarkup("Guest Name", `<input name="guest_name" type="text" value="${episode.guest_name || ""}" required />`)}
-      ${createFieldMarkup("Guest Email", `<input name="guest_email" type="email" value="${episode.guest_email || ""}" />`)}
+      ${createFieldMarkup("Guest Email", `<input name="guest_email" type="text" inputmode="email" autocapitalize="off" spellcheck="false" value="${episode.guest_email || ""}" />`)}
       ${createFieldMarkup("Category", `<input name="category" type="text" list="episode-category-options" value="${episode.category || ""}" />`)}
       ${createFieldMarkup("Release Date", `<input name="release_date" type="datetime-local" value="${formatDateForDateTimeInput(episode.release_date)}" />`)}
       ${createFieldMarkup("Release Status", `
@@ -1268,8 +1277,8 @@ function renderEpisodeInlineEditor(container, episode) {
       `)}
       ${createFieldMarkup("Priority", `<input name="priority_score" type="number" min="0" max="10" step="0.5" value="${clampPriorityScore(episode.priority_score, suggestPriorityScoreForEpisode(episode))}" />`)}
       ${createFieldMarkup("Topic", `<input name="topic" type="text" value="${episode.topic || ""}" />`, true)}
-      ${createFieldMarkup("Show Note / Blogpost URL", `<input name="show_notes_url" type="url" value="${episode.show_notes_url || ""}" />`, true)}
-      ${createFieldMarkup("Files URL", `<input name="release_files_url" type="url" value="${episode.release_files_url || ""}" />`, true)}
+      ${createFieldMarkup("Show Note / Blogpost URL", `<input name="show_notes_url" type="text" inputmode="url" autocapitalize="off" spellcheck="false" value="${episode.show_notes_url || ""}" />`, true)}
+      ${createFieldMarkup("Files URL", `<input name="release_files_url" type="text" inputmode="url" autocapitalize="off" spellcheck="false" value="${episode.release_files_url || ""}" />`, true)}
       ${createFieldMarkup("Transcript", `<textarea name="transcript_text" rows="5">${episode.transcript_text || ""}</textarea>`, true)}
       ${createFieldMarkup("Notes", `<textarea name="notes" rows="3">${episode.notes || ""}</textarea>`, true)}
       <div class="inline-editor-actions full-width">
@@ -1300,9 +1309,10 @@ function renderEpisodeInlineEditor(container, episode) {
     saveButton.disabled = true;
     saveButton.textContent = "Saving...";
     try {
+      validateEpisodePayloadForSave(payload);
       const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify(cleanEpisodePayloadForSave(payload)),
       });
       replaceEpisodeInPayload(savedEpisode);
       activeEpisodeFeedback = {
@@ -2355,13 +2365,14 @@ if (episodeForm && episodeSubmitButton) {
       clampPriorityScore(payload.priority_score, suggestPriorityScoreForEpisode(payload))
     );
     delete payload.id;
-    submitButton.disabled = true;
-    submitButton.textContent = episodeId ? "Saving..." : "Creating...";
-    setMessage(episodeMessage, episodeId ? "Saving episode changes..." : "Saving episode...", "pending");
     try {
+      validateEpisodePayloadForSave(payload);
+      submitButton.disabled = true;
+      submitButton.textContent = episodeId ? "Saving..." : "Creating...";
+      setMessage(episodeMessage, episodeId ? "Saving episode changes..." : "Saving episode...", "pending");
       const savedEpisode = await fetchJSON(episodeId ? `/api/episodes/${episodeId}` : "/api/episodes", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify(cleanEpisodePayloadForSave(payload)),
       });
       replaceEpisodeInPayload(savedEpisode);
       resetEpisodeForm();

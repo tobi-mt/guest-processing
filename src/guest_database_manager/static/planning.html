@@ -92,7 +92,7 @@
               </ol>
             </div>
 
-            <form id="episode-form" class="guest-form">
+            <form id="episode-form" class="guest-form" novalidate>
               <input name="id" type="hidden" />
               <input name="interview_id" type="hidden" />
               <input name="outreach_plan" type="hidden" />
@@ -102,7 +102,7 @@
               </label>
               <label>
                 Guest Email
-                <input name="guest_email" type="email" />
+                <input name="guest_email" type="text" inputmode="email" autocapitalize="off" spellcheck="false" />
               </label>
               <label>
                 Website
@@ -182,11 +182,11 @@
               </details>
               <label class="full-width">
                 Show Note / Blogpost URL
-                <input name="show_notes_url" type="url" placeholder="https://mirrortalkpodcast.com/..." />
+                <input name="show_notes_url" type="text" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://mirrortalkpodcast.com/..." />
               </label>
               <label class="full-width">
                 Files URL
-                <input name="release_files_url" type="url" placeholder="https://..." />
+                <input name="release_files_url" type="text" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://..." />
                 <small class="field-hint">Use this for the guest download link that expires after a short time.</small>
               </label>
               <label class="full-width">
