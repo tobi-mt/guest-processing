@@ -723,8 +723,12 @@ function normalizeOutreachPlan(value) {
 }
 
 function collectOutreachPlanFromForm() {
+  const checklist = document.getElementById("outreach-checklist");
+  if (!checklist) {
+    return normalizeOutreachPlan(episodeForm?.elements?.outreach_plan?.value);
+  }
   const plan = {};
-  outreachChecklist.querySelectorAll("input[data-outreach-key]").forEach((input) => {
+  checklist.querySelectorAll("input[data-outreach-key]").forEach((input) => {
     plan[input.dataset.outreachKey] = Boolean(input.checked);
   });
   return plan;
@@ -2360,12 +2364,12 @@ if (episodeForm && episodeSubmitButton) {
     const payload = Object.fromEntries(new FormData(episodeForm).entries());
     const episodeId = payload.id;
     const submitButton = episodeSubmitButton;
-    payload.outreach_plan = JSON.stringify(collectOutreachPlanFromForm());
-    payload.priority_score = String(
-      clampPriorityScore(payload.priority_score, suggestPriorityScoreForEpisode(payload))
-    );
     delete payload.id;
     try {
+      payload.outreach_plan = JSON.stringify(collectOutreachPlanFromForm());
+      payload.priority_score = String(
+        clampPriorityScore(payload.priority_score, suggestPriorityScoreForEpisode(payload))
+      );
       validateEpisodePayloadForSave(payload);
       submitButton.disabled = true;
       submitButton.textContent = episodeId ? "Saving..." : "Creating...";
