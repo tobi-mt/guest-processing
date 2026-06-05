@@ -59,7 +59,7 @@ let pendingPlanningSuccessMessage = "";
 let activePlanningTab = "release_planning";
 let aiCopilotHydrationInFlight = false;
 let planningRefreshInFlight = false;
-const PLANNING_PAYLOAD_CACHE_KEY = "mirror-talk-planning-payload";
+const PLANNING_PAYLOAD_CACHE_KEY = "mirror-talk-planning-payload-v20260605-intelligence";
 
 const RECOMMENDATION_PAGE_SIZE = 6;
 const EPISODE_PAGE_SIZE = 10;
@@ -628,6 +628,9 @@ function renderAiCopilotStatus(statusPayload) {
   const liveHeadlines = (monthContext?.live_headlines || []).slice(0, 3);
   const liveSource = String(monthContext?.live_signal_source || "").trim();
   const liveUpdatedAt = monthContext?.live_signals_updated_at ? formatDateTime(monthContext.live_signals_updated_at) : "";
+  const diagnostics = statusPayload?.diagnostics || {};
+  const filteredOut = Number(diagnostics.filtered_out_candidates || 0);
+  const trusted = Number(diagnostics.trusted_recommendations || diagnostics.candidate_count || 0);
   aiCopilotStatus.className = `operations-preview ai-copilot-status ${tone}`.trim();
   aiCopilotStatus.innerHTML = `
     <strong class="insight-label">AI scheduling copilot</strong>
@@ -636,6 +639,7 @@ function renderAiCopilotStatus(statusPayload) {
     ${statusPayload?.model ? `<p><strong>Model:</strong> ${escapeHtml(statusPayload.model)}</p>` : ""}
     ${monthContext?.month_label ? `<p><strong>Current month lens:</strong> ${escapeHtml(monthContext.month_label)} · ${escapeHtml(monthContext.theme || "")}</p>` : ""}
     ${observances.length ? `<p><strong>Editorial observances:</strong> ${observances.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
+    ${filteredOut ? `<p><strong>Recommendation safeguards:</strong> ${escapeHtml(String(trusted))} trusted recommendation${trusted === 1 ? "" : "s"} shown · ${escapeHtml(String(filteredOut))} stale or mismatched candidate${filteredOut === 1 ? "" : "s"} filtered out.</p>` : ""}
     ${liveHeadlines.length ? `<div class="insight-stack"><strong class="insight-label">Live web signals${liveSource ? ` · ${escapeHtml(liveSource)}` : ""}</strong><ul>${liveHeadlines.map((item) => `<li>${escapeHtml(item.title || item)}</li>`).join("")}</ul>${liveUpdatedAt ? `<p class="inline-muted">Updated ${escapeHtml(liveUpdatedAt)}</p>` : ""}</div>` : ""}
     ${christianMoments.length ? `<p><strong>Faith calendar:</strong> ${christianMoments.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
   `;

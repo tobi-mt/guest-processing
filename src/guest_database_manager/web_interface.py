@@ -822,6 +822,11 @@ class GuestWebService:
                 enriched_rec = dict(rec)
                 enriched_rec["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
                 filtered_recommendations.append(enriched_rec)
+        recommendation_diagnostics = {
+            "base_candidates": len(recommendations),
+            "trusted_recommendations": len(filtered_recommendations),
+            "filtered_out_candidates": max(len(recommendations) - len(filtered_recommendations), 0),
+        }
         
         response_episodes = [self._summarize_episode_for_list(episode) for episode in enriched_episodes] if compact else enriched_episodes
         response_recommendations = [self._summarize_episode_for_list(episode) for episode in filtered_recommendations] if compact else filtered_recommendations
@@ -836,12 +841,14 @@ class GuestWebService:
             "ai_copilot_status": {
                 "status": "configured" if ai_copilot is not None else "not_configured",
                 "message": (
-                    f"Base recommendation algorithm returned {len(recommendations)} candidate{'s' if len(recommendations) != 1 else ''}. "
+                    f"Base recommendation algorithm returned {len(recommendations)} candidate{'s' if len(recommendations) != 1 else ''}; "
+                    f"{len(filtered_recommendations)} passed strict guest/release safeguards. "
                     f"AI copilot will analyze the top 4 with monthly context and timing insights."
                     if ai_copilot is not None
                     else "AI copilot is not configured. Showing base recommendations from priority scoring algorithm."
                 ),
                 "current_month_context": build_month_context(datetime.now()),
+                "diagnostics": recommendation_diagnostics,
             },
             "weekly_system": self._build_weekly_system_payload(),
         })
@@ -942,7 +949,7 @@ class GuestWebService:
             },
             "recommendations": [
                 self._summarize_episode_for_list(episode)
-                for episode in ai_result.get("recommendations", recommendations)
+                for episode in ai_result.get("recommendations", filtered_recommendations)
             ],
         }
 
