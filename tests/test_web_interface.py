@@ -2486,6 +2486,39 @@ def test_ai_scheduling_fallback_uses_filtered_recommendations(monkeypatch, temp_
     assert all(item["episode_title"] != "Black On Madison Avenue" for item in ai_planning["recommendations"])
 
 
+def test_planning_force_refresh_bypasses_cached_payload(temp_db):
+    """Forced planning refreshes should not reuse stale server-side planning payloads."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Fresh Planning Guest",
+            "email": "fresh-planning@example.com",
+            "website": "https://fresh-planning.example.com",
+        }
+    )
+
+    cached_planning = service.list_planning(compact=True)
+    assert cached_planning["episodes"] == []
+
+    service.database.upsert_episode(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Fresh Planning Guest",
+            "guest_email": "fresh-planning@example.com",
+            "website": "https://fresh-planning.example.com",
+            "episode_title": "Fresh Planning Episode",
+            "topic": "Fresh Planning Episode",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    assert service.list_planning(compact=True)["episodes"] == []
+    refreshed = service.list_planning(compact=True, force_refresh=True)
+
+    assert [item["guest_name"] for item in refreshed["episodes"]] == ["Fresh Planning Guest"]
+
+
 def test_scheduling_intelligence_suppresses_released_duplicate_queue_rows(temp_db):
     """A stale open row should not be recommended when the same release is already archived."""
     service = GuestWebService(temp_db.db_path)

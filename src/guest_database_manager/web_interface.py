@@ -779,12 +779,15 @@ class GuestWebService:
             "booking_alerts": self._build_operations_alerts(raw_interviews),
         })
 
-    def list_planning(self, compact: bool = False) -> Dict[str, Any]:
+    def list_planning(self, compact: bool = False, force_refresh: bool = False) -> Dict[str, Any]:
         """Return episode planning data separate from interview operations."""
         cache_key = "planning_compact" if compact else "planning"
-        cached = self._get_cached_payload(cache_key)
-        if cached is not None:
-            return cached
+        if force_refresh:
+            self._invalidate_payload_cache("planning")
+        else:
+            cached = self._get_cached_payload(cache_key)
+            if cached is not None:
+                return cached
         
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
@@ -5249,7 +5252,8 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
             query = self._query_params(self.path)
             compact = query.get("compact", "").lower() == "true"
-            self._send_json(HTTPStatus.OK, self.service.list_planning(compact=compact))
+            force_refresh = query.get("refresh", "").lower() == "true"
+            self._send_json(HTTPStatus.OK, self.service.list_planning(compact=compact, force_refresh=force_refresh))
             return
 
         if request_path == "/api/planning/ai-copilot":
@@ -6370,6 +6374,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self._send_cors_headers(self.headers.get("Origin"))
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(response)))
         self.end_headers()
         try:

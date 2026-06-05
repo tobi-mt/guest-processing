@@ -59,7 +59,11 @@ let pendingPlanningSuccessMessage = "";
 let activePlanningTab = "release_planning";
 let aiCopilotHydrationInFlight = false;
 let planningRefreshInFlight = false;
-const PLANNING_PAYLOAD_CACHE_KEY = "mirror-talk-planning-payload-v20260605-intelligence";
+const PLANNING_PAYLOAD_CACHE_KEY = "mirror-talk-planning-payload-v20260605-intelligence-nostore";
+const LEGACY_PLANNING_PAYLOAD_CACHE_KEYS = [
+  "mirror-talk-planning-payload",
+  "mirror-talk-planning-payload-v20260605-intelligence",
+];
 
 const RECOMMENDATION_PAGE_SIZE = 6;
 const EPISODE_PAGE_SIZE = 10;
@@ -222,12 +226,27 @@ function updatePlanningStats(payload) {
   stats.needsAssets.textContent = payload.stats.episodes_need_assets ?? 0;
 }
 
+function clearLegacyPlanningPayloadCaches() {
+  LEGACY_PLANNING_PAYLOAD_CACHE_KEYS.forEach((key) => {
+    try {
+      window.localStorage.removeItem(key);
+    } catch (error) {
+      // Local storage can be unavailable in private or restricted browser contexts.
+    }
+  });
+}
+
+function buildPlanningApiUrl(path) {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}_=${Date.now()}`;
+}
+
 function refreshPlanningQuietly() {
   if (planningRefreshInFlight) return;
   planningRefreshInFlight = true;
   window.setTimeout(async () => {
     try {
-      const payload = await fetchJSON("/api/planning?compact=true");
+      const payload = await fetchJSON(buildPlanningApiUrl("/api/planning?compact=true&refresh=true"));
       latestPlanningPayload = payload;
       updatePlanningStats(payload);
       storeCachedPayload(PLANNING_PAYLOAD_CACHE_KEY, payload);
@@ -2275,7 +2294,7 @@ async function hydrateAiSchedulingCopilot() {
   renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
   
   try {
-    const payload = await fetchJSON("/api/planning/ai-copilot");
+    const payload = await fetchJSON(buildPlanningApiUrl("/api/planning/ai-copilot"));
     if (payload?.ai_scheduling_enabled) {
       latestPlanningPayload.ai_copilot_status = payload.ai_copilot_status || latestPlanningPayload.ai_copilot_status;
     }
@@ -2326,6 +2345,7 @@ async function applyEpisodeFocusFromUrl() {
 }
 
 async function loadPlanning() {
+  clearLegacyPlanningPayloadCaches();
   if (!latestPlanningPayload.episodes?.length && !latestPlanningPayload.recommendations?.length) {
     renderSkeletonCards(episodeList, 4);
     renderSkeletonCards(recommendationList, 3, true);
@@ -2346,7 +2366,7 @@ async function loadPlanning() {
       setMessage(episodeMessage, "Loading planning data...", "pending");
     }
   }
-  const payload = await fetchJSON("/api/planning?compact=true");
+  const payload = await fetchJSON(buildPlanningApiUrl("/api/planning?compact=true&refresh=true"));
   latestPlanningPayload = payload;
   updatePlanningStats(payload);
   renderPlanning();
