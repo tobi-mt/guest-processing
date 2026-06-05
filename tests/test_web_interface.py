@@ -2383,6 +2383,52 @@ def test_scheduling_intelligence_does_not_rewrite_shared_email_guest_names(temp_
     assert all(item["episode_title"] != "Black On Madison Avenue" for item in recommendations)
 
 
+def test_scheduling_intelligence_does_not_trust_wrong_guest_id_link(temp_db):
+    """A stale wrong guest_id must not turn one guest's episode into another guest's recommendation."""
+    service = GuestWebService(temp_db.db_path)
+    jonathan = service.create_guest(
+        {
+            "full_name": "Jonathan Robinson",
+            "email": "jonathan@example.com",
+            "website": "https://jonathan.example.com",
+        }
+    )
+    valid_guest = service.create_guest(
+        {
+            "full_name": "Amina Hart",
+            "email": "amina@example.com",
+            "website": "https://amina.example.com",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_id": jonathan["id"],
+            "guest_name": "Mark Robinson",
+            "guest_email": "mark@example.com",
+            "episode_title": "Black On Madison Avenue",
+            "topic": "Black On Madison Avenue",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_id": valid_guest["id"],
+            "guest_name": "Amina Hart",
+            "guest_email": "amina@example.com",
+            "episode_title": "Healing With Courage",
+            "topic": "Healing With Courage",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    recommendations = service.list_planning()["recommendations"]
+
+    assert [item["guest_name"] for item in recommendations] == ["Amina Hart"]
+    assert all(item["episode_title"] != "Black On Madison Avenue" for item in recommendations)
+
+
 def test_scheduling_intelligence_suppresses_released_duplicate_queue_rows(temp_db):
     """A stale open row should not be recommended when the same release is already archived."""
     service = GuestWebService(temp_db.db_path)

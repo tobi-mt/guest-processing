@@ -1601,7 +1601,9 @@ class GuestWebService:
         all_guests = guest_indexes["all_guests"]
 
         if episode_guest_id and episode_guest_id in guest_id_index:
-            return guest_id_index[episode_guest_id]
+            matched = guest_id_index[episode_guest_id]
+            if self._guest_name_compatible(episode, matched):
+                return matched
 
         # Fast email lookup, but avoid shared agency inbox collisions.
         if email_key and email_key in email_index:
@@ -1651,7 +1653,9 @@ class GuestWebService:
         website_index = guest_indexes["website_index"]
 
         if episode_guest_id and episode_guest_id in guest_id_index:
-            return guest_id_index[episode_guest_id]
+            matched = guest_id_index[episode_guest_id]
+            if self._guest_name_compatible(episode, matched):
+                return matched
 
         # Allow exact email only when it points to one name-compatible guest.
         if email_key and email_key in email_index:
