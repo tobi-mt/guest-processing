@@ -2429,6 +2429,34 @@ def test_scheduling_intelligence_does_not_trust_wrong_guest_id_link(temp_db):
     assert all(item["episode_title"] != "Black On Madison Avenue" for item in recommendations)
 
 
+def test_scheduling_intelligence_rejects_title_prefix_guest_mismatch(temp_db):
+    """A trusted guest id is not enough when the episode title still names a different guest."""
+    service = GuestWebService(temp_db.db_path)
+    jonathan = service.create_guest(
+        {
+            "full_name": "Jonathan Robinson",
+            "email": "jonathan@example.com",
+            "website": "https://jonathan.example.com",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_id": jonathan["id"],
+            "guest_name": "Jonathan Robinson",
+            "guest_email": "jonathan@example.com",
+            "website": "https://jonathan.example.com",
+            "episode_title": "Mark Robinson: Black On Madison Avenue",
+            "topic": "Black On Madison Avenue",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    recommendations = service.list_planning(force_refresh=True)["recommendations"]
+
+    assert recommendations == []
+
+
 def test_ai_scheduling_fallback_uses_filtered_recommendations(monkeypatch, temp_db):
     """AI fallback must not leak raw candidates that failed strict recommendation safeguards."""
     service = GuestWebService(temp_db.db_path)

@@ -1579,6 +1579,23 @@ class GuestWebService:
             return True
         return self._name_match_score(episode_name, guest_name) >= minimum_score
 
+    def _episode_title_guest_prefix_conflicts(self, episode: Dict[str, Any], guest: Dict[str, Any]) -> bool:
+        """Catch imported titles that still carry a different guest name prefix."""
+        title = _normalize_text(episode.get("episode_title"))
+        guest_name = _normalize_text(guest.get("full_name") or guest.get("name"))
+        if not title or not guest_name or ":" not in title:
+            return False
+
+        prefix = title.split(":", 1)[0].strip()
+        prefix_tokens = self._name_tokens(prefix)
+        guest_tokens = self._name_tokens(guest_name)
+        if len(prefix_tokens) < 2 or len(prefix_tokens) > 4 or len(guest_tokens) < 2:
+            return False
+
+        # A colon-prefixed two-name title such as "Mark Robinson: ..." should not
+        # be recommended under a different dashboard guest like Jonathan Robinson.
+        return self._name_match_score(prefix, guest_name) < 85
+
     def _unique_compatible_guest(
         self,
         episode: Dict[str, Any],
@@ -1664,19 +1681,19 @@ class GuestWebService:
 
         if episode_guest_id and episode_guest_id in guest_id_index:
             matched = guest_id_index[episode_guest_id]
-            if self._guest_name_compatible(episode, matched):
+            if self._guest_name_compatible(episode, matched) and not self._episode_title_guest_prefix_conflicts(episode, matched):
                 return matched
 
         # Allow exact email only when it points to one name-compatible guest.
         if email_key and email_key in email_index:
             matched = self._unique_compatible_guest(episode, email_index[email_key])
-            if matched:
+            if matched and not self._episode_title_guest_prefix_conflicts(episode, matched):
                 return matched
 
         # Allow exact website only when it points to one name-compatible guest.
         if website_host and website_host in website_index:
             matched = self._unique_compatible_guest(episode, website_index[website_host])
-            if matched:
+            if matched and not self._episode_title_guest_prefix_conflicts(episode, matched):
                 return matched
 
         if not email_key and not website_host:
@@ -1687,7 +1704,9 @@ class GuestWebService:
                     scored_matches.append((score, guest))
             scored_matches.sort(key=lambda item: (item[0], int(item[1].get("id") or 0)), reverse=True)
             if scored_matches and len([item for item in scored_matches if item[0] == scored_matches[0][0]]) == 1:
-                return scored_matches[0][1]
+                matched = scored_matches[0][1]
+                if not self._episode_title_guest_prefix_conflicts(episode, matched):
+                    return matched
 
         return None
 
