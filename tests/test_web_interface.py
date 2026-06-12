@@ -1399,7 +1399,7 @@ def test_list_guests_exposes_compact_planning_summary(temp_db):
             "guest_email": "jordan@example.com",
             "website": "https://jordan.example.com",
             "episode_title": "Healing Through Honest Conversations",
-            "release_date": "2026-05-12 17:00:00",
+            "release_date": "2099-05-12 17:00:00",
             "release_status": "scheduled",
             "production_status": "ready",
             "promotion_status": "ready",
@@ -1417,8 +1417,8 @@ def test_list_guests_exposes_compact_planning_summary(temp_db):
         "featured_title": "Healing Through Honest Conversations",
         "featured_release_status": "scheduled",
         "featured_production_status": "ready",
-        "featured_release_date": "2026-05-12 17:00:00",
-        "next_scheduled_release_date": "2026-05-12 17:00:00",
+        "featured_release_date": "2099-05-12 17:00:00",
+        "next_scheduled_release_date": "2099-05-12 17:00:00",
         "summary_label": "1 linked episode · 1 scheduled · 1 still active in planning",
     }
 
@@ -1833,6 +1833,50 @@ def test_web_service_can_import_episode_history_and_queue_csvs(temp_db):
     assert queue_episode["website"] == "https://jordan.example.com"
 
 
+def test_imported_queue_rows_generate_release_recommendations_without_guest_profiles(temp_db):
+    """Not Yet Released rows should be usable recommendations even before guest profiles exist."""
+    service = GuestWebService(temp_db.db_path)
+    queue_csv = (
+        "Names,Email,Website,Topic,Category,Interview Date,Riverside FM Status\n"
+        "Jordan Rivers,jordan@example.com,https://jordan.example.com,Building Calm Under Pressure,Finance,11/03/2026,Ready\n"
+    ).encode("utf-8")
+
+    service.import_episode_file("MT Guest List - Not Yet Released.csv", queue_csv)
+    planning = service.list_planning(force_refresh=True)
+
+    assert planning["recommendations"]
+    assert planning["recommendations"][0]["guest_name"] == "Jordan Rivers"
+    assert planning["ai_copilot_status"]["diagnostics"]["trusted_recommendations"] == 1
+
+
+def test_ai_scheduling_copilot_receives_imported_queue_candidates(monkeypatch, temp_db):
+    """AI scheduling should not report no_candidates for trusted standalone queue rows."""
+    service = GuestWebService(temp_db.db_path)
+    queue_csv = (
+        "Names,Email,Website,Topic,Category,Interview Date,Riverside FM Status\n"
+        "Jordan Rivers,jordan@example.com,https://jordan.example.com,Building Calm Under Pressure,Finance,11/03/2026,Ready\n"
+    ).encode("utf-8")
+    service.import_episode_file("MT Guest List - Not Yet Released.csv", queue_csv)
+
+    class StubCopilot:
+        def enrich_recommendations(self, recommendations, *, reference, released_history):
+            assert recommendations
+            return {
+                "status": "active",
+                "message": "AI copilot enriched the recommendations.",
+                "model": "gpt-5",
+                "current_month_context": {"month_label": "June 2026", "theme": "Identity, fatherhood, resilience, and community"},
+                "recommendations": recommendations,
+            }
+
+    monkeypatch.setattr(service, "_build_openai_scheduling_copilot", lambda: StubCopilot())
+
+    ai_planning = service.list_planning_ai_copilot()
+
+    assert ai_planning["ai_copilot_status"]["status"] == "active"
+    assert ai_planning["recommendations"][0]["guest_name"] == "Jordan Rivers"
+
+
 def test_web_service_imports_future_release_dates_as_scheduled(temp_db):
     """Imported archive rows with future release dates should stay scheduled, not released."""
     service = GuestWebService(temp_db.db_path)
@@ -1941,7 +1985,7 @@ def test_create_episode_with_release_date_defaults_to_scheduled(temp_db):
             "guest_name": "Jordan Rivers",
             "guest_email": "jordan@example.com",
             "episode_title": "Building Calm Under Pressure",
-            "release_date": "2026-04-14T17:00",
+            "release_date": "2099-04-14T17:00",
         }
     )
 
@@ -2042,7 +2086,7 @@ def test_future_scheduled_episode_numbers_adjust_when_earlier_slot_is_added(temp
             "guest_name": "Later Scheduled",
             "guest_email": "later@example.com",
             "episode_title": "Later Scheduled",
-            "release_date": "2026-06-16T17:00",
+            "release_date": "2099-06-16T17:00",
             "release_status": "scheduled",
             "production_status": "ready",
             "legacy_episode_number": "999",
@@ -2054,7 +2098,7 @@ def test_future_scheduled_episode_numbers_adjust_when_earlier_slot_is_added(temp
             "guest_name": "Earlier Scheduled",
             "guest_email": "earlier@example.com",
             "episode_title": "Earlier Scheduled",
-            "release_date": "2026-06-09T17:00",
+            "release_date": "2099-06-09T17:00",
             "release_status": "scheduled",
             "production_status": "ready",
         }
@@ -2084,7 +2128,7 @@ def test_future_scheduled_episode_numbers_adjust_when_episode_is_rescheduled(tem
             "guest_name": "First Scheduled",
             "guest_email": "first@example.com",
             "episode_title": "First Scheduled",
-            "release_date": "2026-06-09T17:00",
+            "release_date": "2099-06-09T17:00",
             "release_status": "scheduled",
             "production_status": "ready",
         }
@@ -2094,13 +2138,13 @@ def test_future_scheduled_episode_numbers_adjust_when_episode_is_rescheduled(tem
             "guest_name": "Second Scheduled",
             "guest_email": "second@example.com",
             "episode_title": "Second Scheduled",
-            "release_date": "2026-06-16T17:00",
+            "release_date": "2099-06-16T17:00",
             "release_status": "scheduled",
             "production_status": "ready",
         }
     )
 
-    moved_second = service.update_episode(second["id"], {"release_date": "2026-06-05T17:00", "release_status": "scheduled"})
+    moved_second = service.update_episode(second["id"], {"release_date": "2099-06-05T17:00", "release_status": "scheduled"})
     refreshed_first = service.get_episode(first["id"])
 
     assert moved_second["legacy_episode_number"] == "303"
@@ -2686,11 +2730,12 @@ def test_create_episode_prefills_priority_and_legacy_episode_number(temp_db):
         {
             "guest_name": "Jordan Rivers",
             "episode_title": "Episode Forty One",
+            "release_date": "2026-04-07T17:00",
             "legacy_episode_number": "41",
             "priority_score": 8,
-            "release_status": "scheduled",
-            "production_status": "ready",
-            "promotion_status": "ready",
+            "release_status": "released",
+            "production_status": "released",
+            "promotion_status": "released",
         }
     )
 
@@ -5208,6 +5253,8 @@ def test_web_service_can_sync_google_calendar_interviews(monkeypatch, temp_db):
     monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
     monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
     monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+    monkeypatch.delenv(GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR, raising=False)
+    monkeypatch.delenv(GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR, raising=False)
     service = GuestWebService(temp_db.db_path)
     monkeypatch.setattr(service, "_build_google_calendar_client", lambda: StubCalendarClient())
 
@@ -5224,6 +5271,8 @@ def test_build_google_calendar_client_ignores_oauth_without_service_account(monk
     monkeypatch.setenv(GOOGLE_CLIENT_SECRET_ENV_VAR, "client-secret")
     monkeypatch.setenv(GOOGLE_REFRESH_TOKEN_ENV_VAR, "refresh-token")
     monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "calendar@example.com")
+    monkeypatch.delenv(GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR, raising=False)
+    monkeypatch.delenv(GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR, raising=False)
 
     service = GuestWebService(temp_db.db_path)
 

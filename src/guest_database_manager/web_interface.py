@@ -813,18 +813,7 @@ class GuestWebService:
         
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
         
-        # Filter out recommendations for episodes without a corresponding guest in the database
-        # This prevents recommending imported episodes where the guest doesn't exist
-        # STRICT FILTERING: Only allow exact email or website matches, no fuzzy name matching
-        # Also: Replace episode's potentially incorrect guest_name with the actual guest's name from DB
-        filtered_recommendations = []
-        for rec in recommendations:
-            matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
-            if matched_guest:
-                # Create a copy and update with the correct guest name from the database
-                enriched_rec = dict(rec)
-                enriched_rec["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
-                filtered_recommendations.append(enriched_rec)
+        filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
         recommendation_diagnostics = {
             "base_candidates": len(recommendations),
             "trusted_recommendations": len(filtered_recommendations),
@@ -885,17 +874,7 @@ class GuestWebService:
 
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
         
-        # Filter out recommendations for episodes without a corresponding guest in the database
-        # STRICT FILTERING: Only allow exact email or website matches, no fuzzy name matching
-        # Also: Replace episode's potentially incorrect guest_name with the actual guest's name from DB
-        filtered_recommendations = []
-        for rec in recommendations:
-            matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
-            if matched_guest:
-                # Create a copy and update with the correct guest name from the database
-                enriched_rec = dict(rec)
-                enriched_rec["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
-                filtered_recommendations.append(enriched_rec)
+        filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
         
         auto_researched_count = 0
         candidate_ids = {
@@ -920,17 +899,7 @@ class GuestWebService:
                         auto_researched_count += 1
             if auto_researched_count:
                 recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
-                # Re-filter after regenerating recommendations
-                # STRICT FILTERING: Only allow exact email or website matches
-                # Also: Replace episode's potentially incorrect guest_name with actual guest's name from DB
-                filtered_recommendations = []
-                for rec in recommendations:
-                    matched_guest = self._find_matching_guest_strict(rec, guest_indexes)
-                    if matched_guest:
-                        # Create a copy and update with the correct guest name from the database
-                        enriched_rec = dict(rec)
-                        enriched_rec["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
-                        filtered_recommendations.append(enriched_rec)
+                filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
         
         ai_diagnostics = self._build_ai_candidate_diagnostics(filtered_recommendations)
         ai_result = ai_scheduling_client.enrich_recommendations(
@@ -955,6 +924,55 @@ class GuestWebService:
                 for episode in ai_result.get("recommendations", filtered_recommendations)
             ],
         }
+
+    def _filter_trusted_recommendations(
+        self,
+        recommendations: Iterable[Dict[str, Any]],
+        guest_indexes: Dict[str, Any],
+    ) -> list[Dict[str, Any]]:
+        """Keep recommendations that are either matched to a guest or safe standalone episode rows."""
+        filtered: list[Dict[str, Any]] = []
+        for recommendation in recommendations:
+            matched_guest = self._find_matching_guest_strict(recommendation, guest_indexes)
+            if matched_guest:
+                enriched_rec = dict(recommendation)
+                enriched_rec["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
+                filtered.append(enriched_rec)
+                continue
+
+            if self._is_trusted_standalone_recommendation(recommendation, guest_indexes):
+                filtered.append(dict(recommendation))
+        return filtered
+
+    def _is_trusted_standalone_recommendation(
+        self,
+        episode: Dict[str, Any],
+        guest_indexes: Dict[str, Any],
+    ) -> bool:
+        """Allow self-contained queue/manual episodes without reopening cross-guest mismatch leaks."""
+        if _normalize_text(episode.get("release_status")).lower() in {"released", "scheduled"}:
+            return False
+        if _normalize_text(episode.get("guest_id")):
+            return False
+        if not _normalize_text(episode.get("guest_name")):
+            return False
+
+        email_key = _normalize_text(episode.get("guest_email")).casefold()
+        website_host = self._website_host(episode.get("website"))
+        email_index = guest_indexes["email_index"]
+        website_index = guest_indexes["website_index"]
+
+        # If a stable identifier points at a known guest but strict matching rejected it,
+        # this is likely a shared inbox, stale import, or wrong guest link. Keep it out.
+        if email_key and email_key in email_index:
+            return False
+        if website_host and website_host in website_index:
+            return False
+
+        if email_key or website_host:
+            return True
+
+        return not guest_indexes["all_guests"]
 
     @staticmethod
     def _compose_ai_copilot_status_message(
