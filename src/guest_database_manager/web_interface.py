@@ -2556,8 +2556,7 @@ class GuestWebService:
             raise WebInterfaceError("Email address must contain '@'.")
 
         self.database.update_guest_by_id(guest_id, updated_guest)
-        # Don't invalidate guests cache on simple edits - let it expire naturally
-        self._invalidate_payload_cache("planning", "planning_ai_copilot")
+        self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved.")
@@ -3048,6 +3047,7 @@ class GuestWebService:
         *,
         scheduled_for: str,
         timezone_label: str,
+        browser_timezone_label: str,
         guest_note: str,
     ) -> Optional[Dict[str, Any]]:
         """Repair a stale local booking by attaching the missing calendar event when possible."""
@@ -3071,7 +3071,7 @@ class GuestWebService:
                     for part in [
                         _normalize_text(interview.get("notes")),
                         "Calendar invite repaired through the Mirror Talk guest booking flow.",
-                        f"Guest browser timezone: {timezone_label}" if timezone_label else "",
+                        f"Guest browser timezone: {browser_timezone_label}" if browser_timezone_label else "",
                         guest_note,
                     ]
                     if part
@@ -3222,7 +3222,7 @@ class GuestWebService:
                     {
                         "start": slot_start.astimezone(timezone.utc).isoformat(),
                         "end": slot_end.astimezone(timezone.utc).isoformat(),
-                        "timezone": self._booking_timezone_name(),
+                        "timezone": booking_settings["timezone"],
                     }
                 )
                 if limit is not None and len(slots) >= limit:
@@ -3249,7 +3249,9 @@ class GuestWebService:
         guest = target["guest"]
         reschedule_interview = target["reschedule_interview"]
         scheduled_for = _normalize_text(payload.get("scheduled_for"))
-        timezone_label = _normalize_text(payload.get("timezone")) or self._booking_timezone_name()
+        booking_settings = self._guest_booking_settings(guest)
+        timezone_label = booking_settings["timezone"]
+        browser_timezone_label = _normalize_text(payload.get("timezone"))
         guest_note = _normalize_text(payload.get("note"))
         if not scheduled_for:
             raise WebInterfaceError("Please choose one of the available interview slots.")
@@ -3278,7 +3280,7 @@ class GuestWebService:
                             for part in [
                                 _normalize_text(existing_interview.get("notes")),
                                 "Rescheduled through the Mirror Talk guest booking flow.",
-                                f"Guest browser timezone: {timezone_label}" if timezone_label else "",
+                                f"Guest browser timezone: {browser_timezone_label}" if browser_timezone_label else "",
                                 guest_note,
                             ]
                             if part
@@ -3314,6 +3316,7 @@ class GuestWebService:
                 existing_interview,
                 scheduled_for=scheduled_for,
                 timezone_label=timezone_label,
+                browser_timezone_label=browser_timezone_label,
                 guest_note=guest_note,
             )
             if repaired:
@@ -3341,7 +3344,7 @@ class GuestWebService:
                 "notes": "\n".join(
                     part for part in [
                         "Booked through the Mirror Talk guest booking flow.",
-                        f"Guest browser timezone: {timezone_label}" if timezone_label else "",
+                        f"Guest browser timezone: {browser_timezone_label}" if browser_timezone_label else "",
                         guest_note,
                     ] if part
                 ),

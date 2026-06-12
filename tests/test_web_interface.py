@@ -3635,6 +3635,31 @@ def test_guest_booking_override_is_saved_and_serialized(temp_db):
     assert updated["booking_override"]["min_notice_hours"] == 12
 
 
+def test_guest_booking_override_update_refreshes_guest_list_cache(temp_db):
+    """The dashboard guest list should show booking override edits immediately after saving."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    service.list_guests(skip_expensive_enrichment=True)
+
+    service.update_guest(
+        guest["id"],
+        {
+            "full_name": "Jordan Rivers",
+            "booking_override": {
+                "timezone": "America/Phoenix",
+                "weekdays": "WE",
+                "slot_times": "10:00",
+            },
+        },
+    )
+
+    refreshed = service.list_guests(skip_expensive_enrichment=True)
+    saved_guest = next(item for item in refreshed["guests"] if item["id"] == guest["id"])
+    assert saved_guest["booking_override"]["timezone"] == "America/Phoenix"
+    assert saved_guest["booking_override"]["weekdays"] == ["WE"]
+    assert saved_guest["booking_override"]["slot_times"] == ["10:00"]
+
+
 def test_public_booking_uses_guest_specific_booking_override(monkeypatch, temp_db):
     """A guest override should narrow booking availability without changing the global schedule."""
     service = GuestWebService(temp_db.db_path)
@@ -3667,6 +3692,7 @@ def test_public_booking_uses_guest_specific_booking_override(monkeypatch, temp_d
     assert availability["booking_override_active"] is True
     assert availability["slots"]
     for slot in availability["slots"]:
+        assert slot["timezone"] == "America/Phoenix"
         slot_local = datetime.fromisoformat(slot["start"].replace("Z", "+00:00")).astimezone(override_tz)
         assert slot_local.weekday() == 2
         assert slot_local.strftime("%H:%M") in {"10:00", "14:00"}
@@ -3813,9 +3839,11 @@ def test_public_booking_creates_interview_calendar_event_and_confirmation(monkey
     saved = service.database.get_interview_by_id(interview["id"])
     assert saved is not None
     assert saved["guest_name"] == "Jordan Rivers"
+    assert saved["timezone"] == "Europe/Berlin"
     assert saved["calendar_event_id"] == "google-event-1"
     assert saved["confirmation_status"] == "confirmed"
     assert "Booked through the Mirror Talk guest booking flow." in (saved["notes"] or "")
+    assert "Guest browser timezone: Europe/Berlin" in (saved["notes"] or "")
     assert sent == {"guest": "Jordan Rivers", "interview_id": interview["id"]}
 
 
@@ -3872,7 +3900,9 @@ def test_public_booking_repairs_existing_interview_without_calendar_event(monkey
     assert interview["id"] == existing["id"]
     assert saved["calendar_event_id"] == "google-event-repaired"
     assert saved["confirmation_status"] == "confirmed"
+    assert saved["timezone"] == "Europe/Berlin"
     assert "Calendar invite repaired through the Mirror Talk guest booking flow." in (saved["notes"] or "")
+    assert "Guest browser timezone: America/Toronto" in (saved["notes"] or "")
     assert sent == {"guest": "Jordan Rivers", "interview_id": existing["id"]}
 
 
@@ -3936,10 +3966,11 @@ def test_public_reschedule_updates_existing_interview(monkeypatch, temp_db):
     saved = service.database.get_interview_by_id(interview["id"])
     assert result["id"] == interview["id"]
     assert saved["scheduled_for"] == new_start
-    assert saved["timezone"] == "America/Toronto"
+    assert saved["timezone"] == "Europe/Berlin"
     assert saved["confirmation_status"] == "confirmed"
     assert saved["reschedule_token"] is None
     assert "Rescheduled through the Mirror Talk guest booking flow." in (saved["notes"] or "")
+    assert "Guest browser timezone: America/Toronto" in (saved["notes"] or "")
     assert sent == {"guest": "Jordan Rivers", "interview_id": interview["id"]}
 
 
@@ -3979,17 +4010,18 @@ def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):
 
 
 def test_booking_confirmation_email_formats_time_in_booking_timezone():
-    """Booking emails should display the interview time in the guest-facing booking timezone."""
+    """Booking emails should display the interview date and time in the guest-facing booking timezone."""
     manager = EmailManager()
 
     template = manager.get_booking_confirmation_template(
         "Jordan Rivers",
-        datetime(2026, 6, 11, 18, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 9, 23, 30, tzinfo=timezone.utc),
         "Europe/Berlin",
         "https://riverside.fm/studio/example",
     )
 
-    assert "Thursday 11 June, 2026 at 20:00 Europe/Berlin." in template["body"]
+    assert "Your Soulful Conversation is booked for Friday 10 April" == template["subject"]
+    assert "Friday 10 April, 2026 at 01:30 Europe/Berlin." in template["body"]
 
 
 def test_google_calendar_event_creation_requests_attendee_updates(monkeypatch):
