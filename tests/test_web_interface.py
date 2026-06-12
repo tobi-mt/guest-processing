@@ -2067,6 +2067,34 @@ def test_next_legacy_episode_number_uses_latest_release_date_not_highest_old_num
     assert episode["legacy_episode_number"] == "303"
 
 
+def test_next_legacy_episode_number_understands_formatted_numbers(temp_db):
+    """Autofill should increment common formatted episode labels instead of treating them as missing."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Formatted Anchor",
+            "guest_email": "formatted@example.com",
+            "episode_title": "Formatted Anchor",
+            "release_date": "2026-05-26T17:00",
+            "release_status": "released",
+            "production_status": "released",
+            "legacy_episode_number": "EP-042",
+        }
+    )
+
+    episode = service.create_episode(
+        {
+            "guest_name": "Next Formatted Release",
+            "guest_email": "next-formatted@example.com",
+            "episode_title": "Next Formatted Release",
+            "release_date": "2026-06-02T17:00",
+            "release_status": "scheduled",
+        }
+    )
+
+    assert episode["legacy_episode_number"] == "EP-043"
+
+
 def test_future_scheduled_episode_numbers_adjust_when_earlier_slot_is_added(temp_db):
     """Scheduling a new earlier release should renumber future planned episodes in order."""
     service = GuestWebService(temp_db.db_path)
@@ -2149,6 +2177,48 @@ def test_future_scheduled_episode_numbers_adjust_when_episode_is_rescheduled(tem
 
     assert moved_second["legacy_episode_number"] == "303"
     assert refreshed_first["legacy_episode_number"] == "304"
+
+
+def test_future_scheduled_episode_numbers_preserve_anchor_format(temp_db):
+    """Scheduled resequencing should keep the numbering style from the latest release anchor."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Formatted Anchor",
+            "guest_email": "anchor@example.com",
+            "episode_title": "Formatted Anchor",
+            "release_date": "2026-06-02T17:00",
+            "release_status": "released",
+            "production_status": "released",
+            "legacy_episode_number": "Episode 302",
+        }
+    )
+    later = service.create_episode(
+        {
+            "guest_name": "Later Scheduled",
+            "guest_email": "later-formatted@example.com",
+            "episode_title": "Later Scheduled",
+            "release_date": "2099-06-16T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "legacy_episode_number": "999",
+        }
+    )
+
+    earlier = service.create_episode(
+        {
+            "guest_name": "Earlier Scheduled",
+            "guest_email": "earlier-formatted@example.com",
+            "episode_title": "Earlier Scheduled",
+            "release_date": "2099-06-09T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+        }
+    )
+    refreshed_later = service.get_episode(later["id"])
+
+    assert earlier["legacy_episode_number"] == "Episode 303"
+    assert refreshed_later["legacy_episode_number"] == "Episode 304"
 
 
 def test_web_service_can_delete_interview_and_episode(temp_db):

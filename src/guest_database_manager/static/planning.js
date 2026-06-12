@@ -689,21 +689,51 @@ function renderAiSchedulingCopilot(aiCopilot) {
   `;
 }
 
-function renderMonthlyAngleDecision(episode) {
+function getRecommendationMonthlyAngle(episode) {
+  const storedTheme = String(episode.ai_monthly_angle_theme || "").trim();
+  if (storedTheme) {
+    return storedTheme;
+  }
+  const aiTheme = String(episode.ai_copilot?.monthly_theme || "").trim();
+  if (aiTheme) {
+    return aiTheme;
+  }
+  const seasonalMonth = String(episode.seasonal_fit?.month || "").trim();
+  const seasonalReason = String(episode.seasonal_fit?.reason || "").trim();
+  if (seasonalMonth && seasonalReason) {
+    return `${seasonalMonth}: ${seasonalReason}`;
+  }
+  if (seasonalReason) {
+    return seasonalReason;
+  }
+  const monthContext = latestPlanningPayload.ai_copilot_status?.current_month_context || {};
+  const monthLabel = String(monthContext.month_label || "").trim();
+  const monthTheme = String(monthContext.theme || "").trim();
+  if (monthLabel && monthTheme) {
+    return `${monthLabel}: ${monthTheme}`;
+  }
+  return monthTheme || monthLabel || "General monthly release fit";
+}
+
+function renderMonthlyAngleDecision(episode, options = {}) {
   const state = normalizeText(episode.ai_monthly_angle_state);
-  const theme = String(episode.ai_monthly_angle_theme || episode.ai_copilot?.monthly_theme || "").trim();
-  if (!state && !theme) {
+  const hasSavedOrAiTheme = Boolean(String(episode.ai_monthly_angle_theme || episode.ai_copilot?.monthly_theme || "").trim());
+  if (!state && !options.always && !hasSavedOrAiTheme) {
     return "";
   }
+  const theme = getRecommendationMonthlyAngle(episode);
   const label = state === "pinned" ? "Pinned" : state === "rejected" ? "Rejected" : "Unreviewed";
   const tone = state === "pinned" ? "good" : state === "rejected" ? "warning" : "";
+  const detail = state || options.always
+    ? `<p><strong>Theme:</strong> ${escapeHtml(theme)}</p>`
+    : "";
   return `
     <div class="operations-preview">
       <strong class="insight-label">Monthly angle review</strong>
       <div class="signal-list">
         <span class="signal-chip ${tone}">${escapeHtml(label)}</span>
       </div>
-      ${theme ? `<p><strong>Theme:</strong> ${escapeHtml(theme)}</p>` : ""}
+      ${detail}
     </div>
   `;
 }
@@ -759,10 +789,19 @@ function collectOutreachPlanFromForm() {
 
 function parseLegacyEpisodeNumber(value) {
   const text = String(value || "").trim();
-  if (!/^\d+$/.test(text)) {
+  const matches = [...text.matchAll(/\d+/g)];
+  if (!matches.length) {
     return null;
   }
-  return Number.parseInt(text, 10);
+  return Number.parseInt(matches[matches.length - 1][0], 10);
+}
+
+function formatEpisodeNumberLabel(value, fallbackNumber) {
+  const text = String(value || "").trim();
+  if (text) {
+    return /^\d+$/.test(text) ? `#${text}` : text;
+  }
+  return fallbackNumber ? `#${fallbackNumber}` : "#TBD";
 }
 
 function computeNextLegacyEpisodeNumber(episodes, currentEpisodeId = "") {
@@ -842,11 +881,12 @@ function buildEpisodeNumberMap(episodes, recommendations) {
 
   let nextNumber = 0;
   released.forEach((episode, index) => {
-    const number = index + 1;
+    const parsedNumber = parseLegacyEpisodeNumber(episode.legacy_episode_number);
+    const number = parsedNumber || nextNumber + 1 || index + 1;
     nextNumber = number;
     episodeNumberMap.set(String(episode.id), {
       number,
-      label: `Episode #${number} (Actual)`,
+      label: `Episode ${formatEpisodeNumberLabel(episode.legacy_episode_number, number)} (Actual)`,
     });
   });
 
@@ -887,11 +927,12 @@ function buildEpisodeNumberMap(episodes, recommendations) {
     if (episodeNumberMap.has(String(episode.id))) {
       return;
     }
+    const parsedNumber = parseLegacyEpisodeNumber(episode.legacy_episode_number);
     const isScheduled = normalizeText(episode.release_status) === "scheduled";
-    nextNumber += 1;
+    nextNumber = parsedNumber || nextNumber + 1;
     episodeNumberMap.set(String(episode.id), {
       number: nextNumber,
-      label: `Episode #${nextNumber} (${isScheduled ? "Prospective" : "Queued"})`,
+      label: `Episode ${formatEpisodeNumberLabel(episode.legacy_episode_number, nextNumber)} (${isScheduled ? "Prospective" : "Queued"})`,
     });
   });
 
@@ -2093,7 +2134,7 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
       ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${renderSeasonalFit(episode.seasonal_fit)}
       ${renderAiSchedulingCopilot(episode.ai_copilot)}
-      ${renderMonthlyAngleDecision(episode)}
+      ${renderMonthlyAngleDecision(episode, { always: true })}
       ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
       ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${episode.archive_overlap.message}</p></div>` : ""}
       ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}
@@ -2116,22 +2157,16 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
             type="button" 
             class="ghost-button" 
             data-recommendation-action="pin-angle" 
-            ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}
-            ${episode.ai_copilot?.monthly_theme ? "" : 'title="AI copilot analysis not available for this episode"'}
           >Pin Angle</button>
           <button 
             type="button" 
             class="ghost-button" 
             data-recommendation-action="reject-angle" 
-            ${episode.ai_copilot?.monthly_theme ? "" : "disabled"}
-            ${episode.ai_copilot?.monthly_theme ? "" : 'title="AI copilot analysis not available for this episode"'}
           >Reject Angle</button>
           <button 
             type="button" 
             class="ghost-button" 
             data-recommendation-action="clear-angle" 
-            ${episode.ai_monthly_angle_state ? "" : "disabled"}
-            ${episode.ai_monthly_angle_state ? "" : 'title="No angle review to clear"'}
           >Clear Angle Review</button>
         </div>
       </div>
@@ -2205,7 +2240,7 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
       );
     });
     const setMonthlyAngleDecision = async (state) => {
-      const theme = state ? String(episode.ai_copilot?.monthly_theme || episode.ai_monthly_angle_theme || "").trim() : "";
+      const theme = state ? getRecommendationMonthlyAngle(episode) : "";
       const actingButtons = [pinAngleButton, rejectAngleButton, clearAngleButton].filter(Boolean);
       actingButtons.forEach((button) => {
         button.disabled = true;
@@ -2232,7 +2267,7 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
         };
         setMessage(
           episodeMessage,
-          state ? `${state === "pinned" ? "Pinned" : "Rejected"} the AI monthly angle for ${episode.guest_name || "episode"}.` : `Cleared the AI monthly angle review for ${episode.guest_name || "episode"}.`,
+          state ? `${state === "pinned" ? "Pinned" : "Rejected"} the monthly angle for ${episode.guest_name || "episode"}.` : `Cleared the monthly angle review for ${episode.guest_name || "episode"}.`,
           "success",
         );
         renderPlanning();

@@ -630,6 +630,37 @@ class GuestWebService:
         except WebInterfaceError:
             return False
 
+    @staticmethod
+    def _episode_number_parts(value: Any) -> Optional[Dict[str, Any]]:
+        """Parse common episode number labels while preserving their display format."""
+        text = _normalize_text(value)
+        if not text:
+            return None
+        matches = list(re.finditer(r"\d+", text))
+        if not matches:
+            return None
+        match = matches[-1]
+        return {
+            "number": int(match.group(0)),
+            "width": len(match.group(0)),
+            "prefix": text[: match.start()],
+            "suffix": text[match.end() :],
+            "plain": text == match.group(0),
+        }
+
+    @classmethod
+    def _episode_number_value(cls, value: Any) -> Optional[int]:
+        parts = cls._episode_number_parts(value)
+        return int(parts["number"]) if parts else None
+
+    @classmethod
+    def _format_episode_number(cls, number: int, template: Any = "") -> str:
+        parts = cls._episode_number_parts(template)
+        if not parts or parts.get("plain"):
+            return str(number)
+        number_text = str(number).zfill(int(parts.get("width") or 0))
+        return f"{parts.get('prefix', '')}{number_text}{parts.get('suffix', '')}"
+
     def _next_legacy_episode_number(self, current_episode_id: Any = None, target_release_date: str = "") -> str:
         """Return the next episode number from date-credible release history."""
         current_id = str(current_episode_id or "").strip()
@@ -641,10 +672,11 @@ class GuestWebService:
         reference_dt = self._parse_datetime_static(target_release_date) if _normalize_text(target_release_date) else None
         reference_dt = reference_dt or datetime.now(timezone.utc).replace(tzinfo=None)
 
-        credible_rows: list[tuple[datetime, int, Dict[str, Any]]] = []
+        credible_rows: list[tuple[datetime, int, str, Dict[str, Any]]] = []
         for episode in episodes:
             number_text = _normalize_text(episode.get("legacy_episode_number"))
-            if not number_text.isdigit():
+            number = self._episode_number_value(number_text)
+            if number is None:
                 continue
             release_dt = self._parse_datetime_static(episode.get("release_date"))
             if not release_dt or release_dt > reference_dt:
@@ -653,7 +685,7 @@ class GuestWebService:
             source_type = _normalize_text(episode.get("source_type")).lower()
             if release_status not in {"released", "scheduled"} and source_type != "released_archive":
                 continue
-            credible_rows.append((release_dt, int(number_text), episode))
+            credible_rows.append((release_dt, number, number_text, episode))
 
         if not credible_rows:
             return ""
@@ -661,14 +693,15 @@ class GuestWebService:
         credible_rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
         latest_date = credible_rows[0][0].date()
         latest_number = credible_rows[0][1]
+        latest_template = credible_rows[0][2]
         candidate = latest_number + 1
 
         # Only skip numbers already used in the same date-aware release history.
         # This avoids jumping through polluted future/import ranges.
-        scoped_numbers = {number for release_dt, number, _episode in credible_rows if release_dt.date() <= latest_date}
+        scoped_numbers = {number for release_dt, number, _number_text, _episode in credible_rows if release_dt.date() <= latest_date}
         while candidate in scoped_numbers:
             candidate += 1
-        return str(candidate)
+        return self._format_episode_number(candidate, latest_template)
 
     def _suggest_episode_priority_score(self, payload: Dict[str, Any]) -> float:
         """Return a lightweight default priority score for planning records."""
@@ -3485,12 +3518,13 @@ class GuestWebService:
         first_future_date = future_scheduled[0][0]
         scheduled_ids = {str(episode.get("id") or "") for _release_dt, episode in future_scheduled}
 
-        anchors: list[tuple[datetime, int]] = []
+        anchors: list[tuple[datetime, int, str]] = []
         for episode in episodes:
             if str(episode.get("id") or "") in scheduled_ids:
                 continue
             number_text = _normalize_text(episode.get("legacy_episode_number"))
-            if not number_text.isdigit():
+            number = self._episode_number_value(number_text)
+            if number is None:
                 continue
             release_dt = self._parse_datetime_static(episode.get("release_date"))
             if not release_dt or release_dt >= first_future_date:
@@ -3499,16 +3533,17 @@ class GuestWebService:
             source_type = _normalize_text(episode.get("source_type")).lower()
             if release_status not in {"released", "scheduled"} and source_type != "released_archive":
                 continue
-            anchors.append((release_dt, int(number_text)))
+            anchors.append((release_dt, number, number_text))
 
         if not anchors:
             return
 
         anchors.sort(key=lambda item: (item[0], item[1]), reverse=True)
         next_number = anchors[0][1] + 1
+        number_template = anchors[0][2]
         changed = False
         for _release_dt, episode in future_scheduled:
-            desired = str(next_number)
+            desired = self._format_episode_number(next_number, number_template)
             next_number += 1
             if _normalize_text(episode.get("legacy_episode_number")) == desired:
                 continue
