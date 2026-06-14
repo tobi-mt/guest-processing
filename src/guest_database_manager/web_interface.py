@@ -13,7 +13,7 @@ import webbrowser
 import zipfile
 from csv import DictWriter
 from base64 import b64decode
-from time import monotonic
+from time import monotonic, sleep
 from email.parser import BytesParser
 from email.policy import default
 from datetime import datetime, timedelta, timezone
@@ -116,6 +116,10 @@ BOOKING_MIN_NOTICE_HOURS_ENV_VAR = "MIRROR_TALK_BOOKING_MIN_NOTICE_HOURS"
 BOOKING_DURATION_MINUTES_ENV_VAR = "MIRROR_TALK_BOOKING_DURATION_MINUTES"
 BOOKING_JOIN_URL_ENV_VAR = "MIRROR_TALK_BOOKING_JOIN_URL"
 DEFAULT_GOOGLE_CALENDAR_SYNC_DAYS_AHEAD = 365
+BOOKING_CONFIRMATION_RETRY_ATTEMPTS = 3
+BOOKING_CONFIRMATION_RETRY_DELAYS_SECONDS = (0.5, 1.5)
+BOOKING_CONFIRMATION_OUTBOX_MAX_ATTEMPTS = 5
+BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES = 5
 AI_AUTORESEARCH_CANDIDATE_LIMIT = 12
 BULK_GUEST_RESEARCH_BATCH_SIZE = 25
 BOOKING_DEFAULT_WEEKDAYS = ("TU", "WE", "TH")
@@ -582,6 +586,12 @@ class GuestWebService:
 
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
+        if self.database.get_email_outbox_count() > 0:
+            try:
+                self.process_pending_email_outbox(limit=5)
+            except Exception:
+                # Queue processing is best-effort during service startup.
+                pass
 
     @staticmethod
     def _payload_cache_ttl(cache_key: str) -> float:
@@ -5035,29 +5045,188 @@ class GuestWebService:
         return serialize_guest(refreshed)
 
     def _send_booking_confirmation_email(self, guest: Dict[str, Any], interview: Dict[str, Any]) -> None:
-        """Best-effort confirmation email after a guest books a slot."""
-        guest_email = _normalize_text(guest.get("email"))
-        if not guest_email:
-            return
+        """Best-effort booking confirmation with retry and outbox fallback."""
+        guest_email = _normalize_text(guest.get("email")) or _normalize_text(interview.get("guest_email"))
         scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
-        if not scheduled_for:
+        if not guest_email or not scheduled_for:
             return
 
         email_manager = self._build_email_manager()
-        if not email_manager.is_configured():
+        guest_name = _normalize_text(guest.get("full_name") or guest.get("name")) or "there"
+        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        join_url = _normalize_text(interview.get("join_url")) or self._booking_join_url()
+        template = email_manager.get_booking_confirmation_template(
+            guest_name,
+            scheduled_for,
+            timezone_label,
+            join_url,
+        )
+        invite_attachment = {
+            "filename": "mirror-talk-booking.ics",
+            "content": email_manager.build_calendar_invite(
+                guest_name=guest_name,
+                scheduled_for=scheduled_for,
+                timezone_label=timezone_label,
+                join_url=join_url,
+            ),
+        }
+
+        sent = False
+        last_error = ""
+        if email_manager.is_configured():
+            for attempt in range(1, BOOKING_CONFIRMATION_RETRY_ATTEMPTS + 1):
+                try:
+                    sent = email_manager.send_booking_confirmation_email(
+                        guest_name,
+                        guest_email,
+                        scheduled_for,
+                        timezone_label,
+                        join_url,
+                    )
+                except Exception as exc:
+                    last_error = str(exc).strip() or exc.__class__.__name__
+                    sent = False
+                else:
+                    last_error = (email_manager.last_error or "").strip()
+                if sent:
+                    break
+                if attempt < BOOKING_CONFIRMATION_RETRY_ATTEMPTS:
+                    delay_index = min(attempt - 1, len(BOOKING_CONFIRMATION_RETRY_DELAYS_SECONDS) - 1)
+                    sleep(BOOKING_CONFIRMATION_RETRY_DELAYS_SECONDS[delay_index])
+
+        if sent:
+            provider = "resend" if email_manager.resend_api_key else "smtp"
+            self.database.log_interview_email(
+                interview_id=int(interview["id"]),
+                email_type="booking_confirmation",
+                sent_to=guest_email,
+                status="sent",
+                provider=provider,
+                notes=template["subject"],
+            )
             return
 
-        guest_name = _normalize_text(guest.get("full_name") or guest.get("name")) or "there"
-        try:
-            email_manager.send_booking_confirmation_email(
-                guest_name,
-                guest_email,
-                scheduled_for,
-                _normalize_text(interview.get("timezone")) or self._booking_timezone_name(),
-                _normalize_text(interview.get("join_url")) or self._booking_join_url(),
-            )
-        except Exception:
-            return
+        attachments_json = json.dumps(
+            [
+                {
+                    "filename": invite_attachment["filename"],
+                    "content_b64": b64encode(bytes(invite_attachment["content"])).decode("ascii"),
+                }
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        next_attempt_at = (datetime.now(timezone.utc) + timedelta(minutes=BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES)).replace(
+            microsecond=0
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        provider = "resend" if email_manager.resend_api_key else "smtp"
+        outbox_id = self.database.enqueue_email_outbox(
+            interview_id=int(interview["id"]),
+            email_type="booking_confirmation",
+            sent_to=guest_email,
+            subject=template["subject"],
+            body=template["body"],
+            attachments_json=attachments_json,
+            provider=provider,
+            max_attempts=BOOKING_CONFIRMATION_OUTBOX_MAX_ATTEMPTS,
+            next_attempt_at=next_attempt_at,
+            status="retrying" if email_manager.is_configured() else "pending",
+            last_error=last_error,
+        )
+        self.database.log_interview_email(
+            interview_id=int(interview["id"]),
+            email_type="booking_confirmation",
+            sent_to=guest_email,
+            status="queued",
+            provider=provider,
+            notes=f"{template['subject']} | outbox:{outbox_id} | {last_error}".strip(),
+        )
+
+    def process_pending_email_outbox(self, *, limit: int = 10) -> Dict[str, int]:
+        """Retry queued emails and deliver any whose next attempt is due."""
+        email_manager = self._build_email_manager()
+        if not email_manager.is_configured():
+            return {"checked": 0, "sent": 0, "retrying": 0, "failed": 0}
+
+        due_entries = self.database.get_due_email_outbox(limit=limit)
+        results = {"checked": len(due_entries), "sent": 0, "retrying": 0, "failed": 0}
+
+        for entry in due_entries:
+            attachments_payload = []
+            raw_attachments = entry.get("attachments_json") or ""
+            if raw_attachments:
+                try:
+                    decoded_attachments = json.loads(raw_attachments)
+                except (TypeError, ValueError):
+                    decoded_attachments = []
+                for attachment in decoded_attachments if isinstance(decoded_attachments, list) else []:
+                    content_b64 = _normalize_text(attachment.get("content_b64"))
+                    filename = _normalize_text(attachment.get("filename"))
+                    if not content_b64 or not filename:
+                        continue
+                    attachments_payload.append(
+                        {
+                            "filename": filename,
+                            "content": b64decode(content_b64),
+                        }
+                    )
+
+            try:
+                sent = email_manager.send_email(
+                    _normalize_text(entry.get("sent_to")),
+                    _normalize_text(entry.get("subject")),
+                    _normalize_text(entry.get("body")),
+                    attachments=attachments_payload or None,
+                )
+            except Exception as exc:
+                sent = False
+                error_detail = str(exc).strip() or exc.__class__.__name__
+            else:
+                error_detail = (email_manager.last_error or "").strip()
+
+            attempts = int(entry.get("attempts") or 0) + 1
+            max_attempts = int(entry.get("max_attempts") or BOOKING_CONFIRMATION_OUTBOX_MAX_ATTEMPTS)
+
+            if sent:
+                self.database.mark_email_outbox_sent(int(entry["id"]))
+                provider = "resend" if email_manager.resend_api_key else "smtp"
+                if entry.get("interview_id"):
+                    self.database.log_interview_email(
+                        interview_id=int(entry["interview_id"]),
+                        email_type=_normalize_text(entry.get("email_type")) or "booking_confirmation",
+                        sent_to=_normalize_text(entry.get("sent_to")),
+                        status="sent",
+                        provider=provider,
+                        notes=_normalize_text(entry.get("subject")),
+                    )
+                results["sent"] += 1
+                continue
+
+            if attempts >= max_attempts:
+                self.database.mark_email_outbox_retry(
+                    int(entry["id"]),
+                    attempts=attempts,
+                    next_attempt_at=(
+                        datetime.now(timezone.utc) + timedelta(minutes=BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES)
+                    ).replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S"),
+                    last_error=error_detail,
+                    status="failed",
+                )
+                results["failed"] += 1
+            else:
+                delay_minutes = BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES * min(6, attempts)
+                self.database.mark_email_outbox_retry(
+                    int(entry["id"]),
+                    attempts=attempts,
+                    next_attempt_at=(
+                        datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+                    ).replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S"),
+                    last_error=error_detail,
+                    status="retrying",
+                )
+                results["retrying"] += 1
+
+        return results
 
     # ==================== AI Assistant Features ====================
 

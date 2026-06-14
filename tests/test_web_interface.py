@@ -4021,6 +4021,223 @@ def test_public_booking_repairs_existing_interview_without_calendar_event(monkey
     assert sent == {"guest": "Jordan Rivers", "interview_id": existing["id"]}
 
 
+def test_public_booking_queues_confirmation_email_after_retry_failure(monkeypatch, temp_db):
+    """Public bookings should still succeed if the confirmation email has to be queued after retries."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+
+    scheduled_for = (datetime.now(timezone.utc) + timedelta(days=2)).replace(minute=0, second=0, microsecond=0).isoformat()
+
+    monkeypatch.setattr(
+        GuestWebService,
+        "list_public_booking_slots",
+        lambda self, booking_token, limit=12: {
+            "guest_name": "Jordan Rivers",
+            "booking_timezone": "Europe/Berlin",
+            "existing_booking": None,
+            "slots": [{"start": scheduled_for, "end": scheduled_for, "timezone": "Europe/Berlin"}],
+        },
+    )
+    monkeypatch.setattr("guest_database_manager.web_interface.sleep", lambda *_: None)
+
+    class StubCalendarClient:
+        def create_event_from_interview(self, interview):
+            return {"id": "google-event-1", "updated": "2026-04-07T12:00:00Z"}
+
+    class StubEmailManager:
+        def __init__(self):
+            self.calls = 0
+            self.last_error = "SMTP rejected the message"
+            self.resend_api_key = "re_test"
+            self.build_calendar_invite = EmailManager.build_calendar_invite
+
+        def configure_resend(self, **kwargs):
+            return None
+
+        def is_configured(self):
+            return True
+
+        def get_booking_confirmation_template(self, guest_name, scheduled_for, timezone_label, join_url):
+            return {"subject": "Your Soulful Conversation is booked", "body": "Here is your confirmation."}
+
+        def send_booking_confirmation_email(self, guest_name, to_email, scheduled_for, timezone_label, join_url):
+            self.calls += 1
+            return False
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: StubCalendarClient())
+
+    interview = service.create_public_booking(
+        token,
+        {
+            "scheduled_for": scheduled_for,
+            "timezone": "Europe/Berlin",
+            "note": "Looking forward to it",
+        },
+    )
+
+    saved = service.database.get_interview_by_id(interview["id"])
+    assert saved is not None
+    assert saved["confirmation_status"] == "confirmed"
+
+    with sqlite3.connect(temp_db.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM email_outbox ORDER BY id DESC LIMIT 1").fetchone()
+        assert row is not None
+        assert row["email_type"] == "booking_confirmation"
+        assert row["status"] == "retrying"
+        assert row["sent_to"] == "jordan@example.com"
+
+    log_entries = temp_db.get_reminder_log(interview["id"])
+    assert any(entry["reminder_type"] == "booking_confirmation" and entry["status"] == "queued" for entry in log_entries)
+
+
+def test_public_booking_retries_confirmation_email_successfully(monkeypatch, temp_db):
+    """Public bookings should use retries before falling back to the queue."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "website": "https://jordan.example.com",
+        }
+    )
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+
+    scheduled_for = (datetime.now(timezone.utc) + timedelta(days=2)).replace(minute=0, second=0, microsecond=0).isoformat()
+
+    monkeypatch.setattr(
+        GuestWebService,
+        "list_public_booking_slots",
+        lambda self, booking_token, limit=12: {
+            "guest_name": "Jordan Rivers",
+            "booking_timezone": "Europe/Berlin",
+            "existing_booking": None,
+            "slots": [{"start": scheduled_for, "end": scheduled_for, "timezone": "Europe/Berlin"}],
+        },
+    )
+    monkeypatch.setattr("guest_database_manager.web_interface.sleep", lambda *_: None)
+
+    class StubCalendarClient:
+        def create_event_from_interview(self, interview):
+            return {"id": "google-event-1", "updated": "2026-04-07T12:00:00Z"}
+
+    class StubEmailManager:
+        def __init__(self):
+            self.calls = 0
+            self.last_error = ""
+            self.resend_api_key = "re_test"
+            self.build_calendar_invite = EmailManager.build_calendar_invite
+
+        def configure_resend(self, **kwargs):
+            return None
+
+        def is_configured(self):
+            return True
+
+        def get_booking_confirmation_template(self, guest_name, scheduled_for, timezone_label, join_url):
+            return {"subject": "Your Soulful Conversation is booked", "body": "Here is your confirmation."}
+
+        def send_booking_confirmation_email(self, guest_name, to_email, scheduled_for, timezone_label, join_url):
+            self.calls += 1
+            return self.calls >= 2
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: StubCalendarClient())
+
+    interview = service.create_public_booking(
+        token,
+        {
+            "scheduled_for": scheduled_for,
+            "timezone": "Europe/Berlin",
+            "note": "Looking forward to it",
+        },
+    )
+
+    saved = service.database.get_interview_by_id(interview["id"])
+    assert saved is not None
+    assert saved["confirmation_status"] == "confirmed"
+
+    with sqlite3.connect(temp_db.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT COUNT(*) FROM email_outbox").fetchone()
+        assert row[0] == 0
+
+    log_entries = temp_db.get_reminder_log(interview["id"])
+    assert any(entry["reminder_type"] == "booking_confirmation" and entry["status"] == "sent" for entry in log_entries)
+
+
+def test_pending_booking_confirmation_outbox_can_be_drained(monkeypatch, temp_db):
+    """Queued booking confirmations should be deliverable later through the outbox processor."""
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Soulful Conversation with Jordan Rivers",
+            "scheduled_for": "2026-04-20 18:00:00",
+            "timezone": "Europe/Berlin",
+        }
+    )
+
+    temp_db.enqueue_email_outbox(
+        interview_id=interview["id"],
+        email_type="booking_confirmation",
+        sent_to="jordan@example.com",
+        subject="Your Soulful Conversation is booked",
+        body="Here is your confirmation.",
+        attachments_json=json.dumps(
+            [
+                {
+                    "filename": "mirror-talk-booking.ics",
+                    "content_b64": "QkVHSU46VkNBTEVOREFS",
+                }
+            ]
+        ),
+        next_attempt_at="2000-01-01 00:00:00",
+    )
+
+    captured = {}
+
+    class StubEmailManager:
+        def __init__(self):
+            self.last_error = ""
+            self.resend_api_key = "re_test"
+
+        def configure_resend(self, **kwargs):
+            return None
+
+        def is_configured(self):
+            return True
+
+        def send_email(self, to_email, subject, body, attachments=None):
+            captured["to_email"] = to_email
+            captured["subject"] = subject
+            captured["attachments"] = attachments or []
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+
+    result = service.process_pending_email_outbox(limit=5)
+
+    assert result["sent"] == 1
+    assert captured["to_email"] == "jordan@example.com"
+    assert captured["attachments"][0]["filename"] == "mirror-talk-booking.ics"
+    assert temp_db.get_email_outbox_count() == 0
+
+    log_entries = temp_db.get_reminder_log(interview["id"])
+    assert any(entry["reminder_type"] == "booking_confirmation" and entry["status"] == "sent" for entry in log_entries)
+
+
 def test_public_reschedule_updates_existing_interview(monkeypatch, temp_db):
     """A reschedule link should update the same interview record and refresh its calendar linkage."""
     service = GuestWebService(temp_db.db_path)

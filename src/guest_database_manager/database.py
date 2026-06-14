@@ -891,6 +891,115 @@ class GuestDatabase:
             conn.commit()
             return cursor.lastrowid
 
+    def enqueue_email_outbox(
+        self,
+        *,
+        interview_id: Optional[int],
+        email_type: str,
+        sent_to: str,
+        subject: str,
+        body: str,
+        attachments_json: str = "",
+        provider: str = "",
+        max_attempts: int = 5,
+        next_attempt_at: Optional[str] = None,
+        status: str = "pending",
+        last_error: str = "",
+    ) -> int:
+        """Store an email for later retry when delivery is temporarily unavailable."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO email_outbox (
+                    interview_id, email_type, sent_to, subject, body, attachments_json,
+                    provider, status, attempts, max_attempts, next_attempt_at, last_error,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    interview_id,
+                    email_type,
+                    sent_to,
+                    subject,
+                    body,
+                    attachments_json or None,
+                    provider,
+                    status,
+                    0,
+                    max(1, int(max_attempts)),
+                    next_attempt_at or None,
+                    last_error or "",
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_due_email_outbox(self, limit: int = 20) -> List[Dict]:
+        """Return queued emails that are ready for another delivery attempt."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT *
+                FROM email_outbox
+                WHERE status IN ('pending', 'retrying')
+                  AND COALESCE(next_attempt_at, CURRENT_TIMESTAMP) <= CURRENT_TIMESTAMP
+                ORDER BY next_attempt_at ASC, id ASC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def mark_email_outbox_sent(self, outbox_id: int) -> None:
+        """Mark a queued email as delivered."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.execute(
+                """
+                UPDATE email_outbox
+                SET status = 'sent',
+                    last_error = NULL,
+                    sent_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (outbox_id,),
+            )
+            conn.commit()
+
+    def mark_email_outbox_retry(
+        self,
+        outbox_id: int,
+        *,
+        attempts: int,
+        next_attempt_at: str,
+        last_error: str,
+        status: str = "retrying",
+    ) -> None:
+        """Update a queued email after a failed attempt."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.execute(
+                """
+                UPDATE email_outbox
+                SET status = ?,
+                    attempts = ?,
+                    next_attempt_at = ?,
+                    last_error = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, attempts, next_attempt_at, last_error, outbox_id),
+            )
+            conn.commit()
+
+    def get_email_outbox_count(self) -> int:
+        """Return the number of pending or retryable queued emails."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM email_outbox WHERE status IN ('pending', 'retrying')"
+            )
+            return int(cursor.fetchone()[0])
+
     def get_reminder_log(self, interview_id: Optional[int] = None) -> List[Dict]:
         """Return reminder log entries, optionally for a single interview."""
         with sqlite3.connect(str(self.db_path)) as conn:

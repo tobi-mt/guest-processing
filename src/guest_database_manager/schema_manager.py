@@ -143,6 +143,28 @@ class SchemaManager:
             FOREIGN KEY (interview_id) REFERENCES interviews(id) ON DELETE CASCADE
         )
     """
+
+    CREATE_EMAIL_OUTBOX_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS email_outbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interview_id INTEGER,
+            email_type TEXT NOT NULL,
+            sent_to TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            attachments_json TEXT,
+            provider TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            max_attempts INTEGER NOT NULL DEFAULT 5,
+            next_attempt_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_error TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            sent_at TIMESTAMP,
+            FOREIGN KEY (interview_id) REFERENCES interviews(id) ON DELETE CASCADE
+        )
+    """
     
     # Columns that might need to be added to existing databases
     OPTIONAL_COLUMNS: List[Tuple[str, str]] = [
@@ -201,6 +223,7 @@ class SchemaManager:
             conn.execute(SchemaManager.CREATE_INTERVIEWS_TABLE_SQL)
             conn.execute(SchemaManager.CREATE_EPISODES_TABLE_SQL)
             conn.execute(SchemaManager.CREATE_REMINDER_LOG_TABLE_SQL)
+            conn.execute(SchemaManager.CREATE_EMAIL_OUTBOX_TABLE_SQL)
             SchemaManager._add_optional_columns(conn)
             conn.commit()
     
