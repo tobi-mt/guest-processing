@@ -3,6 +3,8 @@
 Comprehensive test to verify the Guest Database Manager is working correctly.
 """
 
+__test__ = False  # Legacy executable diagnostic; covered by the maintained tests/ suite.
+
 import sys
 import os
 

@@ -3,6 +3,8 @@
 Quick verification test for the fixed Guest Database Manager.
 """
 
+__test__ = False  # Legacy executable diagnostic; covered by the maintained tests/ suite.
+
 import sys
 import os
 

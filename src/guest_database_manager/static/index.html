@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Guest Database Manager</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260802.10" />
   </head>
   <body>
     <div class="page-shell">
-      <header class="hero">
-        <div>
+      <header class="hero dashboard-hero">
+        <div class="hero-intro">
           <div class="brand-lockup">
             <img class="brand-logo" src="/static/mirror-talk-logo.png" alt="Mirror Talk Podcast logo" />
             <div class="brand-copy">
@@ -26,62 +26,64 @@
             AI review assist is advisory only. Final approval and decline decisions always stay with you.
           </p>
         </div>
-        <div class="hero-card" id="stats-panel">
+        <div class="hero-card stats-card" id="stats-panel">
           <div class="metric-grid">
             <div class="metric">
               <span>Total</span>
-              <strong id="metric-total">0</strong>
+              <strong id="metric-total" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Processed</span>
-              <strong id="metric-processed">0</strong>
+              <strong id="metric-processed" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Unprocessed</span>
-              <strong id="metric-unprocessed">0</strong>
+              <strong id="metric-unprocessed" aria-live="polite">&mdash;</strong>
             </div>
           </div>
 
-          <div class="insight-card">
-            <p class="insight-title">Decision Insights</p>
-            <div class="insight-grid">
-              <div class="insight-stat accepted">
-                <span>Accepted</span>
-                <strong id="insight-accepted">0</strong>
-              </div>
-              <div class="insight-stat rejected">
-                <span>Declined</span>
-                <strong id="insight-rejected">0</strong>
-              </div>
-              <div class="insight-stat skipped">
-                <span>Skipped</span>
-                <strong id="insight-skipped">0</strong>
-              </div>
-              <div class="insight-stat neutral">
-                <span>Acceptance Rate</span>
-                <strong id="insight-acceptance-rate">0%</strong>
+          <div class="dashboard-insights">
+            <div class="insight-card">
+              <p class="insight-title">Decision Insights</p>
+              <div class="insight-grid">
+                <div class="insight-stat accepted">
+                  <span>Accepted</span>
+                  <strong id="insight-accepted" aria-live="polite">&mdash;</strong>
+                </div>
+                <div class="insight-stat rejected">
+                  <span>Declined</span>
+                  <strong id="insight-rejected" aria-live="polite">&mdash;</strong>
+                </div>
+                <div class="insight-stat skipped">
+                  <span>Skipped</span>
+                  <strong id="insight-skipped" aria-live="polite">&mdash;</strong>
+                </div>
+                <div class="insight-stat neutral">
+                  <span>Decision Approval Rate</span>
+                  <strong id="insight-acceptance-rate" aria-live="polite">&mdash;</strong>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="insight-card">
-            <p class="insight-title">AI Review Assist</p>
-            <div class="insight-grid">
-              <div class="insight-stat accepted">
-                <span>Strong Fits</span>
-                <strong id="ai-strong-fits">0</strong>
-              </div>
-              <div class="insight-stat neutral">
-                <span>Review Queue</span>
-                <strong id="ai-review-queue">0</strong>
-              </div>
-              <div class="insight-stat rejected">
-                <span>High Risk</span>
-                <strong id="ai-high-risk">0</strong>
-              </div>
-              <div class="insight-stat neutral">
-                <span>Avg Fit Score</span>
-                <strong id="ai-average-score">0</strong>
+            <div class="insight-card">
+              <p class="insight-title">AI Review Assist</p>
+              <div class="insight-grid">
+                <div class="insight-stat accepted">
+                  <span>Strong Fits</span>
+                  <strong id="ai-strong-fits" aria-live="polite">&mdash;</strong>
+                </div>
+                <div class="insight-stat neutral">
+                  <span>Review Queue</span>
+                  <strong id="ai-review-queue" aria-live="polite">&mdash;</strong>
+                </div>
+                <div class="insight-stat rejected">
+                  <span>High Risk</span>
+                  <strong id="ai-high-risk" aria-live="polite">&mdash;</strong>
+                </div>
+                <div class="insight-stat neutral">
+                  <span>Avg Fit Score</span>
+                  <strong id="ai-average-score" aria-live="polite">&mdash;</strong>
+                </div>
               </div>
             </div>
           </div>
@@ -93,17 +95,19 @@
             </div>
           </div>
 
-          <button id="export-button" class="secondary-button" type="button">Download CSV</button>
-          <button id="bulk-research-button" class="secondary-button" type="button">Research Missing Profiles</button>
-          <p id="bulk-research-message" class="message" aria-live="polite"></p>
-          <a class="dashboard-link" href="/operations">Open Podcast Operations</a>
-          <a class="dashboard-link" href="/planning">Open Episode Planning</a>
-          <a class="dashboard-link" href="/intake">Open Public Intake Form</a>
+          <nav class="hero-actions" aria-label="Guest dashboard workspaces">
+            <a class="dashboard-link" href="/operations">Podcast Operations</a>
+            <a class="dashboard-link" href="/planning">Episode Planning</a>
+            <a class="dashboard-link" href="/intake">Public Intake Form</a>
+          </nav>
         </div>
       </header>
 
       <main class="main-grid">
         <section class="panel form-panel">
+          <details class="operations-tool">
+            <summary>Administration: import, export, research, and identity review</summary>
+            <div class="operations-tool-body">
           <div class="section-heading">
             <p class="eyebrow">Occasional Import</p>
             <h2>Upload CSV Or Excel</h2>
@@ -132,6 +136,14 @@
           </form>
 
           <p id="import-message" class="message" aria-live="polite"></p>
+          <div class="form-actions">
+            <button id="export-button" class="secondary-button" type="button">Download CSV</button>
+            <button id="bulk-research-button" class="secondary-button" type="button">Research Missing Profiles</button>
+            <button id="identity-review-button" class="secondary-button" type="button">Review Duplicates</button>
+          </div>
+          <p id="bulk-research-message" class="message" aria-live="polite"></p>
+            </div>
+          </details>
 
           <div class="section-heading">
             <p class="eyebrow">Manual Entry</p>
@@ -210,7 +222,7 @@
               <p class="eyebrow">Pipeline</p>
               <h2>Guests</h2>
             </div>
-            <div class="list-toolbar">
+          <div class="list-toolbar">
               <label class="filter-field search-field">
                 <span>Search Guest</span>
                 <input id="guest-search" type="search" placeholder="Search by name or email" />
@@ -229,6 +241,7 @@
               <label class="filter-field">
                 <span>Sort By</span>
                 <select id="guest-sort">
+                  <option value="application_age">Oldest Application / SLA First</option>
                   <option value="newest">Newest First</option>
                   <option value="recommendation">Best AI Fit</option>
                   <option value="name">Guest Name</option>
@@ -239,10 +252,11 @@
               <button id="refresh-button" class="secondary-button">Refresh</button>
             </div>
           </div>
+          <div id="dashboard-saved-views" class="saved-view-controls" aria-label="Dashboard saved views"></div>
 
           <div class="view-presets" id="guest-presets">
-            <button type="button" class="preset-chip active" data-guest-preset="all">All Guests</button>
-            <button type="button" class="preset-chip" data-guest-preset="needs_review">Needs Review</button>
+            <button type="button" class="preset-chip" data-guest-preset="all">All Guests</button>
+            <button type="button" class="preset-chip active" data-guest-preset="needs_review">Needs Review</button>
             <button type="button" class="preset-chip" data-guest-preset="ai_strong_fit">AI Strong Fits</button>
             <button type="button" class="preset-chip" data-guest-preset="ai_review">AI Review Queue</button>
             <button type="button" class="preset-chip" data-guest-preset="ai_risky">AI High Risk</button>
@@ -278,6 +292,7 @@
         <div class="guest-actions">
           <button data-action="edit" class="ghost-button small-button">Edit</button>
           <button data-action="copy" class="ghost-button small-button">Copy Intake</button>
+          <button data-action="activity" class="ghost-button small-button">Activity</button>
           <button data-action="research" class="ghost-button small-button">Research Guest</button>
           <button data-action="ai_email_draft" class="ai-button small-button" title="Generate AI email draft">✨ AI Email</button>
           <button data-action="ai_questions" class="ai-button small-button" title="Generate interview questions">❓ Questions</button>
@@ -285,8 +300,9 @@
           <button data-action="resend_booking_link" class="ghost-button small-button">Resend Booking Link</button>
           <button data-action="resend_personal_application" class="ghost-button small-button">Resend Personal Application</button>
           <button data-action="move_to_planning" class="ghost-button small-button">Move To Planning</button>
-          <button data-action="accepted_email" class="primary-button small-button">Approve + Email</button>
+          <button data-action="accepted_email" class="secondary-button small-button">Accept + Send</button>
           <button data-action="accepted" class="primary-button small-button">Accept</button>
+          <button data-action="needs_information" class="ghost-button small-button">Request Information</button>
           <button data-action="rejected_email" class="secondary-button small-button">Decline + Email</button>
           <button data-action="rejected" class="secondary-button small-button">Reject</button>
           <button data-action="skipped" class="secondary-button small-button">Skip</button>
@@ -300,17 +316,17 @@
     </template>
 
     <!-- AI Modal Container -->
-    <div id="ai-modal" class="modal hidden">
+    <div id="ai-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ai-modal-title">
       <div class="modal-backdrop"></div>
       <div class="modal-content">
         <div class="modal-header">
           <h2 id="ai-modal-title">AI Result</h2>
-          <button id="ai-modal-close" class="ghost-button">✕</button>
+          <button id="ai-modal-close" class="ghost-button" type="button" aria-label="Close result dialog">✕</button>
         </div>
         <div id="ai-modal-body" class="modal-body"></div>
         <div class="modal-footer">
-          <button id="ai-modal-copy" class="secondary-button">📋 Copy</button>
-          <button id="ai-modal-done" class="primary-button">Done</button>
+          <button id="ai-modal-copy" class="secondary-button" type="button">📋 Copy</button>
+          <button id="ai-modal-done" class="primary-button" type="button">Done</button>
         </div>
       </div>
     </div>
@@ -336,9 +352,9 @@
         });
       })();
     </script>
-    <script src="/static/performance-utils.js"></script>
+    <script src="/static/performance-utils.js?v=20260802.8"></script>
     <script
-      src="/static/app.js"
+      src="/static/app.js?v=20260802.10"
       defer
       onload="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_loaded?t='+Date.now();})();"
       onerror="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_error?t='+Date.now();})();"

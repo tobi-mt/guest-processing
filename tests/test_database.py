@@ -3,6 +3,10 @@
 # SPDX-License-Identifier: MIT
 """Tests for the database module."""
 
+import sqlite3
+
+import pytest
+
 # from guest_database_manager.database import GuestDatabase
 
 
@@ -253,6 +257,7 @@ def test_upsert_episode_and_log_reminder(temp_db):
     assert action == "created"
     episode = temp_db.get_episode_by_id(episode_id)
     assert episode["episode_title"] == "Healing Through Hard Seasons"
+    assert episode["working_title"] == "Healing Through Hard Seasons"
     assert episode["release_status"] == "scheduled"
 
     log_id = temp_db.log_reminder(
@@ -324,8 +329,6 @@ def test_import_skips_blank_rows_and_blank_header_columns(temp_db, tmp_path):
 
 def test_clean_database_merges_duplicate_episode_rows(temp_db):
     """Episode cleanup should merge duplicate archive rows conservatively."""
-    import sqlite3
-
     with sqlite3.connect(str(temp_db.db_path)) as conn:
         cursor = conn.execute(
             """
@@ -382,8 +385,6 @@ def test_clean_database_merges_duplicate_episode_rows(temp_db):
 
 def test_clean_database_merges_placeholder_title_episode_with_richer_duplicate(temp_db):
     """Cleanup should merge same-guest interview duplicates when one title is only a guest-name placeholder."""
-    import sqlite3
-
     with sqlite3.connect(str(temp_db.db_path)) as conn:
         cursor = conn.execute(
             """
@@ -430,3 +431,153 @@ def test_clean_database_merges_placeholder_title_episode_with_richer_duplicate(t
     assert result["episodes_removed"] == 1
     assert len(episodes) == 1
     assert episodes[0]["episode_title"] == "Brent Kesler: Financial Intelligence - Mapping Out The Millionaire Mystery"
+
+
+def test_database_connections_enforce_foreign_keys(temp_db):
+    """Core database writes must reject orphaned relationship rows."""
+    with pytest.raises(sqlite3.IntegrityError), temp_db._connect() as conn:
+        conn.execute(
+            "INSERT INTO interviews (guest_id, guest_name, scheduled_for) VALUES (?, ?, ?)",
+            (999999, "Orphan Guest", "2026-08-10 10:00:00"),
+        )
+
+
+def test_reapplication_preserves_prior_application_decision(temp_db):
+    guest_id = temp_db.insert_guest(
+        {"full_name": "Repeat Applicant", "email": "repeat@example.com", "original_file_name": "first.csv"}
+    )
+    accepted = temp_db.transition_latest_guest_application(guest_id, "accepted", reason="Strong fit")
+
+    repeated_id, action = temp_db.upsert_guest(
+        {
+            "full_name": "Repeat Applicant",
+            "email": "repeat@example.com",
+            "original_file_name": "Website Intake Questionnaire",
+            "original_data": '{"submission":2}',
+        }
+    )
+
+    applications = list(reversed(temp_db.list_guest_applications(guest_id)))
+    assert repeated_id == guest_id
+    assert action == "updated"
+    assert [item["status"] for item in applications] == ["accepted", "submitted"]
+    assert applications[0]["decision_reason"] == "Strong fit"
+    assert accepted["row_version"] == 2
+
+
+def test_application_transition_appends_attributable_audit_event(temp_db):
+    guest_id = temp_db.insert_guest({"full_name": "Audited Applicant", "email": "audit@example.com"})
+    application = temp_db.list_guest_applications(guest_id)[0]
+
+    updated = temp_db.transition_latest_guest_application(
+        guest_id,
+        "declined",
+        reason="Topic overlap",
+        actor="producer@example.com",
+        source="test",
+    )
+
+    events = temp_db.list_audit_events("application", application["id"])
+    assert updated["status"] == "declined"
+    assert events[0]["event_type"] == "status_changed"
+    assert events[0]["actor"] == "producer@example.com"
+    assert events[0]["source"] == "test"
+    assert events[0]["reason"] == "Topic overlap"
+
+
+def test_guest_update_rejects_stale_row_version(temp_db):
+    guest_id = temp_db.insert_guest({"full_name": "Concurrent Guest", "email": "first@example.com"})
+    stale = temp_db.get_guest_by_id(guest_id)
+    current = dict(stale)
+    current["email"] = "current@example.com"
+    temp_db.update_guest_by_id(guest_id, current)
+
+    stale["email"] = "stale@example.com"
+    with pytest.raises(RuntimeError, match="changed by another request"):
+        temp_db.update_guest_by_id(guest_id, stale)
+
+    assert temp_db.get_guest_by_id(guest_id)["email"] == "current@example.com"
+
+
+def test_episode_update_rejects_stale_row_version(temp_db):
+    episode_id, _ = temp_db.upsert_episode(
+        {"guest_name": "Concurrent Episode", "episode_title": "Version One"}
+    )
+    stale = temp_db.get_episode_by_id(episode_id)
+    current = dict(stale)
+    current["episode_title"] = "Version Two"
+    temp_db.upsert_episode(current)
+
+    stale["episode_title"] = "Stale Version"
+    with pytest.raises(RuntimeError, match="changed by another request"):
+        temp_db.upsert_episode(stale)
+
+    assert temp_db.get_episode_by_id(episode_id)["episode_title"] == "Version Two"
+
+
+def test_episode_lifecycle_changes_create_before_after_audit_events(temp_db):
+    episode_id, _ = temp_db.upsert_episode(
+        {
+            "guest_name": "Lifecycle Guest",
+            "episode_title": "Lifecycle Episode",
+            "production_status": "editing",
+            "release_status": "unplanned",
+        }
+    )
+    episode = temp_db.get_episode_by_id(episode_id)
+    episode["production_status"] = "ready"
+
+    temp_db.upsert_episode(episode)
+
+    events = list(reversed(temp_db.list_audit_events("episode", episode_id)))
+    assert [event["event_type"] for event in events] == ["created", "status_changed"]
+    assert '"production_status": "editing"' in events[1]["before_json"]
+    assert '"production_status": "ready"' in events[1]["after_json"]
+
+
+@pytest.mark.parametrize(
+    ("method_name", "status", "event_type"),
+    [
+        ("accept_guest_with_email", "accepted", "accepted_email_sent"),
+        ("reject_guest_with_email", "rejected", "declined_email_sent"),
+    ],
+)
+def test_emailed_guest_decisions_use_attributed_lifecycle_boundary(
+    temp_db, method_name, status, event_type
+):
+    guest_id = temp_db.insert_guest({"full_name": "Email Decision", "email": "decision@example.com"})
+
+    getattr(temp_db, method_name)(guest_id, "Reviewed wording")
+
+    guest = temp_db.get_guest_by_id(guest_id)
+    event = temp_db.list_audit_events("guest", guest_id)[0]
+    assert guest["email_status"] == status
+    assert guest["row_version"] == 2
+    assert guest["email_sent_at"]
+    assert event["event_type"] == event_type
+    assert event["reason"] == "Reviewed wording"
+
+
+def test_identity_merge_preserves_history_and_tombstone(temp_db):
+    survivor = temp_db.insert_guest({"full_name": "Same Person", "email": "same@example.com"})
+    duplicate = temp_db.insert_guest({"full_name": "Same Person Duplicate", "email": "same@example.com"})
+
+    candidates = temp_db.list_identity_merge_candidates()
+    assert any(group["match_type"] == "exact_email" for group in candidates)
+
+    result = temp_db.merge_guest_identities(survivor, duplicate, reason="Verified duplicate applications")
+
+    assert result == {"survivor_id": survivor, "merged_id": duplicate, "status": "merged"}
+    assert temp_db.get_guest_by_id(duplicate)["merged_into_guest_id"] == survivor
+    assert temp_db.get_guest_by_id(duplicate)["identity_status"] == "merged"
+    assert len(temp_db.list_guest_applications(survivor)) == 2
+    assert duplicate not in {guest["id"] for guest in temp_db.get_all_guests()}
+    assert temp_db.list_audit_events("guest_identity", duplicate)[0]["event_type"] == "merged"
+
+
+def test_identity_merge_rejects_unrelated_guests(temp_db):
+    first = temp_db.insert_guest({"full_name": "First Person", "email": "first@example.com"})
+    second = temp_db.insert_guest({"full_name": "Second Person", "email": "second@example.com"})
+
+    with pytest.raises(ValueError, match="do not share"):
+        temp_db.merge_guest_identities(first, second, reason="No match")

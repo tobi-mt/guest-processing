@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-    <link rel="stylesheet" href="/static/operations.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260802.10" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260802.10" />
   </head>
   <body>
     <div class="page-shell operations-shell">
-      <header class="hero operations-hero">
-        <div>
+      <header class="hero operations-hero planning-hero">
+        <div class="hero-intro">
           <div class="brand-lockup">
             <img class="brand-logo" src="/static/mirror-talk-logo.png" alt="Mirror Talk Podcast logo" />
             <div class="brand-copy">
@@ -29,35 +29,37 @@
             <span class="premium-badge warm">Guest follow-up stays personal</span>
           </div>
         </div>
-        <div class="hero-card">
+        <div class="hero-card stats-card">
           <div class="metric-grid">
             <div class="metric">
               <span>Total Episodes</span>
-              <strong id="plan-episodes-total">0</strong>
+              <strong id="plan-episodes-total" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Released</span>
-              <strong id="plan-episodes-released">0</strong>
+              <strong id="plan-episodes-released" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Scheduled</span>
-              <strong id="plan-episodes-scheduled">0</strong>
+              <strong id="plan-episodes-scheduled" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Unreleased Queue</span>
-              <strong id="plan-episodes-unreleased">0</strong>
+              <strong id="plan-episodes-unreleased" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Ready In Queue</span>
-              <strong id="plan-episodes-promo-ready">0</strong>
+              <strong id="plan-episodes-promo-ready" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Need Assets In Queue</span>
-              <strong id="plan-episodes-need-assets">0</strong>
+              <strong id="plan-episodes-need-assets" aria-live="polite">&mdash;</strong>
             </div>
           </div>
-          <a class="dashboard-link" href="/operations">Open Interview Operations</a>
-          <a class="dashboard-link" href="/dashboard">Open Guest Dashboard</a>
+          <nav class="hero-actions" aria-label="Planning workspaces">
+            <a class="dashboard-link" href="/operations">Interview Operations</a>
+            <a class="dashboard-link" href="/dashboard">Guest Dashboard</a>
+          </nav>
         </div>
       </header>
 
@@ -94,6 +96,7 @@
 
             <form id="episode-form" class="guest-form" novalidate>
               <input name="id" type="hidden" />
+              <input name="row_version" type="hidden" />
               <input name="interview_id" type="hidden" />
               <input name="outreach_plan" type="hidden" />
               <label>
@@ -109,8 +112,9 @@
                 <input name="website" type="text" inputmode="url" autocapitalize="off" spellcheck="false" />
               </label>
               <label class="full-width">
-                Episode Title
+                Working Title
                 <input name="episode_title" type="text" required />
+                <small class="field-hint">Your editable editorial title. Transcript sync never overwrites it.</small>
               </label>
               <label>
                 Topic
@@ -129,6 +133,10 @@
               <label>
                 Recording Date
                 <input name="recording_date" type="date" />
+              </label>
+              <label>
+                Owner
+                <input name="owner" type="text" placeholder="Producer or editor" />
               </label>
               <label>
                 Release Date
@@ -170,6 +178,15 @@
                     <small class="field-hint">Pre-filled automatically, but you can still adjust it.</small>
                   </label>
                   <label>
+                    Editorial Disposition
+                    <select name="editorial_disposition">
+                      <option value="active">Active</option>
+                      <option value="hold">Hold</option>
+                      <option value="archive">Archive</option>
+                      <option value="retire">Retire</option>
+                    </select>
+                  </label>
+                  <label>
                     Legacy Episode Number
                     <input name="legacy_episode_number" type="text" />
                     <small class="field-hint">Suggested automatically from the next available episode number.</small>
@@ -177,6 +194,11 @@
                   <label class="full-width">
                     Riverside Status
                     <input name="riverside_status" type="text" placeholder="Processing / Restoring / blank" />
+                  </label>
+                  <label class="full-width">
+                    Published Title
+                    <input name="published_title" type="text" />
+                    <small class="field-hint">The public title from Ask Mirror Talk or your publishing platform. Kept separately from the working title.</small>
                   </label>
                 </div>
               </details>
@@ -268,7 +290,7 @@
                   <span>Replace transcripts that are already stored in planning.</span>
                 </label>
                 <div class="form-actions full-width">
-                  <button type="submit" class="secondary-button">Sync Matching Transcripts</button>
+                  <button type="submit" class="secondary-button">Review Transcript Matches</button>
                 </div>
               </form>
 
@@ -357,6 +379,7 @@
               </select>
             </label>
           </div>
+          <div id="planning-saved-views" class="saved-view-controls" aria-label="Planning saved views"></div>
           <p id="recommendation-results-meta" class="results-meta"></p>
           <div id="recommendation-list" class="guest-list"></div>
           <div class="list-footer">
@@ -372,12 +395,36 @@
             </div>
             <button id="planning-refresh-button" class="secondary-button" type="button">Refresh</button>
           </div>
+          <section class="release-calendar-panel" aria-labelledby="release-calendar-title">
+            <div class="calendar-toolbar">
+              <div>
+                <p class="eyebrow">Release calendar</p>
+                <h3 id="release-calendar-title">Release calendar</h3>
+              </div>
+              <div class="calendar-navigation" aria-label="Calendar navigation">
+                <button id="calendar-previous" type="button" class="ghost-button" aria-label="Previous month">←</button>
+                <button id="calendar-today" type="button" class="secondary-button">Today</button>
+                <button id="calendar-next" type="button" class="ghost-button" aria-label="Next month">→</button>
+              </div>
+            </div>
+            <div class="calendar-legend" aria-label="Release status legend">
+              <span><i class="calendar-dot scheduled" aria-hidden="true"></i> Scheduled</span>
+              <span><i class="calendar-dot released" aria-hidden="true"></i> Released</span>
+              <span><i class="calendar-dot risk" aria-hidden="true"></i> Readiness risk</span>
+            </div>
+            <div id="release-calendar" class="release-calendar" aria-live="polite"></div>
+          </section>
+          <section aria-labelledby="backlog-board-title">
+            <h3 id="backlog-board-title">Production backlog</h3>
+            <div id="backlog-board" class="planning-board" aria-live="polite"></div>
+          </section>
 
           <div class="view-presets" id="episode-presets">
             <button type="button" class="preset-chip active" data-episode-preset="all">All Episodes</button>
             <button type="button" class="preset-chip" data-episode-preset="ready_to_schedule">Ready To Schedule</button>
             <button type="button" class="preset-chip" data-episode-preset="scheduled">Scheduled</button>
             <button type="button" class="preset-chip" data-episode-preset="needs_assets">Needs Assets</button>
+            <button type="button" class="preset-chip" data-episode-preset="disposition_review">Disposition Review</button>
             <button type="button" class="preset-chip" data-episode-preset="released_archive">Released Archive</button>
           </div>
           <div class="list-toolbar">
@@ -428,7 +475,12 @@
             <label class="toolbar-field">
               <span>Sort By</span>
               <select id="episode-sort">
-                <option value="closest_release">Closest Release</option>
+                <option value="release_asc">Release Date · Oldest First</option>
+                <option value="release_desc">Release Date · Newest First</option>
+                <option value="episode_number_asc">Episode Number · Low to High</option>
+                <option value="episode_number_desc">Episode Number · High to Low</option>
+                <option value="status_release">Status · Scheduled then Released</option>
+                <option value="updated_desc">Recently Updated</option>
                 <option value="latest_interview">Latest Interview</option>
                 <option value="priority">Priority</option>
                 <option value="guest_name">Guest Name</option>
@@ -446,6 +498,20 @@
       </main>
     </div>
 
+    <div id="episode-details-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="episode-details-title">
+      <div class="modal-content episode-details-content">
+        <div class="modal-heading-row">
+          <h2 id="episode-details-title">Episode details</h2>
+          <button id="episode-details-close" type="button" class="ghost-button" aria-label="Close episode details">×</button>
+        </div>
+        <div id="episode-details-body"></div>
+        <div class="modal-actions">
+          <button id="episode-details-edit" type="button" class="primary-button">Open In Editor</button>
+          <button id="episode-details-dismiss" type="button" class="ghost-button">Close</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Schedule Modal -->
     <div id="schedule-modal" class="modal hidden" role="dialog" aria-labelledby="schedule-modal-title">
       <div class="modal-content">
@@ -456,6 +522,10 @@
             <span>Release Date & Time</span>
             <input name="release_date" type="datetime-local" required />
           </label>
+          <label>
+            <span>Readiness override reason (only if promotion assets are not ready)</span>
+            <textarea name="schedule_override_reason" rows="3"></textarea>
+          </label>
           <div class="modal-actions">
             <button type="submit" class="primary-button">Confirm Schedule</button>
             <button type="button" class="ghost-button" data-modal-action="cancel">Cancel</button>
@@ -465,7 +535,8 @@
       </div>
     </div>
 
-    <script src="/static/performance-utils.js"></script>
-    <script src="/static/planning.js" defer></script>
+    <script src="/static/performance-utils.js?v=20260802.8"></script>
+    <script src="/static/planning-sort.js?v=20260802.9"></script>
+    <script src="/static/planning.js?v=20260802.9" defer></script>
   </body>
 </html>

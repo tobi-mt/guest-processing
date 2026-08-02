@@ -1,20 +1,26 @@
 import logging
 import sqlite3
+from datetime import datetime, timezone
 from json import dumps, loads
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from uuid import uuid4
 
 try:
     from .constants import DEFAULT_DB_PATH
     from .data_mapper import DataMapper
+    from .db_connection import connect_database
     from .file_reader import FileReader
+    from .lifecycle import validate_state, validate_transition
     from .schema_manager import SchemaManager
 except ImportError as exc:
     if "attempted relative import" not in str(exc):
         raise
     from constants import DEFAULT_DB_PATH
     from data_mapper import DataMapper
+    from db_connection import connect_database
     from file_reader import FileReader
+    from lifecycle import validate_state, validate_transition
     from schema_manager import SchemaManager
 
 logger = logging.getLogger(__name__)
@@ -127,12 +133,21 @@ class GuestDatabase:
         SchemaManager.create_tables(str(self.db_path))
         self.mapper = DataMapper()
         self.file_reader = FileReader()
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open a configured connection with integrity enforcement enabled."""
+        return connect_database(self.db_path)
+
+    @staticmethod
+    def get_column_value(row: Any, possible_columns: List[str]) -> str:
+        """Preserve the legacy import helper while delegating to ``DataMapper``."""
+        return DataMapper.get_column_value(row, possible_columns)
     
     # ==================== CRUD Operations ====================
     
     def insert_guest(self, guest_data: Dict[str, Any]) -> int:
         """Insert a new guest into the database."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             cursor = conn.execute("""
                 INSERT INTO guests (
                     name, full_name, email, website, social_media_handles, 
@@ -140,8 +155,9 @@ class GuestDatabase:
                     faith_practice, beliefs_align, favorite_quote, passionate_topics, message_takeaway,
                     podcast_experience, additional_info, following_us, is_processed,
                     original_file_name, original_data, guest_research, guest_research_updated_at,
-                    booking_token, booking_token_created_at, booking_override, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    booking_token, booking_token_created_at, booking_override,
+                    normalized_name, normalized_email, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """, (
                 guest_data.get('full_name'), guest_data.get('full_name'), guest_data.get('email'), 
                 guest_data.get('website'), guest_data.get('social_handles'),
@@ -154,23 +170,185 @@ class GuestDatabase:
                 guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
                 guest_data.get('booking_token'), guest_data.get('booking_token_created_at'),
                 guest_data.get('booking_override'),
+                _normalized_identity(guest_data.get('full_name')),
+                _normalized_identity(guest_data.get('email')),
             ))
+            guest_id = int(cursor.lastrowid)
+            self._insert_guest_application(conn, guest_id, guest_data)
             conn.commit()
-            return cursor.lastrowid
+            return guest_id
+
+    @staticmethod
+    def _insert_guest_application(conn: sqlite3.Connection, guest_id: int, guest_data: Dict[str, Any]) -> int:
+        """Append one immutable intake/import submission for a guest identity."""
+        payload = guest_data.get("original_data")
+        if not payload:
+            payload = dumps(guest_data, ensure_ascii=False, default=str, sort_keys=True)
+        source = str(guest_data.get("original_file_name") or "direct_entry").strip() or "direct_entry"
+        cursor = conn.execute(
+            """
+            INSERT INTO guest_applications (guest_id, source, payload_json, status)
+            VALUES (?, ?, ?, 'submitted')
+            """,
+            (guest_id, source, str(payload)),
+        )
+        return int(cursor.lastrowid)
+
+    def create_guest_application(self, guest_id: int, guest_data: Dict[str, Any]) -> int:
+        """Append a submission without overwriting the guest's prior decision."""
+        with self._connect() as conn:
+            application_id = self._insert_guest_application(conn, guest_id, guest_data)
+            conn.commit()
+            return application_id
+
+    def list_guest_applications(self, guest_id: int) -> List[Dict]:
+        """Return every submission for a guest, newest first."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM guest_applications WHERE guest_id = ? ORDER BY submitted_at DESC, id DESC",
+                (guest_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def transition_latest_guest_application(
+        self,
+        guest_id: int,
+        status: str,
+        *,
+        reason: str = "",
+        actor: str = "operator",
+        source: str = "guest_dashboard",
+    ) -> Dict[str, Any]:
+        """Move the latest application projection while preserving prior submissions."""
+        allowed = {"submitted", "triage", "needs_information", "accepted", "declined", "withdrawn"}
+        if status not in allowed:
+            raise ValueError(f"Unsupported application status: {status}")
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            current_row = conn.execute(
+                "SELECT * FROM guest_applications WHERE guest_id = ? ORDER BY submitted_at DESC, id DESC LIMIT 1",
+                (guest_id,),
+            ).fetchone()
+            if not current_row:
+                raise ValueError("Guest application not found")
+            current = dict(current_row)
+            status = validate_transition("application", current["status"], status)
+            cursor = conn.execute(
+                """UPDATE guest_applications
+                   SET status = ?, decision_reason = ?,
+                       decided_at = CASE WHEN ? IN ('accepted', 'declined', 'withdrawn') THEN CURRENT_TIMESTAMP ELSE NULL END,
+                       row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND row_version = ?""",
+                (status, reason or None, status, current["id"], current["row_version"]),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Application was changed by another request")
+            updated = dict(
+                conn.execute("SELECT * FROM guest_applications WHERE id = ?", (current["id"],)).fetchone()
+            )
+            conn.execute(
+                """INSERT INTO audit_events
+                   (entity_type, entity_id, event_type, actor, source, reason, before_json, after_json)
+                   VALUES ('application', ?, 'status_changed', ?, ?, ?, ?, ?)""",
+                (
+                    str(current["id"]),
+                    actor,
+                    source,
+                    reason or None,
+                    dumps(current, ensure_ascii=False, default=str, sort_keys=True),
+                    dumps(updated, ensure_ascii=False, default=str, sort_keys=True),
+                ),
+            )
+            conn.commit()
+            return updated
+
+    def append_audit_event(
+        self,
+        *,
+        entity_type: str,
+        entity_id: Any,
+        event_type: str,
+        actor: str = "system",
+        source: str = "application",
+        reason: str = "",
+        correlation_id: str = "",
+        before: Any = None,
+        after: Any = None,
+    ) -> int:
+        """Append an immutable, attributable domain event."""
+        with self._connect() as conn:
+            event_id = self._append_audit_event_conn(
+                conn,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                event_type=event_type,
+                actor=actor,
+                source=source,
+                reason=reason,
+                correlation_id=correlation_id,
+                before=before,
+                after=after,
+            )
+            conn.commit()
+            return event_id
+
+    @staticmethod
+    def _append_audit_event_conn(
+        conn: sqlite3.Connection,
+        *,
+        entity_type: str,
+        entity_id: Any,
+        event_type: str,
+        actor: str = "system",
+        source: str = "application",
+        reason: str = "",
+        correlation_id: str = "",
+        before: Any = None,
+        after: Any = None,
+    ) -> int:
+        cursor = conn.execute(
+            """INSERT INTO audit_events
+               (entity_type, entity_id, event_type, actor, source, reason, correlation_id, before_json, after_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entity_type,
+                str(entity_id),
+                event_type,
+                actor or "system",
+                source or "application",
+                reason or None,
+                correlation_id or None,
+                dumps(before, ensure_ascii=False, default=str, sort_keys=True) if before is not None else None,
+                dumps(after, ensure_ascii=False, default=str, sort_keys=True) if after is not None else None,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def list_audit_events(self, entity_type: str, entity_id: Any) -> List[Dict]:
+        """Return the immutable activity timeline for one entity."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT * FROM audit_events
+                   WHERE entity_type = ? AND entity_id = ? ORDER BY created_at DESC, id DESC""",
+                (entity_type, str(entity_id)),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def find_existing_guest(self, guest_data: Dict[str, Any]) -> Optional[Dict]:
         """Find an existing guest using the best available identity fields."""
         full_name = _normalized_identity(guest_data.get("full_name"))
         email = _normalized_identity(guest_data.get("email"))
 
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
 
             if email and email != "anonymous":
                 cursor = conn.execute(
                     """
                     SELECT * FROM guests
-                    WHERE LOWER(COALESCE(email, '')) = ?
+                    WHERE LOWER(COALESCE(email, '')) = ? AND COALESCE(identity_status, 'active') = 'active'
                     ORDER BY id DESC
                     LIMIT 1
                     """,
@@ -184,7 +362,7 @@ class GuestDatabase:
                 cursor = conn.execute(
                     """
                     SELECT * FROM guests
-                    WHERE LOWER(COALESCE(full_name, name, '')) = ?
+                    WHERE LOWER(COALESCE(full_name, name, '')) = ? AND COALESCE(identity_status, 'active') = 'active'
                     ORDER BY id DESC
                     LIMIT 1
                     """,
@@ -202,24 +380,9 @@ class GuestDatabase:
 
         if existing_guest:
             incoming_source = str(guest_data.get("original_file_name") or "").strip()
-            existing_was_reviewed = bool(existing_guest.get("is_processed")) or bool(existing_guest.get("email_status"))
-            if incoming_source == INTAKE_SOURCE_NAME and existing_was_reviewed:
-                reopened_guest = dict(existing_guest)
-                reopened_guest.update(guest_data)
-                reopened_guest["full_name"] = guest_data.get("full_name") or existing_guest.get("full_name") or existing_guest.get("name")
-                reopened_guest["email"] = (
-                    guest_data.get("email")
-                    if self.mapper.should_update_email(existing_guest.get("email"), guest_data.get("email"))
-                    else existing_guest.get("email")
-                )
-                reopened_guest["is_processed"] = False
-                reopened_guest["email_status"] = None
-                reopened_guest["email_sent_at"] = None
-                reopened_guest["skip_reason"] = None
-                reopened_guest["original_file_name"] = guest_data.get("original_file_name")
-                reopened_guest["original_data"] = guest_data.get("original_data")
-                self.update_guest_by_id(existing_guest["id"], reopened_guest)
-                return existing_guest["id"], "updated"
+            is_new_intake = incoming_source == INTAKE_SOURCE_NAME
+            if is_new_intake:
+                self.create_guest_application(existing_guest["id"], guest_data)
 
             merged_guest = dict(existing_guest)
             merged_guest.update(guest_data)
@@ -255,6 +418,15 @@ class GuestDatabase:
                 or existing_guest.get("booking_token_created_at")
             )
             merged_guest["booking_override"] = guest_data.get("booking_override") or existing_guest.get("booking_override")
+            if is_new_intake:
+                # Keep the guest table as a compatibility projection of the latest
+                # application while prior decisions remain immutable in history.
+                merged_guest["is_processed"] = False
+                merged_guest["email_status"] = None
+                merged_guest["email_sent_at"] = None
+                merged_guest["skip_reason"] = None
+                merged_guest["original_file_name"] = guest_data.get("original_file_name")
+                merged_guest["original_data"] = guest_data.get("original_data")
             self.update_guest_by_id(existing_guest["id"], merged_guest)
             return existing_guest["id"], "updated"
 
@@ -262,8 +434,14 @@ class GuestDatabase:
     
     def update_guest_by_id(self, guest_id: int, guest_data: Dict[str, Any]) -> None:
         """Update an existing guest in the database by ID."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            current_row = conn.execute("SELECT * FROM guests WHERE id = ?", (guest_id,)).fetchone()
+            current = dict(current_row) if current_row else None
+            if not current:
+                raise ValueError("Guest not found")
+            expected_version = int(guest_data.get("row_version") or current["row_version"])
+            cursor = conn.execute("""
                 UPDATE guests SET
                     name = ?, full_name = ?, email = ?, website = ?, social_media_handles = ?,
                     background = ?, profession = ?, motivation = ?, life_experiences = ?, 
@@ -272,9 +450,10 @@ class GuestDatabase:
                     additional_info = ?, following_us = ?, is_processed = ?, email_status = ?,
                     email_sent_at = ?, skip_reason = ?, original_file_name = ?, original_data = ?,
                     guest_research = ?, guest_research_updated_at = ?, booking_token = ?, booking_token_created_at = ?,
-                    booking_override = ?,
+                    booking_override = ?, owner = ?,
+                    normalized_name = ?, normalized_email = ?, row_version = row_version + 1,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = ? AND row_version = ?
             """, (
                 guest_data.get('full_name'), guest_data.get('full_name'), guest_data.get('email'), 
                 guest_data.get('website'), guest_data.get('social_handles'), guest_data.get('background'), 
@@ -288,19 +467,38 @@ class GuestDatabase:
                 guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
                 guest_data.get('booking_token'), guest_data.get('booking_token_created_at'),
                 guest_data.get('booking_override'),
-                guest_id
+                guest_data.get('owner'),
+                _normalized_identity(guest_data.get('full_name')),
+                _normalized_identity(guest_data.get('email')),
+                guest_id,
+                expected_version,
             ))
+            if cursor.rowcount != 1:
+                raise RuntimeError("Guest was changed by another request")
+            updated = dict(conn.execute("SELECT * FROM guests WHERE id = ?", (guest_id,)).fetchone())
+            self._append_audit_event_conn(
+                conn,
+                entity_type="guest",
+                entity_id=guest_id,
+                event_type="updated",
+                actor=str(guest_data.get("actor") or "operator"),
+                source=str(guest_data.get("source") or "guest_dashboard"),
+                reason=str(guest_data.get("reason") or ""),
+                correlation_id=str(guest_data.get("correlation_id") or ""),
+                before=current,
+                after=updated,
+            )
             conn.commit()
     
     def delete_guest(self, guest_id: int) -> None:
         """Delete a guest from the database."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.execute("DELETE FROM guests WHERE id = ?", (guest_id,))
             conn.commit()
     
     def get_guest_by_id(self, guest_id: int) -> Optional[Dict]:
         """Get a guest by ID."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM guests WHERE id = ?", (guest_id,))
             row = cursor.fetchone()
@@ -308,7 +506,7 @@ class GuestDatabase:
     
     def get_guest_by_name(self, name: str) -> Optional[Dict]:
         """Get a guest by name (case-insensitive)."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM guests WHERE LOWER(full_name) = LOWER(?) LIMIT 1",
@@ -319,14 +517,96 @@ class GuestDatabase:
     
     def get_all_guests(self) -> List[Dict]:
         """Get all guests."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM guests ORDER BY date_added DESC")
+            cursor = conn.execute(
+                "SELECT * FROM guests WHERE COALESCE(identity_status, 'active') = 'active' ORDER BY date_added DESC"
+            )
             return [dict(row) for row in cursor.fetchall()]
+
+    def list_identity_merge_candidates(self) -> List[Dict[str, Any]]:
+        """Return exact-email and same-name identity groups for human review."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT * FROM guests
+                   WHERE COALESCE(identity_status, 'active') IN ('active', 'review')
+                     AND (normalized_email <> '' OR normalized_name <> '')
+                   ORDER BY normalized_email, normalized_name, id"""
+            ).fetchall()
+        by_key: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+        for row in rows:
+            item = dict(row)
+            if item.get("normalized_email"):
+                key = ("exact_email", str(item["normalized_email"]))
+                by_key.setdefault(key, []).append(item)
+            elif item.get("normalized_name"):
+                key = ("same_name", str(item["normalized_name"]))
+                by_key.setdefault(key, []).append(item)
+        return [
+            {"match_type": key[0], "match_value": key[1], "guests": guests}
+            for key, guests in by_key.items()
+            if len(guests) > 1
+        ]
+
+    def merge_guest_identities(
+        self,
+        survivor_id: int,
+        duplicate_id: int,
+        *,
+        actor: str = "operator",
+        reason: str,
+        correlation_id: str = "",
+    ) -> Dict[str, Any]:
+        """Merge related records into a survivor while retaining a tombstone."""
+        if survivor_id == duplicate_id:
+            raise ValueError("Survivor and duplicate must be different guests")
+        if not reason.strip():
+            raise ValueError("A merge reason is required")
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            survivor_row = conn.execute("SELECT * FROM guests WHERE id = ?", (survivor_id,)).fetchone()
+            duplicate_row = conn.execute("SELECT * FROM guests WHERE id = ?", (duplicate_id,)).fetchone()
+            if not survivor_row or not duplicate_row:
+                raise ValueError("Guest identity not found")
+            survivor, duplicate = dict(survivor_row), dict(duplicate_row)
+            if survivor.get("identity_status") == "merged" or duplicate.get("identity_status") == "merged":
+                raise ValueError("A merged tombstone cannot be merged again")
+            exact_email = survivor.get("normalized_email") and survivor.get("normalized_email") == duplicate.get("normalized_email")
+            exact_name = survivor.get("normalized_name") and survivor.get("normalized_name") == duplicate.get("normalized_name")
+            if not (exact_email or exact_name):
+                raise ValueError("Identities do not share a normalized email or name")
+
+            for table in ("guest_applications", "interviews", "episodes"):
+                conn.execute(f"UPDATE {table} SET guest_id = ? WHERE guest_id = ?", (survivor_id, duplicate_id))
+            cursor = conn.execute(
+                """UPDATE guests
+                   SET identity_status = 'merged', merged_into_guest_id = ?, row_version = row_version + 1,
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND row_version = ?""",
+                (survivor_id, duplicate_id, duplicate["row_version"]),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Guest identity was changed by another request")
+            after = dict(conn.execute("SELECT * FROM guests WHERE id = ?", (duplicate_id,)).fetchone())
+            self._append_audit_event_conn(
+                conn,
+                entity_type="guest_identity",
+                entity_id=duplicate_id,
+                event_type="merged",
+                actor=actor,
+                source="deduplication_review",
+                reason=reason,
+                correlation_id=correlation_id,
+                before=duplicate,
+                after={"tombstone": after, "survivor_id": survivor_id},
+            )
+            conn.commit()
+            return {"survivor_id": survivor_id, "merged_id": duplicate_id, "status": "merged"}
 
     def get_guest_by_booking_token(self, booking_token: str) -> Optional[Dict]:
         """Fetch a single guest by booking token."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM guests WHERE booking_token = ? LIMIT 1",
@@ -334,6 +614,78 @@ class GuestDatabase:
             )
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def create_calendar_reconciliation_proposals(
+        self, proposals: List[Dict[str, Any]], *, correlation_id: str
+    ) -> List[Dict[str, Any]]:
+        """Persist a reviewable calendar diff without changing interviews."""
+        created_ids: List[int] = []
+        with self._connect() as conn:
+            for proposal in proposals:
+                event_id = str(proposal.get("calendar_event_id") or "").strip()
+                if not event_id:
+                    continue
+                conn.execute(
+                    """UPDATE calendar_reconciliation_proposals
+                       SET status = 'superseded', reviewed_at = CURRENT_TIMESTAMP, row_version = row_version + 1
+                       WHERE calendar_event_id = ? AND status = 'pending'""",
+                    (event_id,),
+                )
+                cursor = conn.execute(
+                    """INSERT INTO calendar_reconciliation_proposals
+                       (calendar_event_id, interview_id, action, before_json, after_json, reason, correlation_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        event_id,
+                        proposal.get("interview_id"),
+                        proposal["action"],
+                        dumps(proposal.get("before"), ensure_ascii=False, default=str, sort_keys=True)
+                        if proposal.get("before") is not None
+                        else None,
+                        dumps(proposal.get("after") or {}, ensure_ascii=False, default=str, sort_keys=True),
+                        proposal.get("reason"),
+                        correlation_id,
+                    ),
+                )
+                created_ids.append(int(cursor.lastrowid))
+            conn.commit()
+            if not created_ids:
+                return []
+            conn.row_factory = sqlite3.Row
+            placeholders = ",".join("?" for _ in created_ids)
+            rows = conn.execute(
+                f"SELECT * FROM calendar_reconciliation_proposals WHERE id IN ({placeholders}) ORDER BY id",
+                created_ids,
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_calendar_reconciliation_proposal(self, proposal_id: int) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM calendar_reconciliation_proposals WHERE id = ?", (proposal_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def mark_calendar_reconciliation_proposal(
+        self, proposal_id: int, *, status: str, expected_version: int
+    ) -> Dict[str, Any]:
+        if status not in {"approved", "applied", "dismissed", "failed"}:
+            raise ValueError("Unsupported calendar proposal status")
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """UPDATE calendar_reconciliation_proposals
+                   SET status = ?, reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP),
+                       applied_at = CASE WHEN ? = 'applied' THEN CURRENT_TIMESTAMP ELSE applied_at END,
+                       row_version = row_version + 1
+                   WHERE id = ? AND row_version = ?""",
+                (status, status, proposal_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Calendar proposal was changed by another request")
+            conn.commit()
+            return dict(conn.execute("SELECT * FROM calendar_reconciliation_proposals WHERE id = ?", (proposal_id,)).fetchone())
 
     # ==================== Podcast Operations ====================
 
@@ -349,7 +701,7 @@ class GuestDatabase:
         if not reschedule_token:
             reschedule_token = None
 
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
 
             existing_row = None
@@ -366,6 +718,19 @@ class GuestDatabase:
                 )
                 existing_row = cursor.fetchone()
 
+            interview_status = validate_state("interview", interview_data.get("status", "scheduled"))
+            confirmation_status = validate_state(
+                "confirmation", interview_data.get("confirmation_status", "pending")
+            )
+            if existing_row:
+                existing_row = conn.execute(
+                    "SELECT * FROM interviews WHERE id = ?", (existing_row["id"],)
+                ).fetchone()
+                interview_status = validate_transition("interview", existing_row["status"], interview_status)
+                confirmation_status = validate_transition(
+                    "confirmation", existing_row["confirmation_status"], confirmation_status
+                )
+
             fields = (
                 interview_data.get("guest_id"),
                 interview_data.get("guest_name"),
@@ -380,24 +745,47 @@ class GuestDatabase:
                 interview_data.get("scheduled_for"),
                 interview_data.get("timezone", "Europe/Berlin"),
                 interview_data.get("join_url"),
-                interview_data.get("status", "scheduled"),
-                interview_data.get("confirmation_status", "pending"),
+                interview_status,
+                confirmation_status,
                 interview_data.get("reminder_status", "not_scheduled"),
                 interview_data.get("reminder_sent_at"),
                 interview_data.get("notes"),
+                interview_data.get("owner"),
             )
 
             if existing_row:
-                conn.execute(
+                cursor = conn.execute(
                     """
                     UPDATE interviews SET
                         guest_id = ?, guest_name = ?, guest_email = ?, calendar_event_id = ?, calendar_source = ?,
                         event_updated_at = ?, last_synced_at = ?, reschedule_token = ?, reschedule_token_created_at = ?, title = ?, scheduled_for = ?, timezone = ?,
                         join_url = ?, status = ?, confirmation_status = ?, reminder_status = ?,
-                        reminder_sent_at = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
+                        reminder_sent_at = ?, notes = ?, owner = ?, row_version = row_version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND row_version = ?
                     """,
-                    fields + (existing_row["id"],),
+                    fields + (existing_row["id"], int(interview_data.get("row_version") or existing_row["row_version"])),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("Interview was changed by another request")
+                updated_row = dict(conn.execute("SELECT * FROM interviews WHERE id = ?", (existing_row["id"],)).fetchone())
+                event_type = (
+                    "status_changed"
+                    if (existing_row["status"], existing_row["confirmation_status"])
+                    != (updated_row["status"], updated_row["confirmation_status"])
+                    else "updated"
+                )
+                self._append_audit_event_conn(
+                    conn,
+                    entity_type="interview",
+                    entity_id=existing_row["id"],
+                    event_type=event_type,
+                    actor=str(interview_data.get("actor") or "operator"),
+                    source=str(interview_data.get("source") or "operations"),
+                    reason=str(interview_data.get("reason") or ""),
+                    correlation_id=str(interview_data.get("correlation_id") or ""),
+                    before=dict(existing_row),
+                    after=updated_row,
                 )
                 conn.commit()
                 return existing_row["id"], "updated"
@@ -408,16 +796,26 @@ class GuestDatabase:
                     guest_id, guest_name, guest_email, calendar_event_id, calendar_source, event_updated_at,
                     last_synced_at, reschedule_token, reschedule_token_created_at, title, scheduled_for, timezone, join_url, status, confirmation_status,
                     reminder_status, reminder_sent_at, notes, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    , owner
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                 """,
                 fields,
             )
+            interview_id = int(cursor.lastrowid)
+            created_row = dict(conn.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone())
+            self._append_audit_event_conn(
+                conn, entity_type="interview", entity_id=interview_id, event_type="created",
+                actor=str(interview_data.get("actor") or "operator"),
+                source=str(interview_data.get("source") or "operations"),
+                reason=str(interview_data.get("reason") or ""),
+                correlation_id=str(interview_data.get("correlation_id") or ""), after=created_row
+            )
             conn.commit()
-            return cursor.lastrowid, "created"
+            return interview_id, "created"
 
     def list_interviews(self) -> List[Dict]:
         """Return all interviews, newest scheduled items first."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM interviews ORDER BY datetime(scheduled_for) DESC, id DESC"
@@ -436,7 +834,7 @@ class GuestDatabase:
 
     def get_interview_by_id(self, interview_id: int) -> Optional[Dict]:
         """Fetch a single interview by id."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,))
             row = cursor.fetchone()
@@ -444,7 +842,7 @@ class GuestDatabase:
 
     def get_interview_by_calendar_event_id(self, calendar_event_id: str) -> Optional[Dict]:
         """Fetch a single interview by Google Calendar event id."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM interviews WHERE calendar_event_id = ? LIMIT 1",
@@ -455,7 +853,7 @@ class GuestDatabase:
 
     def get_interview_by_reschedule_token(self, reschedule_token: str) -> Optional[Dict]:
         """Fetch a single interview by reschedule token."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM interviews WHERE reschedule_token = ? LIMIT 1",
@@ -466,7 +864,7 @@ class GuestDatabase:
 
     def delete_interview(self, interview_id: int) -> None:
         """Delete an interview from the database."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.execute("DELETE FROM interviews WHERE id = ?", (interview_id,))
             conn.commit()
 
@@ -475,7 +873,7 @@ class GuestDatabase:
         interview_id = episode_data.get("interview_id")
         episode_id = episode_data.get("id")
 
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
 
             existing_row = None
@@ -492,9 +890,30 @@ class GuestDatabase:
                 )
                 existing_row = cursor.fetchone()
             elif episode_data.get("legacy_episode_number"):
+                # Episode numbers are sequencing metadata, not identity. They can
+                # collide temporarily while future releases are being renumbered,
+                # so only reuse a numbered row when a guest identity signal also
+                # agrees. A number-only match previously overwrote unrelated
+                # scheduled episodes and silently lost their title and metadata.
                 cursor = conn.execute(
-                    "SELECT id FROM episodes WHERE legacy_episode_number = ? LIMIT 1",
-                    (episode_data.get("legacy_episode_number"),),
+                    """
+                    SELECT id FROM episodes
+                    WHERE legacy_episode_number = ?
+                      AND (
+                        (TRIM(COALESCE(?, '')) <> '' AND LOWER(TRIM(COALESCE(guest_email, ''))) = LOWER(TRIM(?)))
+                        OR
+                        (TRIM(COALESCE(?, '')) <> '' AND LOWER(TRIM(COALESCE(guest_name, ''))) = LOWER(TRIM(?)))
+                      )
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        episode_data.get("legacy_episode_number"),
+                        episode_data.get("guest_email"),
+                        episode_data.get("guest_email"),
+                        episode_data.get("guest_name"),
+                        episode_data.get("guest_name"),
+                    ),
                 )
                 existing_row = cursor.fetchone()
             elif episode_data.get("guest_name") and episode_data.get("topic") and episode_data.get("interview_date"):
@@ -515,6 +934,27 @@ class GuestDatabase:
             if not existing_row:
                 existing_row = self._find_existing_episode_row(conn, episode_data)
 
+            release_status = validate_state("release", episode_data.get("release_status", "unplanned"))
+            production_status = validate_state("production", episode_data.get("production_status", "idea"))
+            promotion_status = validate_state("promotion", episode_data.get("promotion_status", "unknown"))
+            if existing_row:
+                existing_row = conn.execute(
+                    "SELECT * FROM episodes WHERE id = ?", (existing_row["id"],)
+                ).fetchone()
+                release_status = validate_transition("release", existing_row["release_status"], release_status)
+                production_status = validate_transition(
+                    "production", existing_row["production_status"], production_status
+                )
+                promotion_status = validate_transition(
+                    "promotion", existing_row["promotion_status"], promotion_status
+                )
+
+            original_planned_release_date = episode_data.get("original_planned_release_date")
+            if not original_planned_release_date and existing_row:
+                original_planned_release_date = existing_row["original_planned_release_date"]
+            if not original_planned_release_date and release_status == "scheduled":
+                original_planned_release_date = episode_data.get("release_date")
+
             fields = (
                 episode_data.get("guest_id"),
                 interview_id,
@@ -522,14 +962,16 @@ class GuestDatabase:
                 episode_data.get("guest_email"),
                 episode_data.get("website"),
                 episode_data.get("episode_title"),
+                episode_data.get("working_title") or episode_data.get("episode_title"),
+                episode_data.get("published_title"),
                 episode_data.get("topic"),
                 episode_data.get("category"),
                 episode_data.get("interview_date"),
                 episode_data.get("recording_date"),
                 episode_data.get("release_date"),
-                episode_data.get("release_status", "unplanned"),
-                episode_data.get("production_status", "idea"),
-                episode_data.get("promotion_status", "unknown"),
+                release_status,
+                production_status,
+                promotion_status,
                 episode_data.get("priority_score", 0),
                 episode_data.get("recommendation_reason"),
                 episode_data.get("legacy_episode_number"),
@@ -539,25 +981,62 @@ class GuestDatabase:
                 episode_data.get("show_notes_url"),
                 episode_data.get("release_files_url"),
                 episode_data.get("transcript_text"),
+                episode_data.get("transcript_source_id"),
+                episode_data.get("transcript_synced_at"),
+                episode_data.get("transcript_match_method"),
+                episode_data.get("transcript_match_score"),
                 _normalize_outreach_plan_storage(episode_data.get("outreach_plan")),
                 episode_data.get("ai_monthly_angle_state"),
                 episode_data.get("ai_monthly_angle_theme"),
                 episode_data.get("notes"),
+                episode_data.get("owner"),
+                episode_data.get("editorial_disposition", "active"),
+                original_planned_release_date,
             )
 
             if existing_row:
-                conn.execute(
+                cursor = conn.execute(
                     """
                     UPDATE episodes SET
-                        guest_id = ?, interview_id = ?, guest_name = ?, guest_email = ?, website = ?, episode_title = ?,
+                        guest_id = ?, interview_id = ?, guest_name = ?, guest_email = ?, website = ?, episode_title = ?, working_title = ?, published_title = ?,
                         topic = ?, category = ?, interview_date = ?, recording_date = ?, release_date = ?,
                         release_status = ?, production_status = ?, promotion_status = ?, priority_score = ?, recommendation_reason = ?,
                         legacy_episode_number = ?, riverside_status = ?, source_file_name = ?, source_type = ?,
-                        show_notes_url = ?, release_files_url = ?, transcript_text = ?, outreach_plan = ?,
-                        ai_monthly_angle_state = ?, ai_monthly_angle_theme = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
+                        show_notes_url = ?, release_files_url = ?, transcript_text = ?, transcript_source_id = ?, transcript_synced_at = ?, transcript_match_method = ?, transcript_match_score = ?, outreach_plan = ?,
+                        ai_monthly_angle_state = ?, ai_monthly_angle_theme = ?, notes = ?, owner = ?, editorial_disposition = ?, original_planned_release_date = ?,
+                        row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND row_version = ?
                     """,
-                    fields + (existing_row["id"],),
+                    fields + (existing_row["id"], int(episode_data.get("row_version") or existing_row["row_version"])),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("Episode was changed by another request")
+                updated_row = dict(conn.execute("SELECT * FROM episodes WHERE id = ?", (existing_row["id"],)).fetchone())
+                event_type = (
+                    "status_changed"
+                    if (
+                        existing_row["release_status"],
+                        existing_row["production_status"],
+                        existing_row["promotion_status"],
+                    )
+                    != (
+                        updated_row["release_status"],
+                        updated_row["production_status"],
+                        updated_row["promotion_status"],
+                    )
+                    else "updated"
+                )
+                self._append_audit_event_conn(
+                    conn,
+                    entity_type="episode",
+                    entity_id=existing_row["id"],
+                    event_type=event_type,
+                    actor=str(episode_data.get("actor") or "operator"),
+                    source=str(episode_data.get("source") or "planning"),
+                    reason=str(episode_data.get("reason") or ""),
+                    correlation_id=str(episode_data.get("correlation_id") or ""),
+                    before=dict(existing_row),
+                    after=updated_row,
                 )
                 conn.commit()
                 return existing_row["id"], "updated"
@@ -565,17 +1044,28 @@ class GuestDatabase:
             cursor = conn.execute(
                 """
                 INSERT INTO episodes (
-                    guest_id, interview_id, guest_name, guest_email, website, episode_title, topic, category,
+                    guest_id, interview_id, guest_name, guest_email, website, episode_title, working_title, published_title, topic, category,
                     interview_date, recording_date, release_date, release_status, production_status,
                     promotion_status, priority_score, recommendation_reason, legacy_episode_number, riverside_status,
-                    source_file_name, source_type, show_notes_url, release_files_url, transcript_text, outreach_plan,
-                    ai_monthly_angle_state, ai_monthly_angle_theme, notes, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    source_file_name, source_type, show_notes_url, release_files_url, transcript_text,
+                    transcript_source_id, transcript_synced_at, transcript_match_method, transcript_match_score, outreach_plan,
+                    ai_monthly_angle_state, ai_monthly_angle_theme, notes, updated_at, owner, editorial_disposition,
+                    original_planned_release_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
                 """,
                 fields,
             )
+            episode_id = int(cursor.lastrowid)
+            created_row = dict(conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone())
+            self._append_audit_event_conn(
+                conn, entity_type="episode", entity_id=episode_id, event_type="created",
+                actor=str(episode_data.get("actor") or "operator"),
+                source=str(episode_data.get("source") or "planning"),
+                reason=str(episode_data.get("reason") or ""),
+                correlation_id=str(episode_data.get("correlation_id") or ""), after=created_row
+            )
             conn.commit()
-            return cursor.lastrowid, "created"
+            return episode_id, "created"
 
     def _find_existing_episode_row(self, conn: sqlite3.Connection, episode_data: Dict[str, Any]) -> Optional[sqlite3.Row]:
         """Find an existing episode using normalized archive/import identity fields."""
@@ -772,6 +1262,8 @@ class GuestDatabase:
         canonical["guest_email"] = self._best_episode_text_value(rows, "guest_email")
         canonical["website"] = self._best_episode_text_value(rows, "website")
         canonical["episode_title"] = self._best_episode_text_value(rows, "episode_title")
+        canonical["working_title"] = self._best_episode_text_value(rows, "working_title") or canonical["episode_title"]
+        canonical["published_title"] = self._best_episode_text_value(rows, "published_title")
         canonical["topic"] = self._best_episode_text_value(rows, "topic")
         canonical["category"] = self._best_episode_text_value(rows, "category")
         canonical["interview_date"] = self._best_episode_text_value(rows, "interview_date")
@@ -784,6 +1276,10 @@ class GuestDatabase:
         canonical["show_notes_url"] = self._best_episode_text_value(rows, "show_notes_url")
         canonical["release_files_url"] = self._best_episode_text_value(rows, "release_files_url")
         canonical["transcript_text"] = self._best_episode_long_text_value(rows, "transcript_text")
+        canonical["transcript_source_id"] = self._best_episode_text_value(rows, "transcript_source_id")
+        canonical["transcript_synced_at"] = self._best_episode_text_value(rows, "transcript_synced_at")
+        canonical["transcript_match_method"] = self._best_episode_text_value(rows, "transcript_match_method")
+        canonical["transcript_match_score"] = max(float(row.get("transcript_match_score") or 0) for row in rows)
         canonical["outreach_plan"] = self._best_episode_long_text_value(rows, "outreach_plan")
         canonical["notes"] = self._best_episode_long_text_value(rows, "notes")
         canonical["recommendation_reason"] = self._best_episode_long_text_value(rows, "recommendation_reason")
@@ -808,7 +1304,7 @@ class GuestDatabase:
 
     def list_episodes(self) -> List[Dict]:
         """Return all episodes ordered by planned release date."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 """
@@ -823,7 +1319,7 @@ class GuestDatabase:
 
     def list_episode_categories(self) -> List[str]:
         """Return known episode categories ordered by how often they appear."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             cursor = conn.execute(
                 """
                 SELECT category, COUNT(*) AS usage_count
@@ -837,7 +1333,7 @@ class GuestDatabase:
 
     def get_episode_by_id(self, episode_id: int) -> Optional[Dict]:
         """Fetch a single episode by id."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,))
             row = cursor.fetchone()
@@ -845,7 +1341,7 @@ class GuestDatabase:
 
     def get_episode_by_interview_id(self, interview_id: int) -> Optional[Dict]:
         """Fetch the episode linked to an interview, if one exists."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM episodes WHERE interview_id = ? LIMIT 1", (interview_id,))
             row = cursor.fetchone()
@@ -853,13 +1349,13 @@ class GuestDatabase:
 
     def delete_episode(self, episode_id: int) -> None:
         """Delete an episode from the database."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
             conn.commit()
 
     def log_reminder(self, interview_id: int, reminder_type: str, sent_to: str, status: str, provider: str = "", notes: str = "") -> int:
         """Record a reminder attempt for an interview."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO reminder_log (interview_id, reminder_type, sent_to, provider, status, notes)
@@ -880,7 +1376,7 @@ class GuestDatabase:
 
     def log_interview_email(self, interview_id: int, email_type: str, sent_to: str, status: str, provider: str = "", notes: str = "") -> int:
         """Record a non-reminder interview email without mutating reminder status."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO reminder_log (interview_id, reminder_type, sent_to, provider, status, notes)
@@ -905,16 +1401,21 @@ class GuestDatabase:
         next_attempt_at: Optional[str] = None,
         status: str = "pending",
         last_error: str = "",
+        idempotency_key: str = "",
+        correlation_id: str = "",
     ) -> int:
         """Store an email for later retry when delivery is temporarily unavailable."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        status = validate_state("communication", status)
+        idempotency_key = str(idempotency_key or f"generated:{uuid4().hex}").strip()
+        with self._connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO email_outbox (
                     interview_id, email_type, sent_to, subject, body, attachments_json,
                     provider, status, attempts, max_attempts, next_attempt_at, last_error,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    idempotency_key, correlation_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(idempotency_key) DO NOTHING
                 """,
                 (
                     interview_id,
@@ -929,14 +1430,69 @@ class GuestDatabase:
                     max(1, int(max_attempts)),
                     next_attempt_at or None,
                     last_error or "",
+                    idempotency_key,
+                    correlation_id or None,
                 ),
             )
+            if cursor.rowcount == 0:
+                existing = conn.execute(
+                    "SELECT id FROM email_outbox WHERE idempotency_key = ?", (idempotency_key,)
+                ).fetchone()
+                if not existing:
+                    raise RuntimeError("Idempotent outbox insert could not be resolved")
+                conn.commit()
+                return int(existing[0])
             conn.commit()
-            return cursor.lastrowid
+            return int(cursor.lastrowid)
+
+    def claim_due_email_outbox(
+        self,
+        *,
+        worker_id: str,
+        limit: int = 20,
+        lease_seconds: int = 120,
+    ) -> List[Dict]:
+        """Atomically lease due messages so only one worker can deliver them."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """SELECT * FROM email_outbox
+                   WHERE (
+                         status IN ('pending', 'retrying')
+                         AND COALESCE(next_attempt_at, CURRENT_TIMESTAMP) <= CURRENT_TIMESTAMP
+                         AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)
+                       ) OR (
+                         status = 'sending' AND lease_until <= CURRENT_TIMESTAMP
+                       )
+                   ORDER BY next_attempt_at ASC, id ASC LIMIT ?""",
+                (max(1, int(limit)),),
+            ).fetchall()
+            claimed: List[Dict] = []
+            for row in rows:
+                validate_transition("communication", row["status"], "sending")
+                cursor = conn.execute(
+                    """UPDATE email_outbox
+                       SET status = 'sending', lease_owner = ?,
+                           lease_until = datetime('now', ?), row_version = row_version + 1,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ? AND row_version = ?
+                         AND (
+                           status IN ('pending', 'retrying')
+                           OR (status = 'sending' AND lease_until <= CURRENT_TIMESTAMP)
+                         )""",
+                    (worker_id, f"+{max(1, int(lease_seconds))} seconds", row["id"], row["row_version"]),
+                )
+                if cursor.rowcount == 1:
+                    claimed.append(
+                        dict(conn.execute("SELECT * FROM email_outbox WHERE id = ?", (row["id"],)).fetchone())
+                    )
+            conn.commit()
+            return claimed
 
     def get_due_email_outbox(self, limit: int = 20) -> List[Dict]:
         """Return queued emails that are ready for another delivery attempt."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 """
@@ -951,19 +1507,33 @@ class GuestDatabase:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def mark_email_outbox_sent(self, outbox_id: int) -> None:
+    def mark_email_outbox_sent(self, outbox_id: int, *, worker_id: str = "") -> None:
         """Mark a queued email as delivered."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
+            current = conn.execute("SELECT status FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()
+            if not current:
+                raise ValueError("Outbox message not found")
+            validate_transition("communication", current[0], "sent")
             conn.execute(
                 """
                 UPDATE email_outbox
                 SET status = 'sent',
+                    attempts = attempts + 1,
                     last_error = NULL,
                     sent_at = CURRENT_TIMESTAMP,
+                    lease_owner = NULL,
+                    lease_until = NULL,
+                    row_version = row_version + 1,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = ? AND (? = '' OR lease_owner = ?)
                 """,
-                (outbox_id,),
+                (outbox_id, worker_id, worker_id),
+            )
+            attempt_number = int(conn.execute("SELECT attempts FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()[0])
+            conn.execute(
+                """INSERT INTO email_outbox_attempts
+                   (outbox_id, attempt_number, worker_id, status) VALUES (?, ?, ?, 'sent')""",
+                (outbox_id, attempt_number, worker_id or None),
             )
             conn.commit()
 
@@ -975,9 +1545,14 @@ class GuestDatabase:
         next_attempt_at: str,
         last_error: str,
         status: str = "retrying",
+        worker_id: str = "",
     ) -> None:
         """Update a queued email after a failed attempt."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
+            current = conn.execute("SELECT status FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()
+            if not current:
+                raise ValueError("Outbox message not found")
+            status = validate_transition("communication", current[0], status)
             conn.execute(
                 """
                 UPDATE email_outbox
@@ -985,16 +1560,129 @@ class GuestDatabase:
                     attempts = ?,
                     next_attempt_at = ?,
                     last_error = ?,
+                    dead_letter_at = CASE WHEN ? = 'dead_letter' THEN CURRENT_TIMESTAMP ELSE dead_letter_at END,
+                    lease_owner = NULL,
+                    lease_until = NULL,
+                    row_version = row_version + 1,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = ? AND (? = '' OR lease_owner = ?)
                 """,
-                (status, attempts, next_attempt_at, last_error, outbox_id),
+                (status, attempts, next_attempt_at, last_error, status, outbox_id, worker_id, worker_id),
             )
+            conn.execute(
+                """INSERT INTO email_outbox_attempts
+                   (outbox_id, attempt_number, worker_id, status, error)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (outbox_id, attempts, worker_id or None, status, last_error or None),
+            )
+            conn.commit()
+
+    def get_email_outbox_health(self) -> Dict[str, int]:
+        """Return operator-facing queue health counts."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT status, COUNT(*) FROM email_outbox GROUP BY status").fetchall()
+            health = {str(status): int(count) for status, count in rows}
+            health["overdue"] = int(
+                conn.execute(
+                    """SELECT COUNT(*) FROM email_outbox
+                       WHERE status IN ('pending', 'retrying') AND next_attempt_at < datetime('now', '-5 minutes')"""
+                ).fetchone()[0]
+            )
+            return health
+
+    def list_email_outbox_failures(self, limit: int = 50) -> List[Dict]:
+        """Return delivery metadata for operator review without message bodies."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT id, interview_id, email_type, sent_to, subject, provider,
+                          status, attempts, max_attempts, last_error, created_at,
+                          updated_at, dead_letter_at, correlation_id, row_version
+                   FROM email_outbox
+                   WHERE status IN ('failed', 'dead_letter')
+                   ORDER BY COALESCE(dead_letter_at, updated_at) DESC, id DESC LIMIT ?""",
+                (max(1, int(limit)),),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def retry_dead_letter_email(self, outbox_id: int) -> Dict[str, Any]:
+        """Return one terminal failure to the retry queue after operator review."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            current_row = conn.execute("SELECT * FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()
+            if not current_row:
+                raise ValueError("Outbox message not found")
+            current = dict(current_row)
+            validate_transition("communication", current["status"], "retrying")
+            cursor = conn.execute(
+                """UPDATE email_outbox
+                   SET status = 'retrying', next_attempt_at = CURRENT_TIMESTAMP,
+                       last_error = NULL, dead_letter_at = NULL,
+                       lease_owner = NULL, lease_until = NULL,
+                       row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND row_version = ?""",
+                (outbox_id, current["row_version"]),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Outbox message was changed by another request")
+            updated = dict(conn.execute("SELECT * FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone())
+            self._append_audit_event_conn(
+                conn,
+                entity_type="communication",
+                entity_id=outbox_id,
+                event_type="dead_letter_retried",
+                actor="operator",
+                source="operations",
+                before=current,
+                after=updated,
+            )
+            conn.commit()
+            return updated
+
+    def start_automation_run(self, automation_type: str, *, worker_id: str = "", correlation_id: str = "") -> int:
+        """Record the start of an observable automation execution."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """INSERT INTO automation_runs (automation_type, correlation_id, worker_id, status)
+                   VALUES (?, ?, ?, 'running')""",
+                (automation_type, correlation_id or None, worker_id or None),
+            )
+            conn.commit()
+            return int(cursor.lastrowid)
+
+    def finish_automation_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        checked: int = 0,
+        succeeded: int = 0,
+        failed: int = 0,
+        details: Any = None,
+    ) -> None:
+        """Finalize automation metrics for operational review."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """UPDATE automation_runs
+                   SET status = ?, checked_count = ?, succeeded_count = ?, failed_count = ?,
+                       details_json = ?, finished_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND finished_at IS NULL""",
+                (
+                    status,
+                    int(checked),
+                    int(succeeded),
+                    int(failed),
+                    dumps(details, ensure_ascii=False, default=str, sort_keys=True) if details is not None else None,
+                    run_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Automation run was already finalized or does not exist")
             conn.commit()
 
     def get_email_outbox_count(self) -> int:
         """Return the number of pending or retryable queued emails."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             cursor = conn.execute(
                 "SELECT COUNT(*) FROM email_outbox WHERE status IN ('pending', 'retrying')"
             )
@@ -1002,7 +1690,7 @@ class GuestDatabase:
 
     def get_reminder_log(self, interview_id: Optional[int] = None) -> List[Dict]:
         """Return reminder log entries, optionally for a single interview."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             if interview_id is None:
                 cursor = conn.execute("SELECT * FROM reminder_log ORDER BY sent_at DESC, id DESC")
@@ -1015,7 +1703,7 @@ class GuestDatabase:
 
     def get_operations_stats(self) -> Dict[str, int]:
         """Return a small summary of podcast operations records."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             interviews_total = conn.execute("SELECT COUNT(*) FROM interviews").fetchone()[0]
             interviews_pending_confirmation = conn.execute(
                 "SELECT COUNT(*) FROM interviews WHERE confirmation_status = 'pending'"
@@ -1038,92 +1726,104 @@ class GuestDatabase:
     
     def mark_guest_processed(self, guest_id: int) -> None:
         """Mark a guest as processed."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute(
-                "UPDATE guests SET is_processed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (guest_id,)
-            )
-            conn.commit()
+        self._update_guest_lifecycle(guest_id, is_processed=True, event_type="marked_processed")
     
     def mark_guest_unprocessed(self, guest_id: int) -> None:
         """Mark a guest as unprocessed."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute(
-                "UPDATE guests SET is_processed = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (guest_id,)
-            )
-            conn.commit()
+        self._update_guest_lifecycle(guest_id, is_processed=False, event_type="marked_unprocessed")
     
     def accept_guest_with_email(self, guest_id: int, custom_message: str = "") -> None:
         """Mark guest as accepted and record email sent."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                UPDATE guests SET 
-                   is_processed = TRUE, 
-                   email_status = 'accepted',
-                   email_sent_at = CURRENT_TIMESTAMP,
-                   updated_at = CURRENT_TIMESTAMP 
-                WHERE id = ?
-            """, (guest_id,))
-            conn.commit()
+        self._update_guest_lifecycle(
+            guest_id,
+            is_processed=True,
+            email_status="accepted",
+            email_sent_at=datetime.now(timezone.utc).isoformat(),
+            event_type="accepted_email_sent",
+            reason=custom_message,
+        )
     
     def reject_guest_with_email(self, guest_id: int, custom_message: str = "") -> None:
         """Mark guest as rejected and record email sent."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                UPDATE guests SET 
-                   is_processed = TRUE, 
-                   email_status = 'rejected',
-                   email_sent_at = CURRENT_TIMESTAMP,
-                   updated_at = CURRENT_TIMESTAMP 
-                WHERE id = ?
-            """, (guest_id,))
-            conn.commit()
+        self._update_guest_lifecycle(
+            guest_id,
+            is_processed=True,
+            email_status="rejected",
+            email_sent_at=datetime.now(timezone.utc).isoformat(),
+            event_type="declined_email_sent",
+            reason=custom_message,
+        )
 
     def accept_guest_without_email(self, guest_id: int) -> None:
         """Mark guest as accepted without sending an email."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                UPDATE guests SET
-                   is_processed = TRUE,
-                   email_status = 'accepted',
-                   email_sent_at = NULL,
-                   updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (guest_id,))
-            conn.commit()
+        self._update_guest_lifecycle(
+            guest_id, is_processed=True, email_status="accepted", email_sent_at=None, event_type="accepted"
+        )
 
     def reject_guest_without_email(self, guest_id: int) -> None:
         """Mark guest as rejected without sending an email."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                UPDATE guests SET
-                   is_processed = TRUE,
-                   email_status = 'rejected',
-                   email_sent_at = NULL,
-                   updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (guest_id,))
-            conn.commit()
+        self._update_guest_lifecycle(
+            guest_id, is_processed=True, email_status="rejected", email_sent_at=None, event_type="declined"
+        )
     
     def skip_guest(self, guest_id: int, reason: str = "") -> None:
         """Mark guest as skipped without sending email."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                UPDATE guests SET 
-                   is_processed = TRUE, 
-                   email_status = 'skipped',
-                   skip_reason = ?,
-                   updated_at = CURRENT_TIMESTAMP 
-                WHERE id = ?
-            """, (reason, guest_id))
+        self._update_guest_lifecycle(
+            guest_id, is_processed=True, email_status="skipped", skip_reason=reason, event_type="skipped", reason=reason
+        )
+
+    def _update_guest_lifecycle(
+        self,
+        guest_id: int,
+        *,
+        is_processed: bool,
+        event_type: str,
+        email_status: Any = ...,
+        email_sent_at: Any = ...,
+        skip_reason: Any = ...,
+        reason: str = "",
+    ) -> None:
+        """Apply an attributed, optimistic guest lifecycle projection update."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM guests WHERE id = ?", (guest_id,)).fetchone()
+            if not row:
+                raise ValueError("Guest not found")
+            before = dict(row)
+            updates = {"is_processed": bool(is_processed)}
+            if email_status is not ...:
+                updates["email_status"] = email_status
+            if email_sent_at is not ...:
+                updates["email_sent_at"] = email_sent_at
+            if skip_reason is not ...:
+                updates["skip_reason"] = skip_reason
+            assignments = ", ".join(f"{column} = ?" for column in updates)
+            cursor = conn.execute(
+                f"""UPDATE guests SET {assignments}, row_version = row_version + 1,
+                       updated_at = CURRENT_TIMESTAMP WHERE id = ? AND row_version = ?""",
+                (*updates.values(), guest_id, before["row_version"]),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Guest was changed by another request")
+            after = dict(conn.execute("SELECT * FROM guests WHERE id = ?", (guest_id,)).fetchone())
+            self._append_audit_event_conn(
+                conn,
+                entity_type="guest",
+                entity_id=guest_id,
+                event_type=event_type,
+                actor="operator",
+                source="guest_dashboard",
+                reason=reason,
+                before=before,
+                after=after,
+            )
             conn.commit()
     
     # ==================== Statistics ====================
     
     def get_stats(self) -> Dict[str, int]:
         """Get guest statistics."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             cursor = conn.execute("""
                 SELECT 
                     COUNT(*) as total,
@@ -1140,7 +1840,7 @@ class GuestDatabase:
     
     def get_email_stats(self) -> Dict[str, int]:
         """Get email-related statistics."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             cursor = conn.execute("""
                 SELECT 
                     COUNT(CASE WHEN email_status IS NOT NULL THEN 1 END) as total_emails,
@@ -1272,7 +1972,7 @@ class GuestDatabase:
         """
         stats = {'removed': 0, 'fixed': 0, 'episodes_removed': 0, 'episodes_merged': 0}
         
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with self._connect() as conn:
             # Find and remove duplicate guests (same name and email)
             cursor = conn.execute("""
                 SELECT full_name, email, COUNT(*) as count, GROUP_CONCAT(id) as ids
@@ -1309,6 +2009,8 @@ class GuestDatabase:
                     merged.get("guest_email"),
                     merged.get("website"),
                     merged.get("episode_title"),
+                    merged.get("working_title") or merged.get("episode_title"),
+                    merged.get("published_title"),
                     merged.get("topic"),
                     merged.get("category"),
                     merged.get("interview_date"),
@@ -1326,17 +2028,30 @@ class GuestDatabase:
                     merged.get("show_notes_url"),
                     merged.get("release_files_url"),
                     merged.get("transcript_text"),
+                    merged.get("transcript_source_id"),
+                    merged.get("transcript_synced_at"),
+                    merged.get("transcript_match_method"),
+                    merged.get("transcript_match_score"),
+                    merged.get("outreach_plan"),
+                    merged.get("ai_monthly_angle_state"),
+                    merged.get("ai_monthly_angle_theme"),
                     merged.get("notes"),
+                    merged.get("owner"),
+                    merged.get("editorial_disposition", "active"),
+                    merged.get("original_planned_release_date"),
                     keep_id,
                 )
                 conn.execute(
                     """
                     UPDATE episodes SET
-                        guest_id = ?, interview_id = ?, guest_name = ?, guest_email = ?, website = ?, episode_title = ?,
+                        guest_id = ?, interview_id = ?, guest_name = ?, guest_email = ?, website = ?, episode_title = ?, working_title = ?, published_title = ?,
                         topic = ?, category = ?, interview_date = ?, recording_date = ?, release_date = ?,
                         release_status = ?, production_status = ?, promotion_status = ?, priority_score = ?, recommendation_reason = ?,
                         legacy_episode_number = ?, riverside_status = ?, source_file_name = ?, source_type = ?,
-                        show_notes_url = ?, release_files_url = ?, transcript_text = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                        show_notes_url = ?, release_files_url = ?, transcript_text = ?, transcript_source_id = ?, transcript_synced_at = ?,
+                        transcript_match_method = ?, transcript_match_score = ?, outreach_plan = ?, ai_monthly_angle_state = ?,
+                        ai_monthly_angle_theme = ?, notes = ?, owner = ?, editorial_disposition = ?, original_planned_release_date = ?,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     fields,

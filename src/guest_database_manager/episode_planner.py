@@ -345,7 +345,10 @@ def _month_theme_score(episode: Dict[str, Any], slot_date: datetime) -> tuple[fl
     matched = [keyword for keyword in keywords if keyword in haystack]
     if not matched:
         return 0.0, "", []
-    score = 12.0 + min(6.0, float(len(set(matched)) * 2))
+    # One generic keyword is a weak signal. Require multiple independent matches
+    # before seasonality can materially outrank freshness or queue readiness.
+    match_count = len(set(matched))
+    score = min(16.0, 4.0 + float(max(match_count - 1, 0) * 5))
     return score, f"fits the seasonal focus for {slot_date.strftime('%B')}", matched
 
 
@@ -592,7 +595,6 @@ def _theme_keyword_set(episode: Dict[str, Any]) -> set[str]:
 
 def _archive_overlap_warning(episode: Dict[str, Any], released_history: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Compare an episode with the released archive and classify the overlap."""
-    current_title = _clean_text(episode.get("episode_title"))
     current_category = _clean_text(episode.get("category"))
     current_keywords = _theme_keyword_set(episode)
     if not current_keywords:
@@ -766,11 +768,13 @@ def _base_episode_score(
             freshness_bonus = 5.0
         elif 121 <= age_days <= 180:
             freshness_bonus = 2.5
-        age_score = min(age_days / 30, 10) + freshness_bonus
+        # Age breaks ties and keeps long-waiting recordings visible, but it must
+        # not overwhelm readiness, freshness, or stronger editorial signals.
+        age_score = min(age_days / 30, 8) + freshness_bonus
         score += age_score
-        if 21 <= age_days <= 120:
+        if 21 <= age_days <= 180:
             reasons.append("recording is still fresh enough to feel current")
-        elif age_days >= 180:
+        elif age_days > 180:
             reasons.append("has been waiting a long time")
 
     category_score, category_reason = _category_fatigue_score(episode, recent_categories)

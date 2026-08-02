@@ -820,8 +820,6 @@ def display_analytics(db: GuestDatabase) -> None:
         accepted = email_stats.get("accepted_emails", 0)
         rejected = email_stats.get("rejected_emails", 0)
         skipped = email_stats.get("skipped_guests", 0)
-        total_emails = email_stats.get("total_emails", 0)
-        
         if accepted + rejected + skipped > 0:
             st.subheader("📊 Email Actions Summary")
             summary_data = {

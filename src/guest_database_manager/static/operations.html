@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Podcast Operations</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-    <link rel="stylesheet" href="/static/operations.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260802.10" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260802.10" />
   </head>
   <body>
     <div class="page-shell operations-shell">
-      <header class="hero operations-hero">
-        <div>
+      <header class="hero operations-hero interview-hero">
+        <div class="hero-intro">
           <div class="brand-lockup">
             <img class="brand-logo" src="/static/mirror-talk-logo.png" alt="Mirror Talk Podcast logo" />
             <div class="brand-copy">
@@ -32,35 +32,36 @@
             <span class="premium-badge warm">Past interviews stay archived, not gone</span>
           </div>
         </div>
-        <div class="hero-card">
+        <div class="hero-card stats-card">
           <div class="metric-grid">
             <div class="metric">
               <span>Interviews</span>
-              <strong id="ops-interviews-total">0</strong>
+              <strong id="ops-interviews-total" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Pending Confirmations</span>
-              <strong id="ops-interviews-pending">0</strong>
+              <strong id="ops-interviews-pending" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Confirmed</span>
-              <strong id="ops-interviews-confirmed">0</strong>
+              <strong id="ops-interviews-confirmed" aria-live="polite">&mdash;</strong>
             </div>
             <div class="metric">
               <span>Reminder Candidates</span>
-              <strong id="ops-reminders-due">0</strong>
+              <strong id="ops-reminders-due" aria-live="polite">&mdash;</strong>
             </div>
           </div>
-          <button id="sync-calendar-button" class="secondary-button" type="button">Sync Google Calendar</button>
-          <button id="backup-data-button" class="secondary-button" type="button">Backup All Data</button>
-          <div id="ai-features-card" style="margin-top: 16px; padding: 16px; background: rgba(99, 102, 241, 0.08); border-radius: 16px; border: 1px solid rgba(99, 102, 241, 0.2);">
-            <p style="margin: 0 0 8px; font-size: 0.85rem; font-weight: 600; color: var(--text);">✨ AI Features</p>
+          <div id="ai-features-card" class="ai-status-card">
+            <p class="ai-status-title">✨ AI Features</p>
             <div id="ai-status-indicator">
               <span class="status-badge checking">Checking...</span>
             </div>
           </div>
-          <a class="dashboard-link" href="/planning">Open Episode Planning</a>
-          <a class="dashboard-link" href="/dashboard">Open Guest Dashboard</a>
+          <div class="hero-actions operations-hero-actions">
+            <button id="sync-calendar-button" class="secondary-button" type="button">Sync Google Calendar</button>
+            <a class="dashboard-link" href="/planning">Episode Planning</a>
+            <a class="dashboard-link" href="/dashboard">Guest Dashboard</a>
+          </div>
         </div>
       </header>
 
@@ -94,8 +95,11 @@
               </ol>
             </div>
 
+            <details class="operations-tool">
+              <summary>Add or edit an interview</summary>
             <form id="interview-form" class="guest-form">
               <input name="id" type="hidden" />
+              <input name="row_version" type="hidden" />
               <label>
                 Guest Name
                 <input name="guest_name" type="text" required />
@@ -115,6 +119,10 @@
               <label>
                 Timezone
                 <input name="timezone" type="text" value="Europe/Berlin" />
+              </label>
+              <label>
+                Owner
+                <input name="owner" type="text" placeholder="Producer or assistant" />
               </label>
               <label class="full-width">
                 Calendar Event ID
@@ -158,8 +166,16 @@
                 <button id="interview-reset-button" type="button" class="secondary-button" hidden>Cancel Editing</button>
               </div>
             </form>
+            </details>
 
           <p id="interview-message" class="message" aria-live="polite"></p>
+          <details class="operations-tool">
+            <summary>Administration and recovery</summary>
+            <div class="operations-tool-body">
+              <p class="tool-copy">Create a complete database backup before migrations, merges, or bulk cleanup.</p>
+              <button id="backup-data-button" class="secondary-button" type="button">Backup All Data</button>
+            </div>
+          </details>
           </div>
 
           <div class="operations-section">
@@ -171,6 +187,23 @@
               </p>
             </div>
             <div id="operations-alerts" class="operations-preview"></div>
+          </div>
+
+          <div class="operations-section" aria-labelledby="delivery-health-title">
+            <div class="section-heading">
+              <p class="eyebrow">Communication Reliability</p>
+              <h2 id="delivery-health-title">Delivery Health</h2>
+              <p class="hero-copy section-copy">
+                Review queue pressure and terminal delivery failures. Retrying returns a reviewed item to the worker; it does not send from this request.
+              </p>
+            </div>
+            <div id="outbox-health" class="operations-preview" aria-live="polite"></div>
+            <div id="outbox-failures" class="stack-list"></div>
+            <p id="outbox-message" class="message" aria-live="polite"></p>
+            <details class="operations-tool">
+              <summary>Metric definitions and freshness</summary>
+              <div id="operations-metrics" class="operations-preview"></div>
+            </details>
           </div>
         </section>
 
@@ -197,6 +230,7 @@
               <input id="reminder-search" type="search" placeholder="Search guest, title, or email" />
             </label>
           </div>
+          <div id="operations-saved-views" class="saved-view-controls" aria-label="Operations saved views"></div>
           <p id="reminder-results-meta" class="results-meta"></p>
           <div id="reminder-message" class="message" aria-live="polite"></div>
           <div id="reminder-list" class="guest-list"></div>
@@ -219,9 +253,12 @@
 
           <div class="view-presets" id="interview-presets">
             <button type="button" class="preset-chip active" data-interview-preset="upcoming" title="Your main working queue for upcoming active interviews.">Upcoming</button>
+            <button type="button" class="preset-chip" data-interview-preset="today">Today</button>
+            <button type="button" class="preset-chip" data-interview-preset="next_7_days">Next 7 Days</button>
             <button type="button" class="preset-chip" data-interview-preset="needs_confirmation" title="Guests who still need a confirmation reply before the interview.">Needs Confirmation</button>
             <button type="button" class="preset-chip warning-chip" data-interview-preset="booking_risks" title="Duplicate bookings and stale calendar holds that could block other dates.">Booking Risks</button>
             <button type="button" class="preset-chip" data-interview-preset="past" title="Already-finished interview records kept for history and reference.">Past</button>
+            <button type="button" class="preset-chip" data-interview-preset="recently_completed">Recently Completed</button>
           </div>
           <div class="list-toolbar">
             <label class="toolbar-field toolbar-search">
@@ -281,7 +318,7 @@
       </div>
     </div>
 
-    <script src="/static/performance-utils.js"></script>
-    <script src="/static/operations.js" defer></script>
+    <script src="/static/performance-utils.js?v=20260802.8"></script>
+    <script src="/static/operations.js?v=20260802.8" defer></script>
   </body>
 </html>

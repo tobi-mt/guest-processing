@@ -4,6 +4,8 @@ Final end-to-end test of the Guest Database Manager CSV import functionality.
 This script will test the complete import process with a real CSV file.
 """
 
+__test__ = False  # Legacy executable diagnostic; covered by the maintained tests/ suite.
+
 import sys
 import os
 import logging

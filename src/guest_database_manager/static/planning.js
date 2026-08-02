@@ -16,6 +16,12 @@ const planningExportMessage = document.getElementById("planning-export-message")
 const planningWeeklySystem = document.getElementById("planning-weekly-system");
 const aiCopilotStatus = document.getElementById("planning-ai-copilot-status");
 const episodeList = document.getElementById("episode-list");
+const releaseCalendar = document.getElementById("release-calendar");
+const releaseCalendarTitle = document.getElementById("release-calendar-title");
+const calendarPreviousButton = document.getElementById("calendar-previous");
+const calendarTodayButton = document.getElementById("calendar-today");
+const calendarNextButton = document.getElementById("calendar-next");
+const backlogBoard = document.getElementById("backlog-board");
 const recommendationList = document.getElementById("recommendation-list");
 const refreshButton = document.getElementById("planning-refresh-button");
 const recommendationSearchInput = document.getElementById("recommendation-search");
@@ -32,6 +38,7 @@ const episodeProductionFilter = document.getElementById("episode-production-filt
 const episodeTranscriptFilter = document.getElementById("episode-transcript-filter");
 const episodeSort = document.getElementById("episode-sort");
 const episodeResultsMeta = document.getElementById("episode-results-meta");
+window.PerformanceUtils?.installSavedViews(document.getElementById("planning-saved-views"), "planning");
 const episodeLoadMoreButton = document.getElementById("episode-load-more");
 const episodePresetButtons = Array.from(document.querySelectorAll("[data-episode-preset]"));
 const planningTabButtons = Array.from(document.querySelectorAll("[data-planning-tab]"));
@@ -39,6 +46,12 @@ const planningTabPanels = Array.from(document.querySelectorAll("[data-planning-p
 const scheduleModal = document.getElementById("schedule-modal");
 const scheduleForm = document.getElementById("schedule-form");
 const scheduleModalMessage = document.querySelector("[data-schedule-modal-message]");
+const episodeDetailsModal = document.getElementById("episode-details-modal");
+const episodeDetailsTitle = document.getElementById("episode-details-title");
+const episodeDetailsBody = document.getElementById("episode-details-body");
+const episodeDetailsClose = document.getElementById("episode-details-close");
+const episodeDetailsDismiss = document.getElementById("episode-details-dismiss");
+const episodeDetailsEdit = document.getElementById("episode-details-edit");
 const IS_FILE_PROTOCOL = window.location.protocol === "file:";
 
 let latestPlanningPayload = {
@@ -59,6 +72,10 @@ let pendingPlanningSuccessMessage = "";
 let activePlanningTab = "release_planning";
 let aiCopilotHydrationInFlight = false;
 let planningRefreshInFlight = false;
+let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let selectedCalendarEpisodeId = null;
+let calendarReturnFocus = null;
+let pendingAskSyncRequest = null;
 const PLANNING_PAYLOAD_CACHE_KEY = "mirror-talk-planning-payload-v20260605-intelligence-nostore";
 const LEGACY_PLANNING_PAYLOAD_CACHE_KEYS = [
   "mirror-talk-planning-payload",
@@ -108,7 +125,8 @@ const EXPORT_FIELD_CONFIG = {
     ["guest_name", "Guest Name"],
     ["guest_email", "Guest Email"],
     ["website", "Website"],
-    ["episode_title", "Episode Title"],
+    ["episode_title", "Working Title"],
+    ["published_title", "Published Title"],
     ["topic", "Topic"],
     ["category", "Category"],
     ["interview_date", "Interview Date"],
@@ -122,6 +140,8 @@ const EXPORT_FIELD_CONFIG = {
     ["show_notes_url", "Show Notes URL"],
     ["release_files_url", "Files URL"],
     ["transcript_text", "Transcript"],
+    ["transcript_source_id", "Transcript Source ID"],
+    ["transcript_synced_at", "Transcript Synced At"],
     ["outreach_plan", "Outreach Plan"],
     ["source_file_name", "Source File"],
     ["recommendation_reason", "Recommendation Reason"],
@@ -142,21 +162,25 @@ const EXPORT_FIELD_CONFIG = {
 };
 
 function readCachedPayload(cacheKey) {
-  try {
-    const raw = window.sessionStorage.getItem(cacheKey);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (error) {
-    return null;
-  }
+  return null;
 }
 
 function storeCachedPayload(cacheKey, payload) {
-  try {
-    window.sessionStorage.setItem(cacheKey, JSON.stringify(payload));
-  } catch (error) {
-    // Ignore browser cache failures.
-  }
+  // Episode records can contain transcripts and private contact data; retain
+  // them in memory only for the life of this page.
+}
+
+function dashboardCsrfToken() {
+  const item = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("dashboard_csrf="));
+  return item ? decodeURIComponent(item.split("=", 2)[1] || "") : "";
+}
+
+function dashboardRequestHeaders(options = {}, isReadRequest = false, includeJson = true) {
+  return {
+    ...(includeJson ? { "Content-Type": "application/json" } : {}),
+    ...(options.headers || {}),
+    ...(!isReadRequest ? { "X-CSRF-Token": dashboardCsrfToken() } : {}),
+  };
 }
 
 const stats = {
@@ -178,6 +202,7 @@ function setPlanningTab(tabName) {
     const isActive = button.dataset.planningTab === tabName;
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-selected", isActive ? "true" : "false");
+    button.setAttribute("tabindex", isActive ? "0" : "-1");
   });
   planningTabPanels.forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.planningPanel === tabName);
@@ -199,6 +224,7 @@ function replaceEpisodeInPayload(savedEpisode) {
 
 function cleanEpisodePayloadForSave(payload) {
   const cleaned = { ...payload };
+  cleaned.working_title = String(cleaned.episode_title || "").trim();
   if (cleaned.transcript_omitted && !cleaned.transcript_text) {
     delete cleaned.transcript_text;
   }
@@ -274,9 +300,9 @@ async function fetchJSON(url, options = {}) {
     try {
       const response = await fetch(url, {
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         ...options,
+        headers: dashboardRequestHeaders(options, isReadRequest),
       });
       const rawText = await response.text();
       let data = {};
@@ -313,6 +339,7 @@ async function postForm(url, formData) {
   const response = await fetch(url, {
     method: "POST",
     credentials: "same-origin",
+    headers: dashboardRequestHeaders({}, false, false),
     body: formData,
   });
   const data = await response.json();
@@ -326,7 +353,7 @@ async function downloadExport(payload) {
   const response = await fetch("/api/exports", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: dashboardRequestHeaders({}, false),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
@@ -388,6 +415,15 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function renderAuditTimeline(events) {
+  if (!events.length) return "<p>No activity has been recorded yet.</p>";
+  return `<ol class="activity-timeline">${events.map((event) => `
+    <li><strong>${escapeHtml(String(event.event_type || "updated").replaceAll("_", " "))}</strong>
+    <span>${escapeHtml(event.created_at || "")}</span>
+    <p>${escapeHtml(event.actor || "system")} via ${escapeHtml(event.source || "application")}${event.reason ? ` — ${escapeHtml(event.reason)}` : ""}</p></li>
+  `).join("")}</ol>`;
 }
 
 function renderLinkedValue(value, fallback = "Not set") {
@@ -587,8 +623,8 @@ function renderPromoReadiness(readiness) {
   if (!readiness) {
     return "";
   }
-  const strengths = (readiness.strengths || []).slice(0, 2).map((item) => `<li>${item}</li>`).join("");
-  const blockers = (readiness.blockers || []).slice(0, 2).map((item) => `<li>${item}</li>`).join("");
+  const strengths = (readiness.strengths || []).slice(0, 2).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const blockers = (readiness.blockers || []).slice(0, 2).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   return `
     <div class="operations-preview">
       <p><strong>Promotion Readiness:</strong> ${readiness.score}/100 · ${readiness.label}</p>
@@ -745,11 +781,11 @@ function renderCopyAssist(copyAssist) {
   return `
     <div class="operations-preview">
       <strong class="insight-label">Promo Copy Assist</strong>
-      <p>${copyAssist.summary || ""}</p>
-      <p><strong>Social:</strong> ${copyAssist.social_caption || ""}</p>
-      <p><strong>Newsletter:</strong> ${copyAssist.newsletter_blurb || ""}</p>
-      ${copyAssist.show_notes_intro ? `<p><strong>Show notes intro:</strong> ${copyAssist.show_notes_intro}</p>` : ""}
-      ${copyAssist.quote_pull ? `<p><strong>Quote pull:</strong> ${copyAssist.quote_pull}</p>` : ""}
+      <p>${escapeHtml(copyAssist.summary || "")}</p>
+      <p><strong>Social:</strong> ${escapeHtml(copyAssist.social_caption || "")}</p>
+      <p><strong>Newsletter:</strong> ${escapeHtml(copyAssist.newsletter_blurb || "")}</p>
+      ${copyAssist.show_notes_intro ? `<p><strong>Show notes intro:</strong> ${escapeHtml(copyAssist.show_notes_intro)}</p>` : ""}
+      ${copyAssist.quote_pull ? `<p><strong>Quote pull:</strong> ${escapeHtml(copyAssist.quote_pull)}</p>` : ""}
     </div>
   `;
 }
@@ -978,8 +1014,8 @@ function renderWeeklySystemPanel(system) {
   const steps = (system.steps || [])
     .map((step) => `<li><strong>${step.day}${step.time_label ? ` · ${step.time_label}` : ""}</strong>: ${step.title}. ${step.description}</li>`)
     .join("");
-  const principles = (system.principles || []).map((item) => `<li>${item}</li>`).join("");
-  const metrics = (system.metrics || []).map((item) => `<li>${item}</li>`).join("");
+  const principles = (system.principles || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const metrics = (system.metrics || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   planningWeeklySystem.innerHTML = `
     <div class="insight-stack">
       <strong class="insight-label">What this tab is for</strong>
@@ -1016,15 +1052,91 @@ function renderAskSyncBreakdown(result) {
     ["Matched by title", result.matched_by_title ?? 0],
     ["Matched by guest", result.matched_by_guest ?? 0],
     ["Updated transcript", result.updated_transcript ?? 0],
-    ["Updated title only", result.updated_title_only ?? 0],
+    ["Updated published title only", result.updated_title_only ?? 0],
     ["Skipped ambiguous", result.skipped_ambiguous ?? 0],
   ];
+  const proposals = result.preview_only ? (result.proposed_matches || []) : [];
+  const proposalMarkup = proposals.map((proposal) => {
+    const local = proposal.local_episode || {};
+    const remote = proposal.remote_episode || {};
+    const changes = proposal.changes || {};
+    const changeLabels = [
+      changes.transcript ? "add transcript" : "keep existing transcript",
+      changes.published_title ? "store published title" : "published title unchanged",
+    ];
+    return `
+      <label class="sync-match-card">
+        <input type="checkbox" data-ask-sync-match
+          data-local-episode-id="${Number(local.id || 0)}"
+          data-remote-episode-ref="${escapeHtml(remote.ref || "")}" checked />
+        <span>
+          <strong>${escapeHtml(local.working_title || "Untitled local episode")}</strong>
+          <small>${escapeHtml(local.guest_name || "Unknown guest")} · ${escapeHtml(local.release_status || "unplanned")} ${local.release_date ? `· ${escapeHtml(formatDateTime(local.release_date))}` : ""}</small>
+          <span class="sync-arrow" aria-hidden="true">→</span>
+          <strong>${escapeHtml(remote.title || "Untitled Ask episode")}</strong>
+          <small>${escapeHtml(formatMatchMethod(proposal.method))} · score ${Number(proposal.score || 0)} · ${escapeHtml(changeLabels.join(" · "))}</small>
+        </span>
+      </label>
+    `;
+  }).join("");
   askSyncBreakdown.classList.remove("hidden");
   askSyncBreakdown.innerHTML = `
-    <strong class="insight-label">Sync breakdown</strong>
+    <strong class="insight-label">${result.preview_only ? "Review proposed matches" : "Sync breakdown"}</strong>
     <ul>${items.map(([label, value]) => `<li>${label}: ${value}</li>`).join("")}</ul>
+    ${result.preview_only ? `
+      <p>No episode data has changed. Select only the matches you have verified.</p>
+      <div class="sync-match-list">${proposalMarkup || "<p>No safe matches are ready to apply.</p>"}</div>
+      <div class="form-actions">
+        <button id="ask-sync-apply" type="button" class="primary-button" ${proposals.length ? "" : "disabled"}>Apply Selected Matches</button>
+      </div>
+    ` : ""}
   `;
+  const applyButton = document.getElementById("ask-sync-apply");
+  if (applyButton) {
+    applyButton.addEventListener("click", applySelectedAskSyncMatches);
+  }
   renderAskSyncAmbiguous(result.ambiguous_matches || []);
+}
+
+async function applySelectedAskSyncMatches() {
+  if (!pendingAskSyncRequest) return;
+  const approvedMatches = Array.from(
+    askSyncBreakdown.querySelectorAll("[data-ask-sync-match]:checked"),
+    (input) => ({
+      local_episode_id: Number(input.dataset.localEpisodeId || 0),
+      remote_episode_ref: input.dataset.remoteEpisodeRef || "",
+    }),
+  ).filter((item) => item.local_episode_id && item.remote_episode_ref);
+  if (!approvedMatches.length) {
+    setMessage(askSyncMessage, "Select at least one verified match before applying.", "error");
+    return;
+  }
+  const applyButton = document.getElementById("ask-sync-apply");
+  applyButton.disabled = true;
+  applyButton.textContent = "Applying...";
+  setMessage(askSyncMessage, "Applying verified transcript matches...", "pending");
+  try {
+    const result = await fetchJSON("/api/ask-mirror-talk/sync", {
+      method: "POST",
+      body: JSON.stringify({
+        ...pendingAskSyncRequest,
+        preview_only: false,
+        approved_matches: approvedMatches,
+      }),
+    });
+    setMessage(
+      askSyncMessage,
+      `Applied ${result.updated} verified match${result.updated === 1 ? "" : "es"}. Working titles and release metadata were preserved.`,
+      "success",
+    );
+    pendingAskSyncRequest = null;
+    renderAskSyncBreakdown(result);
+    await loadPlanning();
+  } catch (error) {
+    setMessage(askSyncMessage, error.message || "Failed to apply transcript matches", "error");
+    applyButton.disabled = false;
+    applyButton.textContent = "Apply Selected Matches";
+  }
 }
 
 function formatMatchMethod(method) {
@@ -1064,8 +1176,8 @@ function renderAskSyncAmbiguous(items) {
           parts.push(candidate.has_transcript ? "Transcript available" : "No transcript");
           return `
             <li>
-              <strong>${candidate.title || "Untitled Ask episode"}</strong>
-              <span>${parts.join(" · ")}</span>
+              <strong>${escapeHtml(candidate.title || "Untitled Ask episode")}</strong>
+              <span>${escapeHtml(parts.join(" · "))}</span>
             </li>
           `;
         })
@@ -1073,8 +1185,8 @@ function renderAskSyncAmbiguous(items) {
 
       return `
         <article class="mini-card">
-          <strong>${local.title || "Untitled local episode"}</strong>
-          <p>${local.guest_name || "Unknown guest"}${localDate ? ` · ${formatDateTime(localDate)}` : ""}</p>
+          <strong>${escapeHtml(local.title || "Untitled local episode")}</strong>
+          <p>${escapeHtml(local.guest_name || "Unknown guest")}${localDate ? ` · ${escapeHtml(formatDateTime(localDate))}` : ""}</p>
           <ul>${candidates}</ul>
         </article>
       `;
@@ -1106,13 +1218,13 @@ function renderOutreachSummary(summary) {
   if (!summary) {
     return "";
   }
-  const completed = (summary.completed_labels || []).map((item) => `<li>${item}</li>`).join("");
-  const pending = (summary.pending_labels || []).map((item) => `<li>${item}</li>`).join("");
+  const completed = (summary.completed_labels || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const pending = (summary.pending_labels || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   return `
     <div class="operations-preview">
       <strong class="insight-label">Outreach status for this episode</strong>
       <p><strong>${summary.progress_label}</strong></p>
-      <p>${summary.next_step || ""}</p>
+      <p>${escapeHtml(summary.next_step || "")}</p>
       <p class="helper-copy">Mark a step complete only after it has actually been published, sent, posted, or reviewed.</p>
       ${completed ? `<div class="insight-stack"><strong class="insight-label">Already done</strong><ul>${completed}</ul></div>` : ""}
       ${pending ? `<div class="insight-stack"><strong class="insight-label">Still ahead in this launch cycle</strong><ul>${pending}</ul></div>` : ""}
@@ -1172,7 +1284,7 @@ function renderReleaseComposer(node, episode, preview) {
         text: `Release email sent to ${episode.guest_name || episode.guest_email}.`,
         tone: "success",
       };
-      node.innerHTML = `<p class="composer-feedback success">Release email sent to ${episode.guest_name || episode.guest_email}.</p>`;
+        node.innerHTML = `<p class="composer-feedback success">Release email sent to ${escapeHtml(episode.guest_name || episode.guest_email)}.</p>`;
       await loadPlanning();
     } catch (error) {
       setMessage(messageNode, error.message, "error");
@@ -1262,6 +1374,7 @@ function resetEpisodeForm() {
   episodeForm.elements.release_status.value = "unplanned";
   episodeForm.elements.production_status.value = "idea";
   episodeForm.elements.promotion_status.value = "unknown";
+  episodeForm.elements.editorial_disposition.value = "active";
   episodeForm.elements.priority_score.value = String(clampPriorityScore(suggestPriorityScoreForEpisode({}), 3));
   episodeForm.elements.legacy_episode_number.value = computeNextLegacyEpisodeNumber(latestPlanningPayload.episodes || []);
   episodeSubmitButton.textContent = "Save Episode";
@@ -1273,19 +1386,23 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   const effectiveProductionStatus = episode.production_status || "idea";
   const effectivePromotionStatus = episode.promotion_status || "unknown";
   episodeForm.elements.id.value = episode.id || "";
+  episodeForm.elements.row_version.value = episode.row_version || "";
   episodeForm.elements.interview_id.value = episode.interview_id || "";
   episodeForm.elements.guest_name.value = episode.guest_name || "";
   episodeForm.elements.guest_email.value = episode.guest_email || "";
   episodeForm.elements.website.value = episode.website || "";
   episodeForm.elements.episode_title.value = episode.episode_title || "";
+  episodeForm.elements.published_title.value = episode.published_title || "";
   episodeForm.elements.topic.value = episode.topic || "";
   episodeForm.elements.category.value = episode.category || "";
   episodeForm.elements.interview_date.value = formatDateForDateInput(episode.interview_date);
   episodeForm.elements.recording_date.value = formatDateForDateInput(episode.recording_date);
+  episodeForm.elements.owner.value = episode.owner || "";
   episodeForm.elements.release_date.value = formatDateForDateTimeInput(releaseDate || episode.release_date);
   episodeForm.elements.release_status.value = effectiveReleaseStatus;
   episodeForm.elements.production_status.value = effectiveProductionStatus;
   episodeForm.elements.promotion_status.value = effectivePromotionStatus;
+  episodeForm.elements.editorial_disposition.value = episode.editorial_disposition || "active";
   const suggestedPriorityScore = suggestPriorityScoreForEpisode({
     release_status: effectiveReleaseStatus,
     production_status: effectiveProductionStatus,
@@ -1314,10 +1431,12 @@ function renderEpisodeInlineEditor(container, episode) {
   container.innerHTML = `
     <div class="inline-editor-title">Quick Edit Episode</div>
     <form class="inline-editor-form" data-inline-episode-form novalidate>
-      ${createFieldMarkup("Episode Title", `<input name="episode_title" type="text" value="${episode.episode_title || ""}" required />`, true)}
-      ${createFieldMarkup("Guest Name", `<input name="guest_name" type="text" value="${episode.guest_name || ""}" required />`)}
-      ${createFieldMarkup("Guest Email", `<input name="guest_email" type="text" inputmode="email" autocapitalize="off" spellcheck="false" value="${episode.guest_email || ""}" />`)}
-      ${createFieldMarkup("Category", `<input name="category" type="text" list="episode-category-options" value="${episode.category || ""}" />`)}
+      <input name="row_version" type="hidden" value="${Number(episode.row_version || 1)}" />
+      ${createFieldMarkup("Episode Title", `<input name="episode_title" type="text" value="${escapeHtml(episode.episode_title || "")}" required />`, true)}
+      ${createFieldMarkup("Published Title", `<input name="published_title" type="text" value="${escapeHtml(episode.published_title || "")}" />`, true)}
+      ${createFieldMarkup("Guest Name", `<input name="guest_name" type="text" value="${escapeHtml(episode.guest_name || "")}" required />`)}
+      ${createFieldMarkup("Guest Email", `<input name="guest_email" type="text" inputmode="email" autocapitalize="off" spellcheck="false" value="${escapeHtml(episode.guest_email || "")}" />`)}
+      ${createFieldMarkup("Category", `<input name="category" type="text" list="episode-category-options" value="${escapeHtml(episode.category || "")}" />`)}
       ${createFieldMarkup("Release Date", `<input name="release_date" type="datetime-local" value="${formatDateForDateTimeInput(episode.release_date)}" />`)}
       ${createFieldMarkup("Release Status", `
         <select name="release_status">
@@ -1344,11 +1463,19 @@ function renderEpisodeInlineEditor(container, episode) {
         </select>
       `)}
       ${createFieldMarkup("Priority", `<input name="priority_score" type="number" min="0" max="10" step="0.5" value="${clampPriorityScore(episode.priority_score, suggestPriorityScoreForEpisode(episode))}" />`)}
-      ${createFieldMarkup("Topic", `<input name="topic" type="text" value="${episode.topic || ""}" />`, true)}
-      ${createFieldMarkup("Show Note / Blogpost URL", `<input name="show_notes_url" type="text" inputmode="url" autocapitalize="off" spellcheck="false" value="${episode.show_notes_url || ""}" />`, true)}
-      ${createFieldMarkup("Files URL", `<input name="release_files_url" type="text" inputmode="url" autocapitalize="off" spellcheck="false" value="${episode.release_files_url || ""}" />`, true)}
-      ${createFieldMarkup("Transcript", `<textarea name="transcript_text" rows="5">${episode.transcript_text || ""}</textarea>`, true)}
-      ${createFieldMarkup("Notes", `<textarea name="notes" rows="3">${episode.notes || ""}</textarea>`, true)}
+      ${createFieldMarkup("Disposition", `
+        <select name="editorial_disposition">
+          <option value="active" ${normalizeText(episode.editorial_disposition) === "active" ? "selected" : ""}>Active</option>
+          <option value="hold" ${normalizeText(episode.editorial_disposition) === "hold" ? "selected" : ""}>Hold</option>
+          <option value="archive" ${normalizeText(episode.editorial_disposition) === "archive" ? "selected" : ""}>Archive</option>
+          <option value="retire" ${normalizeText(episode.editorial_disposition) === "retire" ? "selected" : ""}>Retire</option>
+        </select>
+      `)}
+      ${createFieldMarkup("Topic", `<input name="topic" type="text" value="${escapeHtml(episode.topic || "")}" />`, true)}
+      ${createFieldMarkup("Show Note / Blogpost URL", `<input name="show_notes_url" type="text" inputmode="url" autocapitalize="off" spellcheck="false" value="${escapeHtml(episode.show_notes_url || "")}" />`, true)}
+      ${createFieldMarkup("Files URL", `<input name="release_files_url" type="text" inputmode="url" autocapitalize="off" spellcheck="false" value="${escapeHtml(episode.release_files_url || "")}" />`, true)}
+      ${createFieldMarkup("Transcript", `<textarea name="transcript_text" rows="5">${escapeHtml(episode.transcript_text || "")}</textarea>`, true)}
+      ${createFieldMarkup("Notes", `<textarea name="notes" rows="3">${escapeHtml(episode.notes || "")}</textarea>`, true)}
       <div class="inline-editor-actions full-width">
         <button type="submit" class="primary-button">Save Changes</button>
         <button type="button" class="secondary-button" data-inline-episode-schedule>Schedule Recommended Slot</button>
@@ -1478,7 +1605,7 @@ function filterEpisodes(episodes) {
   const releaseStatus = episodeReleaseFilter.value;
   const productionStatus = episodeProductionFilter.value;
   const transcriptStatus = episodeTranscriptFilter.value;
-  const sortMode = episodeSort.value || "closest_release";
+  const sortMode = episodeSort.value || "release_asc";
 
   const filtered = episodes.filter((episode) => {
     const haystack = [
@@ -1526,35 +1653,16 @@ function filterEpisodes(episodes) {
     if (activeEpisodePreset === "released_archive" && normalizeText(episode.release_status) !== "released") {
       return false;
     }
+    if (
+      activeEpisodePreset === "disposition_review"
+      && (normalizeText(episode.release_status) === "released" || normalizeText(episode.editorial_disposition || "active") !== "active")
+    ) {
+      return false;
+    }
     return true;
   });
 
-  filtered.sort((left, right) => {
-    if (sortMode === "guest_name") {
-      return normalizeText(left.guest_name).localeCompare(normalizeText(right.guest_name));
-    }
-    if (sortMode === "category") {
-      return normalizeText(left.category).localeCompare(normalizeText(right.category));
-    }
-    if (sortMode === "priority") {
-      return Number(right.priority_score || 0) - Number(left.priority_score || 0);
-    }
-    if (sortMode === "latest_interview") {
-      const leftDate = parseDate(left.interview_date);
-      const rightDate = parseDate(right.interview_date);
-      if (!leftDate && !rightDate) return Number(right.id || 0) - Number(left.id || 0);
-      if (!leftDate) return 1;
-      if (!rightDate) return -1;
-      return rightDate - leftDate;
-    }
-
-    const leftRelease = parseDate(left.release_date);
-    const rightRelease = parseDate(right.release_date);
-    if (!leftRelease && !rightRelease) return Number(right.priority_score || 0) - Number(left.priority_score || 0);
-    if (!leftRelease) return 1;
-    if (!rightRelease) return -1;
-    return leftRelease - rightRelease;
-  });
+  filtered.sort((left, right) => window.PlanningSort.compareEpisodes(left, right, sortMode));
 
   return filtered;
 }
@@ -1644,7 +1752,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     episodeResultsMeta,
     episodes.length,
     totalCount,
-    "No episodes tracked yet.",
+    "",
     "Use search, category, year, or status filters to focus the planning queue."
   );
 
@@ -1652,7 +1760,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
   if (!episodes.length) {
     episodeList.innerHTML = totalCount
       ? "<p class='guest-summary'>No episodes match the current planning controls.</p>"
-      : "<p class='guest-summary'>No episodes tracked yet.</p>";
+      : "<p class='guest-summary'>No episodes tracked yet. Add or import one from the planning tools above.</p>";
     episodeLoadMoreButton.classList.add("hidden");
     return;
   }
@@ -1672,32 +1780,35 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     card.innerHTML = `
       <div class="card-header-row">
         <div>
-          <h3>${episode.episode_title || "Untitled episode"}</h3>
-          <p>${episode.guest_name || "Guest not set"}</p>
+          <h3>${escapeHtml(episode.episode_title || "Untitled episode")}</h3>
+          <p>${escapeHtml(episode.guest_name || "Guest not set")}</p>
         </div>
         <div class="card-status-chips">
-          <span class="status-chip ${releaseTone}">${episode.release_status || "unplanned"}</span>
-          <span class="status-chip">${episode.production_status || "idea"}</span>
-          <span class="status-chip">${episode.promotion_status || "unknown"}</span>
+          <span class="status-chip ${releaseTone}">${escapeHtml(episode.release_status || "unplanned")}</span>
+          <span class="status-chip">${escapeHtml(episode.production_status || "idea")}</span>
+          <span class="status-chip">${escapeHtml(episode.promotion_status || "unknown")}</span>
         </div>
       </div>
       ${renderEpisodeBadges(episode)}
       <div class="operations-meta">
         <span>${episodeNumberLabel}</span>
-        <span>Topic: ${episode.topic || "Not set"}</span>
-        <span>Category: ${episode.category || "Not set"}</span>
+        <span>Published title: ${escapeHtml(episode.published_title || "Not set")}</span>
+        <span>Topic: ${escapeHtml(episode.topic || "Not set")}</span>
+        <span>Category: ${escapeHtml(episode.category || "Not set")}</span>
         <span>Email: ${renderLinkedValue(episode.guest_email)}</span>
         <span>Website: ${renderLinkedValue(episode.website)}</span>
         <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
         <span>Release: ${formatDateTime(episode.release_date)}</span>
-        <span>Status: ${episode.release_status || "unplanned"} / ${episode.production_status || "idea"}</span>
-        <span>Promo: ${episode.promotion_status || "unknown"}</span>
+        <span>Status: ${escapeHtml(episode.release_status || "unplanned")} / ${escapeHtml(episode.production_status || "idea")}</span>
+        <span>Owner: ${escapeHtml(episode.owner || "Unassigned")}</span>
+        <span>Disposition: ${escapeHtml(episode.editorial_disposition || "active")}</span>
+        <span>Promo: ${escapeHtml(episode.promotion_status || "unknown")}</span>
         <span>Readiness: ${episode.promotion_readiness?.score ?? 0}/100</span>
         <span>Priority: ${episode.priority_score ?? 0}</span>
         <span>Show Notes: ${renderLinkedValue(episode.show_notes_url, "Missing")}</span>
         <span>Files: ${renderLinkedValue(episode.release_files_url, "Missing")}</span>
         <span>Transcript: ${transcriptStatusLabel(episode)}</span>
-        <span>Source: ${episode.source_file_name || "Manual entry"}</span>
+        <span>Source: ${escapeHtml(episode.source_file_name || "Manual entry")}</span>
       </div>
       ${renderPromoReadiness(episode.promotion_readiness)}
       ${renderAiSchedulingCopilot(episode.ai_copilot)}
@@ -1713,6 +1824,13 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
           <span class="action-group-label">Core Actions</span>
           <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
           <button type="button" class="ghost-button" data-episode-action="form">Open In Form</button>
+          <button type="button" class="ghost-button" data-episode-action="activity">Activity</button>
+          <button type="button" class="ghost-button" data-episode-action="refresh">Refresh</button>
+          ${isScheduled && normalizeText(episode.production_status) === "ready" && normalizeText(episode.promotion_status) === "ready" ? `<button type="button" class="primary-button" data-episode-action="release">Mark Released</button>` : ""}
+          ${!isReleased ? `<button type="button" class="ghost-button" data-episode-action="accelerate">Accelerate</button>` : ""}
+          <button type="button" class="ghost-button" data-episode-action="hold">Hold</button>
+          <button type="button" class="ghost-button" data-episode-action="archive">Archive</button>
+          <button type="button" class="ghost-button" data-episode-action="retire">Retire</button>
           ${!isReleased ? `
             ${!isScheduled ? `<button type="button" class="secondary-button" data-episode-action="schedule">Schedule for Release</button>` : `
               <button type="button" class="secondary-button" data-episode-action="reschedule">Change Release Date</button>
@@ -1737,6 +1855,11 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
 
     const editButton = card.querySelector("[data-episode-action='edit']");
     const formButton = card.querySelector("[data-episode-action='form']");
+    const activityButton = card.querySelector("[data-episode-action='activity']");
+    const refreshButton = card.querySelector("[data-episode-action='refresh']");
+    const releaseButton = card.querySelector("[data-episode-action='release']");
+    const accelerateButton = card.querySelector("[data-episode-action='accelerate']");
+    const dispositionButtons = Array.from(card.querySelectorAll("[data-episode-action='hold'], [data-episode-action='archive'], [data-episode-action='retire']"));
     const scheduleButton = card.querySelector("[data-episode-action='schedule']");
     const rescheduleButton = card.querySelector("[data-episode-action='reschedule']");
     const unscheduleButton = card.querySelector("[data-episode-action='unschedule']");
@@ -1775,6 +1898,55 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
         `Loaded ${episode.episode_title || episode.guest_name || "episode"} into the main form. You can finish the details here or send the thank-you email when ready.`,
         "success",
       );
+    });
+    activityButton.addEventListener("click", async () => {
+      showAIModal(`Activity: ${episode.episode_title || episode.guest_name || "Episode"}`, "<p class='loading'>Loading activity…</p>");
+      try {
+        const activity = await fetchJSON(`/api/audit-events?entity_type=episode&entity_id=${encodeURIComponent(episode.id)}`);
+        showAIModal(`Activity: ${episode.episode_title || episode.guest_name || "Episode"}`, renderAuditTimeline(activity.events || []));
+      } catch (error) {
+        showAIModal("Activity unavailable", `<p class="error">${escapeHtml(error.message)}</p>`);
+      }
+    });
+    refreshButton.addEventListener("click", () => loadPlanning({ forceRefresh: true }));
+    if (accelerateButton) accelerateButton.addEventListener("click", () => openScheduleModal(episode));
+    if (releaseButton) {
+      releaseButton.addEventListener("click", async () => {
+        if (!confirmCriticalAction(`Mark ${episode.episode_title || "this episode"} as released?`)) return;
+        try {
+          const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
+            method: "POST",
+            body: JSON.stringify({
+              row_version: episode.row_version,
+              release_status: "released",
+              production_status: "released",
+              promotion_status: "released",
+            }),
+          });
+          replaceEpisodeInPayload(savedEpisode);
+          renderPlanning();
+          setMessage(episodeMessage, `${episode.episode_title || "Episode"} marked released.`, "success");
+        } catch (error) {
+          setMessage(episodeMessage, error.message, "error");
+        }
+      });
+    }
+    dispositionButtons.forEach((button) => {
+      button.addEventListener("click", async () => {
+        const disposition = button.dataset.episodeAction;
+        if (!confirmCriticalAction(`${disposition[0].toUpperCase()}${disposition.slice(1)} ${episode.episode_title || "this episode"}?`)) return;
+        try {
+          const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
+            method: "POST",
+            body: JSON.stringify({row_version: episode.row_version, editorial_disposition: disposition}),
+          });
+          replaceEpisodeInPayload(savedEpisode);
+          renderPlanning();
+          setMessage(episodeMessage, `${episode.episode_title || "Episode"} disposition set to ${disposition}.`, "success");
+        } catch (error) {
+          setMessage(episodeMessage, error.message, "error");
+        }
+      });
     });
     if (scheduleButton) {
       scheduleButton.addEventListener("click", () => {
@@ -1849,9 +2021,9 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
           const preview = await fetchJSON(`/api/episodes/${episode.id}/appreciation-template`);
           appreciationPreviewNode.classList.remove("hidden");
           appreciationPreviewNode.innerHTML = `
-            <h4>${preview.subject}</h4>
+            <h4>${escapeHtml(preview.subject)}</h4>
             <p>To: ${renderLinkedValue(episode.guest_email)}</p>
-            <pre>${preview.body}</pre>
+            <pre>${escapeHtml(preview.body)}</pre>
           `;
           releasePreviewNode.classList.add("hidden");
           releasePreviewNode.innerHTML = "";
@@ -1897,7 +2069,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
           sendAppreciationButton.disabled = false;
           sendAppreciationButton.textContent = "Send Thank You";
           appreciationPreviewNode.classList.remove("hidden");
-          appreciationPreviewNode.innerHTML = `<p class="composer-feedback success">Thank-you email sent to ${episode.guest_name || episode.guest_email}.</p>`;
+          appreciationPreviewNode.innerHTML = `<p class="composer-feedback success">Thank-you email sent to ${escapeHtml(episode.guest_name || episode.guest_email)}.</p>`;
           releasePreviewNode.classList.add("hidden");
           releasePreviewNode.innerHTML = "";
           activeEpisodeActionFeedback = {
@@ -2011,7 +2183,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
           sendReleaseButton.disabled = false;
           sendReleaseButton.textContent = "Send Release Email";
           releasePreviewNode.classList.remove("hidden");
-          releasePreviewNode.innerHTML = `<p class="composer-feedback success">Release email sent to ${episode.guest_name || episode.guest_email}.</p>`;
+          releasePreviewNode.innerHTML = `<p class="composer-feedback success">Release email sent to ${escapeHtml(episode.guest_name || episode.guest_email)}.</p>`;
           appreciationPreviewNode.classList.add("hidden");
           appreciationPreviewNode.innerHTML = "";
           activeEpisodeActionFeedback = {
@@ -2107,37 +2279,37 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
     card.innerHTML = `
       <div class="card-header-row">
         <div>
-          <h3>#${index + 1} ${episode.episode_title || episode.topic || "Untitled episode"}</h3>
-          <p>${episode.guest_name || "Guest not set"}</p>
+          <h3>#${index + 1} ${escapeHtml(episode.episode_title || episode.topic || "Untitled episode")}</h3>
+          <p>${escapeHtml(episode.guest_name || "Guest not set")}</p>
         </div>
         <div class="card-status-chips">
           <span class="status-chip pending">Score ${episode.priority_score ?? 0}</span>
-          <span class="status-chip">${episode.production_status || "idea"}</span>
-          <span class="status-chip">${episode.promotion_status || "unknown"}</span>
+          <span class="status-chip">${escapeHtml(episode.production_status || "idea")}</span>
+          <span class="status-chip">${escapeHtml(episode.promotion_status || "unknown")}</span>
         </div>
       </div>
       <div class="operations-meta">
         <span>${episodeNumberLabel}</span>
         <span>Recommended Slot: ${formatDateTime(episode.recommended_release_date)}</span>
-        <span>Category: ${episode.category || "Not set"}</span>
+        <span>Category: ${escapeHtml(episode.category || "Not set")}</span>
         <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
-        <span>Production: ${episode.production_status || "idea"}</span>
-        <span>Promo: ${episode.promotion_status || "unknown"}</span>
+        <span>Production: ${escapeHtml(episode.production_status || "idea")}</span>
+        <span>Promo: ${escapeHtml(episode.promotion_status || "unknown")}</span>
       </div>
       ${signals.length ? `<div class="signal-list">${signals.map((signal) => `<span class="signal-chip ${signal.tone}">${signal.label}</span>`).join("")}</div>` : ""}
       <div class="operations-preview">
-        <p>${insights.summary}</p>
-        ${insights.strengths.length ? `<div class="insight-stack"><strong class="insight-label">Why now</strong><ul>${insights.strengths.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
-        ${insights.cautions.length ? `<div class="insight-stack caution"><strong class="insight-label">Watchouts</strong><ul>${insights.cautions.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
+        <p>${escapeHtml(insights.summary)}</p>
+        ${insights.strengths.length ? `<div class="insight-stack"><strong class="insight-label">Why now</strong><ul>${insights.strengths.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+        ${insights.cautions.length ? `<div class="insight-stack caution"><strong class="insight-label">Watchouts</strong><ul>${insights.cautions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
       </div>
-      ${episode.why_now?.length ? `<div class="operations-preview"><strong class="insight-label">Why this next</strong><ul>${episode.why_now.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
-      ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
+      ${episode.why_now?.length ? `<div class="operations-preview"><strong class="insight-label">Why this next</strong><ul>${episode.why_now.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+      ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
       ${renderSeasonalFit(episode.seasonal_fit)}
       ${renderAiSchedulingCopilot(episode.ai_copilot)}
       ${renderMonthlyAngleDecision(episode, { always: true })}
-      ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${item}</li>`).join("")}</ul></div>` : ""}
-      ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${episode.archive_overlap.message}</p></div>` : ""}
-      ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${episode.topic_cluster_warning.message}</p></div>` : ""}
+      ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+      ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${escapeHtml(episode.archive_overlap.message)}</p></div>` : ""}
+      ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${escapeHtml(episode.topic_cluster_warning.message)}</p></div>` : ""}
       ${renderPromoReadiness(episode.promotion_readiness)}
       ${renderGuestResearchCopilot(episode.guest_research)}
       ${renderCopyAssist(episode.copy_assist)}
@@ -2192,6 +2364,7 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
           ...episode,
           release_date: formatDateForDateTimeInput(episode.recommended_release_date),
           release_status: "scheduled",
+          enforce_readiness: true,
           priority_score: clampPriorityScore(
             episode.priority_score,
             suggestPriorityScoreForEpisode({
@@ -2310,8 +2483,152 @@ function renderPlanning() {
   renderCategoryOptions(categories);
   renderWeeklySystemPanel(latestPlanningPayload.weekly_system);
   renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
+  renderReleaseWorkspace(episodes);
   renderRecommendations(filterRecommendations(recommendations), recommendations.length, episodeNumberMap);
   renderEpisodes(filterEpisodes(episodes), episodes.length, episodeNumberMap);
+}
+
+function calendarDateKey(value) {
+  const date = value instanceof Date ? value : parseDate(value);
+  if (!date) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function episodeCalendarTone(episode) {
+  const releaseStatus = normalizeText(episode.release_status);
+  if (releaseStatus === "released") return "released";
+  if (
+    releaseStatus === "scheduled"
+    && (
+      normalizeText(episode.production_status) !== "ready"
+      || normalizeText(episode.promotion_status) !== "ready"
+    )
+  ) return "risk";
+  return "scheduled";
+}
+
+function closeEpisodeDetailsModal({ restoreFocus = true } = {}) {
+  if (!episodeDetailsModal) return;
+  episodeDetailsModal.classList.add("hidden");
+  selectedCalendarEpisodeId = null;
+  if (restoreFocus && calendarReturnFocus?.isConnected) calendarReturnFocus.focus();
+  calendarReturnFocus = null;
+}
+
+function openEpisodeDetailsModal(episode, trigger) {
+  if (!episodeDetailsModal || !episodeDetailsBody) return;
+  selectedCalendarEpisodeId = Number(episode.id);
+  calendarReturnFocus = trigger || null;
+  const workingTitle = episode.working_title || episode.episode_title || "Untitled episode";
+  episodeDetailsTitle.textContent = workingTitle;
+  episodeDetailsBody.innerHTML = `
+    <div class="episode-detail-status">
+      <span class="status-chip ${episodeCalendarTone(episode)}">${escapeHtml(episode.release_status || "unplanned")}</span>
+      <span class="status-chip">${escapeHtml(episode.production_status || "idea")}</span>
+      <span class="status-chip">${escapeHtml(episode.promotion_status || "unknown")}</span>
+    </div>
+    <dl class="episode-detail-grid">
+      <div><dt>Working title</dt><dd>${escapeHtml(workingTitle)}</dd></div>
+      <div><dt>Published title</dt><dd>${escapeHtml(episode.published_title || "Not set")}</dd></div>
+      <div><dt>Guest</dt><dd>${escapeHtml(episode.guest_name || "Not set")}</dd></div>
+      <div><dt>Episode number</dt><dd>${escapeHtml(episode.legacy_episode_number || "TBD")}</dd></div>
+      <div><dt>Release</dt><dd>${escapeHtml(formatDateTime(episode.release_date))}</dd></div>
+      <div><dt>Owner</dt><dd>${escapeHtml(episode.owner || "Unassigned")}</dd></div>
+      <div><dt>Category</dt><dd>${escapeHtml(episode.category || "Not set")}</dd></div>
+      <div><dt>Transcript</dt><dd>${escapeHtml(transcriptStatusLabel(episode))}</dd></div>
+      <div><dt>Show notes</dt><dd>${renderLinkedValue(episode.show_notes_url, "Missing")}</dd></div>
+      <div><dt>Release files</dt><dd>${renderLinkedValue(episode.release_files_url, "Missing")}</dd></div>
+    </dl>
+  `;
+  episodeDetailsModal.classList.remove("hidden");
+  episodeDetailsClose.focus();
+}
+
+function renderReleaseCalendar(episodes) {
+  if (!releaseCalendar) return;
+  const monthStart = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth(), 1);
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(1 - gridStart.getDay());
+  const todayKey = calendarDateKey(new Date());
+  const eventsByDate = new Map();
+
+  episodes
+    .filter((episode) => ["scheduled", "released"].includes(normalizeText(episode.release_status)))
+    .filter((episode) => parseDate(episode.release_date))
+    .forEach((episode) => {
+      const key = calendarDateKey(episode.release_date);
+      if (!eventsByDate.has(key)) eventsByDate.set(key, []);
+      eventsByDate.get(key).push(episode);
+    });
+  eventsByDate.forEach((items) => items.sort((left, right) => (
+    parseDate(left.release_date) - parseDate(right.release_date)
+    || Number(left.id || 0) - Number(right.id || 0)
+  )));
+
+  releaseCalendarTitle.textContent = monthStart.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+  const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    .map((label) => `<div class="calendar-weekday" role="columnheader">${label}</div>`)
+    .join("");
+  const dayCells = [];
+  for (let offset = 0; offset < 42; offset += 1) {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + offset);
+    const key = calendarDateKey(date);
+    const isOutsideMonth = date.getMonth() !== monthStart.getMonth();
+    const events = eventsByDate.get(key) || [];
+    const dots = events.map((episode) => {
+      const title = episode.working_title || episode.episode_title || "Untitled episode";
+      const tone = episodeCalendarTone(episode);
+      return `<button type="button" class="calendar-event-dot ${tone}" data-calendar-episode="${Number(episode.id)}" aria-label="${escapeHtml(`${title}, ${episode.release_status}, ${formatDateTime(episode.release_date)}`)}" title="${escapeHtml(title)}"></button>`;
+    }).join("");
+    dayCells.push(`
+      <div class="calendar-day ${isOutsideMonth ? "outside-month" : ""} ${key === todayKey ? "today" : ""}" role="gridcell" aria-label="${escapeHtml(date.toLocaleDateString())}">
+        <span class="calendar-day-number">${date.getDate()}</span>
+        <div class="calendar-day-events">${dots}</div>
+        ${events.length > 3 ? `<small>${events.length} releases</small>` : ""}
+      </div>
+    `);
+  }
+  releaseCalendar.innerHTML = `<div class="calendar-grid" role="grid" aria-label="${escapeHtml(releaseCalendarTitle.textContent)}">${weekdayLabels}${dayCells.join("")}</div>`;
+  releaseCalendar.querySelectorAll("[data-calendar-episode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const episode = episodes.find((item) => Number(item.id) === Number(button.dataset.calendarEpisode));
+      if (episode) openEpisodeDetailsModal(episode, button);
+    });
+  });
+}
+
+function renderReleaseWorkspace(episodes) {
+  if (!releaseCalendar || !backlogBoard) return;
+  renderReleaseCalendar(episodes);
+
+  const stages = [
+    ["Recorded", (item) => normalizeText(item.production_status) === "recorded"],
+    ["Editing", (item) => normalizeText(item.production_status) === "editing"],
+    ["Assets needed", (item) => normalizeText(item.promotion_status) === "needs_assets"],
+    ["Ready", (item) => normalizeText(item.production_status) === "ready" && normalizeText(item.release_status) === "unplanned"],
+    ["Scheduled", (item) => normalizeText(item.release_status) === "scheduled"],
+    ["Released", (item) => normalizeText(item.release_status) === "released"],
+  ];
+  backlogBoard.innerHTML = stages.map(([label, matches]) => {
+    const items = episodes.filter(matches);
+    return `<section class="planning-column"><h4>${escapeHtml(label)} <span>${items.length}</span></h4>${items.slice(0, 5).map((item) => `<button type="button" class="mini-card board-item" data-board-episode="${Number(item.id)}"><strong>${escapeHtml(item.episode_title || item.topic || "Untitled")}</strong><small>${escapeHtml(item.guest_name || "Guest not set")}</small></button>`).join("") || `<p class="empty-copy">No episodes</p>`}</section>`;
+  }).join("");
+  backlogBoard.querySelectorAll("[data-board-episode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      episodeSearchInput.value = String(button.dataset.boardEpisode || "");
+      const episode = episodes.find((item) => String(item.id) === button.dataset.boardEpisode);
+      if (episode) episodeSearchInput.value = episode.episode_title || episode.guest_name || "";
+      renderPlanning();
+      episodeSearchInput.focus();
+    });
+  });
 }
 
 async function hydrateAiSchedulingCopilot() {
@@ -2493,30 +2810,30 @@ if (askSyncForm) {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(askSyncForm).entries());
     payload.overwrite_existing = Boolean(askSyncForm.elements.overwrite_existing.checked);
+    payload.preview_only = true;
+    pendingAskSyncRequest = { ...payload };
     const submitButton = askSyncForm.querySelector("button[type='submit']");
     submitButton.disabled = true;
-    submitButton.textContent = "Syncing...";
-    setMessage(askSyncMessage, "Syncing Ask Mirror Talk transcripts...", "pending");
+    submitButton.textContent = "Reviewing...";
+    setMessage(askSyncMessage, "Finding safe transcript matches for review...", "pending");
     try {
       const result = await fetchJSON("/api/ask-mirror-talk/sync", {
         method: "POST",
         body: JSON.stringify(payload),
       });
       const summary = [
-        `Updated ${result.updated} episode${result.updated === 1 ? "" : "s"}`,
-        `${result.matched} matched`,
+        `${result.matched} proposed match${result.matched === 1 ? "" : "es"}`,
         `${result.unmatched_local} unmatched`,
       ].join(" · ");
-      setMessage(askSyncMessage, summary, "success");
+      setMessage(askSyncMessage, `${summary}. Nothing has been changed yet.`, "success");
       renderAskSyncBreakdown(result);
-      await loadPlanning();
     } catch (error) {
       console.error("Ask sync error:", error);
       setMessage(askSyncMessage, error.message || "Failed to sync transcripts", "error");
       renderAskSyncBreakdown(null);
     } finally {
       submitButton.disabled = false;
-      submitButton.textContent = "Sync Matching Transcripts";
+      submitButton.textContent = "Review Transcript Matches";
     }
   });
 }
@@ -2581,6 +2898,7 @@ if (refreshButton) {
     visibleRecommendationCount = RECOMMENDATION_PAGE_SIZE;
     visibleEpisodeCount = EPISODE_PAGE_SIZE;
     renderPlanning();
+    window.PerformanceUtils?.updateWorkspaceUrlState({ q: episodeSearchInput.value });
   });
   node.addEventListener("change", () => {
     visibleRecommendationCount = RECOMMENDATION_PAGE_SIZE;
@@ -2659,13 +2977,53 @@ function applyUrlState() {
 planningTabButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setPlanningTab(button.dataset.planningTab || "release_planning");
+    window.PerformanceUtils?.updateWorkspaceUrlState({ tab: activePlanningTab });
   });
 });
+window.PerformanceUtils?.installKeyboardTabs(planningTabButtons, setPlanningTab);
 
 renderExportFields();
 resetEpisodeForm();
 applyUrlState();
 episodeForm.elements.outreach_plan.value = JSON.stringify(normalizeOutreachPlan(null));
+
+calendarPreviousButton?.addEventListener("click", () => {
+  calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() - 1, 1);
+  renderReleaseCalendar(latestPlanningPayload.episodes || []);
+});
+calendarTodayButton?.addEventListener("click", () => {
+  const now = new Date();
+  calendarCursor = new Date(now.getFullYear(), now.getMonth(), 1);
+  renderReleaseCalendar(latestPlanningPayload.episodes || []);
+});
+calendarNextButton?.addEventListener("click", () => {
+  calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() + 1, 1);
+  renderReleaseCalendar(latestPlanningPayload.episodes || []);
+});
+episodeDetailsClose?.addEventListener("click", () => closeEpisodeDetailsModal());
+episodeDetailsDismiss?.addEventListener("click", () => closeEpisodeDetailsModal());
+episodeDetailsModal?.addEventListener("click", (event) => {
+  if (event.target === episodeDetailsModal) closeEpisodeDetailsModal();
+});
+episodeDetailsEdit?.addEventListener("click", async () => {
+  const episode = (latestPlanningPayload.episodes || []).find(
+    (item) => Number(item.id) === Number(selectedCalendarEpisodeId),
+  );
+  if (!episode) return;
+  try {
+    const fullEpisode = await hydrateEpisodeForEditing(episode);
+    closeEpisodeDetailsModal({ restoreFocus: false });
+    loadEpisodeIntoForm(fullEpisode);
+    setMessage(episodeMessage, `Loaded ${episode.episode_title || "episode"} into the editor.`, "success");
+  } catch (error) {
+    setMessage(episodeMessage, error.message || "Could not load episode details", "error");
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && episodeDetailsModal && !episodeDetailsModal.classList.contains("hidden")) {
+    closeEpisodeDetailsModal();
+  }
+});
 
 // Schedule modal event listener
 if (scheduleForm) {
@@ -2673,6 +3031,7 @@ if (scheduleForm) {
     event.preventDefault();
     const episodeId = scheduleForm.elements.episode_id.value;
     const releaseDate = scheduleForm.elements.release_date.value;
+    const scheduleOverrideReason = scheduleForm.elements.schedule_override_reason.value.trim();
     
     if (!episodeId || !releaseDate) {
       setMessage(scheduleModalMessage, "Please select a date and time.", "error");
@@ -2690,6 +3049,7 @@ if (scheduleForm) {
         body: JSON.stringify({
           release_date: releaseDate,
           release_status: "scheduled",
+          schedule_override_reason: scheduleOverrideReason,
         }),
       });
       replaceEpisodeInPayload(savedEpisode);

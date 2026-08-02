@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import jwt
 import requests
 
-from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
+from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
 
 
 class GoogleCalendarServiceAccountError(Exception):

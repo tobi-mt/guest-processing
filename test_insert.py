@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Test script to check column mapping issues."""
 
+__test__ = False  # Legacy executable diagnostic; covered by the maintained tests/ suite.
+
 import sqlite3
 import sys
 from pathlib import Path

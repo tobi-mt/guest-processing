@@ -3,6 +3,8 @@
 Test script to verify the Guest Database Manager app functionality.
 """
 
+__test__ = False  # Legacy executable diagnostic; covered by the maintained tests/ suite.
+
 import sys
 import os
 import sqlite3

@@ -10,6 +10,8 @@ import sqlite3
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from guest_database_manager.db_connection import connect_database
+
 logger = logging.getLogger(__name__)
 
 
@@ -118,7 +120,7 @@ class DatabaseOptimizer:
             ("idx_episodes_release_status", "episodes", "release_status"),
         ]
         
-        with sqlite3.connect(db_path) as conn:
+        with connect_database(db_path) as conn:
             for index_name, table_name, columns in indexes:
                 try:
                     conn.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name}({columns})")
@@ -130,7 +132,7 @@ class DatabaseOptimizer:
     @staticmethod
     def optimize_database(db_path: str) -> None:
         """Run VACUUM and ANALYZE to optimize database performance."""
-        with sqlite3.connect(db_path) as conn:
+        with connect_database(db_path) as conn:
             logger.info("Running ANALYZE to update query planner statistics...")
             conn.execute("ANALYZE")
             logger.info("Optimization complete")

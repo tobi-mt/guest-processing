@@ -1,5 +1,7 @@
 """Helper script to test Google Service Account Calendar integration."""
 
+__test__ = False  # Live credential diagnostic; contract behavior is tested offline.
+
 import os
 import sys
 from datetime import datetime, timezone

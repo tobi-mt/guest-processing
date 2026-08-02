@@ -1,0 +1,41 @@
+{
+  "captured_at": "2026-08-02T18:00:00+02:00",
+  "source": "Authenticated read-only review of the production web application",
+  "dashboard": {
+    "url": "https://guest-processing-production.up.railway.app/dashboard",
+    "total_guests": 290,
+    "processed": 272,
+    "unprocessed": 18,
+    "accepted": 204,
+    "declined": 12,
+    "skipped": 46,
+    "displayed_acceptance_rate": 0.78,
+    "strong_fits": 253,
+    "review_queue": 12,
+    "high_risk": 25,
+    "average_fit_score": 73
+  },
+  "operations": {
+    "url": "https://guest-processing-production.up.railway.app/operations",
+    "interviews": 70,
+    "pending_confirmations": 18,
+    "confirmed": 42,
+    "reminder_candidates": 0,
+    "visible_calendar_cleanup_alerts_minimum": 5
+  },
+  "planning": {
+    "url": "https://guest-processing-production.up.railway.app/planning",
+    "total_episodes": 556,
+    "released": 418,
+    "scheduled": 5,
+    "unreleased": 138,
+    "ready_in_queue": 92,
+    "needs_assets": 45,
+    "other_unreleased": 1,
+    "recommendations_visible": 4
+  },
+  "limitations": [
+    "Values were transcribed from authenticated production UI states; no direct production database query was executed.",
+    "The responsive viewport emulation did not take effect, so mobile behavior was not verified."
+  ]
+}

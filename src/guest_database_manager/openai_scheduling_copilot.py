@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from time import monotonic
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable
 from urllib.parse import quote_plus
 from xml.etree import ElementTree
 

@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a workflow, reliability, or usability improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the operator or guest problem before proposing implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: workspace
+    attributes:
+      label: Primary workspace
+      options:
+        - Guest Dashboard
+        - Operations
+        - Planning
+        - Intake or booking
+        - Platform/reliability
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome and acceptance criteria
+    validations:
+      required: true
+  - type: textarea
+    id: automation
+    attributes:
+      label: Human decision and automation boundary
+      description: State what may run automatically and what must require approval.
+    validations:
+      required: true
+  - type: textarea
+    id: measurement
+    attributes:
+      label: How will we know it works?
+      description: Include success metrics, guardrails, and data-quality considerations.

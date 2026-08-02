@@ -12,17 +12,19 @@ import tempfile
 import webbrowser
 import zipfile
 from csv import DictWriter
-from base64 import b64decode
+from base64 import b64decode, b64encode
 from time import monotonic, sleep
+from threading import Event, Thread
 from email.parser import BytesParser
 from email.policy import default
+from http.cookies import SimpleCookie
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -35,6 +37,7 @@ load_dotenv()
 from guest_database_manager.ask_mirror_talk_client import AskMirrorTalkClient, AskMirrorTalkClientError
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
+from guest_database_manager.db_connection import connect_database
 from guest_database_manager.email_manager import EmailManager
 from guest_database_manager.episode_planner import (
     build_episode_copy_assist,
@@ -45,6 +48,7 @@ from guest_database_manager.episode_planner import (
 from guest_database_manager.guest_recommender import (
     build_guest_recommendation_stats,
     enrich_guests_with_recommendations,
+    evaluate_guest_recommendations,
 )
 from guest_database_manager.guest_research import research_guest_from_google_search, research_guest_from_public_web
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncError
@@ -53,6 +57,9 @@ from guest_database_manager.google_service_account_calendar import (
     GoogleServiceAccountCalendarClient,
 )
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot, build_month_context
+from guest_database_manager.security import LoginRateLimiter, SessionError, SessionSigner, role_allows
+from guest_database_manager.maintenance import build_integrity_report, is_database_ready
+from guest_database_manager.metrics import build_operational_metrics
 
 # Import new AI assistant features
 try:
@@ -78,6 +85,9 @@ API_TOKEN_ENV_VAR = "MIRROR_TALK_INTAKE_API_TOKEN"
 DASHBOARD_USERNAME_ENV_VAR = "MIRROR_TALK_DASHBOARD_USERNAME"
 DASHBOARD_PASSWORD_ENV_VAR = "MIRROR_TALK_DASHBOARD_PASSWORD"
 DASHBOARD_SESSION_SECRET_ENV_VAR = "MIRROR_TALK_DASHBOARD_SESSION_SECRET"
+DASHBOARD_SESSION_TTL_ENV_VAR = "MIRROR_TALK_DASHBOARD_SESSION_TTL_SECONDS"
+DASHBOARD_ROLE_ENV_VAR = "MIRROR_TALK_DASHBOARD_ROLE"
+DASHBOARD_USERS_ENV_VAR = "MIRROR_TALK_DASHBOARD_USERS_JSON"
 EMAIL_SMTP_SERVER_ENV_VAR = "MIRROR_TALK_SMTP_SERVER"
 EMAIL_SMTP_PORT_ENV_VAR = "MIRROR_TALK_SMTP_PORT"
 EMAIL_USERNAME_ENV_VAR = "MIRROR_TALK_SMTP_USERNAME"
@@ -308,6 +318,8 @@ EXPORTABLE_FIELDS: Dict[str, list[str]] = {
         "guest_email",
         "website",
         "episode_title",
+        "working_title",
+        "published_title",
         "topic",
         "category",
         "interview_date",
@@ -321,6 +333,10 @@ EXPORTABLE_FIELDS: Dict[str, list[str]] = {
         "show_notes_url",
         "release_files_url",
         "transcript_text",
+        "transcript_source_id",
+        "transcript_synced_at",
+        "transcript_match_method",
+        "transcript_match_score",
         "outreach_plan",
         "source_file_name",
         "recommendation_reason",
@@ -357,6 +373,40 @@ def _normalize_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _configured_dashboard_users() -> Dict[str, Dict[str, str]]:
+    """Return configured dashboard identities while preserving legacy credentials."""
+    users: Dict[str, Dict[str, str]] = {}
+    raw_users = os.environ.get(DASHBOARD_USERS_ENV_VAR, "").strip()
+    if raw_users:
+        try:
+            parsed = json.loads(raw_users)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            for username, record in parsed.items():
+                normalized_username = _normalize_text(username)
+                if not normalized_username or not isinstance(record, dict):
+                    continue
+                password = _normalize_text(record.get("password"))
+                role = _normalize_text(record.get("role")).lower() or "viewer"
+                if password and role in {"viewer", "operator", "admin"}:
+                    users[normalized_username] = {"password": password, "role": role}
+
+    legacy_username = os.environ.get(DASHBOARD_USERNAME_ENV_VAR, "").strip()
+    legacy_password = os.environ.get(DASHBOARD_PASSWORD_ENV_VAR, "").strip()
+    legacy_role = os.environ.get(DASHBOARD_ROLE_ENV_VAR, "admin").strip().lower() or "admin"
+    if legacy_username and legacy_password and legacy_role in {"viewer", "operator", "admin"}:
+        users.setdefault(legacy_username, {"password": legacy_password, "role": legacy_role})
+    return users
+
+
+def _dashboard_auth_configured() -> bool:
+    return any(
+        os.environ.get(name, "").strip()
+        for name in (DASHBOARD_USERS_ENV_VAR, DASHBOARD_USERNAME_ENV_VAR, DASHBOARD_PASSWORD_ENV_VAR)
+    )
+
+
 def _normalize_website(value: Any) -> str:
     """Accept common website input patterns like www.example.com."""
     website = _normalize_text(value)
@@ -366,45 +416,45 @@ def _normalize_website(value: Any) -> str:
 
 
 def _normalize_episode_release_status(release_date: str, release_status: str) -> str:
-    """Treat dated future episodes as scheduled unless explicitly released."""
+    """Normalize explicit release state without publishing from a date alone."""
     normalized_status = _normalize_text(release_status).lower()
     normalized_date = _normalize_text(release_date)
     
-    # If explicitly marked as released, respect that (unless date is in future)
+    # Respect an explicit release decision, while keeping future-dated records
+    # scheduled instead of presenting them as already published.
     if normalized_status == "released":
         parsed_release = GuestWebService._parse_datetime_static(normalized_date)
         if parsed_release and parsed_release > datetime.now():
             return "scheduled"
         return "released"
+
+    if normalized_status == "scheduled":
+        return "scheduled"
     
-    # If there's a release date, determine status based on whether it's past or future
+    # A future date is enough to schedule an unplanned episode. A past date is not
+    # evidence that publication actually happened; that transition must be explicit.
     if normalized_date:
         parsed_release = GuestWebService._parse_datetime_static(normalized_date)
         if parsed_release:
-            # Past dates should be treated as released
-            if parsed_release <= datetime.now():
-                return "released"
-            # Future dates should be scheduled
-            return "scheduled"
-        # If we can't parse the date, treat it as scheduled for safety
-        return "scheduled"
+            return "scheduled" if parsed_release > datetime.now() else (normalized_status or "unplanned")
+        return normalized_status or "unplanned"
     
     return normalized_status or "unplanned"
 
 
 def validate_intake_payload(payload: Dict[str, str]) -> None:
     """Reject obviously spammy or low-effort intake submissions."""
-    combined_text = " ".join(str(payload.get(field, "")) for field in payload).lower()
+    combined_text = " ".join(str(payload.get(field_name, "")) for field_name in payload).lower()
 
     if any(keyword in combined_text for keyword in SPAM_KEYWORDS):
         raise WebInterfaceError("Your submission was flagged as spam.")
 
-    for field in LONG_TEXT_FIELDS:
-        value = str(payload.get(field, "")).strip()
+    for field_name in LONG_TEXT_FIELDS:
+        value = str(payload.get(field_name, "")).strip()
         if not value:
             continue
-        if _word_count(value) < MIN_WORDS_BY_FIELD.get(field, 8):
-            field_label = field.replace("_", " ")
+        if _word_count(value) < MIN_WORDS_BY_FIELD.get(field_name, 8):
+            field_label = field_name.replace("_", " ")
             raise WebInterfaceError(f"Please provide a more complete answer for: {field_label}")
 
 
@@ -583,15 +633,39 @@ class GuestWebService:
 
     db_path: Path
     _payload_cache: Dict[str, tuple[float, Dict[str, Any]]] = field(default_factory=dict, init=False, repr=False)
+    _outbox_stop: Optional[Event] = field(default=None, init=False, repr=False)
+    _outbox_thread: Optional[Thread] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
-        if self.database.get_email_outbox_count() > 0:
-            try:
-                self.process_pending_email_outbox(limit=5)
-            except Exception:
-                # Queue processing is best-effort during service startup.
-                pass
+
+    def start_outbox_worker(self, *, interval_seconds: float = 30.0) -> None:
+        """Start one daemon worker that continuously drains due communications."""
+        if self._outbox_thread and self._outbox_thread.is_alive():
+            return
+        self._outbox_stop = Event()
+        worker_id = f"web-{secrets.token_hex(6)}"
+
+        def run() -> None:
+            assert self._outbox_stop is not None
+            while not self._outbox_stop.is_set():
+                try:
+                    self.process_pending_email_outbox(limit=10, worker_id=worker_id)
+                except Exception:
+                    # Attempt details remain in the outbox; the worker must survive
+                    # transient provider and database failures.
+                    pass
+                self._outbox_stop.wait(max(1.0, float(interval_seconds)))
+
+        self._outbox_thread = Thread(target=run, name="guest-email-outbox", daemon=True)
+        self._outbox_thread.start()
+
+    def stop_outbox_worker(self, *, timeout_seconds: float = 5.0) -> None:
+        """Stop the background worker during graceful server shutdown."""
+        if self._outbox_stop:
+            self._outbox_stop.set()
+        if self._outbox_thread and self._outbox_thread.is_alive():
+            self._outbox_thread.join(timeout=max(0.0, float(timeout_seconds)))
 
     @staticmethod
     def _payload_cache_ttl(cache_key: str) -> float:
@@ -761,6 +835,22 @@ class GuestWebService:
         
         # Build guest context (optimized to reuse episodes/interviews lists)
         for guest in guests:
+            applications = self.database.list_guest_applications(int(guest["id"]))
+            latest_application = applications[0] if applications else None
+            if latest_application:
+                submitted_at = self._parse_datetime_static(latest_application.get("submitted_at"))
+                age_days = max(0, (datetime.now() - submitted_at).days) if submitted_at else None
+                guest["application_summary"] = {
+                    "id": latest_application["id"],
+                    "source": latest_application["source"],
+                    "status": latest_application["status"],
+                    "submitted_at": latest_application["submitted_at"],
+                    "age_days": age_days,
+                    "sla_breached": bool(age_days is not None and age_days >= 7 and latest_application["status"] in {"submitted", "triage", "needs_information"}),
+                    "submission_count": len(applications),
+                }
+            else:
+                guest["application_summary"] = None
             if not skip_expensive_enrichment:
                 guest["promotion_profile"] = self._build_guest_promotion_profile(guest)
             guest["planning_summary"] = self._build_guest_planning_summary(guest, episodes)
@@ -784,11 +874,16 @@ class GuestWebService:
             },
             "email_stats": self.database.get_email_stats(),
             "email_enabled": self._build_email_manager().is_configured(),
+            "application_stats": {
+                status: sum(1 for guest in guests if (guest.get("application_summary") or {}).get("status") == status)
+                for status in ("submitted", "triage", "needs_information", "accepted", "declined", "withdrawn")
+            },
         }
         
         # Only include recommendation stats if we did the expensive enrichment
         if not skip_expensive_enrichment:
             result["recommendation_stats"] = build_guest_recommendation_stats(guests)
+            result["recommendation_evaluation"] = evaluate_guest_recommendations(guests)
         else:
             # Provide dummy stats for lite mode
             result["recommendation_stats"] = {
@@ -820,7 +915,25 @@ class GuestWebService:
             "weekly_outreach": self._build_weekly_outreach_focus(episodes),
             "weekly_system": self._build_weekly_system_payload(),
             "booking_alerts": self._build_operations_alerts(raw_interviews),
+            "outbox": {
+                "health": self.database.get_email_outbox_health(),
+                "failures": self.database.list_email_outbox_failures(),
+            },
+            "operational_metrics": build_operational_metrics(self.db_path),
         })
+
+    def retry_dead_letter_email(self, outbox_id: int) -> Dict[str, Any]:
+        """Retry one reviewed dead-letter communication."""
+        try:
+            result = self.database.retry_dead_letter_email(outbox_id)
+        except (ValueError, RuntimeError) as exc:
+            raise WebInterfaceError(str(exc)) from exc
+        self._invalidate_payload_cache("operations")
+        return {
+            "id": result["id"],
+            "status": result["status"],
+            "next_attempt_at": result["next_attempt_at"],
+        }
 
     def list_planning(self, compact: bool = False, force_refresh: bool = False) -> Dict[str, Any]:
         """Return episode planning data separate from interview operations."""
@@ -1142,8 +1255,8 @@ class GuestWebService:
         db_snapshot_bytes = b""
         with tempfile.TemporaryDirectory(prefix="mirror-talk-backup-") as temp_dir:
             snapshot_path = Path(temp_dir) / f"guest_database_snapshot_{timestamp_slug}.db"
-            source = sqlite3.connect(str(self.db_path))
-            destination = sqlite3.connect(str(snapshot_path))
+            source = connect_database(self.db_path)
+            destination = connect_database(snapshot_path)
             try:
                 source.backup(destination)
             finally:
@@ -2121,9 +2234,9 @@ class GuestWebService:
             summarized["transcript_omitted"] = False
         
         # Remove other large text fields to reduce payload size
-        for field in ["recommendation_reason", "show_notes", "promotional_copy"]:
-            if field in summarized and len(str(summarized.get(field, ""))) > 500:
-                summarized[field] = str(summarized[field])[:500] + "..."
+        for field_name in ["recommendation_reason", "show_notes", "promotional_copy"]:
+            if field_name in summarized and len(str(summarized.get(field_name, ""))) > 500:
+                summarized[field_name] = str(summarized[field_name])[:500] + "..."
         
         return summarized
 
@@ -2311,10 +2424,9 @@ class GuestWebService:
         """Create a guest directly from the web form."""
         guest_data = build_guest_payload(payload, source_name=source_name)
         guest_id, _ = self.database.upsert_guest(guest_data)
-        # Don't invalidate full cache on single guest save - let it expire naturally
-        # This prevents expensive re-enrichment of ALL guests on every save
-        # Only invalidate planning caches as they're more time-sensitive
-        self._invalidate_payload_cache("planning", "planning_ai_copilot")
+        # A newly created identity must be visible immediately. Expensive
+        # enrichment remains lazy, but cached guest lists cannot retain a stale count.
+        self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         return serialize_guest(guest) if guest else {"id": guest_id}
 
@@ -2465,12 +2577,41 @@ class GuestWebService:
         else:
             raise WebInterfaceError(f"Unsupported status: {status}")
 
+        application_status = {
+            "accepted": "accepted",
+            "rejected": "declined",
+            "skipped": "withdrawn",
+            "unprocessed": "submitted",
+            "processed": "triage",
+        }[normalized_status]
+        self.database.transition_latest_guest_application(
+            guest_id,
+            application_status,
+            reason=skip_reason,
+        )
+
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest not found.")
-        # Don't invalidate guests cache - let it expire naturally for better performance
-        self._invalidate_payload_cache("planning", "planning_ai_copilot")
+        self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         return serialize_guest(guest)
+
+    def update_guest_application_status(
+        self, guest_id: int, status: str, *, reason: str = "", actor: str = "operator"
+    ) -> Dict[str, Any]:
+        """Move the latest application through its explicit review lifecycle."""
+        try:
+            application = self.database.transition_latest_guest_application(
+                guest_id,
+                status,
+                reason=reason,
+                actor=actor,
+                source="guest_dashboard",
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise WebInterfaceError(str(exc)) from exc
+        self._invalidate_payload_cache("guests", "guests_lite")
+        return application
 
     def send_guest_decision_email(self, guest_id: int, status: str, custom_message: str = "") -> Dict[str, Any]:
         """Send an approval/decline email and persist the resulting decision."""
@@ -2523,12 +2664,15 @@ class GuestWebService:
             raise WebInterfaceError("Dashboard email is not configured on the server.")
 
         guest_name = (guest.get("full_name") or guest.get("name") or "Guest").strip()
+        applications = self.database.list_guest_applications(guest_id)
+        application_id = applications[0]["id"] if applications else guest_id
+        decision_key = f"guest_decision:{application_id}:{normalized_status}"
 
         subject = subject.strip()
         body = body.strip()
 
         if subject and body:
-            sent = email_manager.send_email(guest_email, subject, body)
+            sent = email_manager.send_email(guest_email, subject, body, idempotency_key=decision_key)
         else:
             if normalized_status == "accepted":
                 sent = email_manager.send_acceptance_email(
@@ -2536,9 +2680,12 @@ class GuestWebService:
                     guest_email,
                     custom_message,
                     booking_url=self._booking_link_for_guest(guest_id),
+                    idempotency_key=decision_key,
                 )
             else:
-                sent = email_manager.send_rejection_email(guest_name, guest_email, custom_message)
+                sent = email_manager.send_rejection_email(
+                    guest_name, guest_email, custom_message, idempotency_key=decision_key
+                )
 
         if not sent:
             error_detail = (email_manager.last_error or "").strip()
@@ -2551,7 +2698,7 @@ class GuestWebService:
         else:
             self.database.reject_guest_with_email(guest_id, custom_message)
 
-        self._invalidate_payload_cache("planning", "planning_ai_copilot")
+        self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         updated_guest = self.database.get_guest_by_id(guest_id)
         if not updated_guest:
             raise WebInterfaceError("Guest not found after email send.")
@@ -2583,6 +2730,8 @@ class GuestWebService:
             raise WebInterfaceError("Guest not found.")
 
         updated_guest = {
+            "row_version": payload.get("row_version") or current.get("row_version"),
+            "owner": _normalize_text(payload.get("owner")) if "owner" in payload else current.get("owner"),
             "full_name": _normalize_text(payload.get("full_name")) or _normalize_text(current.get("full_name") or current.get("name")),
             "email": _normalize_text(payload.get("email")) or _normalize_text(current.get("email")),
             "website": _normalize_text(payload.get("website")) or _normalize_text(current.get("website")),
@@ -2640,7 +2789,7 @@ class GuestWebService:
         updated_guest["guest_research_updated_at"] = research.get("updated_at")
 
         self.database.update_guest_by_id(guest_id, updated_guest)
-        self._invalidate_payload_cache("planning", "planning_ai_copilot")
+        self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved after research.")
@@ -2671,7 +2820,7 @@ class GuestWebService:
         updated_guest["guest_research_updated_at"] = research.get("updated_at")
 
         self.database.update_guest_by_id(guest_id, updated_guest)
-        self._invalidate_payload_cache("planning", "planning_ai_copilot")
+        self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest could not be saved after search-assisted research.")
@@ -2748,7 +2897,8 @@ class GuestWebService:
         """Create or update an interview record."""
         interview_data = {
             "id": payload.get("id"),
-            "guest_id": payload.get("guest_id"),
+            "row_version": payload.get("row_version"),
+            "guest_id": int(payload["guest_id"]) if str(payload.get("guest_id") or "").isdigit() else None,
             "guest_name": _normalize_text(payload.get("guest_name")),
             "guest_email": _normalize_text(payload.get("guest_email")),
             "calendar_event_id": _normalize_text(payload.get("calendar_event_id")),
@@ -2766,6 +2916,7 @@ class GuestWebService:
             "reschedule_token": _normalize_text(payload.get("reschedule_token")),
             "reschedule_token_created_at": _normalize_text(payload.get("reschedule_token_created_at")),
             "notes": _normalize_text(payload.get("notes")),
+            "owner": _normalize_text(payload.get("owner")),
         }
 
         if not interview_data["guest_name"]:
@@ -3441,6 +3592,9 @@ class GuestWebService:
         )
         normalized_production_status = _normalize_text(payload.get("production_status")) or "idea"
         normalized_promotion_status = _normalize_text(payload.get("promotion_status")) or "unknown"
+        editorial_disposition = _normalize_text(payload.get("editorial_disposition")) or "active"
+        if editorial_disposition not in {"active", "hold", "archive", "retire"}:
+            raise WebInterfaceError("Editorial disposition must be active, hold, archive, or retire.")
         parsed_priority_score = _parse_priority_score(payload.get("priority_score"))
         if parsed_priority_score <= 0:
             parsed_priority_score = self._suggest_episode_priority_score(
@@ -3451,10 +3605,28 @@ class GuestWebService:
                 }
             )
         parsed_priority_score = _clamp_priority_score(parsed_priority_score)
+        if normalized_release_status == "scheduled" and bool(payload.get("enforce_readiness")):
+            missing = []
+            if not normalized_release_date:
+                missing.append("release date")
+            if not _normalize_text(payload.get("guest_name")):
+                missing.append("guest name")
+            if not _normalize_text(payload.get("episode_title")):
+                missing.append("episode title")
+            if normalized_production_status not in {"ready", "released"}:
+                missing.append("production ready")
+            schedule_override_reason = _normalize_text(payload.get("schedule_override_reason"))
+            if normalized_promotion_status != "ready" and not schedule_override_reason:
+                missing.append("promotion ready or an override reason")
+            if missing:
+                raise WebInterfaceError(f"Cannot schedule until ready: {', '.join(missing)}.")
         requested_legacy_episode_number = _normalize_text(payload.get("legacy_episode_number"))
         if requested_legacy_episode_number:
             legacy_episode_number = requested_legacy_episode_number
-        elif normalized_release_status == "scheduled":
+        elif (
+            normalized_release_status == "scheduled"
+            and (self._parse_datetime_static(normalized_release_date) or datetime.min) > datetime.now()
+        ):
             # Save the row first, then sequence all future scheduled rows together.
             # This avoids upsert collisions with later planned episodes that already
             # have the would-be next number.
@@ -3463,12 +3635,20 @@ class GuestWebService:
             legacy_episode_number = self._next_legacy_episode_number(payload.get("id"), normalized_release_date)
         episode_data = {
             "id": payload.get("id"),
-            "guest_id": payload.get("guest_id"),
-            "interview_id": payload.get("interview_id"),
+            "row_version": payload.get("row_version"),
+            "actor": "operator",
+            "source": "planning",
+            "reason": _normalize_text(payload.get("schedule_override_reason")),
+            "correlation_id": _normalize_text(payload.get("correlation_id")),
+            "guest_id": int(payload["guest_id"]) if str(payload.get("guest_id") or "").isdigit() else None,
+            "interview_id": int(payload["interview_id"]) if str(payload.get("interview_id") or "").isdigit() else None,
             "guest_name": _normalize_text(payload.get("guest_name")),
             "guest_email": _normalize_text(payload.get("guest_email")),
             "website": _normalize_text(payload.get("website")),
             "episode_title": _normalize_text(payload.get("episode_title")),
+            "working_title": _normalize_text(payload.get("working_title"))
+            or _normalize_text(payload.get("episode_title")),
+            "published_title": _normalize_text(payload.get("published_title")),
             "topic": _normalize_text(payload.get("topic")),
             "category": _normalize_text(payload.get("category")),
             "interview_date": _normalize_text(payload.get("interview_date")),
@@ -3486,18 +3666,52 @@ class GuestWebService:
             "show_notes_url": _normalize_text(payload.get("show_notes_url")),
             "release_files_url": _normalize_text(payload.get("release_files_url")),
             "transcript_text": _normalize_text(payload.get("transcript_text")),
+            "transcript_source_id": _normalize_text(payload.get("transcript_source_id")),
+            "transcript_synced_at": _normalize_text(payload.get("transcript_synced_at")),
+            "transcript_match_method": _normalize_text(payload.get("transcript_match_method")),
+            "transcript_match_score": int(payload.get("transcript_match_score") or 0),
             "outreach_plan": _normalize_outreach_plan(payload.get("outreach_plan")),
             "ai_monthly_angle_state": _normalize_text(payload.get("ai_monthly_angle_state")),
             "ai_monthly_angle_theme": _normalize_text(payload.get("ai_monthly_angle_theme")),
             "notes": _normalize_text(payload.get("notes")),
+            "owner": _normalize_text(payload.get("owner")),
+            "editorial_disposition": editorial_disposition,
         }
 
         if not episode_data["guest_name"]:
             raise WebInterfaceError("Episode guest name is required.")
         if not episode_data["episode_title"]:
             raise WebInterfaceError("Episode title is required.")
+        if episode_data["guest_id"]:
+            linked_guest = self.database.get_guest_by_id(int(episode_data["guest_id"]))
+            linked_name = _normalize_text((linked_guest or {}).get("full_name") or (linked_guest or {}).get("name"))
+            if not linked_guest:
+                raise WebInterfaceError("The selected guest no longer exists.")
+            if linked_name and linked_name.casefold() != episode_data["guest_name"].casefold():
+                raise WebInterfaceError(
+                    f'Episode guest name must match the linked guest "{linked_name}".'
+                )
+        if episode_data["interview_id"]:
+            linked_interview = self.database.get_interview_by_id(int(episode_data["interview_id"]))
+            interview_guest = _normalize_text((linked_interview or {}).get("guest_name"))
+            if not linked_interview:
+                raise WebInterfaceError("The selected interview no longer exists.")
+            normalized_interview_guest = self._extract_guest_name_from_interview_title(
+                (linked_interview or {}).get("title"), interview_guest
+            )
+            if (
+                normalized_interview_guest
+                and normalized_interview_guest.casefold() != episode_data["guest_name"].casefold()
+            ):
+                raise WebInterfaceError(
+                    "Episode guest name must match the normalized linked interview guest "
+                    f'"{normalized_interview_guest}".'
+                )
 
-        episode_id, _ = self.database.upsert_episode(episode_data)
+        try:
+            episode_id, _ = self.database.upsert_episode(episode_data)
+        except (sqlite3.IntegrityError, ValueError, RuntimeError) as exc:
+            raise WebInterfaceError(f"Episode could not be saved: {exc}") from exc
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
             raise WebInterfaceError("Episode could not be saved.")
@@ -3582,7 +3796,12 @@ class GuestWebService:
         linked_guest = None
         guest_id = interview.get("guest_id")
         if guest_id:
-            linked_guest = self.database.get_guest_by_id(int(guest_id))
+            candidate_guest = self.database.get_guest_by_id(int(guest_id))
+            candidate_name = _normalize_text(
+                (candidate_guest or {}).get("full_name") or (candidate_guest or {}).get("name")
+            )
+            if candidate_name.casefold() == guest_name.casefold():
+                linked_guest = candidate_guest
         if not linked_guest:
             linked_guest = self.database.get_guest_by_name(guest_name)
 
@@ -3593,7 +3812,7 @@ class GuestWebService:
 
         episode_payload = {
             "id": linked_episode.get("id") if linked_episode else None,
-            "guest_id": (linked_guest or {}).get("id") or interview.get("guest_id"),
+            "guest_id": (linked_guest or {}).get("id"),
             "interview_id": interview_id,
             "guest_name": guest_name,
             "guest_email": _normalize_text(interview.get("guest_email"))
@@ -3746,8 +3965,10 @@ class GuestWebService:
         overwrite_existing: bool = False,
         limit: int = 1000,
         search: str = "",
+        preview_only: bool = False,
+        approved_matches: Optional[list[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Enrich local planning records with transcripts from Ask Mirror Talk."""
+        """Preview or apply lossless transcript matches from Ask Mirror Talk."""
         client = self._build_ask_mirror_talk_client()
         if client is None:
             raise WebInterfaceError("Ask Mirror Talk sync is not configured.")
@@ -3789,9 +4010,17 @@ class GuestWebService:
         skipped_without_title = 0
         updated_transcript = 0
         updated_title_only = 0
+        skipped_unapproved = 0
         updated_titles: list[str] = []
+        proposed_matches: list[Dict[str, Any]] = []
         ambiguous_matches: list[Dict[str, Any]] = []
         used_remote_ids: set[Any] = set()
+        approved_keys = {
+            (int(item.get("local_episode_id")), str(item.get("remote_episode_ref")))
+            for item in (approved_matches or [])
+            if str(item.get("local_episode_id") or "").isdigit()
+            and str(item.get("remote_episode_ref") or "").strip()
+        }
 
         for episode in local_episodes:
             local_title_key = self._episode_match_key(episode.get("episode_title"))
@@ -3855,9 +4084,51 @@ class GuestWebService:
 
             transcript_text = _normalize_text(remote_episode.get("transcript_text"))
             remote_title = _normalize_text(remote_episode.get("title"))
+            remote_reference = str(
+                remote_episode.get("id")
+                if remote_episode.get("id") is not None
+                else self._episode_match_key(remote_title)
+            )
             transcript_exists = bool(_normalize_text(episode.get("transcript_text")))
             should_update_transcript = bool(transcript_text) and (overwrite_existing or not transcript_exists)
-            should_update_title = bool(remote_title) and remote_title != _normalize_text(episode.get("episode_title"))
+            should_update_title = bool(remote_title) and remote_title != _normalize_text(
+                episode.get("published_title")
+            )
+
+            proposed_matches.append(
+                {
+                    "local_episode": {
+                        "id": episode.get("id"),
+                        "working_title": _normalize_text(
+                            episode.get("working_title") or episode.get("episode_title")
+                        ),
+                        "published_title": _normalize_text(episode.get("published_title")),
+                        "guest_name": _normalize_text(episode.get("guest_name")),
+                        "release_date": _normalize_text(episode.get("release_date")),
+                        "release_status": _normalize_text(episode.get("release_status")),
+                    },
+                    "remote_episode": {
+                        "ref": remote_reference,
+                        "id": remote_episode.get("id"),
+                        "title": remote_title,
+                        "published_at": _normalize_text(remote_episode.get("published_at")),
+                        "has_transcript": bool(transcript_text),
+                    },
+                    "score": best_score,
+                    "method": best_method,
+                    "changes": {
+                        "transcript": should_update_transcript,
+                        "published_title": should_update_title,
+                        "existing_transcript_preserved": transcript_exists and not overwrite_existing,
+                    },
+                }
+            )
+
+            if preview_only:
+                continue
+            if approved_matches is not None and (int(episode["id"]), remote_reference) not in approved_keys:
+                skipped_unapproved += 1
+                continue
 
             if not should_update_transcript and not should_update_title:
                 if transcript_exists and transcript_text:
@@ -3872,13 +4143,17 @@ class GuestWebService:
             }
             if should_update_transcript:
                 payload["transcript_text"] = transcript_text
+                payload["transcript_synced_at"] = datetime.now(timezone.utc).isoformat()
                 updated_transcript += 1
             elif not transcript_text:
                 skipped_without_remote_transcript += 1
             if should_update_title:
-                payload["episode_title"] = remote_title
+                payload["published_title"] = remote_title
                 if not should_update_transcript:
                     updated_title_only += 1
+            payload["transcript_source_id"] = remote_reference
+            payload["transcript_match_method"] = best_method
+            payload["transcript_match_score"] = best_score
 
             self.update_episode(
                 episode["id"],
@@ -3898,6 +4173,9 @@ class GuestWebService:
             "updated": updated,
             "updated_transcript": updated_transcript,
             "updated_title_only": updated_title_only,
+            "preview_only": preview_only,
+            "proposed_matches": proposed_matches[:100],
+            "skipped_unapproved": skipped_unapproved,
             "skipped_ambiguous": skipped_ambiguous,
             "skipped_existing": skipped_existing,
             "skipped_without_remote_transcript": skipped_without_remote_transcript,
@@ -4141,7 +4419,10 @@ class GuestWebService:
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
 
-        sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        sent = email_manager.send_email(
+            guest_email, resolved_subject, resolved_body,
+            idempotency_key=f"weekly_reminder:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
+        )
         if not sent:
             error_detail = (email_manager.last_error or "").strip()
             if error_detail:
@@ -4207,7 +4488,10 @@ class GuestWebService:
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
 
-        sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        sent = email_manager.send_email(
+            guest_email, resolved_subject, resolved_body,
+            idempotency_key=f"interview_appreciation:{interview_id}",
+        )
         if not sent:
             error_detail = (email_manager.last_error or "").strip()
             if error_detail:
@@ -4272,6 +4556,7 @@ class GuestWebService:
                 resolved_subject,
                 resolved_body,
                 attachments=[invite_attachment],
+                idempotency_key=f"booking_confirmation:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
             )
         else:
             sent = email_manager.send_booking_confirmation_email(
@@ -4280,6 +4565,7 @@ class GuestWebService:
                 scheduled_for,
                 timezone_label,
                 join_url,
+                idempotency_key=f"booking_confirmation:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
             )
 
         if not sent:
@@ -4332,7 +4618,10 @@ class GuestWebService:
         resolved_body = body.strip() or preview["body"]
 
         if subject.strip() or body.strip():
-            sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+            sent = email_manager.send_email(
+                guest_email, resolved_subject, resolved_body,
+                idempotency_key=f"reschedule_link:{interview_id}:{_normalize_text(interview.get('reschedule_token'))}",
+            )
         else:
             sent = email_manager.send_reschedule_link_email(
                 guest_name,
@@ -4340,6 +4629,7 @@ class GuestWebService:
                 scheduled_for,
                 timezone_label,
                 reschedule_url,
+                idempotency_key=f"reschedule_link:{interview_id}:{_normalize_text(interview.get('reschedule_token'))}",
             )
 
         if not sent:
@@ -4384,7 +4674,10 @@ class GuestWebService:
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
 
-        sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        sent = email_manager.send_email(
+            guest_email, resolved_subject, resolved_body,
+            idempotency_key=f"interview_cancellation:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
+        )
         if not sent:
             error_detail = (email_manager.last_error or "").strip()
             if error_detail:
@@ -4449,7 +4742,10 @@ class GuestWebService:
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
 
-        sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        sent = email_manager.send_email(
+            guest_email, resolved_subject, resolved_body,
+            idempotency_key=f"episode_appreciation:{episode_id}",
+        )
         if not sent:
             error_detail = (email_manager.last_error or "").strip()
             if error_detail:
@@ -4518,7 +4814,10 @@ class GuestWebService:
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
 
-        sent = email_manager.send_email(guest_email, resolved_subject, resolved_body)
+        sent = email_manager.send_email(
+            guest_email, resolved_subject, resolved_body,
+            idempotency_key=f"episode_release:{episode_id}:{_normalize_text(episode.get('release_date'))}",
+        )
         if not sent:
             error_detail = (email_manager.last_error or "").strip()
             if error_detail:
@@ -4549,7 +4848,7 @@ class GuestWebService:
         query: str = "",
         dry_run: bool = False,
     ) -> Dict[str, Any]:
-        """Sync upcoming Google Calendar interview events into the interview tracker."""
+        """Build calendar reconciliation proposals; never write from a read/sync."""
         client = self._build_google_calendar_client()
         if client is None:
             raise WebInterfaceError("Google Calendar sync is not configured on the server.")
@@ -4562,30 +4861,91 @@ class GuestWebService:
             raise WebInterfaceError(str(exc)) from exc
 
         normalized = [client.normalize_event(event) for event in events]
-        if dry_run:
-            return {
-                "dry_run": True,
-                "count": len(normalized),
-                "interviews": [self._serialize_interview_reminder(item) for item in normalized],
-            }
-
-        synced = []
+        proposals = []
+        comparison_fields = (
+            "guest_name", "guest_email", "title", "scheduled_for", "timezone", "join_url",
+            "status", "confirmation_status", "calendar_event_id", "calendar_source", "event_updated_at",
+        )
         for event_data in normalized:
             existing_interview = None
             event_id = _normalize_text(event_data.get("calendar_event_id"))
             if event_id:
                 existing_interview = self.database.get_interview_by_calendar_event_id(event_id)
-            interview = self.create_interview(event_data)
-            if interview:
-                serialized = self._serialize_interview_reminder(interview)
-                serialized["sync_action"] = "updated" if existing_interview else "created"
-                synced.append(serialized)
+            action = "create"
+            reason = "Calendar event is not yet represented in Operations."
+            if existing_interview:
+                changed = [
+                    field for field in comparison_fields
+                    if _normalize_text(existing_interview.get(field)) != _normalize_text(event_data.get(field))
+                ]
+                if not changed:
+                    continue
+                action = "update"
+                reason = f"Calendar differs in: {', '.join(changed)}."
+                event_data = {**event_data, "id": existing_interview["id"], "row_version": existing_interview["row_version"]}
+            proposals.append(
+                {
+                    "calendar_event_id": event_id,
+                    "interview_id": existing_interview.get("id") if existing_interview else None,
+                    "action": action,
+                    "before": existing_interview,
+                    "after": event_data,
+                    "reason": reason,
+                }
+            )
+
+        correlation_id = f"calendar-sync-{secrets.token_hex(8)}"
+        stored = [] if dry_run else self.database.create_calendar_reconciliation_proposals(
+            proposals, correlation_id=correlation_id
+        )
+        public_proposals = []
+        for index, proposal in enumerate(proposals):
+            item = {
+                "action": proposal["action"],
+                "calendar_event_id": proposal["calendar_event_id"],
+                "interview_id": proposal["interview_id"],
+                "reason": proposal["reason"],
+                "after": self._serialize_interview_reminder(proposal["after"]),
+            }
+            if stored:
+                item.update({"id": stored[index]["id"], "row_version": stored[index]["row_version"]})
+            public_proposals.append(item)
 
         return {
-            "dry_run": False,
-            "count": len(synced),
-            "interviews": synced,
+            "dry_run": dry_run,
+            "count": len(public_proposals),
+            "correlation_id": correlation_id,
+            "proposals": public_proposals,
         }
+
+    def apply_calendar_reconciliation_proposals(self, proposal_ids: Iterable[int]) -> Dict[str, Any]:
+        """Apply only proposals explicitly approved by an operator."""
+        applied = []
+        for proposal_id in proposal_ids:
+            proposal = self.database.get_calendar_reconciliation_proposal(int(proposal_id))
+            if not proposal or proposal.get("status") != "pending":
+                raise WebInterfaceError(f"Calendar proposal {proposal_id} is no longer pending.")
+            after = json.loads(proposal.get("after_json") or "{}")
+            self.database.mark_calendar_reconciliation_proposal(
+                int(proposal_id), status="approved", expected_version=int(proposal["row_version"])
+            )
+            try:
+                interview = self.create_interview(after)
+            except Exception as exc:
+                current = self.database.get_calendar_reconciliation_proposal(int(proposal_id))
+                if current:
+                    self.database.mark_calendar_reconciliation_proposal(
+                        int(proposal_id), status="failed", expected_version=int(current["row_version"])
+                    )
+                raise WebInterfaceError(f"Calendar proposal {proposal_id} failed: {exc}") from exc
+            current = self.database.get_calendar_reconciliation_proposal(int(proposal_id))
+            assert current is not None
+            self.database.mark_calendar_reconciliation_proposal(
+                int(proposal_id), status="applied", expected_version=int(current["row_version"])
+            )
+            applied.append(self._serialize_interview_reminder(interview))
+        self._invalidate_payload_cache("operations")
+        return {"count": len(applied), "interviews": applied}
 
     def push_interview_to_google_calendar(self, interview_id: int) -> Dict[str, Any]:
         """Push a linked interview record back to its Google Calendar event."""
@@ -4936,8 +5296,12 @@ class GuestWebService:
             return
 
         guest_name = _normalize_text(guest.get("full_name")) or "there"
+        applications = self.database.list_guest_applications(int(guest["id"])) if guest.get("id") else []
+        effect_id = applications[0]["id"] if applications else guest.get("id") or guest_email
         try:
-            email_manager.send_intake_confirmation_email(guest_name, guest_email)
+            email_manager.send_intake_confirmation_email(
+                guest_name, guest_email, idempotency_key=f"intake_confirmation:{effect_id}"
+            )
         except Exception:
             return
 
@@ -4960,6 +5324,7 @@ class GuestWebService:
                 guest_email,
                 intake_url,
                 agency_name,
+                idempotency_key=f"personal_application_request:{guest_email}:{intake_url}",
             )
         except Exception:
             return
@@ -4991,6 +5356,7 @@ class GuestWebService:
                 guest_email,
                 intake_url,
                 agency_name,
+                idempotency_key=f"personal_application_resend:{guest_id}:{secrets.token_hex(8)}",
             )
         except Exception as exc:
             error_detail = str(exc).strip()
@@ -5028,7 +5394,10 @@ class GuestWebService:
         guest_name = _normalize_text(guest.get("full_name")) or "there"
         booking_url = self._booking_link_for_guest(guest_id)
         try:
-            sent = email_manager.send_booking_link_email(guest_name, guest_email, booking_url)
+            sent = email_manager.send_booking_link_email(
+                guest_name, guest_email, booking_url,
+                idempotency_key=f"booking_link_resend:{guest_id}:{secrets.token_hex(8)}",
+            )
         except Exception as exc:
             error_detail = str(exc).strip()
             raise WebInterfaceError(error_detail or "The booking link email could not be sent.") from exc
@@ -5073,6 +5442,7 @@ class GuestWebService:
 
         sent = False
         last_error = ""
+        idempotency_key = f"booking_confirmation:{interview.get('id')}:{scheduled_for.isoformat()}"
         if email_manager.is_configured():
             for attempt in range(1, BOOKING_CONFIRMATION_RETRY_ATTEMPTS + 1):
                 try:
@@ -5082,6 +5452,7 @@ class GuestWebService:
                         scheduled_for,
                         timezone_label,
                         join_url,
+                        idempotency_key=idempotency_key,
                     )
                 except Exception as exc:
                     last_error = str(exc).strip() or exc.__class__.__name__
@@ -5132,6 +5503,8 @@ class GuestWebService:
             next_attempt_at=next_attempt_at,
             status="retrying" if email_manager.is_configured() else "pending",
             last_error=last_error,
+            idempotency_key=f"booking_confirmation:{interview['id']}:{scheduled_for.isoformat()}",
+            correlation_id=f"interview:{interview['id']}",
         )
         self.database.log_interview_email(
             interview_id=int(interview["id"]),
@@ -5142,13 +5515,17 @@ class GuestWebService:
             notes=f"{template['subject']} | outbox:{outbox_id} | {last_error}".strip(),
         )
 
-    def process_pending_email_outbox(self, *, limit: int = 10) -> Dict[str, int]:
+    def process_pending_email_outbox(self, *, limit: int = 10, worker_id: str = "") -> Dict[str, int]:
         """Retry queued emails and deliver any whose next attempt is due."""
+        worker_id = worker_id or f"manual-{secrets.token_hex(6)}"
+        run_id = self.database.start_automation_run("email_outbox", worker_id=worker_id)
         email_manager = self._build_email_manager()
         if not email_manager.is_configured():
-            return {"checked": 0, "sent": 0, "retrying": 0, "failed": 0}
+            result = {"checked": 0, "sent": 0, "retrying": 0, "failed": 0}
+            self.database.finish_automation_run(run_id, status="skipped", details={"reason": "email_not_configured"})
+            return result
 
-        due_entries = self.database.get_due_email_outbox(limit=limit)
+        due_entries = self.database.claim_due_email_outbox(worker_id=worker_id, limit=limit)
         results = {"checked": len(due_entries), "sent": 0, "retrying": 0, "failed": 0}
 
         for entry in due_entries:
@@ -5177,6 +5554,7 @@ class GuestWebService:
                     _normalize_text(entry.get("subject")),
                     _normalize_text(entry.get("body")),
                     attachments=attachments_payload or None,
+                    idempotency_key=_normalize_text(entry.get("idempotency_key")),
                 )
             except Exception as exc:
                 sent = False
@@ -5188,7 +5566,7 @@ class GuestWebService:
             max_attempts = int(entry.get("max_attempts") or BOOKING_CONFIRMATION_OUTBOX_MAX_ATTEMPTS)
 
             if sent:
-                self.database.mark_email_outbox_sent(int(entry["id"]))
+                self.database.mark_email_outbox_sent(int(entry["id"]), worker_id=worker_id)
                 provider = "resend" if email_manager.resend_api_key else "smtp"
                 if entry.get("interview_id"):
                     self.database.log_interview_email(
@@ -5210,11 +5588,15 @@ class GuestWebService:
                         datetime.now(timezone.utc) + timedelta(minutes=BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES)
                     ).replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S"),
                     last_error=error_detail,
-                    status="failed",
+                    status="dead_letter",
+                    worker_id=worker_id,
                 )
                 results["failed"] += 1
             else:
-                delay_minutes = BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES * min(6, attempts)
+                delay_minutes = min(
+                    360,
+                    BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES * (2 ** max(0, attempts - 1)),
+                )
                 self.database.mark_email_outbox_retry(
                     int(entry["id"]),
                     attempts=attempts,
@@ -5223,9 +5605,18 @@ class GuestWebService:
                     ).replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S"),
                     last_error=error_detail,
                     status="retrying",
+                    worker_id=worker_id,
                 )
                 results["retrying"] += 1
 
+        self.database.finish_automation_run(
+            run_id,
+            status="completed" if not results["failed"] else "completed_with_failures",
+            checked=results["checked"],
+            succeeded=results["sent"],
+            failed=results["failed"],
+            details=results,
+        )
         return results
 
     # ==================== AI Assistant Features ====================
@@ -5368,19 +5759,53 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the direct web interface."""
 
     service: GuestWebService
-    _session_secret: str = ""  # Set at server start; validated via dashboard_session cookie
+    _session_signer: SessionSigner
+    _login_limiter: LoginRateLimiter
+
+    def end_headers(self) -> None:
+        """Apply browser protections consistently to every response."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; "
+            "img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'",
+        )
+        if self._request_is_secure():
+            self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        super().end_headers()
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         origin = self.headers.get("Origin")
         self.send_response(HTTPStatus.NO_CONTENT)
         self._send_cors_headers(origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Api-Token")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Api-Token, X-CSRF-Token")
         self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
         request_path = urlsplit(self.path).path
+
+        if request_path == "/healthz":
+            self._send_json(HTTPStatus.OK, {"status": "ok", "service": "guest-processing"})
+            return
+
+        if request_path == "/readyz":
+            try:
+                report = build_integrity_report(self.service.db_path)
+                ready = is_database_ready(report)
+            except Exception as exc:
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"status": "not_ready", "error": str(exc)})
+                return
+            self._send_json(
+                HTTPStatus.OK if ready else HTTPStatus.SERVICE_UNAVAILABLE,
+                {"status": "ready" if ready else "not_ready", "integrity": report},
+            )
+            return
 
         if request_path in {"/", "/intake", "/intake/", "/intake.html"}:
             self._serve_static("intake.html")
@@ -5432,6 +5857,53 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_cors_headers(self.headers.get("Origin"))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
+            return
+
+        if request_path == "/api/dashboard/session":
+            claims = self._session_claims()
+            if not claims or not role_allows(str(claims.get("role")), "viewer"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(
+                HTTPStatus.OK,
+                {"username": claims.get("sub", "dashboard"), "role": claims.get("role", "viewer")},
+            )
+            return
+
+        if request_path == "/api/audit-events":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            query = self._query_params(self.path)
+            entity_type = _normalize_text(query.get("entity_type"))
+            entity_id = _normalize_text(query.get("entity_id"))
+            if entity_type not in {"guest", "application", "interview", "episode", "communication", "guest_identity"} or not entity_id:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Valid entity_type and entity_id are required"})
+                return
+            self._send_json(
+                HTTPStatus.OK,
+                {"events": self.service.database.list_audit_events(entity_type, entity_id)},
+            )
+            return
+
+        if request_path == "/api/identity-merge-candidates":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            candidates = self.service.database.list_identity_merge_candidates()
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "candidates": [
+                        {
+                            "match_type": item["match_type"],
+                            "match_value": item["match_value"],
+                            "guests": [serialize_guest(guest) for guest in item["guests"]],
+                        }
+                        for item in candidates
+                    ]
+                },
+            )
             return
 
         if request_path == "/api/guests":
@@ -5767,6 +6239,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/api/dashboard/login":
+            client = self._client_identity()
+            if not self.__class__._login_limiter.is_allowed(client):
+                self._send_json(HTTPStatus.TOO_MANY_REQUESTS, {"error": "Too many failed login attempts. Try again later."})
+                return
             payload = self._read_json_payload()
             provided_username = _normalize_text(payload.get("username"))
             provided_password = _normalize_text(payload.get("password"))
@@ -5774,30 +6250,37 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             if not redirect_to.startswith("/"):
                 redirect_to = "/dashboard"
 
-            configured_username = os.environ.get(DASHBOARD_USERNAME_ENV_VAR, "").strip()
-            configured_password = os.environ.get(DASHBOARD_PASSWORD_ENV_VAR, "").strip()
-            auth_required = bool(configured_username or configured_password)
+            configured_users = _configured_dashboard_users()
+            auth_required = _dashboard_auth_configured()
+            matched_user = configured_users.get(provided_username)
+            credentials_match = bool(
+                matched_user
+                and secrets.compare_digest(provided_password, matched_user["password"])
+            )
 
-            if auth_required and (
-                not secrets.compare_digest(provided_username, configured_username)
-                or not secrets.compare_digest(provided_password, configured_password)
-            ):
+            if auth_required and not credentials_match:
+                self.__class__._login_limiter.record_failure(client)
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Invalid dashboard credentials"})
                 return
+
+            self.__class__._login_limiter.record_success(client)
 
             response = json.dumps({"ok": True, "redirect_to": redirect_to}, ensure_ascii=False).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self._send_cors_headers(self.headers.get("Origin"))
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(response)))
-            cookie = self._build_dashboard_session_cookie()
-            if cookie:
-                self.send_header("Set-Cookie", cookie)
+            self._send_dashboard_session_cookies(
+                role=(matched_user or {}).get("role", "admin"),
+                subject=provided_username or "dashboard",
+            )
             self.end_headers()
             self.wfile.write(response)
             return
 
         if self.path == "/api/dashboard/logout":
+            if not self._enforce_dashboard_security(required_role="viewer", require_csrf=True):
+                return
             response = json.dumps({"ok": True}, ensure_ascii=False).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self._send_cors_headers(self.headers.get("Origin"))
@@ -5807,9 +6290,20 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 "Set-Cookie",
                 "dashboard_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
             )
+            self.send_header(
+                "Set-Cookie",
+                "dashboard_csrf=; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+            )
             self.end_headers()
             self.wfile.write(response)
             return
+
+        if self.path not in {"/api/intake", "/api/booking/confirm"}:
+            if not self._enforce_dashboard_security(
+                required_role=self._required_role_for_request("POST", urlsplit(self.path).path),
+                require_csrf=True,
+            ):
+                return
 
         if self.path == "/api/guests":
             if not self._is_authorized_dashboard_request():
@@ -5823,6 +6317,23 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.CREATED, guest)
+            return
+
+        if self.path == "/api/identity-merge":
+            payload = self._read_json_payload()
+            try:
+                result = self.service.database.merge_guest_identities(
+                    int(payload.get("survivor_id")),
+                    int(payload.get("duplicate_id")),
+                    actor=str((self._session_claims() or {}).get("sub") or "operator"),
+                    reason=_normalize_text(payload.get("reason")),
+                    correlation_id=_normalize_text(payload.get("correlation_id")),
+                )
+            except (TypeError, ValueError, RuntimeError) as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self.service._invalidate_payload_cache("guests", "guests_lite", "operations", "planning")
+            self._send_json(HTTPStatus.OK, result)
             return
 
         if self.path == "/api/intake":
@@ -6003,6 +6514,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     overwrite_existing=bool(payload.get("overwrite_existing")),
                     limit=int(payload.get("limit", 1000) or 1000),
                     search=_normalize_text(payload.get("search")),
+                    preview_only=bool(payload.get("preview_only")),
+                    approved_matches=(
+                        payload.get("approved_matches")
+                        if isinstance(payload.get("approved_matches"), list)
+                        else None
+                    ),
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -6030,12 +6547,39 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, result)
             return
 
+        if self.path.startswith("/api/outbox/") and self.path.endswith("/retry"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            outbox_id = self._extract_record_id(self.path.removesuffix("/retry"), "/api/outbox/")
+            if outbox_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid outbox id"})
+                return
+            try:
+                result = self.service.retry_dead_letter_email(outbox_id)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
         if self.path == "/api/google-calendar/sync":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
 
             payload = self._read_json_payload()
+            proposal_ids = payload.get("proposal_ids") or []
+            if proposal_ids:
+                try:
+                    result = self.service.apply_calendar_reconciliation_proposals(
+                        int(item) for item in proposal_ids
+                    )
+                except (TypeError, ValueError, WebInterfaceError) as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(HTTPStatus.OK, result)
+                return
             reference_value = _normalize_text(payload.get("reference"))
             reference = self.service._parse_datetime(reference_value) if reference_value else None
             configured_days_ahead = os.environ.get(
@@ -6060,7 +6604,11 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, result)
             return
 
-        if self.path.startswith("/api/guests/") and self.path.endswith("/status"):
+        if (
+            self.path.startswith("/api/guests/")
+            and self.path.endswith("/status")
+            and not self.path.endswith("/application-status")
+        ):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
@@ -6081,6 +6629,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.OK, guest)
+            return
+
+        if self.path.startswith("/api/guests/") and self.path.endswith("/application-status"):
+            guest_id = self._extract_guest_id(self.path, suffix="/application-status")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+            payload = self._read_json_payload()
+            try:
+                application = self.service.update_guest_application_status(
+                    guest_id,
+                    _normalize_text(payload.get("status")),
+                    reason=_normalize_text(payload.get("reason")),
+                    actor=str((self._session_claims() or {}).get("sub") or "operator"),
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, application)
             return
 
         if self.path.startswith("/api/guests/") and self.path.endswith("/research"):
@@ -6469,6 +7036,8 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_DELETE(self) -> None:  # noqa: N802
+        if not self._enforce_dashboard_security(required_role="admin", require_csrf=True):
+            return
         if self.path.startswith("/api/guests/"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -6585,14 +7154,15 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self._send_cors_headers(self.headers.get("Origin"))
         self.send_header("Content-Type", content_type or "application/octet-stream")
-        # Avoid stale dashboard bundles on Railway edge caches after deploys.
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        if set_session_cookie:
-            cookie = self._build_dashboard_session_cookie()
-            if cookie:
-                self.send_header("Set-Cookie", cookie)
+        versioned = bool(self._query_params(self.path).get("v")) and safe_path.suffix.lower() not in {".html"}
+        if versioned:
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        else:
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        if set_session_cookie and self._session_should_rotate():
+            self._send_dashboard_session_cookies()
         self.end_headers()
         self.wfile.write(safe_path.read_bytes())
 
@@ -6602,16 +7172,100 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
-    def _build_dashboard_session_cookie(self) -> str:
-        session_secret = self.__class__._session_secret
-        if not session_secret:
-            return ""
-        host = self.headers.get("Host", "")
-        is_secure = not (host.startswith("127.0.0.1") or host.startswith("localhost"))
-        cookie = f"dashboard_session={session_secret}; HttpOnly; SameSite=Strict; Path=/"
-        if is_secure:
-            cookie += "; Secure"
-        return cookie
+    def _send_dashboard_session_cookies(
+        self, *, role: Optional[str] = None, subject: Optional[str] = None
+    ) -> None:
+        current_claims = self._session_claims() or {}
+        effective_role = role or str(current_claims.get("role") or os.environ.get(DASHBOARD_ROLE_ENV_VAR, "admin"))
+        effective_subject = subject or str(current_claims.get("sub") or "dashboard")
+        token, claims = self.__class__._session_signer.issue(
+            role=effective_role.strip().lower() or "admin", subject=effective_subject
+        )
+        secure = "; Secure" if self._request_is_secure() else ""
+        max_age = self.__class__._session_signer.ttl_seconds
+        self.send_header(
+            "Set-Cookie",
+            f"dashboard_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}{secure}",
+        )
+        self.send_header(
+            "Set-Cookie",
+            f"dashboard_csrf={claims['csrf']}; SameSite=Strict; Path=/; Max-Age={max_age}{secure}",
+        )
+
+    def _request_is_secure(self) -> bool:
+        forwarded_proto = (self.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+        if forwarded_proto:
+            return forwarded_proto == "https"
+        host = (self.headers.get("Host") or "").split(":", 1)[0].lower()
+        return host not in {"", "localhost", "127.0.0.1", "::1"}
+
+    def _client_identity(self) -> str:
+        forwarded = (self.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
+        if forwarded:
+            return forwarded
+        return str(self.client_address[0]) if self.client_address else "unknown"
+
+    def _cookies(self) -> SimpleCookie:
+        cookies = SimpleCookie()
+        try:
+            cookies.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return SimpleCookie()
+        return cookies
+
+    def _session_claims(self) -> Optional[Dict[str, Any]]:
+        cookie = self._cookies().get("dashboard_session")
+        if not cookie:
+            return None
+        try:
+            return self.__class__._session_signer.verify(cookie.value)
+        except SessionError:
+            return None
+
+    def _session_should_rotate(self) -> bool:
+        claims = self._session_claims()
+        if not claims:
+            return True
+        lifetime = int(claims.get("exp", 0)) - int(claims.get("iat", 0))
+        return int(datetime.now(timezone.utc).timestamp()) - int(claims.get("iat", 0)) >= max(60, lifetime // 2)
+
+    @staticmethod
+    def _required_role_for_request(method: str, path: str) -> str:
+        if method == "GET":
+            return "viewer"
+        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge"}:
+            return "admin"
+        return "operator"
+
+    def _enforce_dashboard_security(self, *, required_role: str, require_csrf: bool) -> bool:
+        claims = self._session_claims()
+        if claims:
+            if not role_allows(str(claims.get("role")), required_role):
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Insufficient dashboard permissions"})
+                return False
+            if require_csrf:
+                csrf_header = self.headers.get("X-CSRF-Token", "").strip()
+                csrf_cookie = self._cookies().get("dashboard_csrf")
+                csrf_cookie_value = csrf_cookie.value if csrf_cookie else ""
+                expected = str(claims.get("csrf") or "")
+                if not (
+                    csrf_header
+                    and csrf_cookie_value
+                    and secrets.compare_digest(csrf_header, expected)
+                    and secrets.compare_digest(csrf_cookie_value, expected)
+                ):
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "Invalid or missing CSRF token"})
+                    return False
+            return True
+
+        basic_identity = self._basic_auth_identity()
+        if basic_identity:
+            return role_allows(basic_identity[1], required_role)
+
+        if not _dashboard_auth_configured():
+            return True
+        self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+        return False
 
     def _send_json(self, status: HTTPStatus, payload: Dict[str, Any]) -> None:
         response = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -6715,32 +7369,37 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         # Accept a previously issued session cookie so that JavaScript fetch()
         # calls (which don't automatically forward HTTP Basic Auth credentials)
         # still authenticate correctly after the user has logged in via the browser.
-        session_secret = self.__class__._session_secret
-        if session_secret:
-            cookie_header = self.headers.get("Cookie", "")
-            for part in cookie_header.split(";"):
-                name, _, value = part.strip().partition("=")
-                if name.strip() == "dashboard_session" and secrets.compare_digest(value.strip(), session_secret):
-                    return True
-
-        configured_username = os.environ.get(DASHBOARD_USERNAME_ENV_VAR, "").strip()
-        configured_password = os.environ.get(DASHBOARD_PASSWORD_ENV_VAR, "").strip()
-
-        if not configured_username and not configured_password:
+        claims = self._session_claims()
+        if claims and role_allows(str(claims.get("role")), "viewer"):
             return True
 
+        if not _dashboard_auth_configured():
+            return True
+
+        return self._is_valid_basic_auth()
+
+    def _is_valid_basic_auth(self) -> bool:
+        return self._basic_auth_identity() is not None
+
+    def _basic_auth_identity(self) -> Optional[tuple[str, str]]:
+        configured_users = _configured_dashboard_users()
+        if not _dashboard_auth_configured():
+            return "dashboard", "admin"
         auth_header = self.headers.get("Authorization", "")
         if not auth_header.startswith("Basic "):
-            return False
+            return None
 
         try:
             encoded_credentials = auth_header.split(" ", 1)[1]
             decoded_credentials = b64decode(encoded_credentials).decode("utf-8")
             username, password = decoded_credentials.split(":", 1)
         except Exception:
-            return False
+            return None
 
-        return username == configured_username and password == configured_password
+        matched = configured_users.get(username)
+        if matched and secrets.compare_digest(password, matched["password"]):
+            return username, matched["role"]
+        return None
 
     def _send_basic_auth_challenge(self) -> None:
         self.send_response(HTTPStatus.UNAUTHORIZED)
@@ -6780,7 +7439,9 @@ def create_web_server(
     server = ThreadingHTTPServer((host, port), GuestWebRequestHandler)
     GuestWebRequestHandler.service = GuestWebService(Path(db_path))
     configured_secret = os.environ.get(DASHBOARD_SESSION_SECRET_ENV_VAR, "").strip()
-    GuestWebRequestHandler._session_secret = configured_secret or secrets.token_urlsafe(32)
+    session_ttl = int(os.environ.get(DASHBOARD_SESSION_TTL_ENV_VAR, str(8 * 60 * 60)) or str(8 * 60 * 60))
+    GuestWebRequestHandler._session_signer = SessionSigner(configured_secret or secrets.token_urlsafe(32), ttl_seconds=session_ttl)
+    GuestWebRequestHandler._login_limiter = LoginRateLimiter()
     return server
 
 
@@ -6792,6 +7453,7 @@ def run_web_interface(
 ) -> None:
     """Run the direct web interface server."""
     server = create_web_server(host=host, port=port, db_path=db_path)
+    GuestWebRequestHandler.service.start_outbox_worker()
     url = f"http://{host}:{port}"
     print(f"🌐 Starting direct web interface at {url}")
     print(f"🗄️ Using database: {Path(db_path)}")
@@ -6804,4 +7466,5 @@ def run_web_interface(
     except KeyboardInterrupt:
         print("\n🛑 Shutting down web interface...")
     finally:
+        GuestWebRequestHandler.service.stop_outbox_worker()
         server.server_close()

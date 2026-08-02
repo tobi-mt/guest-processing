@@ -3,8 +3,9 @@
 import sqlite3
 import pandas as pd
 import logging
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional
+
+from guest_database_manager.db_connection import connect_database
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +22,7 @@ class GuestDatabase:
     
     def create_tables(self):
         """Create the guests table if it doesn't exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS guests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -335,7 +336,7 @@ class GuestDatabase:
     
     def guest_exists_by_name(self, name: str) -> bool:
         """Check if a guest already exists based on name (case-insensitive) only."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             cursor = conn.execute(
                 "SELECT COUNT(*) FROM guests WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))",
                 (name,)
@@ -344,7 +345,7 @@ class GuestDatabase:
     
     def get_guest_by_name(self, name: str) -> Optional[Dict]:
         """Get a guest by name (case-insensitive), preferring one with real email."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             
             # Get by name, preferring real email over anonymous
@@ -361,7 +362,7 @@ class GuestDatabase:
     
     def get_guest_by_name_email(self, name: str, email: str) -> Optional[Dict]:
         """Get a guest by name (case-insensitive) and email, or just by name if no exact email match."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             
             # First try exact name and email match
@@ -383,7 +384,7 @@ class GuestDatabase:
     
     def insert_guest(self, guest_data: Dict[str, Any]) -> int:
         """Insert a new guest into the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             cursor = conn.execute("""
                 INSERT INTO guests (
                     name, full_name, email, website, social_media_handles, 
@@ -406,7 +407,7 @@ class GuestDatabase:
     
     def update_guest(self, guest_data: Dict[str, Any]) -> None:
         """Update an existing guest in the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.execute("""
                 UPDATE guests SET
                     website = ?, social_media_handles = ?, personal_professional_background = ?,
@@ -429,7 +430,7 @@ class GuestDatabase:
     
     def update_guest_by_id(self, guest_id: int, guest_data: Dict[str, Any]) -> None:
         """Update an existing guest in the database by ID."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.execute("""
                 UPDATE guests SET
                     name = ?, full_name = ?, email = ?, website = ?, social_media_handles = ?,
@@ -452,20 +453,20 @@ class GuestDatabase:
     
     def delete_guest(self, guest_id: int) -> None:
         """Delete a guest from the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.execute("DELETE FROM guests WHERE id = ?", (guest_id,))
             conn.commit()
     
     def get_all_guests(self) -> List[Dict]:
         """Get all guests from the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM guests ORDER BY date_added DESC")
             return [dict(row) for row in cursor.fetchall()]
     
     def get_guests_by_status(self, is_processed: bool) -> List[Dict]:
         """Get guests filtered by processing status."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM guests WHERE is_processed = ? ORDER BY date_added DESC",
@@ -475,7 +476,7 @@ class GuestDatabase:
     
     def mark_guest_processed(self, guest_id: int) -> None:
         """Mark a guest as processed."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.execute(
                 "UPDATE guests SET is_processed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (guest_id,)
@@ -484,7 +485,7 @@ class GuestDatabase:
     
     def mark_guest_unprocessed(self, guest_id: int) -> None:
         """Mark a guest as unprocessed and clear email status."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.execute(
                 """UPDATE guests SET 
                    is_processed = FALSE, 
@@ -499,7 +500,7 @@ class GuestDatabase:
 
     def accept_guest_with_email(self, guest_id: int, custom_message: str = "") -> None:
         """Mark a guest as accepted and record that an acceptance email was sent."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.execute(
                 """UPDATE guests SET 
                    is_processed = TRUE, 
@@ -513,7 +514,7 @@ class GuestDatabase:
 
     def reject_guest_with_email(self, guest_id: int, custom_message: str = "") -> None:
         """Mark a guest as rejected and record that a rejection email was sent."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.execute(
                 """UPDATE guests SET 
                    is_processed = TRUE, 
@@ -527,7 +528,7 @@ class GuestDatabase:
 
     def skip_guest(self, guest_id: int, skip_reason: str = "") -> None:
         """Mark a guest as skipped with an optional reason."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             conn.execute(
                 """UPDATE guests SET 
                    is_processed = TRUE, 
@@ -541,7 +542,7 @@ class GuestDatabase:
 
     def get_stats(self) -> Dict[str, int]:
         """Get database statistics."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             cursor = conn.execute("SELECT COUNT(*) FROM guests")
             total = cursor.fetchone()[0]
             
@@ -559,7 +560,7 @@ class GuestDatabase:
     
     def get_email_stats(self) -> Dict[str, int]:
         """Get email-related statistics."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connect_database(self.db_path) as conn:
             cursor = conn.execute("SELECT COUNT(*) FROM guests WHERE email IS NOT NULL AND email != ''")
             with_email = cursor.fetchone()[0]
             

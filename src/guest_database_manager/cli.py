@@ -4,6 +4,7 @@
 """Command-line interface for Guest Database Manager."""
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ load_dotenv()
 
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
+from guest_database_manager.maintenance import build_integrity_report, build_sqlite_scale_report, verify_backup_restore
 from guest_database_manager.web_interface import run_web_interface
 from guest_database_manager.web_interface import GuestWebService
 
@@ -115,6 +117,14 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Preview which calendar events would sync without writing interviews",
     )
+
+    integrity_parser = subparsers.add_parser("integrity", help="Run a read-only database integrity audit")
+    integrity_parser.add_argument("--db", type=Path, default=Path(DEFAULT_DB_PATH))
+
+    backup_parser = subparsers.add_parser("verify-backup", help="Verify backup and restore in temporary files")
+    backup_parser.add_argument("--db", type=Path, default=Path(DEFAULT_DB_PATH))
+    scale_parser = subparsers.add_parser("scale-report", help="Measure observable SQLite exit signals")
+    scale_parser.add_argument("--db", type=Path, default=Path(DEFAULT_DB_PATH))
 
     return parser
 
@@ -273,6 +283,26 @@ def sync_google_calendar(db_path: Path, days_ahead: int = 30, query: str = "", d
         sys.exit(1)
 
 
+def run_integrity_audit(db_path: Path) -> None:
+    """Print a machine-readable, read-only integrity report."""
+    report = build_integrity_report(db_path)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    if report["status"] != "ok":
+        raise SystemExit(2)
+
+
+def run_backup_verification(db_path: Path) -> None:
+    """Exercise SQLite backup and restore without replacing the source file."""
+    result = verify_backup_restore(db_path)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    if result["status"] != "ok":
+        raise SystemExit(2)
+
+
+def run_scale_report(db_path: Path) -> None:
+    print(json.dumps(build_sqlite_scale_report(db_path), indent=2, sort_keys=True))
+
+
 def main() -> None:
     """Main CLI entry point."""
     parser = create_parser()
@@ -297,6 +327,12 @@ def main() -> None:
         send_weekly_reminders(args.db, args.dry_run)
     elif args.command == "calendar-sync":
         sync_google_calendar(args.db, args.days_ahead, args.query, args.dry_run)
+    elif args.command == "integrity":
+        run_integrity_audit(args.db)
+    elif args.command == "verify-backup":
+        run_backup_verification(args.db)
+    elif args.command == "scale-report":
+        run_scale_report(args.db)
     else:
         parser.print_help()
 

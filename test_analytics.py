@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Test script to verify analytics function works without errors."""
 
+__test__ = False  # Legacy executable diagnostic; covered by the maintained tests/ suite.
+
 import sys
 from pathlib import Path
 

@@ -329,7 +329,7 @@ Mirror Talk Podcast"""
     ) -> Dict[str, str]:
         """Build the email that invites a guest to choose a new interview time."""
         localized = self._localize_datetime(scheduled_for, timezone_label)
-        subject = f"Choose a new time for your Soulful Conversation"
+        subject = "Choose a new time for your Soulful Conversation"
         formatted_date = localized.strftime("%A %d %B, %Y")
         formatted_time = localized.strftime("%H:%M")
 
@@ -579,6 +579,7 @@ Mirror Talk Podcast
         subject: str,
         body: str,
         attachments: Optional[Sequence[Dict[str, object]]] = None,
+        idempotency_key: str = "",
     ) -> bool:
         """Send an email through the Resend HTTPS API."""
         if not self.resend_api_key or not self.from_email:
@@ -604,13 +605,16 @@ Mirror Talk Podcast
             ]
 
         try:
+            headers = {
+                "Authorization": f"Bearer {self.resend_api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "guest-database-manager/0.1.0",
+            }
+            if idempotency_key:
+                headers["Idempotency-Key"] = idempotency_key[:256]
             response = requests.post(
                 "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {self.resend_api_key}",
-                    "Content-Type": "application/json",
-                    "User-Agent": "guest-database-manager/0.1.0",
-                },
+                headers=headers,
                 json=payload,
                 timeout=20,
             )
@@ -647,6 +651,7 @@ Mirror Talk Podcast
         subject: str,
         body: str,
         attachments: Optional[Sequence[Dict[str, object]]] = None,
+        idempotency_key: str = "",
     ) -> bool:
         """Send an email.
 
@@ -665,7 +670,13 @@ Mirror Talk Podcast
             raise ValueError(self.last_error)
 
         if self.resend_api_key:
-            sent = self._send_via_resend(to_email, subject, body, attachments=attachments)
+            sent = self._send_via_resend(
+                to_email,
+                subject,
+                body,
+                attachments=attachments,
+                idempotency_key=idempotency_key,
+            )
             if not sent:
                 self._report_send_failure(self.last_error)
             return sent
@@ -676,6 +687,10 @@ Mirror Talk Podcast
             msg['From'] = f"{self.from_name} <{self.from_email}>" if self.from_name else self.from_email
             msg['To'] = to_email
             msg['Subject'] = subject
+            if idempotency_key:
+                # Resend's SMTP gateway honors this header. Other SMTP servers
+                # preserve it for traceability even when they cannot deduplicate.
+                msg['Resend-Idempotency-Key'] = idempotency_key[:256]
             if self.cc_email:
                 msg['Cc'] = self.cc_email
 
@@ -705,7 +720,7 @@ Mirror Talk Podcast
             self._report_send_failure(error_msg)
             return False
 
-    def send_acceptance_email(self, guest_name: str, to_email: str, custom_message: str = "", booking_url: str = "") -> bool:
+    def send_acceptance_email(self, guest_name: str, to_email: str, custom_message: str = "", booking_url: str = "", idempotency_key: str = "") -> bool:
         """Send acceptance email to a guest.
 
         Args:
@@ -717,7 +732,7 @@ Mirror Talk Podcast
             True if email sent successfully, False otherwise
         """
         template = self.get_acceptance_template(guest_name, custom_message, booking_url=booking_url)
-        return self.send_email(to_email, template["subject"], template["body"])
+        return self.send_email(to_email, template["subject"], template["body"], idempotency_key=idempotency_key)
 
     def send_booking_confirmation_email(
         self,
@@ -726,6 +741,7 @@ Mirror Talk Podcast
         scheduled_for: datetime,
         timezone_label: str,
         join_url: str,
+        idempotency_key: str = "",
     ) -> bool:
         """Send the first booking confirmation email after a guest books a slot."""
         template = self.get_booking_confirmation_template(guest_name, scheduled_for, timezone_label, join_url)
@@ -738,9 +754,9 @@ Mirror Talk Podcast
                 join_url=join_url,
             ),
         }
-        return self.send_email(to_email, template["subject"], template["body"], attachments=[invite_attachment])
+        return self.send_email(to_email, template["subject"], template["body"], attachments=[invite_attachment], idempotency_key=idempotency_key)
 
-    def send_rejection_email(self, guest_name: str, to_email: str, custom_message: str = "") -> bool:
+    def send_rejection_email(self, guest_name: str, to_email: str, custom_message: str = "", idempotency_key: str = "") -> bool:
         """Send rejection email to a guest.
 
         Args:
@@ -752,12 +768,12 @@ Mirror Talk Podcast
             True if email sent successfully, False otherwise
         """
         template = self.get_rejection_template(guest_name, custom_message)
-        return self.send_email(to_email, template["subject"], template["body"])
+        return self.send_email(to_email, template["subject"], template["body"], idempotency_key=idempotency_key)
 
-    def send_intake_confirmation_email(self, guest_name: str, to_email: str) -> bool:
+    def send_intake_confirmation_email(self, guest_name: str, to_email: str, idempotency_key: str = "") -> bool:
         """Send a submission-confirmation email to an intake applicant."""
         template = self.get_intake_confirmation_template(guest_name)
-        return self.send_email(to_email, template["subject"], template["body"])
+        return self.send_email(to_email, template["subject"], template["body"], idempotency_key=idempotency_key)
 
     def send_personal_application_request_email(
         self,
@@ -765,15 +781,16 @@ Mirror Talk Podcast
         to_email: str,
         intake_url: str,
         agency_name: str = "",
+        idempotency_key: str = "",
     ) -> bool:
         """Send a guest their own personal intake link after an agency referral."""
         template = self.get_personal_application_request_template(guest_name, intake_url, agency_name)
-        return self.send_email(to_email, template["subject"], template["body"])
+        return self.send_email(to_email, template["subject"], template["body"], idempotency_key=idempotency_key)
 
-    def send_booking_link_email(self, guest_name: str, to_email: str, booking_url: str) -> bool:
+    def send_booking_link_email(self, guest_name: str, to_email: str, booking_url: str, idempotency_key: str = "") -> bool:
         """Send a guest their personal booking link again."""
         template = self.get_booking_link_template(guest_name, booking_url)
-        return self.send_email(to_email, template["subject"], template["body"])
+        return self.send_email(to_email, template["subject"], template["body"], idempotency_key=idempotency_key)
 
     def send_reschedule_link_email(
         self,
@@ -782,6 +799,7 @@ Mirror Talk Podcast
         scheduled_for: datetime,
         timezone_label: str,
         reschedule_url: str,
+        idempotency_key: str = "",
     ) -> bool:
         """Send a guest their personal rescheduling link."""
         template = self.get_reschedule_link_template(
@@ -790,7 +808,7 @@ Mirror Talk Podcast
             timezone_label,
             reschedule_url,
         )
-        return self.send_email(to_email, template["subject"], template["body"])
+        return self.send_email(to_email, template["subject"], template["body"], idempotency_key=idempotency_key)
 
     def load_saved_config(self) -> bool:
         """Load saved email configuration.

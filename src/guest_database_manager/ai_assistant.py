@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from guest_database_manager.db_connection import connect_database
+
 logger = logging.getLogger(__name__)
 
 
@@ -333,8 +335,8 @@ class FollowUpManager:
     def get_guests_needing_follow_up(self, days_threshold: int = 7) -> List[Dict[str, Any]]:
         """Find guests who haven't been contacted in specified days."""
         import sqlite3
-        
-        with sqlite3.connect(self.db_path) as conn:
+
+        with connect_database(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             
             threshold_date = datetime.now() - timedelta(days=days_threshold)
@@ -353,8 +355,8 @@ class FollowUpManager:
     def get_upcoming_interviews(self, days_ahead: int = 3) -> List[Dict[str, Any]]:
         """Get interviews scheduled in the next N days for reminder emails."""
         import sqlite3
-        
-        with sqlite3.connect(self.db_path) as conn:
+
+        with connect_database(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             
             now = datetime.now()

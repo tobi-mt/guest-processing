@@ -16,11 +16,16 @@ const interviewSort = document.getElementById("interview-sort");
 const interviewResultsMeta = document.getElementById("interview-results-meta");
 const interviewLoadMoreButton = document.getElementById("interview-load-more");
 const interviewPresetButtons = Array.from(document.querySelectorAll("[data-interview-preset]"));
+window.PerformanceUtils?.installSavedViews(document.getElementById("operations-saved-views"), "operations");
 const refreshButton = document.getElementById("operations-refresh-button");
 const syncCalendarButton = document.getElementById("sync-calendar-button");
 const backupDataButton = document.getElementById("backup-data-button");
 const operationsWeeklyOutreach = document.getElementById("operations-weekly-outreach");
 const operationsAlerts = document.getElementById("operations-alerts");
+const outboxHealth = document.getElementById("outbox-health");
+const outboxFailures = document.getElementById("outbox-failures");
+const outboxMessage = document.getElementById("outbox-message");
+const operationsMetrics = document.getElementById("operations-metrics");
 const operationsTabButtons = Array.from(document.querySelectorAll("[data-operations-tab]"));
 const operationsTabPanels = Array.from(document.querySelectorAll("[data-operations-panel]"));
 const IS_FILE_PROTOCOL = window.location.protocol === "file:";
@@ -41,21 +46,25 @@ const REMINDER_PAGE_SIZE = 8;
 const INTERVIEW_PAGE_SIZE = 10;
 
 function readCachedPayload(cacheKey) {
-  try {
-    const raw = window.sessionStorage.getItem(cacheKey);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (error) {
-    return null;
-  }
+  return null;
 }
 
 function storeCachedPayload(cacheKey, payload) {
-  try {
-    window.sessionStorage.setItem(cacheKey, JSON.stringify(payload));
-  } catch (error) {
-    // Ignore browser cache failures.
-  }
+  // Operational records remain in memory only; browser storage is not an
+  // appropriate cache for guest contact and scheduling details.
+}
+
+function dashboardCsrfToken() {
+  const item = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("dashboard_csrf="));
+  return item ? decodeURIComponent(item.split("=", 2)[1] || "") : "";
+}
+
+function dashboardRequestHeaders(options = {}, isReadRequest = false) {
+  return {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+    ...(!isReadRequest ? { "X-CSRF-Token": dashboardCsrfToken() } : {}),
+  };
 }
 
 const stats = {
@@ -75,6 +84,7 @@ function setOperationsTab(tabName) {
     const isActive = button.dataset.operationsTab === tabName;
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-selected", isActive ? "true" : "false");
+    button.setAttribute("tabindex", isActive ? "0" : "-1");
   });
   operationsTabPanels.forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.operationsPanel === tabName);
@@ -92,9 +102,9 @@ async function fetchJSON(url, options = {}) {
     try {
       const response = await fetch(url, {
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         ...options,
+        headers: dashboardRequestHeaders(options, isReadRequest),
       });
 
       const rawText = await response.text();
@@ -135,7 +145,7 @@ async function downloadSystemBackup() {
     const response = await fetch("/api/system/backup", {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
+      headers: dashboardRequestHeaders({}, false),
       body: JSON.stringify({}),
       signal: controller.signal,
     });
@@ -216,6 +226,15 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function renderAuditTimeline(events) {
+  if (!events.length) return "<p>No activity has been recorded yet.</p>";
+  return `<ol class="activity-timeline">${events.map((event) => `
+    <li><strong>${escapeHtml(String(event.event_type || "updated").replaceAll("_", " "))}</strong>
+    <span>${escapeHtml(event.created_at || "")}</span>
+    <p>${escapeHtml(event.actor || "system")} via ${escapeHtml(event.source || "application")}${event.reason ? ` — ${escapeHtml(event.reason)}` : ""}</p></li>
+  `).join("")}</ol>`;
+}
+
 function renderLinkedValue(value, fallback = "Not set") {
   const text = String(value || "").trim();
   if (!text) {
@@ -266,6 +285,16 @@ function formatInterviewStatus(value) {
     cancelled: "Cancelled",
   };
   return labels[normalizeText(value)] || value || "Scheduled";
+}
+
+function confirmationSlaLabel(interview) {
+  if (normalizeText(interview.confirmation_status) === "confirmed") return "Met";
+  const scheduled = parseDate(interview.scheduled_for);
+  if (!scheduled) return "Unknown";
+  const hoursRemaining = (scheduled.getTime() - Date.now()) / 3600000;
+  if (hoursRemaining < 0) return "Breached (interview passed)";
+  if (hoursRemaining <= 72) return "At risk (under 72 hours)";
+  return "Within SLA";
 }
 
 function formatReminderStatus(value) {
@@ -407,7 +436,7 @@ function renderOperationsAlerts() {
           ${doubleBookings.map((alert) => `
             <div class="mini-card">
               <strong>${alert.guest_name}</strong>
-              <p>${alert.count} future bookings are holding space for the same guest.</p>
+              <p>${Number(alert.count || 0)} future bookings are holding space for the same guest.</p>
               <ul>
                 ${alert.interviews.map((item) => `<li>${item.title || "Mirror Talk interview"} · ${formatDateTime(item.scheduled_for)}</li>`).join("")}
               </ul>
@@ -424,8 +453,8 @@ function renderOperationsAlerts() {
           ${cleanup.map((item) => `
             <div class="mini-card">
               <strong>${item.guest_name || "Guest"}</strong>
-              <p>${item.title || "Mirror Talk interview"} · ${formatDateTime(item.scheduled_for)}</p>
-              <p>${item.reason}</p>
+              <p>${escapeHtml(item.title || "Mirror Talk interview")} · ${escapeHtml(formatDateTime(item.scheduled_for))}</p>
+              <p>${escapeHtml(item.reason)}</p>
               <button type="button" class="ghost-button small-button" data-alert-action="remove-calendar" data-interview-id="${item.id}">Remove From Google Calendar</button>
             </div>
           `).join("")}
@@ -458,6 +487,72 @@ function renderOperationsAlerts() {
       }
     });
   });
+}
+
+function renderOutboxConsole() {
+  if (!outboxHealth || !outboxFailures) return;
+  const outbox = latestOperationsPayload.outbox || {};
+  const health = outbox.health || {};
+  const failures = outbox.failures || [];
+  const pending = Number(health.pending || 0) + Number(health.retrying || 0);
+  const terminal = Number(health.dead_letter || 0) + Number(health.failed || 0);
+
+  outboxHealth.innerHTML = `
+    <div class="delivery-health-grid">
+      <div class="mini-card"><span>Waiting</span><strong>${pending}</strong></div>
+      <div class="mini-card"><span>Sending</span><strong>${Number(health.sending || 0)}</strong></div>
+      <div class="mini-card ${Number(health.overdue || 0) ? "caution" : ""}"><span>Overdue</span><strong>${Number(health.overdue || 0)}</strong></div>
+      <div class="mini-card ${terminal ? "caution" : ""}"><span>Needs review</span><strong>${terminal}</strong></div>
+    </div>
+  `;
+
+  if (!failures.length) {
+    outboxFailures.innerHTML = `<div class="insight-stack"><strong class="insight-label">No terminal delivery failures</strong><p>The worker has no messages waiting for manual recovery.</p></div>`;
+    return;
+  }
+  outboxFailures.innerHTML = failures.map((item) => `
+    <article class="mini-card outbox-failure-card">
+      <div>
+        <strong>${escapeHtml(item.email_type || "Email delivery")}</strong>
+        <p>${escapeHtml(item.sent_to || "Recipient unavailable")} · ${escapeHtml(item.status || "failed")}</p>
+        <p>${escapeHtml(item.last_error || "No provider error was recorded.")}</p>
+        <small>Attempts: ${Number(item.attempts || 0)} / ${Number(item.max_attempts || 0)} · Correlation: ${escapeHtml(item.correlation_id || "not set")}</small>
+      </div>
+      ${item.status === "dead_letter" ? `<button type="button" class="secondary-button" data-outbox-retry="${Number(item.id)}">Retry reviewed item</button>` : ""}
+    </article>
+  `).join("");
+
+  outboxFailures.querySelectorAll("[data-outbox-retry]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const outboxId = Number(button.dataset.outboxRetry || 0);
+      if (!outboxId || !confirmCriticalAction("Return this reviewed delivery to the automated retry queue?")) return;
+      button.disabled = true;
+      setMessage(outboxMessage, "Returning delivery to the retry queue...", "pending");
+      try {
+        await fetchJSON(`/api/outbox/${outboxId}/retry`, { method: "POST", body: JSON.stringify({}) });
+        setMessage(outboxMessage, "Delivery returned to the retry queue.", "success");
+        await loadOperations();
+      } catch (error) {
+        button.disabled = false;
+        setMessage(outboxMessage, error.message, "error");
+      }
+    });
+  });
+}
+
+function renderOperationalMetrics() {
+  if (!operationsMetrics) return;
+  const metrics = latestOperationsPayload.operational_metrics || {};
+  const values = metrics.values || {};
+  const definitions = metrics.definitions || {};
+  const rows = Object.entries(values).map(([key, value]) => {
+    const definition = definitions[key] || {};
+    const display = value && typeof value === "object"
+      ? `Median ${value.median ?? "—"}; p90 ${value.p90 ?? "—"}; n=${value.count ?? 0}`
+      : (value ?? "—");
+    return `<div class="mini-card"><strong>${escapeHtml(key.replaceAll("_", " "))}</strong><p>${escapeHtml(display)}</p><small>${escapeHtml(definition.definition || "")} Owner: ${escapeHtml(definition.owner || "Unassigned")}</small></div>`;
+  });
+  operationsMetrics.innerHTML = `<p>Freshness: ${escapeHtml(metrics.freshness || "unknown")} · Generated ${escapeHtml(metrics.generated_at || "unknown")}</p><div class="stack-list">${rows.join("")}</div>`;
 }
 
 function buildBookingRiskReasonMap(alerts = {}) {
@@ -520,11 +615,13 @@ function resetInterviewForm() {
 
 function loadInterviewIntoForm(interview) {
   interviewForm.elements.id.value = interview.id || "";
+  interviewForm.elements.row_version.value = interview.row_version || "";
   interviewForm.elements.guest_name.value = interview.guest_name || "";
   interviewForm.elements.guest_email.value = interview.guest_email || "";
   interviewForm.elements.title.value = interview.title || "";
   interviewForm.elements.scheduled_for.value = formatDateForDateTimeInput(interview.scheduled_for);
   interviewForm.elements.timezone.value = interview.timezone || "Europe/Berlin";
+  interviewForm.elements.owner.value = interview.owner || "";
   interviewForm.elements.calendar_event_id.value = interview.calendar_event_id || "";
   interviewForm.elements.join_url.value = interview.join_url || "";
   interviewForm.elements.status.value = interview.status || "scheduled";
@@ -540,12 +637,14 @@ function renderInterviewInlineEditor(container, interview) {
   container.innerHTML = `
     <div class="inline-editor-title">Quick Edit Interview</div>
     <form class="inline-editor-form" data-inline-interview-form>
-      ${createFieldMarkup("Guest Name", `<input name="guest_name" type="text" value="${interview.guest_name || ""}" required />`)}
-      ${createFieldMarkup("Guest Email", `<input name="guest_email" type="email" value="${interview.guest_email || ""}" />`)}
-      ${createFieldMarkup("Title", `<input name="title" type="text" value="${interview.title || ""}" />`, true)}
+      <input name="row_version" type="hidden" value="${Number(interview.row_version || 1)}" />
+      ${createFieldMarkup("Guest Name", `<input name="guest_name" type="text" value="${escapeHtml(interview.guest_name || "")}" required />`)}
+      ${createFieldMarkup("Guest Email", `<input name="guest_email" type="email" value="${escapeHtml(interview.guest_email || "")}" />`)}
+      ${createFieldMarkup("Title", `<input name="title" type="text" value="${escapeHtml(interview.title || "")}" />`, true)}
       ${createFieldMarkup("Scheduled For", `<input name="scheduled_for" type="datetime-local" value="${formatDateForDateTimeInput(interview.scheduled_for)}" required />`)}
-      ${createFieldMarkup("Timezone", `<input name="timezone" type="text" value="${interview.timezone || "Europe/Berlin"}" />`)}
-      ${createFieldMarkup("Join URL", `<input name="join_url" type="url" value="${interview.join_url || ""}" />`, true)}
+      ${createFieldMarkup("Timezone", `<input name="timezone" type="text" value="${escapeHtml(interview.timezone || "Europe/Berlin")}" />`)}
+      ${createFieldMarkup("Owner", `<input name="owner" type="text" value="${escapeHtml(interview.owner || "")}" />`)}
+      ${createFieldMarkup("Join URL", `<input name="join_url" type="url" value="${escapeHtml(interview.join_url || "")}" />`, true)}
       ${createFieldMarkup("Status", `
         <select name="status">
           <option value="scheduled" ${normalizeText(interview.status) === "scheduled" ? "selected" : ""}>Scheduled</option>
@@ -568,8 +667,8 @@ function renderInterviewInlineEditor(container, interview) {
           <option value="sent" ${normalizeText(interview.reminder_status) === "sent" ? "selected" : ""}>Sent</option>
         </select>
       `)}
-      ${createFieldMarkup("Calendar Event ID", `<input name="calendar_event_id" type="text" value="${interview.calendar_event_id || ""}" />`, true)}
-      ${createFieldMarkup("Notes", `<textarea name="notes" rows="3">${interview.notes || ""}</textarea>`, true)}
+      ${createFieldMarkup("Calendar Event ID", `<input name="calendar_event_id" type="text" value="${escapeHtml(interview.calendar_event_id || "")}" />`, true)}
+      ${createFieldMarkup("Notes", `<textarea name="notes" rows="3">${escapeHtml(interview.notes || "")}</textarea>`, true)}
       <div class="inline-editor-actions full-width">
         <button type="submit" class="primary-button">Save Changes</button>
         <button type="button" class="secondary-button" data-inline-interview-confirm>Mark Confirmed</button>
@@ -677,6 +776,12 @@ function filterAndSortInterviews(interviews) {
     }
     const date = parseDate(interview.scheduled_for);
     const isPast = date ? date < now : false;
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfTomorrow = new Date(startOfToday.getTime() + 86400000);
+    const nextSevenDays = new Date(startOfToday.getTime() + (7 * 86400000));
+    if (activeInterviewPreset === "today" && (!date || date < startOfToday || date >= startOfTomorrow)) return false;
+    if (activeInterviewPreset === "next_7_days" && (!date || date < startOfToday || date >= nextSevenDays)) return false;
+    if (activeInterviewPreset === "recently_completed" && (!date || !isPast || date < new Date(now.getTime() - (14 * 86400000)))) return false;
     if (activeInterviewPreset === "upcoming" && isPast) {
       return false;
     }
@@ -774,7 +879,7 @@ function renderInterviews(interviews, totalCount) {
     interviewResultsMeta,
     interviews.length,
     totalCount,
-    "No interviews tracked yet.",
+    "",
     "Refine the search, year, or confirmation filters to narrow the calendar."
   );
 
@@ -782,7 +887,7 @@ function renderInterviews(interviews, totalCount) {
   if (!interviews.length) {
     interviewList.innerHTML = totalCount
       ? "<p class='guest-summary'>No interviews match the current controls.</p>"
-      : "<p class='guest-summary'>No interviews tracked yet.</p>";
+      : "<p class='guest-summary'>No interviews tracked yet. Add one from the collapsed interview editor above.</p>";
     interviewLoadMoreButton.classList.add("hidden");
     return;
   }
@@ -793,17 +898,24 @@ function renderInterviews(interviews, totalCount) {
     card.className = "operations-card";
     const riskReasons = bookingRiskReasons.get(Number(interview.id)) || [];
     const planningButtonLabel = interview.planning_episode_id ? "Update Planning Episode" : "Move To Planning";
+    const primaryAction = normalizeText(interview.status) === "completed"
+      ? "move-to-planning"
+      : normalizeText(interview.confirmation_status) !== "confirmed"
+        ? "mark-confirmed"
+        : normalizeText(interview.reminder_status) !== "sent"
+          ? "send-reminder"
+          : "none";
     const calendarButton = interview.calendar_event_id
       ? `<button type="button" class="secondary-button" data-calendar-action="push">Update Google Calendar Event</button>`
       : "";
     const reminderButtons = interview.guest_email
       ? `
         <button type="button" class="ghost-button" data-interview-action="preview-booking-confirmation">Preview Booking Confirmation</button>
-        <button type="button" class="primary-button" data-interview-action="send-booking-confirmation">Send Booking Confirmation</button>
+        <button type="button" class="secondary-button" data-interview-action="send-booking-confirmation">Send Booking Confirmation</button>
         <button type="button" class="ghost-button" data-interview-action="preview-reschedule-link">Preview Reschedule Link</button>
         <button type="button" class="secondary-button" data-interview-action="send-reschedule-link">Send Reschedule Link</button>
         <button type="button" class="ghost-button" data-interview-action="preview-reminder">Preview Reminder</button>
-        <button type="button" class="primary-button" data-interview-action="send-reminder">Send Reminder</button>
+        <button type="button" class="${primaryAction === "send-reminder" ? "primary-button" : "secondary-button"}" data-interview-action="send-reminder">Send Reminder</button>
         <button type="button" class="ghost-button" data-interview-action="preview-cancellation">Preview Cancellation</button>
         <button type="button" class="secondary-button" data-interview-action="send-cancellation">Cancel & Email</button>
       `
@@ -827,24 +939,28 @@ function renderInterviews(interviews, totalCount) {
     card.innerHTML = `
       <div class="card-header-row">
         <div>
-          <h3>${interview.guest_name || "Unnamed guest"}</h3>
-          <p>${interview.title || "Mirror Talk interview"}</p>
+          <h3>${escapeHtml(interview.guest_name || "Unnamed guest")}</h3>
+          <p>${escapeHtml(interview.title || "Mirror Talk interview")}</p>
         </div>
         <div class="card-status-chips">
-          <span class="status-chip ${statusTone}">${formatInterviewStatus(interview.status)}</span>
-          <span class="status-chip ${confirmationTone}">${formatConfirmationStatus(interview.confirmation_status)}</span>
-          <span class="status-chip ${reminderTone}">${formatReminderStatus(interview.reminder_status)}</span>
+          <span class="status-chip ${statusTone}">${escapeHtml(formatInterviewStatus(interview.status))}</span>
+          <span class="status-chip ${confirmationTone}">${escapeHtml(formatConfirmationStatus(interview.confirmation_status))}</span>
+          <span class="status-chip ${reminderTone}">${escapeHtml(formatReminderStatus(interview.reminder_status))}</span>
         </div>
       </div>
       <div class="operations-meta">
-        <span>Scheduled: ${formatDateTime(interview.scheduled_for)}</span>
+        <span>Scheduled: ${escapeHtml(formatDateTime(interview.scheduled_for))}</span>
+        <span>Owner: ${escapeHtml(interview.owner || "Unassigned")}</span>
+        <span>Confirmation SLA: ${escapeHtml(confirmationSlaLabel(interview))}</span>
+        <span>Last contact: ${escapeHtml(formatDateTime(interview.reminder_sent_at || interview.event_updated_at || interview.updated_at))}</span>
+        <span>Delivery: ${escapeHtml(formatReminderStatus(interview.reminder_status))}</span>
         <span>Email: ${renderLinkedValue(interview.guest_email)}</span>
         <span>Join: ${renderLinkedValue(interview.join_url)}</span>
       </div>
       ${activeInterviewPreset === "booking_risks" && riskReasons.length ? `
         <div class="operations-preview caution">
           <strong class="insight-label">Why this is in Booking Risks</strong>
-          <ul>${riskReasons.map((reason) => `<li>${reason}</li>`).join("")}</ul>
+          <ul>${riskReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>
         </div>
       ` : ""}
       <div class="context-links">
@@ -856,8 +972,9 @@ function renderInterviews(interviews, totalCount) {
           <span class="action-group-label">Core Actions</span>
           <button type="button" class="secondary-button" data-interview-action="edit">${activeInterviewEditorId === interview.id ? "Hide Quick Edit" : "Quick Edit"}</button>
           <button type="button" class="ghost-button" data-interview-action="form">Open In Form</button>
-          <button type="button" class="ghost-button" data-interview-action="move-to-planning">${planningButtonLabel}</button>
-          <button type="button" class="ghost-button" data-interview-action="mark-confirmed">Mark Confirmed</button>
+          <button type="button" class="ghost-button" data-interview-action="activity">Activity</button>
+          <button type="button" class="${primaryAction === "move-to-planning" ? "primary-button" : "ghost-button"}" data-interview-action="move-to-planning">${planningButtonLabel}</button>
+          <button type="button" class="${primaryAction === "mark-confirmed" ? "primary-button" : "ghost-button"}" data-interview-action="mark-confirmed">Mark Confirmed</button>
           <button type="button" class="ghost-button" data-interview-action="mark-pending">Mark Pending</button>
         </div>
         <div class="action-group">
@@ -882,6 +999,7 @@ function renderInterviews(interviews, totalCount) {
 
     const editButton = card.querySelector("[data-interview-action='edit']");
     const formButton = card.querySelector("[data-interview-action='form']");
+    const activityButton = card.querySelector("[data-interview-action='activity']");
     const aiReminderButton = card.querySelector("[data-interview-action='ai-reminder']");
     const aiQuestionsButton = card.querySelector("[data-interview-action='ai-questions']");
     const moveToPlanningButton = card.querySelector("[data-interview-action='move-to-planning']");
@@ -910,12 +1028,24 @@ function renderInterviews(interviews, totalCount) {
     });
 
     formButton.addEventListener("click", () => {
+      const formDisclosure = interviewForm.closest("details");
+      if (formDisclosure) formDisclosure.open = true;
       loadInterviewIntoForm(interview);
       setMessage(
         interviewMessage,
         `Loaded ${interview.guest_name || "interview"} into the main form. Keep the details accurate here, then move it to planning after the recording.`,
         "success",
       );
+    });
+
+    activityButton.addEventListener("click", async () => {
+      showAIModal(`Activity: ${interview.guest_name || "Interview"}`, "<p class='loading'>Loading activity…</p>");
+      try {
+        const activity = await fetchJSON(`/api/audit-events?entity_type=interview&entity_id=${encodeURIComponent(interview.id)}`);
+        showAIModal(`Activity: ${interview.guest_name || "Interview"}`, renderAuditTimeline(activity.events || []));
+      } catch (error) {
+        showAIModal("Activity unavailable", `<p class="error">${escapeHtml(error.message)}</p>`);
+      }
     });
 
     // AI Reminder Button
@@ -1059,9 +1189,9 @@ function renderInterviews(interviews, totalCount) {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/reschedule-template`);
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `
-            <h4>${preview.subject}</h4>
+            <h4>${escapeHtml(preview.subject)}</h4>
             <p>To: ${renderLinkedValue(interview.guest_email)}</p>
-            <pre>${preview.body}</pre>
+            <pre>${escapeHtml(preview.body)}</pre>
             <p><strong>Reschedule link:</strong> <a class="inline-link" href="${preview.reschedule_url}" target="_blank" rel="noopener">${preview.reschedule_url}</a></p>
           `;
           activeInterviewActionFeedback = { id: interview.id, text: `Reschedule email preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
@@ -1095,7 +1225,7 @@ function renderInterviews(interviews, totalCount) {
             body: JSON.stringify({}),
           });
           reminderPreviewNode.classList.remove("hidden");
-          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Reschedule link sent to ${interview.guest_name || interview.guest_email}. They can now choose a new interview slot.</p>`;
+          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Reschedule link sent to ${escapeHtml(interview.guest_name || interview.guest_email)}. They can now choose a new interview slot.</p>`;
           activeInterviewActionFeedback = { id: interview.id, text: `Reschedule link sent to ${interview.guest_name || interview.guest_email}.`, tone: "success" };
           setMessage(interviewMessage, `Reschedule link sent to ${interview.guest_name || interview.guest_email}.`, "success");
           await loadOperations();
@@ -1122,9 +1252,9 @@ function renderInterviews(interviews, totalCount) {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/booking-confirmation-template`);
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `
-            <h4>${preview.subject}</h4>
+            <h4>${escapeHtml(preview.subject)}</h4>
             <p>To: ${renderLinkedValue(interview.guest_email)}</p>
-            <pre>${preview.body}</pre>
+            <pre>${escapeHtml(preview.body)}</pre>
           `;
           activeInterviewActionFeedback = { id: interview.id, text: `Booking confirmation preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
@@ -1157,7 +1287,7 @@ function renderInterviews(interviews, totalCount) {
             body: JSON.stringify({}),
           });
           reminderPreviewNode.classList.remove("hidden");
-          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Booking confirmation sent to ${interview.guest_name || interview.guest_email}, including the calendar invite.</p>`;
+          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Booking confirmation sent to ${escapeHtml(interview.guest_name || interview.guest_email)}, including the calendar invite.</p>`;
           activeInterviewActionFeedback = { id: interview.id, text: `Booking confirmation sent to ${interview.guest_name || interview.guest_email}.`, tone: "success" };
           setMessage(interviewMessage, `Booking confirmation sent to ${interview.guest_name || interview.guest_email}.`, "success");
           await loadOperations();
@@ -1184,9 +1314,9 @@ function renderInterviews(interviews, totalCount) {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/reminder-template`);
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `
-            <h4>${preview.subject}</h4>
+            <h4>${escapeHtml(preview.subject)}</h4>
             <p>To: ${renderLinkedValue(interview.guest_email)}</p>
-            <pre>${preview.body}</pre>
+            <pre>${escapeHtml(preview.body)}</pre>
           `;
           activeInterviewActionFeedback = { id: interview.id, text: `Reminder preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
@@ -1221,7 +1351,7 @@ function renderInterviews(interviews, totalCount) {
             body: JSON.stringify({}),
           });
           reminderPreviewNode.classList.remove("hidden");
-          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Reminder sent to ${interview.guest_name || interview.guest_email}.</p>`;
+          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Reminder sent to ${escapeHtml(interview.guest_name || interview.guest_email)}.</p>`;
           activeInterviewActionFeedback = { id: interview.id, text: `Reminder sent to ${interview.guest_name || interview.guest_email}.`, tone: "success" };
           setMessage(interviewMessage, `Reminder sent to ${interview.guest_name || interview.guest_email}.`, "success");
           await loadOperations();
@@ -1250,9 +1380,9 @@ function renderInterviews(interviews, totalCount) {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/cancellation-template`);
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `
-            <h4>${preview.subject}</h4>
+            <h4>${escapeHtml(preview.subject)}</h4>
             <p>To: ${renderLinkedValue(interview.guest_email)}</p>
-            <pre>${preview.body}</pre>
+            <pre>${escapeHtml(preview.body)}</pre>
           `;
           activeInterviewActionFeedback = { id: interview.id, text: `Cancellation preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
@@ -1287,7 +1417,7 @@ function renderInterviews(interviews, totalCount) {
             body: JSON.stringify({}),
           });
           reminderPreviewNode.classList.remove("hidden");
-          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Cancellation email sent to ${interview.guest_name || interview.guest_email}. Interview marked cancelled.</p>`;
+          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Cancellation email sent to ${escapeHtml(interview.guest_name || interview.guest_email)}. Interview marked cancelled.</p>`;
           activeInterviewActionFeedback = { id: interview.id, text: `Cancellation email sent to ${interview.guest_name || interview.guest_email}.`, tone: "success" };
           setMessage(interviewMessage, `Cancellation email sent to ${interview.guest_name || interview.guest_email}. Interview marked cancelled.`, "success");
           await loadOperations();
@@ -1444,10 +1574,10 @@ function renderReminderCandidates(interviews, totalCount) {
     const card = document.createElement("article");
     card.className = "operations-card";
     card.innerHTML = `
-      <h3>${interview.guest_name || "Unnamed guest"}</h3>
-      <p>${interview.title || "Soulful Conversation"}</p>
+      <h3>${escapeHtml(interview.guest_name || "Unnamed guest")}</h3>
+      <p>${escapeHtml(interview.title || "Soulful Conversation")}</p>
       <div class="operations-meta">
-        <span>Scheduled: ${interview.scheduled_for_display || formatDateTime(interview.scheduled_for)}</span>
+        <span>Scheduled: ${escapeHtml(interview.scheduled_for_display || formatDateTime(interview.scheduled_for))}</span>
         <span>Email: ${renderLinkedValue(interview.guest_email)}</span>
         <span>Confirmation: ${formatConfirmationStatus(interview.confirmation_status)}</span>
       </div>
@@ -1490,9 +1620,9 @@ function renderReminderCandidates(interviews, totalCount) {
         card.classList.add("selected");
         previewPanel.classList.remove("hidden");
         previewPanel.innerHTML = `
-          <h4>${preview.subject}</h4>
+          <h4>${escapeHtml(preview.subject)}</h4>
           <p>To: ${renderLinkedValue(interview.guest_email, "No email address")}</p>
-          <pre>${preview.body}</pre>
+          <pre>${escapeHtml(preview.body)}</pre>
         `;
       } catch (error) {
         setMessage(reminderMessage, error.message, "error");
@@ -1533,6 +1663,8 @@ function renderOperations() {
   populateInterviewYearOptions(interviews);
   renderWeeklyOutreachPanel();
   renderOperationsAlerts();
+  renderOutboxConsole();
+  renderOperationalMetrics();
   renderReminderCandidates(filterReminderCandidates(reminders), reminders.length);
   renderInterviews(filterAndSortInterviews(interviews), interviews.length);
 }
@@ -1626,15 +1758,30 @@ syncCalendarButton.addEventListener("click", async () => {
   syncCalendarButton.textContent = "Syncing...";
   setMessage(interviewMessage, "Syncing Google Calendar...", "pending");
   try {
-    const result = await fetchJSON("/api/google-calendar/sync", {
+    const proposalResult = await fetchJSON("/api/google-calendar/sync", {
       method: "POST",
       body: JSON.stringify({}),
+    });
+    const proposals = proposalResult.proposals || [];
+    if (!proposals.length) {
+      setMessage(interviewMessage, "Google Calendar is already reconciled; no changes were proposed.", "success");
+      return;
+    }
+    const summary = proposals.slice(0, 8).map((item) => `${item.action.toUpperCase()}: ${item.after?.guest_name || item.after?.title || item.calendar_event_id}`).join("\n");
+    const suffix = proposals.length > 8 ? `\n…and ${proposals.length - 8} more.` : "";
+    if (!confirmCriticalAction(`Review ${proposals.length} proposed calendar change(s):\n\n${summary}${suffix}\n\nApply these changes to Operations?`)) {
+      setMessage(interviewMessage, `${proposals.length} calendar change(s) were proposed and left pending for review.`, "pending");
+      return;
+    }
+    const result = await fetchJSON("/api/google-calendar/sync", {
+      method: "POST",
+      body: JSON.stringify({ proposal_ids: proposals.map((item) => item.id) }),
     });
     setMessage(
       interviewMessage,
       result.count
-        ? `Google Calendar sync complete. ${result.count} interview event(s) synced.`
-        : "Google Calendar sync completed, but no matching interview events were found.",
+        ? `Calendar reconciliation complete. ${result.count} approved change(s) applied.`
+        : "No calendar changes were applied.",
       "success",
     );
     await loadOperations();
@@ -1671,6 +1818,7 @@ if (backupDataButton) {
     visibleReminderCount = REMINDER_PAGE_SIZE;
     visibleInterviewCount = INTERVIEW_PAGE_SIZE;
     renderOperations();
+    window.PerformanceUtils?.updateWorkspaceUrlState({ q: interviewSearchInput.value });
   });
   node.addEventListener("change", () => {
     visibleReminderCount = REMINDER_PAGE_SIZE;
@@ -1700,6 +1848,7 @@ reminderPresetButtons.forEach((button) => {
 interviewPresetButtons.forEach((button) => {
   button.addEventListener("click", () => {
     activeInterviewPreset = button.dataset.interviewPreset || "upcoming";
+    window.PerformanceUtils?.updateWorkspaceUrlState({ preset: activeInterviewPreset });
     visibleInterviewCount = INTERVIEW_PAGE_SIZE;
     if (activeInterviewPreset === "needs_confirmation") {
       interviewConfirmationFilter.value = "pending";
@@ -1732,8 +1881,10 @@ function applyUrlState() {
 operationsTabButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setOperationsTab(button.dataset.operationsTab || "upcoming_interviews");
+    window.PerformanceUtils?.updateWorkspaceUrlState({ tab: activeOperationsTab });
   });
 });
+window.PerformanceUtils?.installKeyboardTabs(operationsTabButtons, setOperationsTab);
 
 resetInterviewForm();
 applyUrlState();

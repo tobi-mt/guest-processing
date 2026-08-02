@@ -16,6 +16,7 @@ const template = document.getElementById("guest-card-template");
 const refreshButton = document.getElementById("refresh-button");
 const exportButton = document.getElementById("export-button");
 const bulkResearchButton = document.getElementById("bulk-research-button");
+const identityReviewButton = document.getElementById("identity-review-button");
 const bulkResearchMessage = document.getElementById("bulk-research-message");
 const decisionFilter = document.getElementById("decision-filter");
 const guestSearch = document.getElementById("guest-search");
@@ -23,6 +24,7 @@ const guestSort = document.getElementById("guest-sort");
 const guestResultsMeta = document.getElementById("guest-results-meta");
 const guestLoadMoreButton = document.getElementById("guest-load-more");
 const guestPresetButtons = Array.from(document.querySelectorAll("[data-guest-preset]"));
+window.PerformanceUtils?.installSavedViews(document.getElementById("dashboard-saved-views"), "dashboard");
 const IS_FILE_PROTOCOL = window.location.protocol === "file:";
 
 const GUEST_PAGE_SIZE = 12;
@@ -146,7 +148,7 @@ let emailEnabled = false;
 let latestPayload = null;
 let activeEmailComposer = null;
 let activeGuestEditor = null;
-let activeGuestPreset = "all";
+let activeGuestPreset = "needs_review";
 let activeGuestActionFeedback = null;
 let visibleGuestCount = GUEST_PAGE_SIZE;
 let payloadHasFullEnrichment = false;
@@ -165,21 +167,25 @@ function emitClientBeacon(phase) {
 emitClientBeacon("app_js_evaluated");
 
 function readCachedPayload(cacheKey) {
-  try {
-    const raw = window.sessionStorage.getItem(cacheKey);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (error) {
-    return null;
-  }
+  return null;
 }
 
 function storeCachedPayload(cacheKey, payload) {
-  try {
-    window.sessionStorage.setItem(cacheKey, JSON.stringify(payload));
-  } catch (error) {
-    // Ignore browser cache failures.
-  }
+  // Guest records contain sensitive application data and must not be persisted
+  // in browser storage. The in-memory latestPayload remains the page cache.
+}
+
+function dashboardCsrfToken() {
+  const item = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("dashboard_csrf="));
+  return item ? decodeURIComponent(item.split("=", 2)[1] || "") : "";
+}
+
+function dashboardRequestHeaders(options = {}, isReadRequest = false, includeJson = true) {
+  return {
+    ...(includeJson ? { "Content-Type": "application/json" } : {}),
+    ...(options.headers || {}),
+    ...(!isReadRequest ? { "X-CSRF-Token": dashboardCsrfToken() } : {}),
+  };
 }
 
 function buildGuestScopedLink(path, guest) {
@@ -240,8 +246,8 @@ async function fetchJSONInternal(url, options = {}) {
     async () => {
       const response = await fetch(url, {
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
         ...options,
+        headers: dashboardRequestHeaders(options, isReadRequest),
       });
       const rawText = await response.text();
       let data = {};
@@ -275,6 +281,7 @@ async function fetchUpload(url, formData) {
   const response = await fetch(url, {
     method: "POST",
     credentials: "same-origin",
+    headers: dashboardRequestHeaders({}, false, false),
     body: formData,
   });
 
@@ -404,6 +411,11 @@ function guestSortRank(guest) {
 function sortGuests(guests, sortMode) {
   const sorted = [...guests];
   sorted.sort((left, right) => {
+    if (sortMode === "application_age") {
+      const slaDifference = Number(Boolean(right.application_summary?.sla_breached)) - Number(Boolean(left.application_summary?.sla_breached));
+      if (slaDifference !== 0) return slaDifference;
+      return Number(right.application_summary?.age_days || 0) - Number(left.application_summary?.age_days || 0);
+    }
     if (sortMode === "recommendation") {
       const scoreDifference = Number(right.decision_support?.score || 0) - Number(left.decision_support?.score || 0);
       if (scoreDifference !== 0) {
@@ -429,17 +441,17 @@ function sortGuests(guests, sortMode) {
   return sorted;
 }
 
-function updateResultsMeta(shown, total, visible) {
+function updateResultsMeta(matched, total, visible) {
   if (!total) {
     guestResultsMeta.textContent = "No guests in the pipeline yet.";
     return;
   }
-  if (shown === total && visible === shown) {
+  if (matched === total && visible === matched) {
     guestResultsMeta.textContent = `Showing all ${total} guest${total === 1 ? "" : "s"}.`;
     return;
   }
-  const moreText = visible < shown ? ` Displaying ${visible} right now.` : "";
-  guestResultsMeta.textContent = `Showing ${shown} of ${total} guests after the current view controls.${moreText}`;
+  const moreText = visible < matched ? ` Displaying ${visible} right now.` : "";
+  guestResultsMeta.textContent = `${matched} of ${total} guests match the current view.${moreText}`;
 }
 
 function updateGuestPresetButtons() {
@@ -537,7 +549,7 @@ function parseSocialHandleEntries(rawValue) {
 
 function socialValueToUrl(label, value) {
   const trimmedValue = String(value || "").trim();
-  if (!trimmedValue) {
+  if (!trimmedValue || /^(?:n\/?a|none|null|not available|no social(?: media)?)$/i.test(trimmedValue)) {
     return "";
   }
 
@@ -935,6 +947,10 @@ function renderInlineEditor(editorNode, guest) {
         Profession
         <input name="profession" type="text" value="${escapeHtml(activeGuestEditor.profession)}" />
       </label>
+      <label>
+        Owner
+        <input name="owner" type="text" value="${escapeHtml(activeGuestEditor.owner)}" placeholder="Producer or assistant" />
+      </label>
       <label class="full-width">
         Social Handles
         <input name="social_handles" type="text" value="${escapeHtml(activeGuestEditor.social_handles)}" />
@@ -999,9 +1015,11 @@ function renderInlineEditor(editorNode, guest) {
         method: "POST",
         body: JSON.stringify({
           full_name: activeGuestEditor.full_name,
+          row_version: activeGuestEditor.row_version,
           email: activeGuestEditor.email,
           website: activeGuestEditor.website,
           profession: activeGuestEditor.profession,
+          owner: activeGuestEditor.owner,
           social_handles: activeGuestEditor.social_handles,
           background: activeGuestEditor.background,
           passionate_topics: activeGuestEditor.passionate_topics,
@@ -1042,7 +1060,7 @@ function renderGuests(payload) {
   const accepted = payload.email_stats.accepted_emails ?? 0;
   const rejected = payload.email_stats.rejected_emails ?? 0;
   const skipped = payload.email_stats.skipped_guests ?? 0;
-  const decided = accepted + rejected + skipped;
+  const decided = accepted + rejected;
 
   if (insights.accepted) {
     insights.accepted.textContent = accepted;
@@ -1185,7 +1203,7 @@ function renderGuests(payload) {
         <div class="composer-header">
           <div>
             <p class="composer-eyebrow">${activeEmailComposer.status === "accepted" ? "Approval Email" : "Decline Email"}</p>
-            <h4>${guest.full_name || "Guest"}</h4>
+            <h4>${escapeHtml(guest.full_name || "Guest")}</h4>
           </div>
           <p class="composer-meta">${guest.email || "No email address"}</p>
         </div>
@@ -1270,6 +1288,13 @@ function renderGuests(payload) {
     }
 
     const details = [];
+    const application = guest.application_summary || {};
+    const completenessFields = [guest.email, guest.background, guest.profession, guest.passionate_topics, guest.message_takeaway];
+    const completeness = Math.round((completenessFields.filter(Boolean).length / completenessFields.length) * 100);
+    if (application.source) details.push(`Source: ${application.source}`);
+    if (application.age_days !== null && application.age_days !== undefined) details.push(`Application age: ${application.age_days} day${application.age_days === 1 ? "" : "s"}${application.sla_breached ? " · SLA breached" : ""}`);
+    details.push(`Completeness: ${completeness}%`);
+    details.push(`Owner: ${guest.owner || "Unassigned"}`);
     if (guest.profession) details.push(`Profession: ${guest.profession}`);
     if (guest.website) details.push(`Website: ${guest.website}`);
     const socialHandles = guest.social_media_handles;
@@ -1277,7 +1302,7 @@ function renderGuests(payload) {
       details.push(`Social media available`);
     }
     if (guest.passionate_topics) details.push(`Topics: ${guest.passionate_topics}`);
-    if (guest.original_file_name) details.push(`Source: ${guest.original_file_name}`);
+    if (!application.source && guest.original_file_name) details.push(`Source: ${guest.original_file_name}`);
     node.querySelector(".guest-details").innerHTML = details.map((detail) => `<span>${linkifyText(detail)}</span>`).join("");
     if (socialHandles) {
       node.querySelector(".guest-details").insertAdjacentHTML("beforeend", renderSocialHandlesMarkup(socialHandles));
@@ -1303,10 +1328,12 @@ function renderGuests(payload) {
             activeEmailComposer = null;
             activeGuestEditor = {
               guestId: guest.id,
+              row_version: guest.row_version,
               full_name: guest.full_name || "",
               email: guest.email || "",
               website: guest.website || "",
               profession: guest.profession || "",
+              owner: guest.owner || "",
               social_handles: guest.social_media_handles || "",
               background: guest.background || "",
               passionate_topics: guest.passionate_topics || "",
@@ -1326,6 +1353,14 @@ function renderGuests(payload) {
             activeGuestActionFeedback = { guestId: guest.id, text: `Copied ${guest.full_name}'s intake details.`, tone: "success" };
             renderGuests(latestPayload);
             setMessage(`Copied ${guest.full_name}'s intake details.`, "success");
+          } else if (action === "activity") {
+            showAIModal(
+              `Activity: ${guest.full_name || "Guest"}`,
+              "<p class='loading'>Loading activity…</p>",
+              button,
+            );
+            const activity = await fetchJSON(`/api/audit-events?entity_type=guest&entity_id=${encodeURIComponent(guest.id)}`);
+            showAIModal(`Activity: ${guest.full_name || "Guest"}`, renderAuditTimeline(activity.events || []));
           } else if (action === "research") {
             const failedResearch = guest.guest_research?.cache_status === "failed";
             activeGuestActionFeedback = {
@@ -1486,6 +1521,17 @@ function renderGuests(payload) {
             });
             activeGuestActionFeedback = { guestId: guest.id, text: `${guest.full_name || "Guest"} marked skipped.`, tone: "success" };
             setMessage(`Updated ${guest.full_name} to skipped.`, "success");
+          } else if (action === "needs_information") {
+            const reason = String(window.prompt("What information is missing?") || "").trim();
+            if (!reason) return;
+            activeGuestActionFeedback = { guestId: guest.id, text: `Flagging missing information for ${guest.full_name || "guest"}...`, tone: "pending" };
+            renderGuests(latestPayload);
+            await fetchJSON(`/api/guests/${guest.id}/application-status`, {
+              method: "POST",
+              body: JSON.stringify({status: "needs_information", reason}),
+            });
+            activeGuestActionFeedback = { guestId: guest.id, text: `${guest.full_name || "Guest"} moved to needs information.`, tone: "success" };
+            setMessage(`${guest.full_name || "Guest"} moved to needs information.`, "success");
           } else {
             activeGuestActionFeedback = { guestId: guest.id, text: `Updating ${guest.full_name || "guest"}...`, tone: "pending" };
             renderGuests(latestPayload);
@@ -1539,7 +1585,7 @@ async function loadGuests() {
     payloadHasFullEnrichment = hasFullEnrichment(payload);
     renderGuests(payload);
     storeCachedPayload(GUEST_PAYLOAD_CACHE_KEY, payload);
-    if (!payloadHasFullEnrichment && !fullHydrationInFlight) {
+    if (needsFullForPreset && !payloadHasFullEnrichment && !fullHydrationInFlight) {
       fullHydrationInFlight = true;
       window.setTimeout(async () => {
         try {
@@ -1645,7 +1691,8 @@ exportButton.addEventListener("click", () => {
 
 if (bulkResearchButton) {
   bulkResearchButton.addEventListener("click", async () => {
-    if (!confirmCriticalAction("Research missing guest profiles now? This will use saved website and social data to prefill planning copilot context.")) {
+    const affected = (latestPayload?.guests || []).filter((guest) => !guest.guest_research && (guest.website || guest.social_media_handles)).length;
+    if (!confirmCriticalAction(`Preview bulk research\n\nAffected records: up to ${affected}\nSide effects: reads public web profiles and stores enrichment; no guest email is sent.\n\nContinue?`)) {
       return;
     }
     bulkResearchButton.disabled = true;
@@ -1693,8 +1740,43 @@ if (bulkResearchButton) {
   });
 }
 
+if (identityReviewButton) {
+  identityReviewButton.addEventListener("click", async () => {
+    const loadCandidates = async () => {
+      const payload = await fetchJSON("/api/identity-merge-candidates");
+      showAIModal("Duplicate identity review", renderIdentityCandidates(payload.candidates || []));
+    };
+    try {
+      await loadCandidates();
+      aiModalBody.onclick = async (event) => {
+        const button = event.target.closest("[data-merge-survivor]");
+        if (!button) return;
+        const survivorId = Number(button.dataset.mergeSurvivor);
+        const duplicateId = Number(button.dataset.mergeDuplicate);
+        const reason = String(window.prompt("Why should these guest identities be merged?") || "").trim();
+        if (!reason) return;
+        if (!confirmCriticalAction(`Merge guest ID ${duplicateId} into ${survivorId}? All linked applications, interviews, and episodes will move to the survivor; the duplicate remains as an audit tombstone.`)) return;
+        button.disabled = true;
+        try {
+          await fetchJSON("/api/identity-merge", {
+            method: "POST",
+            body: JSON.stringify({survivor_id: survivorId, duplicate_id: duplicateId, reason}),
+          });
+          await loadCandidates();
+          await loadGuests();
+        } catch (error) {
+          showAIModal("Merge failed", `<p class="error">${escapeHtml(error.message)}</p>`);
+        }
+      };
+    } catch (error) {
+      showAIModal("Duplicate review unavailable", `<p class="error">${escapeHtml(error.message)}</p>`);
+    }
+  });
+}
+
 if (decisionFilter) {
 decisionFilter.addEventListener("change", () => {
+  window.PerformanceUtils?.updateWorkspaceUrlState({ decision: decisionFilter.value });
   visibleGuestCount = GUEST_PAGE_SIZE;
   if (latestPayload) {
     renderGuests(latestPayload);
@@ -1704,6 +1786,7 @@ decisionFilter.addEventListener("change", () => {
 
 // Debounce search input for better performance
 const debouncedSearch = debounceUtil(() => {
+  window.PerformanceUtils?.updateWorkspaceUrlState({ q: guestSearch.value });
   visibleGuestCount = GUEST_PAGE_SIZE;
   if (latestPayload) {
     renderGuests(latestPayload);
@@ -1734,6 +1817,7 @@ guestLoadMoreButton.addEventListener("click", () => {
 guestPresetButtons.forEach((button) => {
   button.addEventListener("click", async () => {
     activeGuestPreset = button.dataset.guestPreset || "all";
+    window.PerformanceUtils?.updateWorkspaceUrlState({ preset: activeGuestPreset });
     visibleGuestCount = GUEST_PAGE_SIZE;
     if (activeGuestPreset === "accepted" || activeGuestPreset === "rejected") {
       decisionFilter.value = activeGuestPreset;
@@ -1757,6 +1841,7 @@ function applyUrlState() {
   const params = new URLSearchParams(window.location.search);
   const query = params.get("q");
   const preset = params.get("preset");
+  const decision = params.get("decision");
 
   if (query) {
     guestSearch.value = query;
@@ -1764,6 +1849,7 @@ function applyUrlState() {
   if (preset && guestPresetButtons.some((button) => button.dataset.guestPreset === preset)) {
     activeGuestPreset = preset;
   }
+  if (decision) decisionFilter.value = decision;
 }
 
 function escapeHtml(value) {
@@ -1772,6 +1858,34 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function renderAuditTimeline(events) {
+  if (!events.length) return "<p>No activity has been recorded for this guest yet.</p>";
+  return `<ol class="activity-timeline">${events.map((event) => `
+    <li>
+      <strong>${escapeHtml(String(event.event_type || "updated").replaceAll("_", " "))}</strong>
+      <span>${escapeHtml(event.created_at || "")}</span>
+      <p>${escapeHtml(event.actor || "system")} via ${escapeHtml(event.source || "application")}${event.reason ? ` — ${escapeHtml(event.reason)}` : ""}</p>
+    </li>
+  `).join("")}</ol>`;
+}
+
+function renderIdentityCandidates(candidates) {
+  if (!candidates.length) return "<p>No exact-email or same-name duplicate groups need review.</p>";
+  return candidates.map((candidate) => `
+    <section class="identity-candidate">
+      <h3>${escapeHtml(String(candidate.match_type || "possible duplicate").replaceAll("_", " "))}: ${escapeHtml(candidate.match_value || "")}</h3>
+      <p class="inline-muted">Shared inboxes can represent different people. Compare the name, application history, and public profile before merging.</p>
+      ${(candidate.guests || []).map((guest, index) => `
+        <div class="mini-card">
+          <strong>${escapeHtml(guest.full_name || "Unnamed guest")}</strong>
+          <p>${escapeHtml(guest.email || "No email")} · ID ${Number(guest.id)}</p>
+          ${index ? `<button type="button" class="danger-button small-button" data-merge-survivor="${Number(candidate.guests[0].id)}" data-merge-duplicate="${Number(guest.id)}">Verify identity, then merge into ID ${Number(candidate.guests[0].id)}</button>` : "<small>Comparison anchor (oldest record; not automatically preferred)</small>"}
+        </div>
+      `).join("")}
+    </section>
+  `).join("");
 }
 
 function linkifyText(value) {
@@ -1860,6 +1974,7 @@ const aiModalCopy = document.getElementById("ai-modal-copy");
 const aiModalDone = document.getElementById("ai-modal-done");
 const aiStatusIndicator = document.getElementById("ai-status-indicator");
 let currentAIContent = "";
+let aiModalReturnFocus = null;
 
 async function checkAIStatus() {
   if (!aiStatusIndicator) {
@@ -1890,18 +2005,26 @@ async function checkAIStatus() {
   }
 }
 
-function showAIModal(title, content) {
+function showAIModal(title, content, returnFocus = null) {
+  if (aiModal.classList.contains("hidden")) {
+    aiModalReturnFocus = returnFocus || document.activeElement;
+  }
   aiModalTitle.textContent = title;
   aiModalBody.innerHTML = content;
   currentAIContent = content;
   aiModal.classList.remove("hidden");
   document.body.style.overflow = "hidden";
+  aiModalClose?.focus();
 }
 
 function hideAIModal() {
   aiModal.classList.add("hidden");
   document.body.style.overflow = "";
   currentAIContent = "";
+  if (aiModalReturnFocus?.isConnected) {
+    aiModalReturnFocus.focus();
+  }
+  aiModalReturnFocus = null;
 }
 
 function copyAIContent() {
@@ -2067,6 +2190,12 @@ if (aiModalCopy) {
 
 if (aiModal) {
   aiModal.querySelector(".modal-backdrop")?.addEventListener("click", hideAIModal);
+  aiModal.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hideAIModal();
+    }
+  });
 }
 
 try {

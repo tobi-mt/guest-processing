@@ -461,6 +461,77 @@ function getUserFriendlyError(error) {
   return message;
 }
 
+function updateWorkspaceUrlState(changes) {
+  const url = new URL(window.location.href);
+  Object.entries(changes || {}).forEach(([key, value]) => {
+    const normalized = String(value || "").trim();
+    if (normalized) url.searchParams.set(key, normalized);
+    else url.searchParams.delete(key);
+  });
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function installKeyboardTabs(buttons, activate) {
+  const items = Array.from(buttons || []);
+  items.forEach((button, index) => {
+    button.setAttribute("tabindex", button.getAttribute("aria-selected") === "true" ? "0" : "-1");
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      let target = index;
+      if (event.key === "ArrowRight") target = (index + 1) % items.length;
+      if (event.key === "ArrowLeft") target = (index - 1 + items.length) % items.length;
+      if (event.key === "Home") target = 0;
+      if (event.key === "End") target = items.length - 1;
+      items[target].focus();
+      items[target].click();
+    });
+  });
+}
+
+function installSavedViews(container, scope) {
+  if (!container || !scope) return;
+  const storageKey = `mirror-talk-saved-views:${scope}`;
+  const readViews = () => {
+    try { return JSON.parse(window.localStorage.getItem(storageKey) || "{}"); }
+    catch (_error) { return {}; }
+  };
+  const writeViews = (views) => window.localStorage.setItem(storageKey, JSON.stringify(views));
+  container.innerHTML = `
+    <label class="toolbar-field"><span>Saved Views</span><select data-saved-view-select><option value="">Choose view</option></select></label>
+    <button type="button" class="ghost-button" data-saved-view-save>Save Current View</button>
+    <button type="button" class="ghost-button" data-saved-view-delete disabled>Delete View</button>`;
+  const select = container.querySelector("[data-saved-view-select]");
+  const deleteButton = container.querySelector("[data-saved-view-delete]");
+  const render = () => {
+    const views = readViews();
+    select.innerHTML = `<option value="">Choose view</option>${Object.keys(views).sort().map((name) => `<option value="${name.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")}">${name.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}</option>`).join("")}`;
+    deleteButton.disabled = true;
+  };
+  container.querySelector("[data-saved-view-save]").addEventListener("click", () => {
+    const name = String(window.prompt("Name this saved view:") || "").trim();
+    if (!name) return;
+    const views = readViews();
+    views[name] = window.location.search;
+    writeViews(views);
+    render();
+    select.value = name;
+    deleteButton.disabled = false;
+  });
+  select.addEventListener("change", () => {
+    deleteButton.disabled = !select.value;
+    const query = readViews()[select.value];
+    if (select.value && typeof query === "string") window.location.search = query;
+  });
+  deleteButton.addEventListener("click", () => {
+    const views = readViews();
+    delete views[select.value];
+    writeViews(views);
+    render();
+  });
+  render();
+}
+
 // ==================== Export ====================
 
 window.PerformanceUtils = {
@@ -472,5 +543,8 @@ window.PerformanceUtils = {
   KeyboardShortcutManager,
   OptimisticUpdateManager,
   retryWithBackoff,
-  getUserFriendlyError
+  getUserFriendlyError,
+  updateWorkspaceUrlState,
+  installKeyboardTabs,
+  installSavedViews
 };

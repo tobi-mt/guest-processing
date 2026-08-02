@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from urllib.parse import urlsplit
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable
 
 
 MIRROR_TALK_KEYWORDS = (
@@ -391,6 +391,13 @@ def score_guest(
         "accepted_guest_matches": accepted_history_signal["matches"],
         "identity_flags": identity_conflicts,
         "model_version": "mirror-talk-intake-v1",
+        "advisory_only": True,
+        "source_fields": [
+            "application answers",
+            "public guest research" if guest.get("guest_research") else "application answers only",
+            "historical accepted guest patterns",
+        ],
+        "research_freshness": guest.get("guest_research_updated_at") or "not enriched",
     }
 
 
@@ -443,4 +450,39 @@ def build_guest_recommendation_stats(guests: Iterable[Dict[str, Any]]) -> Dict[s
         "review_queue": review_queue,
         "high_risk": high_risk,
         "average_score": round(total_score / len(guest_list)),
+    }
+
+
+def evaluate_guest_recommendations(guests: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Evaluate advisory scores against explicit historical decisions by band."""
+    decided = [
+        guest for guest in guests
+        if _normalize_text(guest.get("email_status")) in {"accepted", "rejected", "declined"}
+        and isinstance(guest.get("decision_support"), dict)
+    ]
+    bands = ((0, 34), (35, 49), (50, 57), (58, 100))
+    precision = []
+    disagreements = 0
+    for lower, upper in bands:
+        rows = [guest for guest in decided if lower <= float(guest["decision_support"].get("score", 0)) <= upper]
+        accepted = sum(1 for guest in rows if _normalize_text(guest.get("email_status")) == "accepted")
+        precision.append(
+            {
+                "band": f"{lower}-{upper}",
+                "count": len(rows),
+                "acceptance_precision": round(accepted / len(rows), 3) if rows else None,
+            }
+        )
+        disagreements += sum(
+            1 for guest in rows
+            if (guest["decision_support"].get("suggested_decision") == "approve")
+            != (_normalize_text(guest.get("email_status")) == "accepted")
+        )
+    return {
+        "model_version": "mirror-talk-intake-v1",
+        "evaluated_decisions": len(decided),
+        "precision_by_score_band": precision,
+        "disagreement_count": disagreements,
+        "override_rate": round(disagreements / len(decided), 3) if decided else None,
+        "calibration_status": "insufficient_sample" if len(decided) < 30 else "monitor",
     }

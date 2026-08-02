@@ -28,7 +28,6 @@ from guest_database_manager.web_interface import (
     EMAIL_CC_ENV_VAR,
     EMAIL_RESEND_API_KEY_ENV_VAR,
     GOOGLE_CALENDAR_ID_ENV_VAR,
-    GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR,
     GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR,
     GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR,
     GOOGLE_CLIENT_ID_ENV_VAR,
@@ -180,6 +179,76 @@ def test_web_service_can_create_and_update_guest(temp_db):
     listed_guests = service.list_guests()["guests"]
     assert len(listed_guests) == 1
     assert listed_guests[0]["full_name"] == "Jordan Rivers"
+
+
+def test_created_guest_invalidates_preloaded_guest_list_cache(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    assert service.list_guests(skip_expensive_enrichment=True)["stats"]["total"] == 0
+
+    service.create_guest({"full_name": "Immediately Visible", "email": "visible@example.com"})
+
+    refreshed = service.list_guests(skip_expensive_enrichment=True)
+    assert refreshed["stats"]["total"] == 1
+    assert refreshed["guests"][0]["full_name"] == "Immediately Visible"
+
+
+def test_assignments_and_editorial_disposition_persist_across_workspaces(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Assigned Person", "email": "assigned@example.com"})
+    guest = service.update_guest(guest["id"], {"owner": "assistant@example.com", "row_version": guest["row_version"]})
+    interview = service.create_interview(
+        {
+            "guest_id": guest["id"],
+            "guest_name": guest["full_name"],
+            "scheduled_for": "2026-08-10T10:00",
+            "owner": "producer@example.com",
+        }
+    )
+    episode = service.create_episode(
+        {
+            "guest_id": "",
+            "interview_id": "",
+            "guest_name": guest["full_name"],
+            "episode_title": "Assignment Workflow",
+            "owner": "editor@example.com",
+            "editorial_disposition": "hold",
+        }
+    )
+
+    assert guest["owner"] == "assistant@example.com"
+    assert interview["owner"] == "producer@example.com"
+    assert episode["guest_id"] is None
+    assert episode["interview_id"] is None
+    assert episode["owner"] == "editor@example.com"
+    assert episode["editorial_disposition"] == "hold"
+
+
+def test_incomplete_information_workflow_updates_latest_application(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Incomplete Applicant", "email": "missing@example.com"})
+
+    application = service.update_guest_application_status(
+        guest["id"], "needs_information", reason="Please add a website", actor="producer@example.com"
+    )
+
+    assert application["status"] == "needs_information"
+    event = service.database.list_audit_events("application", application["id"])[0]
+    assert event["actor"] == "producer@example.com"
+    assert event["reason"] == "Please add a website"
+
+
+def test_episode_rejects_guest_identity_mismatch(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Canonical Guest", "email": "canonical@example.com"})
+
+    with pytest.raises(WebInterfaceError, match="must match the linked guest"):
+        service.create_episode(
+            {
+                "guest_id": guest["id"],
+                "guest_name": "Different Guest",
+                "episode_title": "Mismatched Episode",
+            }
+        )
 
 
 def test_web_service_create_guest_updates_existing_match(temp_db):
@@ -905,7 +974,7 @@ def test_bulk_research_guests_skips_cached_and_missing_profiles(monkeypatch, tem
             "website": "https://cached.example.com",
         }
     )
-    missing_profile_guest = service.create_guest(
+    service.create_guest(
         {
             "full_name": "Missing Profile Guest",
             "email": "missing@example.com",
@@ -1119,7 +1188,7 @@ def test_agency_referral_sends_personal_application_link(monkeypatch, temp_db):
         def is_configured(self):
             return self.configured
 
-        def send_personal_application_request_email(self, guest_name, to_email, intake_url, agency_name=""):
+        def send_personal_application_request_email(self, guest_name, to_email, intake_url, agency_name="", idempotency_key=""):
             sent["guest_name"] = guest_name
             sent["to_email"] = to_email
             sent["intake_url"] = intake_url
@@ -1177,7 +1246,7 @@ def test_list_guests_exposes_agency_submission_meta(monkeypatch, temp_db):
         def is_configured(self):
             return self.configured
 
-        def send_personal_application_request_email(self, guest_name, to_email, intake_url, agency_name=""):
+        def send_personal_application_request_email(self, guest_name, to_email, intake_url, agency_name="", idempotency_key=""):
             return True
 
     monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
@@ -1226,7 +1295,7 @@ def test_resend_guest_personal_application_email(monkeypatch, temp_db):
         def is_configured(self):
             return self.configured
 
-        def send_personal_application_request_email(self, guest_name, to_email, intake_url, agency_name=""):
+        def send_personal_application_request_email(self, guest_name, to_email, intake_url, agency_name="", idempotency_key=""):
             sent["guest_name"] = guest_name
             sent["to_email"] = to_email
             sent["intake_url"] = intake_url
@@ -1299,7 +1368,7 @@ def test_resend_guest_booking_link(monkeypatch, temp_db):
         def is_configured(self):
             return self.configured
 
-        def send_booking_link_email(self, guest_name, to_email, booking_url):
+        def send_booking_link_email(self, guest_name, to_email, booking_url, idempotency_key=""):
             sent["guest_name"] = guest_name
             sent["to_email"] = to_email
             sent["booking_url"] = booking_url
@@ -1501,11 +1570,12 @@ def test_google_calendar_sync_creates_dashboard_guest_when_missing(monkeypatch, 
     monkeypatch.setattr(service, "_build_google_calendar_client", lambda: StubCalendarClient())
 
     result = service.sync_google_calendar_interviews()
+    applied = service.apply_calendar_reconciliation_proposals([result["proposals"][0]["id"]])
     payload = service.list_guests()
     dashboard_guest = next(item for item in payload["guests"] if item["full_name"] == "Calendar Guest")
 
     assert result["count"] == 1
-    assert result["interviews"][0]["guest_id"] == dashboard_guest["id"]
+    assert applied["interviews"][0]["guest_id"] == dashboard_guest["id"]
     assert dashboard_guest["email"] == "calendar@example.com"
 
 
@@ -1557,7 +1627,7 @@ def test_public_intake_submission_sends_confirmation_email_when_configured(monke
         def is_configured(self):
             return self.configured
 
-        def send_intake_confirmation_email(self, guest_name, to_email):
+        def send_intake_confirmation_email(self, guest_name, to_email, idempotency_key=""):
             assert guest_name == "Amara Stone"
             assert to_email == "amara@example.com"
             return True
@@ -1596,7 +1666,7 @@ def test_public_intake_submission_ignores_confirmation_email_failures(monkeypatc
         def is_configured(self):
             return self.configured
 
-        def send_intake_confirmation_email(self, guest_name, to_email):
+        def send_intake_confirmation_email(self, guest_name, to_email, idempotency_key=""):
             raise RuntimeError("delivery failed")
 
     monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
@@ -2221,6 +2291,61 @@ def test_future_scheduled_episode_numbers_preserve_anchor_format(temp_db):
     assert refreshed_later["legacy_episode_number"] == "Episode 304"
 
 
+def test_episode_number_collision_never_overwrites_another_scheduled_guest(temp_db):
+    """Sequence collisions are renumbered; they must never act as cross-guest identity."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Released Anchor",
+            "guest_email": "anchor@example.com",
+            "episode_title": "Released Anchor Title",
+            "release_date": "2026-06-02T17:00",
+            "release_status": "released",
+            "production_status": "released",
+            "promotion_status": "released",
+            "legacy_episode_number": "501",
+        }
+    )
+    first = service.create_episode(
+        {
+            "guest_name": "First Scheduled Guest",
+            "guest_email": "first@example.com",
+            "episode_title": "First Scheduled Title",
+            "release_date": "2099-06-09T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "promotion_status": "ready",
+            "legacy_episode_number": "503",
+        }
+    )
+    second = service.create_episode(
+        {
+            "guest_name": "Second Scheduled Guest",
+            "guest_email": "second@example.com",
+            "episode_title": "Second Scheduled Title",
+            "release_date": "2099-06-16T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "promotion_status": "ready",
+            "legacy_episode_number": "502",
+        }
+    )
+
+    episodes = service.database.list_episodes()
+    scheduled = [item for item in episodes if item["release_status"] == "scheduled"]
+
+    assert first["id"] != second["id"]
+    assert [item["guest_name"] for item in scheduled] == [
+        "First Scheduled Guest",
+        "Second Scheduled Guest",
+    ]
+    assert [item["episode_title"] for item in scheduled] == [
+        "First Scheduled Title",
+        "Second Scheduled Title",
+    ]
+    assert [item["legacy_episode_number"] for item in scheduled] == ["502", "503"]
+
+
 def test_web_service_can_delete_interview_and_episode(temp_db):
     """Operations records should be removable through the web service."""
     service = GuestWebService(temp_db.db_path)
@@ -2514,7 +2639,9 @@ def test_scheduling_intelligence_does_not_trust_wrong_guest_id_link(temp_db):
             "website": "https://amina.example.com",
         }
     )
-    service.create_episode(
+    # Seed a legacy-corrupt row below the guarded service boundary. New writes
+    # reject this mismatch; planning must still defend against historical data.
+    service.database.upsert_episode(
         {
             "guest_id": jonathan["id"],
             "guest_name": "Mark Robinson",
@@ -2588,7 +2715,9 @@ def test_ai_scheduling_fallback_uses_filtered_recommendations(monkeypatch, temp_
             "website": "https://amina.example.com",
         }
     )
-    service.create_episode(
+    # Seed a legacy-corrupt row below the guarded service boundary. New writes
+    # reject this mismatch; AI fallback must still filter historical data.
+    service.database.upsert_episode(
         {
             "guest_id": jonathan["id"],
             "guest_name": "Mark Robinson",
@@ -3088,8 +3217,82 @@ def test_web_service_can_sync_matching_transcripts_from_ask_mirror_talk(monkeypa
     assert updated_episode["transcript_text"] == "We explored how calm grows through honest practice."
 
 
-def test_web_service_can_match_ask_episode_by_guest_name_and_update_title(monkeypatch, temp_db):
-    """Planning sync should update the local episode title when Ask Mirror Talk has the published version."""
+def test_ask_sync_preview_requires_approval_and_preserves_release_metadata(monkeypatch, temp_db):
+    """A review pass must be non-mutating and an approved sync must be lossless."""
+
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def export_episodes(self, **kwargs):
+            return [
+                {
+                    "id": 501,
+                    "title": "Published: Calm Under Pressure",
+                    "description": "Jordan Rivers joins Mirror Talk to discuss calm leadership.",
+                    "published_at": "2099-05-12T17:00:00Z",
+                    "transcript_text": "A verified remote transcript.",
+                }
+            ]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "Editorial Working Title",
+            "topic": "Calm leadership",
+            "release_date": "2099-05-12T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "promotion_status": "ready",
+            "legacy_episode_number": "501",
+            "show_notes_url": "https://example.com/show-notes",
+            "notes": "Keep this editorial note.",
+        }
+    )
+
+    preview = service.sync_ask_mirror_talk_transcripts(preview_only=True)
+    untouched = service.database.get_episode_by_id(episode["id"])
+
+    assert preview["preview_only"] is True
+    assert preview["updated"] == 0
+    assert len(preview["proposed_matches"]) == 1
+    assert not untouched["transcript_text"]
+    assert not untouched["published_title"]
+
+    proposal = preview["proposed_matches"][0]
+    result = service.sync_ask_mirror_talk_transcripts(
+        approved_matches=[
+            {
+                "local_episode_id": proposal["local_episode"]["id"],
+                "remote_episode_ref": proposal["remote_episode"]["ref"],
+            }
+        ]
+    )
+    updated = service.database.get_episode_by_id(episode["id"])
+
+    assert result["updated"] == 1
+    assert updated["episode_title"] == "Editorial Working Title"
+    assert updated["working_title"] == "Editorial Working Title"
+    assert updated["published_title"] == "Published: Calm Under Pressure"
+    assert updated["release_date"] == "2099-05-12T17:00"
+    assert updated["release_status"] == "scheduled"
+    assert updated["production_status"] == "ready"
+    assert updated["promotion_status"] == "ready"
+    assert updated["legacy_episode_number"] == "501"
+    assert updated["show_notes_url"] == "https://example.com/show-notes"
+    assert updated["notes"] == "Keep this editorial note."
+    assert updated["transcript_text"] == "A verified remote transcript."
+
+
+def test_web_service_can_match_ask_episode_and_preserve_working_title(monkeypatch, temp_db):
+    """Planning sync stores the published title without replacing editorial work."""
 
     class StubAskMirrorTalkClient:
         def __init__(self, **kwargs):
@@ -3128,7 +3331,13 @@ def test_web_service_can_match_ask_episode_by_guest_name_and_update_title(monkey
     assert result["matched_by_guest"] == 1
     assert result["updated_transcript"] == 1
     assert result["updated_title_only"] == 0
-    assert updated_episode["episode_title"] == "Jordan Rivers on Building Calm Under Pressure"
+    assert updated_episode["episode_title"] == "Calm Under Pressure"
+    assert updated_episode["working_title"] == "Calm Under Pressure"
+    assert updated_episode["published_title"] == "Jordan Rivers on Building Calm Under Pressure"
+    assert updated_episode["transcript_source_id"] == "77"
+    assert updated_episode["transcript_match_method"] == "guest_title"
+    assert updated_episode["transcript_match_score"] > 0
+    assert updated_episode["transcript_synced_at"]
     assert updated_episode["transcript_text"] == "Jordan explains how honest practice helps people stay calm under pressure."
 
 
@@ -3171,7 +3380,8 @@ def test_web_service_can_use_date_proximity_for_guest_match(monkeypatch, temp_db
 
     assert result["matched"] == 1
     assert result["matched_by_guest"] == 1
-    assert updated_episode["episode_title"] == "A Different Published Title"
+    assert updated_episode["episode_title"] == "Internal Working Title"
+    assert updated_episode["published_title"] == "A Different Published Title"
 
 
 def test_web_service_can_match_by_first_or_last_name_with_date_anchor(monkeypatch, temp_db):
@@ -3213,7 +3423,8 @@ def test_web_service_can_match_by_first_or_last_name_with_date_anchor(monkeypatc
 
     assert result["matched"] == 1
     assert result["matched_by_guest"] == 1
-    assert updated_episode["episode_title"] == "Volk on Grief, Healing and Spiritual Solace"
+    assert updated_episode["episode_title"] == "Grief and Healing"
+    assert updated_episode["published_title"] == "Volk on Grief, Healing and Spiritual Solace"
 
 
 def test_web_service_reports_ambiguous_ask_matches(monkeypatch, temp_db):
@@ -3384,14 +3595,14 @@ def test_web_service_can_send_acceptance_email(monkeypatch, temp_db):
         def is_configured(self):
             return self.configured
 
-        def send_acceptance_email(self, guest_name, to_email, custom_message="", booking_url=""):
+        def send_acceptance_email(self, guest_name, to_email, custom_message="", booking_url="", idempotency_key=""):
             assert guest_name == "Amina Hart"
             assert to_email == "amina@example.com"
             assert custom_message == "Welcome aboard"
             assert booking_url
             return True
 
-        def send_rejection_email(self, guest_name, to_email, custom_message=""):
+        def send_rejection_email(self, guest_name, to_email, custom_message="", idempotency_key=""):
             raise AssertionError("Rejection email should not be called")
 
     monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
@@ -4068,7 +4279,7 @@ def test_public_booking_queues_confirmation_email_after_retry_failure(monkeypatc
         def get_booking_confirmation_template(self, guest_name, scheduled_for, timezone_label, join_url):
             return {"subject": "Your Soulful Conversation is booked", "body": "Here is your confirmation."}
 
-        def send_booking_confirmation_email(self, guest_name, to_email, scheduled_for, timezone_label, join_url):
+        def send_booking_confirmation_email(self, guest_name, to_email, scheduled_for, timezone_label, join_url, idempotency_key=""):
             self.calls += 1
             return False
 
@@ -4147,7 +4358,7 @@ def test_public_booking_retries_confirmation_email_successfully(monkeypatch, tem
         def get_booking_confirmation_template(self, guest_name, scheduled_for, timezone_label, join_url):
             return {"subject": "Your Soulful Conversation is booked", "body": "Here is your confirmation."}
 
-        def send_booking_confirmation_email(self, guest_name, to_email, scheduled_for, timezone_label, join_url):
+        def send_booking_confirmation_email(self, guest_name, to_email, scheduled_for, timezone_label, join_url, idempotency_key=""):
             self.calls += 1
             return self.calls >= 2
 
@@ -4219,10 +4430,11 @@ def test_pending_booking_confirmation_outbox_can_be_drained(monkeypatch, temp_db
         def is_configured(self):
             return True
 
-        def send_email(self, to_email, subject, body, attachments=None):
+        def send_email(self, to_email, subject, body, attachments=None, idempotency_key=""):
             captured["to_email"] = to_email
             captured["subject"] = subject
             captured["attachments"] = attachments or []
+            captured["idempotency_key"] = idempotency_key
             return True
 
     monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
@@ -4311,7 +4523,7 @@ def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):
     manager = EmailManager()
     captured = {}
 
-    def fake_send_email(to_email, subject, body, attachments=None):
+    def fake_send_email(to_email, subject, body, attachments=None, idempotency_key=""):
         captured["to_email"] = to_email
         captured["subject"] = subject
         captured["body"] = body
@@ -4419,7 +4631,7 @@ def test_web_service_can_send_custom_email_body(monkeypatch, temp_db):
         def is_configured(self):
             return self.configured
 
-        def send_email(self, to_email, subject, body):
+        def send_email(self, to_email, subject, body, idempotency_key=""):
             assert to_email == "amina@example.com"
             assert subject == "Custom Subject"
             assert body == "Custom Body"
@@ -4521,8 +4733,6 @@ def test_operations_expose_known_episode_categories_for_guided_input(temp_db):
             "category": "Personal Development",
         }
     )
-
-    operations = service.list_operations()
 
     planning = service.list_planning()
 
@@ -5113,7 +5323,7 @@ def test_web_service_can_preview_and_send_weekly_interview_reminders(monkeypatch
             assert timezone_label == "CET"
             return {"subject": "Reminder Subject", "body": f"Join here: {join_url}"}
 
-        def send_email(self, to_email, subject, body):
+        def send_email(self, to_email, subject, body, idempotency_key=""):
             assert to_email == "jordan@example.com"
             assert subject == "Reminder Subject"
             assert "riverside.fm" in body
@@ -5166,7 +5376,7 @@ def test_web_service_can_preview_and_send_post_interview_appreciation(monkeypatc
             assert guest_name == "Jordan Rivers"
             return {"subject": "Thank You", "body": "We appreciate you."}
 
-        def send_email(self, to_email, subject, body):
+        def send_email(self, to_email, subject, body, idempotency_key=""):
             assert to_email == "jordan@example.com"
             assert subject == "Thank You"
             assert "appreciate" in body.lower()
@@ -5217,7 +5427,7 @@ def test_web_service_can_preview_and_send_interview_cancellation(monkeypatch, te
             assert timezone_label == "CET"
             return {"subject": "Schedule Update", "body": "We need to cancel this booking."}
 
-        def send_email(self, to_email, subject, body):
+        def send_email(self, to_email, subject, body, idempotency_key=""):
             assert to_email == "jordan@example.com"
             assert subject == "Schedule Update"
             assert "cancel" in body.lower()
@@ -5275,7 +5485,7 @@ def test_web_service_can_preview_and_send_booking_confirmation(monkeypatch, temp
             assert join_url == "https://riverside.fm/example"
             return {"subject": "Your Soulful Conversation is booked", "body": "Here is your confirmation."}
 
-        def send_booking_confirmation_email(self, guest_name, to_email, scheduled_for, timezone_label, join_url):
+        def send_booking_confirmation_email(self, guest_name, to_email, scheduled_for, timezone_label, join_url, idempotency_key=""):
             assert guest_name == "Jordan Rivers"
             assert to_email == "jordan@example.com"
             assert timezone_label == "America/Toronto"
@@ -5334,7 +5544,7 @@ def test_web_service_can_preview_and_send_reschedule_link(monkeypatch, temp_db):
             assert "token=" in reschedule_url
             return {"subject": "Choose a new time", "body": "Here is your reschedule link."}
 
-        def send_reschedule_link_email(self, guest_name, to_email, scheduled_for, timezone_label, reschedule_url):
+        def send_reschedule_link_email(self, guest_name, to_email, scheduled_for, timezone_label, reschedule_url, idempotency_key=""):
             assert guest_name == "Jordan Rivers"
             assert to_email == "jordan@example.com"
             assert timezone_label == "Europe/Berlin"
@@ -5407,7 +5617,7 @@ def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp
             assert guest_name == "Natalie Bouchard"
             return {"subject": "Thank You", "body": "We appreciate you."}
 
-        def send_email(self, to_email, subject, body):
+        def send_email(self, to_email, subject, body, idempotency_key=""):
             assert to_email == "natalie@example.com"
             assert subject == "Thank You"
             assert "appreciate" in body.lower()
@@ -5458,7 +5668,7 @@ def test_web_service_can_preview_and_send_released_episode_email(monkeypatch, te
             assert files_url == "https://downloads.mirrortalkpodcast.com/jordan-rivers"
             return {"subject": "Your Mirror Talk episode is now live", "body": "Show notes and files are ready."}
 
-        def send_email(self, to_email, subject, body):
+        def send_email(self, to_email, subject, body, idempotency_key=""):
             assert to_email == "jordan@example.com"
             assert subject == "Your Mirror Talk episode is now live"
             assert "files" in body.lower()
@@ -5546,9 +5756,11 @@ def test_web_service_can_sync_google_calendar_interviews(monkeypatch, temp_db):
     monkeypatch.setattr(service, "_build_google_calendar_client", lambda: StubCalendarClient())
 
     result = service.sync_google_calendar_interviews()
+    applied = service.apply_calendar_reconciliation_proposals([result["proposals"][0]["id"]])
 
     assert result["count"] == 1
-    assert result["interviews"][0]["guest_name"] == "Jordan Rivers"
+    assert result["proposals"][0]["action"] == "create"
+    assert applied["interviews"][0]["guest_name"] == "Jordan Rivers"
     assert service.list_operations()["interviews"][0]["calendar_source"] == "google_calendar"
 
 
@@ -5990,3 +6202,25 @@ def test_validate_intake_payload_rejects_low_effort_answers():
                 "additional_info": "Not detailed",
             }
         )
+def test_operator_schedule_action_enforces_readiness_and_allows_reasoned_asset_override(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    payload = {
+        "guest_name": "Readiness Guest",
+        "episode_title": "Readiness Episode",
+        "release_date": "2099-08-10T17:00",
+        "release_status": "scheduled",
+        "production_status": "editing",
+        "promotion_status": "needs_assets",
+        "enforce_readiness": True,
+    }
+
+    with pytest.raises(WebInterfaceError, match="production ready"):
+        service.create_episode(payload)
+
+    payload.update(
+        production_status="ready",
+        schedule_override_reason="Sponsor date requires scheduling before final artwork",
+    )
+    episode = service.create_episode(payload)
+    assert episode["release_status"] == "scheduled"
+    assert "Sponsor date" in service.database.list_audit_events("episode", episode["id"])[0]["reason"]

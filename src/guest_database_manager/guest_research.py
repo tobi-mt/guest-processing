@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import html
-import json
 import re
 from datetime import datetime
 from http.client import InvalidURL
-from typing import Any, Dict, List
+from typing import Any, Dict
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus, unquote, urlparse
 from urllib.request import Request, urlopen
