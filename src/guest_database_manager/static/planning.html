@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
     <link rel="stylesheet" href="/static/styles.css?v=20260802.10" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260802.14" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260803.1" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -75,23 +75,16 @@
       <main class="main-grid operations-grid">
         <section class="panel operations-form-panel">
           <div class="workspace-panel active" data-planning-panel="release_planning">
-          <div class="operations-section">
-            <div class="section-heading">
+          <div id="episode-editor-section" class="operations-section episode-editor-section">
+            <div class="section-heading section-heading-inline">
+              <div>
               <p class="eyebrow">Episode Pipeline</p>
-              <h2>Add Or Update Episode</h2>
+              <h2 id="episode-editor-title">Episode editor</h2>
               <p class="hero-copy section-copy">
-                Use this right after recording so the planner can weigh readiness, promo assets, category balance, timing, and your post-interview guest follow-up.
+                Add a recorded episode or update its editorial and release details.
               </p>
-            </div>
-
-            <div class="workflow-note">
-              <strong>Best flow after a recording</strong>
-              <p>This is the right place to finish the human side of the workflow once the conversation has actually happened.</p>
-              <ol class="workflow-steps">
-                <li>Save the episode with the right guest, title, and recording date.</li>
-                <li>Preview or send the thank-you email when you are ready.</li>
-                <li>Later, add assets, schedule the release, and send the release email after publication.</li>
-              </ol>
+              </div>
+              <button id="episode-editor-close" type="button" class="ghost-button" aria-label="Close episode editor">×</button>
             </div>
 
             <form id="episode-form" class="guest-form" novalidate>
@@ -398,8 +391,12 @@
               <p class="eyebrow">Release Planning</p>
               <h2>Episodes</h2>
             </div>
-            <button id="planning-refresh-button" class="secondary-button" type="button">Refresh</button>
+            <div class="section-heading-actions">
+              <button id="episode-editor-create" class="primary-button" type="button">Add Episode</button>
+              <button id="planning-refresh-button" class="secondary-button" type="button">Refresh</button>
+            </div>
           </div>
+          <p id="planning-workspace-message" class="message" aria-live="polite"></p>
           <section class="release-calendar-panel" aria-labelledby="release-calendar-title">
             <div class="calendar-toolbar">
               <div>
@@ -518,7 +515,7 @@
         </div>
         <div id="episode-details-body"></div>
         <div class="modal-actions">
-          <button id="episode-details-edit" type="button" class="primary-button">Open In Editor</button>
+          <button id="episode-details-edit" type="button" class="primary-button">Edit Episode</button>
           <button id="episode-details-dismiss" type="button" class="ghost-button">Close</button>
         </div>
       </div>
@@ -547,8 +544,12 @@
       </div>
     </div>
 
+    <div id="episode-editor-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="episode-editor-title">
+      <div class="modal-content episode-editor-modal-content"></div>
+    </div>
+
     <script src="/static/performance-utils.js?v=20260802.8"></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
-    <script src="/static/planning.js?v=20260802.12" defer></script>
+    <script src="/static/planning.js?v=20260803.2" defer></script>
   </body>
 </html>

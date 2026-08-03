@@ -1084,6 +1084,45 @@
   margin: 0 0 0.3rem;
 }
 
+/* Planning keeps release management in the main workspace; editing opens on demand. */
+.operations-grid:has(> .operations-form-panel > .workspace-panel.active[data-planning-panel="release_planning"]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.operations-form-panel:has(> .workspace-panel.active[data-planning-panel="release_planning"]) {
+  display: none;
+}
+
+.section-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.episode-editor-modal-content {
+  width: min(980px, 100%);
+  max-width: 980px;
+  max-height: min(90vh, 900px);
+  padding: 0;
+  overflow-y: auto;
+}
+
+.episode-editor-section {
+  padding: 1.5rem;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.episode-editor-section .section-heading {
+  margin-bottom: 1rem;
+}
+
+.episode-editor-section .guest-form {
+  margin-top: 0;
+}
+
 @media (max-width: 640px) {
   .planning-hero .metric-grid,
   .interview-hero .metric-grid,
@@ -1110,5 +1149,17 @@
 
   .rejected-recommendation-row {
     grid-template-columns: 1fr;
+  }
+
+  .section-heading-actions {
+    width: 100%;
+  }
+
+  .section-heading-actions > * {
+    flex: 1 1 140px;
+  }
+
+  .episode-editor-section {
+    padding: 1.1rem;
   }
 }

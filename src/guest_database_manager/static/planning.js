@@ -8,6 +8,7 @@ const exportListName = document.getElementById("export-list-name");
 const exportFields = document.getElementById("export-fields");
 const episodeCategoryOptions = document.getElementById("episode-category-options");
 const episodeMessage = document.getElementById("episode-message");
+const planningWorkspaceMessage = document.getElementById("planning-workspace-message");
 const episodeImportMessage = document.getElementById("episode-import-message");
 const askSyncMessage = document.getElementById("ask-sync-message");
 const askSyncBreakdown = document.getElementById("ask-sync-breakdown");
@@ -56,6 +57,11 @@ const episodeDetailsBody = document.getElementById("episode-details-body");
 const episodeDetailsClose = document.getElementById("episode-details-close");
 const episodeDetailsDismiss = document.getElementById("episode-details-dismiss");
 const episodeDetailsEdit = document.getElementById("episode-details-edit");
+const episodeEditorModal = document.getElementById("episode-editor-modal");
+const episodeEditorSection = document.getElementById("episode-editor-section");
+const episodeEditorCreate = document.getElementById("episode-editor-create");
+const episodeEditorClose = document.getElementById("episode-editor-close");
+const episodeEditorTitle = document.getElementById("episode-editor-title");
 const IS_FILE_PROTOCOL = window.location.protocol === "file:";
 
 let latestPlanningPayload = {
@@ -81,6 +87,7 @@ let planningRefreshInFlight = false;
 let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let selectedCalendarEpisodeId = null;
 let calendarReturnFocus = null;
+let episodeEditorReturnFocus = null;
 let pendingAskSyncRequest = null;
 const PLANNING_PAYLOAD_CACHE_KEY = "mirror-talk-planning-payload-v20260605-intelligence-nostore";
 const LEGACY_PLANNING_PAYLOAD_CACHE_KEYS = [
@@ -391,6 +398,10 @@ function setMessage(node, text, tone = "") {
   if (!node) return;
   node.textContent = text;
   node.className = `message ${tone}`.trim();
+  if (node === episodeMessage && planningWorkspaceMessage) {
+    planningWorkspaceMessage.textContent = text;
+    planningWorkspaceMessage.className = `message ${tone}`.trim();
+  }
 }
 
 function enforceHostedMode() {
@@ -1394,6 +1405,35 @@ function resetEpisodeForm() {
   episodeForm.elements.legacy_episode_number.value = computeNextLegacyEpisodeNumber(latestPlanningPayload.episodes || []);
   episodeSubmitButton.textContent = "Save Episode";
   episodeResetButton.hidden = true;
+  if (episodeEditorTitle) episodeEditorTitle.textContent = "Add episode";
+}
+
+function openEpisodeEditor({ restoreFocusTo = document.activeElement } = {}) {
+  if (!episodeEditorModal) return;
+  if (episodeEditorModal.classList.contains("hidden")) {
+    episodeEditorReturnFocus = restoreFocusTo instanceof HTMLElement ? restoreFocusTo : null;
+  }
+  episodeEditorModal.classList.remove("hidden");
+  const focusTarget = episodeForm?.elements?.id?.value
+    ? episodeForm.elements.episode_title
+    : episodeForm?.elements?.guest_name;
+  focusTarget?.focus({ preventScroll: true });
+}
+
+function closeEpisodeEditor({ restoreFocus = true } = {}) {
+  if (!episodeEditorModal || episodeEditorModal.classList.contains("hidden")) return;
+  episodeEditorModal.classList.add("hidden");
+  if (restoreFocus && episodeEditorReturnFocus?.isConnected) {
+    episodeEditorReturnFocus.focus();
+  }
+  episodeEditorReturnFocus = null;
+}
+
+function initializeEpisodeEditor() {
+  const editorContent = episodeEditorModal?.querySelector(".episode-editor-modal-content");
+  if (editorContent && episodeEditorSection) {
+    editorContent.appendChild(episodeEditorSection);
+  }
 }
 
 function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } = {}) {
@@ -1439,7 +1479,8 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeForm.elements.notes.value = episode.notes || "";
   episodeSubmitButton.textContent = "Update Episode";
   episodeResetButton.hidden = false;
-  episodeForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (episodeEditorTitle) episodeEditorTitle.textContent = "Edit episode";
+  openEpisodeEditor();
 }
 
 function renderEpisodeInlineEditor(container, episode) {
@@ -1843,7 +1884,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
         <div class="action-group">
           <span class="action-group-label">Core Actions</span>
           <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
-          <button type="button" class="ghost-button" data-episode-action="form">Open In Form</button>
+          <button type="button" class="ghost-button" data-episode-action="form">Open Full Editor</button>
           <button type="button" class="ghost-button" data-episode-action="activity">Activity</button>
           <button type="button" class="ghost-button" data-episode-action="refresh">Refresh</button>
           ${isScheduled && normalizeText(episode.production_status) === "ready" && normalizeText(episode.promotion_status) === "ready" ? `<button type="button" class="primary-button" data-episode-action="release">Mark Released</button>` : ""}
@@ -1915,7 +1956,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
       loadEpisodeIntoForm(fullEpisode);
       setMessage(
         episodeMessage,
-        `Loaded ${episode.episode_title || episode.guest_name || "episode"} into the main form. You can finish the details here or send the thank-you email when ready.`,
+        `Opened ${episode.episode_title || episode.guest_name || "episode"} in the full editor.`,
         "success",
       );
     });
@@ -2341,7 +2382,7 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
         <div class="action-group">
           <span class="action-group-label">Release Decision</span>
           <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
-          <button type="button" class="secondary-button" data-recommendation-action="edit">Review In Form</button>
+          <button type="button" class="secondary-button" data-recommendation-action="edit">Open Full Editor</button>
         </div>
         <details class="recommendation-reject-control action-group">
           <summary class="ghost-button">Reject recommendation</summary>
@@ -2920,6 +2961,7 @@ if (episodeForm && episodeSubmitButton) {
       });
       replaceEpisodeInPayload(savedEpisode);
       resetEpisodeForm();
+      closeEpisodeEditor({ restoreFocus: false });
       setMessage(episodeMessage, episodeId ? "Episode updated." : "Episode saved.", "success");
       renderPlanning();
       refreshPlanningQuietly();
@@ -2938,7 +2980,7 @@ if (episodeForm && episodeSubmitButton) {
 if (episodeResetButton) {
   episodeResetButton.addEventListener("click", () => {
     resetEpisodeForm();
-    setMessage(episodeMessage, "Back to creating a new episode.", "success");
+    closeEpisodeEditor();
   });
 }
 
@@ -3157,6 +3199,7 @@ planningTabButtons.forEach((button) => {
 window.PerformanceUtils?.installKeyboardTabs(planningTabButtons, setPlanningTab);
 
 renderExportFields();
+initializeEpisodeEditor();
 resetEpisodeForm();
 applyUrlState();
 episodeForm.elements.outreach_plan.value = JSON.stringify(normalizeOutreachPlan(null));
@@ -3193,9 +3236,28 @@ episodeDetailsEdit?.addEventListener("click", async () => {
     setMessage(episodeMessage, error.message || "Could not load episode details", "error");
   }
 });
+episodeEditorCreate?.addEventListener("click", (event) => {
+  setPlanningTab("release_planning");
+  resetEpisodeForm();
+  openEpisodeEditor({ restoreFocusTo: event.currentTarget });
+});
+episodeEditorClose?.addEventListener("click", () => {
+  resetEpisodeForm();
+  closeEpisodeEditor();
+});
+episodeEditorModal?.addEventListener("click", (event) => {
+  if (event.target === episodeEditorModal) {
+    resetEpisodeForm();
+    closeEpisodeEditor();
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && episodeDetailsModal && !episodeDetailsModal.classList.contains("hidden")) {
     closeEpisodeDetailsModal();
+  }
+  if (event.key === "Escape" && episodeEditorModal && !episodeEditorModal.classList.contains("hidden")) {
+    resetEpisodeForm();
+    closeEpisodeEditor();
   }
 });
 
