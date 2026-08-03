@@ -535,6 +535,53 @@ def test_episode_lifecycle_changes_create_before_after_audit_events(temp_db):
     assert '"production_status": "ready"' in events[1]["after_json"]
 
 
+def test_recommendation_feedback_is_reversible_audited_and_idempotent(temp_db):
+    episode_id, _ = temp_db.upsert_episode(
+        {"guest_name": "Editorial Guest", "episode_title": "Editorial Episode"}
+    )
+
+    rejected = temp_db.record_recommendation_feedback(
+        episode_id,
+        action="rejected",
+        reason="Too similar to a recent episode",
+        actor="editor@example.com",
+        idempotency_key="reject-request-1",
+        recommendation_version="release-planner-v1",
+        recommendation_snapshot={"priority_score": 84},
+    )
+    duplicate = temp_db.record_recommendation_feedback(
+        episode_id,
+        action="rejected",
+        reason="Too similar to a recent episode",
+        actor="editor@example.com",
+        idempotency_key="reject-request-1",
+    )
+
+    assert duplicate["id"] == rejected["id"]
+    assert temp_db.get_latest_recommendation_feedback()[episode_id]["action"] == "rejected"
+    temp_db.record_recommendation_feedback(
+        episode_id,
+        action="restored",
+        reason="Editorial timing changed",
+        actor="editor@example.com",
+        idempotency_key="restore-request-1",
+    )
+    assert temp_db.get_latest_recommendation_feedback([episode_id])[episode_id]["action"] == "restored"
+    events = temp_db.list_audit_events("episode", episode_id)
+    assert [events[0]["event_type"], events[1]["event_type"]] == [
+        "recommendation_restored",
+        "recommendation_rejected",
+    ]
+
+
+def test_recommendation_rejection_requires_reason(temp_db):
+    episode_id, _ = temp_db.upsert_episode(
+        {"guest_name": "Reason Guest", "episode_title": "Reason Episode"}
+    )
+    with pytest.raises(ValueError, match="reason is required"):
+        temp_db.record_recommendation_feedback(episode_id, action="rejected")
+
+
 @pytest.mark.parametrize(
     ("method_name", "status", "event_type"),
     [

@@ -59,5 +59,18 @@
     return result || stableTieBreak();
   }
 
-  return { compareEpisodes, episodeNumber };
+  function classifyProductionStage(episode) {
+    const releaseStatus = normalize(episode?.release_status);
+    const productionStatus = normalize(episode?.production_status);
+    const promotionStatus = normalize(episode?.promotion_status);
+    if (releaseStatus === "released") return "";
+    if (releaseStatus === "scheduled") return "scheduled";
+    if (productionStatus === "editing") return "editing";
+    if (productionStatus === "recorded") return "recorded";
+    if (productionStatus === "ready" && promotionStatus === "needs_assets") return "assets_needed";
+    if (productionStatus === "ready" && promotionStatus === "ready") return "ready";
+    return "";
+  }
+
+  return { classifyProductionStage, compareEpisodes, episodeNumber };
 }));

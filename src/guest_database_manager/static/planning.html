@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
     <link rel="stylesheet" href="/static/styles.css?v=20260802.10" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260802.10" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260802.14" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -385,6 +385,11 @@
           <div class="list-footer">
             <button id="recommendation-load-more" class="secondary-button hidden" type="button">Load More Recommendations</button>
           </div>
+          <details id="rejected-recommendations-panel" class="rejected-recommendations-panel hidden">
+            <summary><span>Rejected recommendations</span><span id="rejected-recommendations-count" class="status-chip">0</span></summary>
+            <p class="tool-copy">These episodes stay out of scheduling recommendations and AI research until an editor restores them.</p>
+            <div id="rejected-recommendation-list" class="rejected-recommendation-list"></div>
+          </details>
           </div>
 
           <div class="workspace-panel" data-planning-panel="release_planning">
@@ -414,9 +419,16 @@
             </div>
             <div id="release-calendar" class="release-calendar" aria-live="polite"></div>
           </section>
-          <section aria-labelledby="backlog-board-title">
-            <h3 id="backlog-board-title">Production backlog</h3>
-            <div id="backlog-board" class="planning-board" aria-live="polite"></div>
+          <section class="production-pipeline-panel" aria-labelledby="production-pipeline-title">
+            <div class="production-pipeline-heading">
+              <div>
+                <p class="eyebrow">Workflow health</p>
+                <h3 id="production-pipeline-title">Production pipeline</h3>
+              </div>
+              <button id="production-stage-clear" type="button" class="ghost-button production-stage-clear hidden">Clear stage</button>
+            </div>
+            <p class="production-pipeline-copy">Select a stage to filter the episode list. Released episodes stay in the calendar and archive.</p>
+            <div id="production-rail" class="production-rail" aria-label="Active production stages" aria-live="polite"></div>
           </section>
 
           <div class="view-presets" id="episode-presets">
@@ -536,7 +548,7 @@
     </div>
 
     <script src="/static/performance-utils.js?v=20260802.8"></script>
-    <script src="/static/planning-sort.js?v=20260802.9"></script>
-    <script src="/static/planning.js?v=20260802.9" defer></script>
+    <script src="/static/planning-sort.js?v=20260802.11"></script>
+    <script src="/static/planning.js?v=20260802.12" defer></script>
   </body>
 </html>

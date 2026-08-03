@@ -18,12 +18,18 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
         episode_columns = {row[1] for row in conn.execute("PRAGMA table_info(episodes)")}
-    assert {"guest_applications", "audit_events", "schema_migrations", "calendar_reconciliation_proposals"} <= tables
+    assert {
+        "guest_applications",
+        "audit_events",
+        "schema_migrations",
+        "calendar_reconciliation_proposals",
+        "recommendation_feedback",
+    } <= tables
     assert {"normalized_name", "normalized_email", "row_version", "identity_status", "owner"} <= guest_columns
     assert {
         "working_title",
@@ -85,7 +91,7 @@ def test_title_provenance_migration_backfills_existing_episode_title(tmp_path):
             "SELECT episode_title, working_title, published_title FROM episodes"
         ).fetchone()
     assert title == ("Legacy Editorial Title", "Legacy Editorial Title", None)
-    assert _versions(db_path)[-1] == 9
+    assert 9 in _versions(db_path)
 
 
 def test_failed_migration_rolls_back_its_schema_and_ledger(monkeypatch, tmp_path):

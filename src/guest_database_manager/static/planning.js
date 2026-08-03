@@ -21,7 +21,8 @@ const releaseCalendarTitle = document.getElementById("release-calendar-title");
 const calendarPreviousButton = document.getElementById("calendar-previous");
 const calendarTodayButton = document.getElementById("calendar-today");
 const calendarNextButton = document.getElementById("calendar-next");
-const backlogBoard = document.getElementById("backlog-board");
+const productionRail = document.getElementById("production-rail");
+const productionStageClear = document.getElementById("production-stage-clear");
 const recommendationList = document.getElementById("recommendation-list");
 const refreshButton = document.getElementById("planning-refresh-button");
 const recommendationSearchInput = document.getElementById("recommendation-search");
@@ -29,6 +30,9 @@ const recommendationCategoryFilter = document.getElementById("recommendation-cat
 const recommendationSort = document.getElementById("recommendation-sort");
 const recommendationResultsMeta = document.getElementById("recommendation-results-meta");
 const recommendationLoadMoreButton = document.getElementById("recommendation-load-more");
+const rejectedRecommendationsPanel = document.getElementById("rejected-recommendations-panel");
+const rejectedRecommendationsCount = document.getElementById("rejected-recommendations-count");
+const rejectedRecommendationList = document.getElementById("rejected-recommendation-list");
 const recommendationPresetButtons = Array.from(document.querySelectorAll("[data-recommendation-preset]"));
 const episodeSearchInput = document.getElementById("episode-search");
 const episodeCategoryFilter = document.getElementById("episode-category-filter");
@@ -58,10 +62,12 @@ let latestPlanningPayload = {
   stats: {},
   episodes: [],
   recommendations: [],
+  rejected_recommendations: [],
   available_categories: [],
 };
 let activeRecommendationPreset = "all";
 let activeEpisodePreset = "all";
+let activeProductionStage = "";
 let activeEpisodeEditorId = null;
 let activeEpisodeFeedback = { id: null, text: "", tone: "" };
 let activeEpisodeActionFeedback = { id: null, text: "", tone: "" };
@@ -84,6 +90,13 @@ const LEGACY_PLANNING_PAYLOAD_CACHE_KEYS = [
 
 const RECOMMENDATION_PAGE_SIZE = 6;
 const EPISODE_PAGE_SIZE = 10;
+const PRODUCTION_RAIL_STAGES = [
+  ["recorded", "Recorded"],
+  ["editing", "Editing"],
+  ["assets_needed", "Assets needed"],
+  ["ready", "Ready"],
+  ["scheduled", "Scheduled"],
+];
 const OUTREACH_STEPS = [
   ["monday_preparation", "Monday · Preparation and positioning", "Titles, thumbnails, clips, blog, and email"],
   ["tuesday_launch", "Tuesday 17:00 · Podcast and YouTube launch", "Publish the full episode and anchor the cycle"],
@@ -686,6 +699,7 @@ function renderAiCopilotStatus(statusPayload) {
   const diagnostics = statusPayload?.diagnostics || {};
   const filteredOut = Number(diagnostics.filtered_out_candidates || 0);
   const trusted = Number(diagnostics.trusted_recommendations || diagnostics.candidate_count || 0);
+  const humanSuppressed = Number(diagnostics.human_suppressed_candidates || 0);
   aiCopilotStatus.className = `operations-preview ai-copilot-status ${tone}`.trim();
   aiCopilotStatus.innerHTML = `
     <strong class="insight-label">AI scheduling copilot</strong>
@@ -695,6 +709,7 @@ function renderAiCopilotStatus(statusPayload) {
     ${monthContext?.month_label ? `<p><strong>Current month lens:</strong> ${escapeHtml(monthContext.month_label)} · ${escapeHtml(monthContext.theme || "")}</p>` : ""}
     ${observances.length ? `<p><strong>Editorial observances:</strong> ${observances.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
     ${filteredOut ? `<p><strong>Recommendation safeguards:</strong> ${escapeHtml(String(trusted))} trusted recommendation${trusted === 1 ? "" : "s"} shown · ${escapeHtml(String(filteredOut))} stale or mismatched candidate${filteredOut === 1 ? "" : "s"} filtered out.</p>` : ""}
+    ${humanSuppressed ? `<p><strong>Editorial feedback:</strong> ${escapeHtml(String(humanSuppressed))} rejected candidate${humanSuppressed === 1 ? " is" : "s are"} suppressed from ranking, research, and AI review.</p>` : ""}
     ${liveHeadlines.length ? `<div class="insight-stack"><strong class="insight-label">Live web signals${liveSource ? ` · ${escapeHtml(liveSource)}` : ""}</strong><ul>${liveHeadlines.map((item) => `<li>${escapeHtml(item.title || item)}</li>`).join("")}</ul>${liveUpdatedAt ? `<p class="inline-muted">Updated ${escapeHtml(liveUpdatedAt)}</p>` : ""}</div>` : ""}
     ${christianMoments.length ? `<p><strong>Faith calendar:</strong> ${christianMoments.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
   `;
@@ -1636,6 +1651,9 @@ function filterEpisodes(episodes) {
     if (transcriptStatus === "missing_transcript" && (episodeHasTranscript(episode) || !transcriptExpectedSoon(episode))) {
       return false;
     }
+    if (activeProductionStage && getProductionStage(episode) !== activeProductionStage) {
+      return false;
+    }
     if (activeEpisodePreset === "ready_to_schedule") {
       if (!(
         normalizeText(episode.production_status) === "ready" &&
@@ -1753,7 +1771,9 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     episodes.length,
     totalCount,
     "",
-    "Use search, category, year, or status filters to focus the planning queue."
+    activeProductionStage
+      ? `Production stage: ${productionStageLabel(activeProductionStage)}. Select the stage again or use Clear stage to return to the full list.`
+      : "Use search, category, year, or status filters to focus the planning queue."
   );
 
   const visibleEpisodes = episodes.slice(0, visibleEpisodeCount);
@@ -2323,6 +2343,29 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
           <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
           <button type="button" class="secondary-button" data-recommendation-action="edit">Review In Form</button>
         </div>
+        <details class="recommendation-reject-control action-group">
+          <summary class="ghost-button">Reject recommendation</summary>
+          <form class="recommendation-reject-form">
+            <label>
+              Why should this stop being recommended?
+              <select name="reason" required>
+                <option value="">Choose a reason</option>
+                <option value="Timing or topic is not suitable">Timing or topic is not suitable</option>
+                <option value="Too similar to a recent episode">Too similar to a recent episode</option>
+                <option value="Not release-ready or missing assets">Not release-ready or missing assets</option>
+                <option value="Editorial mismatch">Editorial mismatch</option>
+                <option value="Duplicate or already covered">Duplicate or already covered</option>
+                <option value="Other editorial reason">Other editorial reason</option>
+              </select>
+            </label>
+            <label>
+              Note <span class="field-hint">(optional)</span>
+              <textarea name="note" rows="2" maxlength="500" placeholder="Add context for future review"></textarea>
+            </label>
+            <p class="field-hint">This hides the episode from future scheduling recommendations and AI review until restored.</p>
+            <button type="submit" class="secondary-button danger-button">Confirm rejection</button>
+          </form>
+        </details>
         <div class="action-group">
           <span class="action-group-label">Monthly Angle Review</span>
           <button 
@@ -2349,6 +2392,7 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
     const pinAngleButton = card.querySelector("[data-recommendation-action='pin-angle']");
     const rejectAngleButton = card.querySelector("[data-recommendation-action='reject-angle']");
     const clearAngleButton = card.querySelector("[data-recommendation-action='clear-angle']");
+    const rejectRecommendationForm = card.querySelector(".recommendation-reject-form");
     const actionFeedbackNode = card.querySelector(".card-action-feedback");
     scheduleButton.addEventListener("click", async () => {
       scheduleButton.disabled = true;
@@ -2412,6 +2456,51 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
         "success",
       );
     });
+    rejectRecommendationForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submitButton = rejectRecommendationForm.querySelector("button[type='submit']");
+      const formData = new FormData(rejectRecommendationForm);
+      const selectedReason = String(formData.get("reason") || "").trim();
+      const note = String(formData.get("note") || "").trim();
+      if (!selectedReason) return;
+      const reason = note ? `${selectedReason} — ${note}` : selectedReason;
+      submitButton.disabled = true;
+      submitButton.textContent = "Rejecting...";
+      try {
+        const feedback = await fetchJSON(`/api/episodes/${episode.id}/recommendation-feedback`, {
+          method: "POST",
+          body: JSON.stringify({
+            action: "rejected",
+            reason,
+            idempotency_key: recommendationRequestKey(),
+            recommendation: {
+              recommended_release_date: episode.recommended_release_date,
+              priority_score: episode.priority_score,
+              recommendation_reason: episode.recommendation_reason,
+            },
+          }),
+        });
+        latestPlanningPayload.recommendations = (latestPlanningPayload.recommendations || [])
+          .filter((item) => String(item.id) !== String(episode.id));
+        latestPlanningPayload.rejected_recommendations = [
+          {
+            ...episode,
+            recommendation_feedback_state: feedback.state,
+            recommendation_feedback_reason: feedback.reason,
+            recommendation_feedback_at: feedback.created_at,
+            recommendation_feedback_actor: feedback.actor,
+          },
+          ...(latestPlanningPayload.rejected_recommendations || [])
+            .filter((item) => String(item.id) !== String(episode.id)),
+        ];
+        setMessage(episodeMessage, `Rejected ${episode.episode_title || episode.guest_name || "episode"}; it will stay out of recommendations until restored.`, "success");
+        renderPlanning();
+      } catch (error) {
+        submitButton.disabled = false;
+        submitButton.textContent = "Confirm rejection";
+        setMessage(episodeMessage, error.message, "error");
+      }
+    });
     const setMonthlyAngleDecision = async (state) => {
       const theme = state ? getRecommendationMonthlyAngle(episode) : "";
       const actingButtons = [pinAngleButton, rejectAngleButton, clearAngleButton].filter(Boolean);
@@ -2471,6 +2560,56 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
   }
 }
 
+function recommendationRequestKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `recommendation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function renderRejectedRecommendations(episodes) {
+  if (!rejectedRecommendationsPanel || !rejectedRecommendationList || !rejectedRecommendationsCount) return;
+  const rejected = Array.isArray(episodes) ? episodes : [];
+  rejectedRecommendationsCount.textContent = String(rejected.length);
+  rejectedRecommendationsPanel.classList.toggle("hidden", rejected.length === 0);
+  rejectedRecommendationList.innerHTML = "";
+  rejected.forEach((episode) => {
+    const row = document.createElement("article");
+    row.className = "rejected-recommendation-row";
+    row.innerHTML = `
+      <div>
+        <h3>${escapeHtml(episode.episode_title || episode.topic || "Untitled episode")}</h3>
+        <p>${escapeHtml(episode.guest_name || "Guest not set")} · ${escapeHtml(episode.category || "Category not set")}</p>
+        <p><strong>Reason:</strong> ${escapeHtml(episode.recommendation_feedback_reason || "No reason recorded")}</p>
+        <small>Rejected ${escapeHtml(formatDateTime(episode.recommendation_feedback_at))}${episode.recommendation_feedback_actor ? ` by ${escapeHtml(episode.recommendation_feedback_actor)}` : ""}</small>
+      </div>
+      <button type="button" class="secondary-button" data-restore-recommendation>Restore recommendation</button>
+    `;
+    row.querySelector("[data-restore-recommendation]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = "Restoring...";
+      try {
+        await fetchJSON(`/api/episodes/${episode.id}/recommendation-feedback`, {
+          method: "POST",
+          body: JSON.stringify({
+            action: "restored",
+            reason: "Restored by editor",
+            idempotency_key: recommendationRequestKey(),
+          }),
+        });
+        latestPlanningPayload.rejected_recommendations = rejected.filter((item) => String(item.id) !== String(episode.id));
+        setMessage(episodeMessage, `Restored ${episode.episode_title || episode.guest_name || "episode"} to scheduling consideration.`, "success");
+        renderPlanning();
+        await refreshPlanningQuietly();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "Restore recommendation";
+        setMessage(episodeMessage, error.message, "error");
+      }
+    });
+    rejectedRecommendationList.appendChild(row);
+  });
+}
+
 function renderPlanning() {
   const episodes = latestPlanningPayload.episodes || [];
   const recommendations = latestPlanningPayload.recommendations || [];
@@ -2485,6 +2624,7 @@ function renderPlanning() {
   renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
   renderReleaseWorkspace(episodes);
   renderRecommendations(filterRecommendations(recommendations), recommendations.length, episodeNumberMap);
+  renderRejectedRecommendations(latestPlanningPayload.rejected_recommendations || []);
   renderEpisodes(filterEpisodes(episodes), episodes.length, episodeNumberMap);
 }
 
@@ -2604,31 +2744,51 @@ function renderReleaseCalendar(episodes) {
   });
 }
 
-function renderReleaseWorkspace(episodes) {
-  if (!releaseCalendar || !backlogBoard) return;
-  renderReleaseCalendar(episodes);
+function getProductionStage(episode) {
+  return window.PlanningSort.classifyProductionStage(episode);
+}
 
-  const stages = [
-    ["Recorded", (item) => normalizeText(item.production_status) === "recorded"],
-    ["Editing", (item) => normalizeText(item.production_status) === "editing"],
-    ["Assets needed", (item) => normalizeText(item.promotion_status) === "needs_assets"],
-    ["Ready", (item) => normalizeText(item.production_status) === "ready" && normalizeText(item.release_status) === "unplanned"],
-    ["Scheduled", (item) => normalizeText(item.release_status) === "scheduled"],
-    ["Released", (item) => normalizeText(item.release_status) === "released"],
-  ];
-  backlogBoard.innerHTML = stages.map(([label, matches]) => {
-    const items = episodes.filter(matches);
-    return `<section class="planning-column"><h4>${escapeHtml(label)} <span>${items.length}</span></h4>${items.slice(0, 5).map((item) => `<button type="button" class="mini-card board-item" data-board-episode="${Number(item.id)}"><strong>${escapeHtml(item.episode_title || item.topic || "Untitled")}</strong><small>${escapeHtml(item.guest_name || "Guest not set")}</small></button>`).join("") || `<p class="empty-copy">No episodes</p>`}</section>`;
+function productionStageLabel(stageKey) {
+  return PRODUCTION_RAIL_STAGES.find(([key]) => key === stageKey)?.[1] || "Production";
+}
+
+function renderProductionRail(episodes) {
+  if (!productionRail) return;
+  const stageCounts = new Map(PRODUCTION_RAIL_STAGES.map(([key]) => [key, 0]));
+  episodes.forEach((episode) => {
+    const stage = getProductionStage(episode);
+    if (stageCounts.has(stage)) stageCounts.set(stage, stageCounts.get(stage) + 1);
+  });
+  productionRail.innerHTML = PRODUCTION_RAIL_STAGES.map(([key, label]) => {
+    const selected = activeProductionStage === key;
+    return `
+      <button type="button" class="production-rail-stage ${selected ? "active" : ""}" data-production-stage="${key}" aria-pressed="${selected}">
+        <span class="production-stage-marker" aria-hidden="true"></span>
+        <strong>${stageCounts.get(key) || 0}</strong>
+        <span>${escapeHtml(label)}</span>
+      </button>
+    `;
   }).join("");
-  backlogBoard.querySelectorAll("[data-board-episode]").forEach((button) => {
+  productionStageClear?.classList.toggle("hidden", !activeProductionStage);
+  productionRail.querySelectorAll("[data-production-stage]").forEach((button) => {
     button.addEventListener("click", () => {
-      episodeSearchInput.value = String(button.dataset.boardEpisode || "");
-      const episode = episodes.find((item) => String(item.id) === button.dataset.boardEpisode);
-      if (episode) episodeSearchInput.value = episode.episode_title || episode.guest_name || "";
+      const selectedStage = button.dataset.productionStage || "";
+      activeProductionStage = activeProductionStage === selectedStage ? "" : selectedStage;
+      activeEpisodePreset = "all";
+      episodeReleaseFilter.value = "";
+      episodeProductionFilter.value = "";
+      visibleEpisodeCount = EPISODE_PAGE_SIZE;
       renderPlanning();
-      episodeSearchInput.focus();
+      const nextButton = productionRail.querySelector(`[data-production-stage="${selectedStage}"]`);
+      nextButton?.focus();
     });
   });
+}
+
+function renderReleaseWorkspace(episodes) {
+  if (!releaseCalendar || !productionRail) return;
+  renderReleaseCalendar(episodes);
+  renderProductionRail(episodes);
 }
 
 async function hydrateAiSchedulingCopilot() {
@@ -2651,7 +2811,11 @@ async function hydrateAiSchedulingCopilot() {
       latestPlanningPayload.ai_copilot_status = payload.ai_copilot_status || latestPlanningPayload.ai_copilot_status;
     }
     if (payload?.ai_scheduling_enabled && Array.isArray(payload.recommendations) && payload.recommendations.length) {
-      latestPlanningPayload.recommendations = payload.recommendations;
+      const rejectedIds = new Set(
+        (latestPlanningPayload.rejected_recommendations || []).map((item) => String(item.id)),
+      );
+      latestPlanningPayload.recommendations = payload.recommendations
+        .filter((item) => !rejectedIds.has(String(item.id)));
       if (activePlanningTab === "scheduling_intelligence" && !activeEpisodeEditorId && !episodeForm?.elements?.id?.value) {
         const episodeNumberMap = buildEpisodeNumberMap(latestPlanningPayload.episodes || [], latestPlanningPayload.recommendations || []);
         renderRecommendations(
@@ -2895,12 +3059,14 @@ if (refreshButton) {
   episodeSort,
 ].forEach((node) => {
   node.addEventListener("input", () => {
+    if (node === episodeReleaseFilter || node === episodeProductionFilter) activeProductionStage = "";
     visibleRecommendationCount = RECOMMENDATION_PAGE_SIZE;
     visibleEpisodeCount = EPISODE_PAGE_SIZE;
     renderPlanning();
     window.PerformanceUtils?.updateWorkspaceUrlState({ q: episodeSearchInput.value });
   });
   node.addEventListener("change", () => {
+    if (node === episodeReleaseFilter || node === episodeProductionFilter) activeProductionStage = "";
     visibleRecommendationCount = RECOMMENDATION_PAGE_SIZE;
     visibleEpisodeCount = EPISODE_PAGE_SIZE;
     renderPlanning();
@@ -2928,6 +3094,7 @@ recommendationPresetButtons.forEach((button) => {
 episodePresetButtons.forEach((button) => {
   button.addEventListener("click", () => {
     activeEpisodePreset = button.dataset.episodePreset || "all";
+    activeProductionStage = "";
     visibleEpisodeCount = EPISODE_PAGE_SIZE;
     if (activeEpisodePreset === "scheduled") {
       episodeReleaseFilter.value = "scheduled";
@@ -2942,6 +3109,13 @@ episodePresetButtons.forEach((button) => {
     }
     renderPlanning();
   });
+});
+
+productionStageClear?.addEventListener("click", () => {
+  activeProductionStage = "";
+  visibleEpisodeCount = EPISODE_PAGE_SIZE;
+  renderPlanning();
+  productionRail?.querySelector("[data-production-stage]")?.focus();
 });
 
 function applyUrlState() {

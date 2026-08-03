@@ -828,6 +828,7 @@ def build_release_recommendations(
     queue = [
         episode for episode in episodes
         if _clean_text(episode.get("release_status")).lower() not in {"released", "scheduled"}
+        and _clean_text(episode.get("recommendation_feedback_state")).lower() != "rejected"
     ]
     non_queue_identity_keys = _build_non_queue_identity_keys(episodes)
     queue = [

@@ -505,6 +505,30 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_010_recommendation_feedback(conn: sqlite3.Connection) -> None:
+        """Persist reversible human decisions about scheduling recommendations."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS recommendation_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER NOT NULL,
+                action TEXT NOT NULL CHECK(action IN ('rejected', 'restored')),
+                reason TEXT,
+                actor TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'scheduling_intelligence',
+                recommendation_version TEXT,
+                recommendation_snapshot TEXT,
+                correlation_id TEXT,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recommendation_feedback_episode_latest "
+            "ON recommendation_feedback(episode_id, id DESC)"
+        )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -519,6 +543,7 @@ class SchemaManager:
             (7, "editorial_dispositions", SchemaManager._migration_007_editorial_dispositions),
             (8, "release_baseline", SchemaManager._migration_008_release_baseline),
             (9, "episode_title_provenance", SchemaManager._migration_009_episode_title_provenance),
+            (10, "recommendation_feedback", SchemaManager._migration_010_recommendation_feedback),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

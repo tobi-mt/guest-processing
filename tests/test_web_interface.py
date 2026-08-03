@@ -2866,6 +2866,73 @@ def test_release_recommendations_use_guest_research_for_seasonal_fit():
     assert "men" in recommendations[0]["seasonal_fit"]["matched_keywords"]
 
 
+def test_release_recommendations_exclude_human_rejected_candidates():
+    recommendations = build_release_recommendations(
+        [
+            {
+                "id": 1,
+                "guest_name": "Rejected Guest",
+                "episode_title": "Rejected Episode",
+                "production_status": "ready",
+                "promotion_status": "ready",
+                "recommendation_feedback_state": "rejected",
+            },
+            {
+                "id": 2,
+                "guest_name": "Eligible Guest",
+                "episode_title": "Eligible Episode",
+                "production_status": "ready",
+                "promotion_status": "ready",
+            },
+        ],
+        reference=datetime(2026, 8, 2, 12, 0, 0),
+    )
+
+    assert [item["id"] for item in recommendations] == [2]
+
+
+def test_planning_recommendation_feedback_suppresses_and_restores_candidate(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {
+            "guest_name": "Feedback Guest",
+            "episode_title": "Feedback Episode",
+            "topic": "A distinct editorial topic",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    assert episode["id"] in {item["id"] for item in service.list_planning()["recommendations"]}
+
+    feedback = service.update_scheduling_recommendation_feedback(
+        episode["id"],
+        {
+            "action": "rejected",
+            "reason": "Editorial mismatch",
+            "idempotency_key": "service-reject-1",
+        },
+        actor="planning-editor",
+    )
+    planning = service.list_planning()
+    assert feedback["state"] == "rejected"
+    assert episode["id"] not in {item["id"] for item in planning["recommendations"]}
+    assert episode["id"] in {item["id"] for item in planning["rejected_recommendations"]}
+    assert planning["ai_copilot_status"]["diagnostics"]["human_suppressed_candidates"] == 1
+
+    service.update_scheduling_recommendation_feedback(
+        episode["id"],
+        {
+            "action": "restored",
+            "reason": "Editorial timing changed",
+            "idempotency_key": "service-restore-1",
+        },
+        actor="planning-editor",
+    )
+    restored = service.list_planning()
+    assert episode["id"] in {item["id"] for item in restored["recommendations"]}
+    assert restored["rejected_recommendations"] == []
+
+
 def test_planning_payload_includes_grounded_editorial_assist(temp_db):
     """Planning payload should expose deterministic readiness and copy/title suggestions."""
     service = GuestWebService(temp_db.db_path)
@@ -3580,6 +3647,40 @@ def test_web_service_can_export_selected_episode_fields_as_excel(temp_db):
     assert worksheet["B1"].value == "promotion_status"
     assert worksheet["A2"].value == "Jordan Rivers"
     assert worksheet["B2"].value == "ready"
+
+
+def test_rejected_recommendations_stay_out_of_recommendation_exports(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {"full_name": "Export Feedback Guest", "email": "export-feedback@example.com"}
+    )
+    episode = service.create_episode(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Export Feedback Guest",
+            "guest_email": "export-feedback@example.com",
+            "episode_title": "Do Not Re-export This Recommendation",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    service.update_scheduling_recommendation_feedback(
+        episode["id"],
+        {
+            "action": "rejected",
+            "reason": "Editorial mismatch",
+            "idempotency_key": "export-reject-1",
+        },
+        actor="planning-editor",
+    )
+
+    payload, _, _ = service.export_records(
+        "recommendations",
+        ["episode_title", "guest_name"],
+        "csv",
+    )
+
+    assert "Do Not Re-export This Recommendation" not in payload.decode("utf-8")
 
 
 def test_web_service_can_send_acceptance_email(monkeypatch, temp_db):

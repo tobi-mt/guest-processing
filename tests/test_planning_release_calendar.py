@@ -67,3 +67,21 @@ def test_calendar_uses_distinct_status_markers_and_safe_details_rendering() -> N
     assert ".calendar-event-dot.scheduled" in css
     assert ".calendar-event-dot.released" in css
     assert ".calendar-event-dot.risk" in css
+
+
+def test_production_pipeline_is_a_compact_filter_rail_without_duplicate_cards() -> None:
+    html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+    css = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
+
+    assert 'id="production-rail"' in html
+    assert "Production pipeline" in html
+    assert "Released episodes stay in the calendar and archive" in html
+    assert "PRODUCTION_RAIL_STAGES" in javascript
+    assert "getProductionStage" in javascript
+    assert "activeProductionStage" in javascript
+    assert "data-production-stage" in javascript
+    assert "data-board-episode" not in javascript
+    assert "items.slice(0, 5)" not in javascript
+    assert ".production-rail-stage" in css
+    assert ".planning-column" not in css

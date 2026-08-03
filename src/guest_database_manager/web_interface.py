@@ -75,6 +75,7 @@ FORM_SOURCE_NAME = "Direct Web Entry"
 INTAKE_SOURCE_NAME = "Website Intake Questionnaire"
 AGENCY_REFERRAL_SOURCE_NAME = "Agency Referral"
 INTERVIEW_SOURCE_NAME = "Interview Operations Entry"
+SCHEDULING_RECOMMENDATION_VERSION = "release-planner-v1"
 ALLOWED_ORIGINS = {
     "https://www.mirrortalkpodcast.com",
     "https://mirrortalkpodcast.com",
@@ -935,6 +936,18 @@ class GuestWebService:
             "next_attempt_at": result["next_attempt_at"],
         }
 
+    def _attach_recommendation_feedback(self, episodes: list[Dict[str, Any]]) -> None:
+        """Annotate episode candidates with their latest reversible editorial decision."""
+        feedback_by_episode = self.database.get_latest_recommendation_feedback(
+            [int(episode["id"]) for episode in episodes if episode.get("id") is not None]
+        )
+        for episode in episodes:
+            feedback = feedback_by_episode.get(int(episode["id"])) if episode.get("id") is not None else None
+            episode["recommendation_feedback_state"] = _normalize_text((feedback or {}).get("action"))
+            episode["recommendation_feedback_reason"] = _normalize_text((feedback or {}).get("reason"))
+            episode["recommendation_feedback_at"] = (feedback or {}).get("created_at")
+            episode["recommendation_feedback_actor"] = _normalize_text((feedback or {}).get("actor"))
+
     def list_planning(self, compact: bool = False, force_refresh: bool = False) -> Dict[str, Any]:
         """Return episode planning data separate from interview operations."""
         cache_key = "planning_compact" if compact else "planning"
@@ -946,6 +959,7 @@ class GuestWebService:
                 return cached
         
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
+        self._attach_recommendation_feedback(episodes)
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
         
         # Build guest lookup indexes ONCE for O(1) lookups instead of O(n) per episode
@@ -970,10 +984,16 @@ class GuestWebService:
         recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
         
         filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
+        rejected_recommendations = [
+            episode for episode in enriched_episodes
+            if _normalize_text(episode.get("recommendation_feedback_state")).lower() == "rejected"
+            and _normalize_text(episode.get("release_status")).lower() not in {"released", "scheduled"}
+        ]
         recommendation_diagnostics = {
             "base_candidates": len(recommendations),
             "trusted_recommendations": len(filtered_recommendations),
             "filtered_out_candidates": max(len(recommendations) - len(filtered_recommendations), 0),
+            "human_suppressed_candidates": len(rejected_recommendations),
         }
         
         response_episodes = [self._summarize_episode_for_list(episode) for episode in enriched_episodes] if compact else enriched_episodes
@@ -983,6 +1003,9 @@ class GuestWebService:
             "stats": self._build_episode_stats(enriched_episodes),
             "episodes": response_episodes,
             "recommendations": response_recommendations,
+            "rejected_recommendations": [
+                self._summarize_episode_for_list(episode) for episode in rejected_recommendations
+            ],
             "available_categories": self.database.list_episode_categories(),
             "ask_sync_enabled": self._build_ask_mirror_talk_client() is not None,
             "ai_scheduling_enabled": ai_copilot is not None,
@@ -1008,6 +1031,7 @@ class GuestWebService:
             return {"ai_scheduling_enabled": False, "recommendations": []}
 
         episodes = [self._normalize_episode_record(episode) for episode in self.database.list_episodes()]
+        self._attach_recommendation_feedback(episodes)
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
         
         # Build guest indexes for filtering recommendations
@@ -1058,6 +1082,12 @@ class GuestWebService:
                 filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
         
         ai_diagnostics = self._build_ai_candidate_diagnostics(filtered_recommendations)
+        ai_diagnostics["human_suppressed_candidates"] = sum(
+            1
+            for episode in enriched_episodes
+            if _normalize_text(episode.get("recommendation_feedback_state")).lower() == "rejected"
+            and _normalize_text(episode.get("release_status")).lower() not in {"released", "scheduled"}
+        )
         ai_result = ai_scheduling_client.enrich_recommendations(
             filtered_recommendations,
             reference=datetime.now(),
@@ -1245,6 +1275,7 @@ class GuestWebService:
         guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
         interviews = self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
         episodes = self.database.list_episodes()
+        self._attach_recommendation_feedback(episodes)
         recommendations = build_release_recommendations(episodes, reference=datetime.now())
 
         guest_csv = self._records_to_csv(guests, list(EXPORTABLE_FIELDS["guests"]))
@@ -1316,6 +1347,7 @@ class GuestWebService:
             return self.database.list_episodes()
         if list_name == "recommendations":
             episodes = self.database.list_episodes()
+            self._attach_recommendation_feedback(episodes)
             guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
             guest_indexes = self._build_guest_lookup_indexes(guests)
             recommendations = build_release_recommendations(episodes, reference=datetime.now())
@@ -4196,6 +4228,56 @@ class GuestWebService:
         saved = self.create_episode(episode_data)
         return saved
 
+    def update_scheduling_recommendation_feedback(
+        self,
+        episode_id: int,
+        payload: Dict[str, Any],
+        *,
+        actor: str,
+    ) -> Dict[str, Any]:
+        """Reject or restore a scheduling recommendation without changing episode status."""
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode not found.")
+        action = _normalize_text(payload.get("action")).lower()
+        reason = _normalize_text(payload.get("reason"))
+        if action not in {"rejected", "restored"}:
+            raise WebInterfaceError("Recommendation feedback action must be rejected or restored.")
+        if action == "rejected" and not reason:
+            raise WebInterfaceError("Choose or enter a reason before rejecting this recommendation.")
+        snapshot_input = payload.get("recommendation") if isinstance(payload.get("recommendation"), dict) else {}
+        snapshot = {
+            "episode_id": episode_id,
+            "episode_title": _normalize_text(episode.get("episode_title")),
+            "guest_name": _normalize_text(episode.get("guest_name")),
+            "category": _normalize_text(episode.get("category")),
+            "recommended_release_date": _normalize_text(snapshot_input.get("recommended_release_date")),
+            "priority_score": snapshot_input.get("priority_score"),
+            "recommendation_reason": _normalize_text(snapshot_input.get("recommendation_reason")),
+        }
+        try:
+            feedback = self.database.record_recommendation_feedback(
+                episode_id,
+                action=action,
+                reason=reason,
+                actor=actor or "dashboard",
+                source="scheduling_intelligence",
+                recommendation_version=SCHEDULING_RECOMMENDATION_VERSION,
+                recommendation_snapshot=snapshot,
+                correlation_id=_normalize_text(payload.get("correlation_id")),
+                idempotency_key=_normalize_text(payload.get("idempotency_key")),
+            )
+        except ValueError as exc:
+            raise WebInterfaceError(str(exc)) from exc
+        self._invalidate_payload_cache("planning", "planning_ai_copilot")
+        return {
+            "episode_id": episode_id,
+            "state": feedback["action"],
+            "reason": feedback.get("reason") or "",
+            "actor": feedback["actor"],
+            "created_at": feedback["created_at"],
+        }
+
     def delete_episode(self, episode_id: int, confirm_label: str = "") -> Dict[str, Any]:
         """Delete an episode and return a small confirmation payload."""
         episode = self.database.get_episode_by_id(episode_id)
@@ -6976,6 +7058,28 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/episodes/"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+
+            if self.path.endswith("/recommendation-feedback"):
+                episode_id = self._extract_record_id(
+                    self.path[: -len("/recommendation-feedback")],
+                    "/api/episodes/",
+                )
+                if episode_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                    return
+                payload = self._read_json_payload()
+                claims = self._session_claims() or {}
+                try:
+                    result = self.service.update_scheduling_recommendation_feedback(
+                        episode_id,
+                        payload,
+                        actor=_normalize_text(claims.get("sub")) or "dashboard",
+                    )
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(HTTPStatus.OK, result)
                 return
 
             if self.path.endswith("/send-release-email"):

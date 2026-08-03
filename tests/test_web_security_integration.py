@@ -97,6 +97,40 @@ def test_cookie_authenticated_write_requires_matching_csrf(monkeypatch, temp_db)
         assert accepted.status_code == 201
 
 
+def test_operator_can_reject_scheduling_recommendation_with_audited_reason(monkeypatch, temp_db):
+    configure_auth(monkeypatch, role="operator")
+    episode_id, _ = temp_db.upsert_episode(
+        {
+            "guest_name": "HTTP Feedback Guest",
+            "episode_title": "HTTP Feedback Episode",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    with running_server(temp_db.db_path) as base_url:
+        session = requests.Session()
+        assert login(session, base_url).status_code == 200
+        response = session.post(
+            f"{base_url}/api/episodes/{episode_id}/recommendation-feedback",
+            json={
+                "action": "rejected",
+                "reason": "Too similar to a recent episode",
+                "idempotency_key": "http-reject-1",
+            },
+            headers={"X-CSRF-Token": session.cookies["dashboard_csrf"]},
+            timeout=5,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["state"] == "rejected"
+        planning = session.get(f"{base_url}/api/planning", timeout=5).json()
+        assert episode_id not in {item["id"] for item in planning["recommendations"]}
+        assert episode_id in {item["id"] for item in planning["rejected_recommendations"]}
+        event = temp_db.list_audit_events("episode", episode_id)[0]
+        assert event["event_type"] == "recommendation_rejected"
+        assert event["actor"] == "producer"
+
+
 def test_versioned_assets_cache_but_private_api_does_not(monkeypatch, temp_db):
     configure_auth(monkeypatch)
     with running_server(temp_db.db_path) as base_url:

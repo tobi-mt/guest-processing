@@ -336,6 +336,107 @@ class GuestDatabase:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def record_recommendation_feedback(
+        self,
+        episode_id: int,
+        *,
+        action: str,
+        reason: str = "",
+        actor: str = "system",
+        source: str = "scheduling_intelligence",
+        recommendation_version: str = "",
+        recommendation_snapshot: Any = None,
+        correlation_id: str = "",
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        """Append a reversible scheduling-recommendation decision and its audit event."""
+        normalized_action = str(action or "").strip().lower()
+        normalized_reason = str(reason or "").strip()
+        if normalized_action not in {"rejected", "restored"}:
+            raise ValueError("Recommendation feedback action must be rejected or restored")
+        if normalized_action == "rejected" and not normalized_reason:
+            raise ValueError("A rejection reason is required")
+        request_key = str(idempotency_key or "").strip() or str(uuid4())
+
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            existing = conn.execute(
+                "SELECT * FROM recommendation_feedback WHERE idempotency_key = ?",
+                (request_key,),
+            ).fetchone()
+            if existing:
+                return dict(existing)
+            episode = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+            if not episode:
+                raise ValueError("Episode not found")
+            previous = conn.execute(
+                "SELECT * FROM recommendation_feedback WHERE episode_id = ? ORDER BY id DESC LIMIT 1",
+                (episode_id,),
+            ).fetchone()
+            snapshot_json = (
+                dumps(recommendation_snapshot, ensure_ascii=False, default=str, sort_keys=True)
+                if recommendation_snapshot is not None
+                else None
+            )
+            cursor = conn.execute(
+                """INSERT INTO recommendation_feedback
+                   (episode_id, action, reason, actor, source, recommendation_version,
+                    recommendation_snapshot, correlation_id, idempotency_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    episode_id,
+                    normalized_action,
+                    normalized_reason or None,
+                    str(actor or "system").strip() or "system",
+                    str(source or "scheduling_intelligence").strip() or "scheduling_intelligence",
+                    str(recommendation_version or "").strip() or None,
+                    snapshot_json,
+                    str(correlation_id or "").strip() or None,
+                    request_key,
+                ),
+            )
+            saved = dict(conn.execute("SELECT * FROM recommendation_feedback WHERE id = ?", (cursor.lastrowid,)).fetchone())
+            self._append_audit_event_conn(
+                conn,
+                entity_type="episode",
+                entity_id=episode_id,
+                event_type=f"recommendation_{normalized_action}",
+                actor=saved["actor"],
+                source=saved["source"],
+                reason=normalized_reason,
+                correlation_id=str(correlation_id or ""),
+                before=dict(previous) if previous else None,
+                after=saved,
+            )
+            conn.commit()
+            return saved
+
+    def get_latest_recommendation_feedback(self, episode_ids: Optional[List[int]] = None) -> Dict[int, Dict[str, Any]]:
+        """Return the latest scheduling-recommendation decision for each episode."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            params: list[Any] = []
+            where = ""
+            if episode_ids is not None:
+                normalized_ids = sorted({int(value) for value in episode_ids})
+                if not normalized_ids:
+                    return {}
+                placeholders = ",".join("?" for _ in normalized_ids)
+                where = f"WHERE feedback.episode_id IN ({placeholders})"
+                params.extend(normalized_ids)
+            rows = conn.execute(
+                f"""SELECT feedback.*
+                    FROM recommendation_feedback AS feedback
+                    JOIN (
+                        SELECT episode_id, MAX(id) AS latest_id
+                        FROM recommendation_feedback
+                        GROUP BY episode_id
+                    ) AS latest ON latest.latest_id = feedback.id
+                    {where}""",
+                params,
+            ).fetchall()
+            return {int(row["episode_id"]): dict(row) for row in rows}
+
     def find_existing_guest(self, guest_data: Dict[str, Any]) -> Optional[Dict]:
         """Find an existing guest using the best available identity fields."""
         full_name = _normalized_identity(guest_data.get("full_name"))
