@@ -4570,6 +4570,10 @@ def test_public_booking_queues_confirmation_email_after_retry_failure(monkeypatc
     saved = service.database.get_interview_by_id(interview["id"])
     assert saved is not None
     assert saved["confirmation_status"] == "confirmed"
+    assert interview["booking_confirmation"] == {
+        "status": "queued",
+        "message": "Your booking is confirmed. We are preparing your confirmation email and calendar invite now.",
+    }
 
     with sqlite3.connect(temp_db.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -4649,6 +4653,10 @@ def test_public_booking_retries_confirmation_email_successfully(monkeypatch, tem
     saved = service.database.get_interview_by_id(interview["id"])
     assert saved is not None
     assert saved["confirmation_status"] == "confirmed"
+    assert interview["booking_confirmation"] == {
+        "status": "sent",
+        "message": "Your confirmation email and calendar invite have been accepted for delivery.",
+    }
 
     with sqlite3.connect(temp_db.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -4767,7 +4775,10 @@ def test_public_reschedule_updates_existing_interview(monkeypatch, temp_db):
     monkeypatch.setattr(
         GuestWebService,
         "_send_booking_confirmation_email",
-        lambda self, guest_payload, updated_interview: sent.update({"guest": guest_payload["full_name"], "interview_id": updated_interview["id"]}),
+        lambda self, guest_payload, updated_interview: (
+            sent.update({"guest": guest_payload["full_name"], "interview_id": updated_interview["id"]})
+            or {"status": "sent", "message": "Your confirmation email and calendar invite have been accepted for delivery."}
+        ),
     )
 
     result = service.create_public_booking(
@@ -4788,6 +4799,7 @@ def test_public_reschedule_updates_existing_interview(monkeypatch, temp_db):
     assert "Rescheduled through the Mirror Talk guest booking flow." in (saved["notes"] or "")
     assert "Guest browser timezone: America/Toronto" in (saved["notes"] or "")
     assert sent == {"guest": "Jordan Rivers", "interview_id": interview["id"]}
+    assert result["booking_confirmation"]["status"] == "sent"
 
 
 def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):

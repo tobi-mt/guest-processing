@@ -409,11 +409,17 @@ async function submitBooking() {
     bookingSelectedSlot.classList.add("hidden");
     bookingSelectedSlot.innerHTML = "";
     panelHeading.textContent = rescheduleMode ? "Your Soulful Conversation is now rescheduled" : "Your Soulful Conversation is now confirmed";
+    const delivery = result.interview?.booking_confirmation || {};
+    const deliveryMessage = delivery.message || (
+      delivery.status === "sent"
+        ? "Your confirmation email and calendar invite have been accepted for delivery."
+        : "Your booking is confirmed. We are preparing your confirmation email and calendar invite now."
+    );
     setMessage(
       rescheduleMode
-        ? "Your Soulful Conversation has been rescheduled. We’ve also sent you a fresh confirmation email with the updated invite."
-        : "Your Soulful Conversation is booked. We’ve also sent you a confirmation email with the next steps.",
-      "success"
+        ? `Your Soulful Conversation has been rescheduled. ${deliveryMessage}`
+        : `Your Soulful Conversation is booked. ${deliveryMessage}`,
+      delivery.status === "unavailable" ? "error" : "success"
     );
   } catch (error) {
     bookingSubmit.disabled = false;

@@ -3371,7 +3371,7 @@ class GuestWebService:
 
     def _serialize_public_booking_interview(self, interview: Dict[str, Any]) -> Dict[str, Any]:
         """Return a small safe booking summary for the guest-facing page."""
-        return {
+        serialized = {
             "id": interview.get("id"),
             "scheduled_for": interview.get("scheduled_for"),
             "timezone": interview.get("timezone"),
@@ -3380,6 +3380,13 @@ class GuestWebService:
             "confirmation_status": interview.get("confirmation_status"),
             "title": interview.get("title"),
         }
+        delivery = interview.get("booking_confirmation")
+        if isinstance(delivery, dict):
+            serialized["booking_confirmation"] = {
+                "status": _normalize_text(delivery.get("status")) or "queued",
+                "message": _normalize_text(delivery.get("message")),
+            }
+        return serialized
 
     def _normalize_booking_datetime(self, value: Any) -> Optional[datetime]:
         """Normalize a booking-related datetime into UTC for safe comparisons."""
@@ -3622,7 +3629,7 @@ class GuestWebService:
             )
             updated_interview = self.database.get_interview_by_id(updated_interview["id"]) or updated_interview
 
-        self._send_booking_confirmation_email(guest, updated_interview)
+        updated_interview["booking_confirmation"] = self._send_booking_confirmation_email(guest, updated_interview)
         return updated_interview
 
     def _booking_timezone(self) -> ZoneInfo:
@@ -3834,7 +3841,7 @@ class GuestWebService:
                     )
                     updated = self.database.get_interview_by_id(updated["id"]) or updated
 
-                self._send_booking_confirmation_email(guest, updated)
+                updated["booking_confirmation"] = self._send_booking_confirmation_email(guest, updated)
                 return self._serialize_public_booking_interview(updated)
 
             repaired = self._repair_existing_public_booking(
@@ -3894,7 +3901,7 @@ class GuestWebService:
             )
             interview = self.database.get_interview_by_id(interview["id"]) or interview
 
-        self._send_booking_confirmation_email(guest, interview)
+        interview["booking_confirmation"] = self._send_booking_confirmation_email(guest, interview)
         return self._serialize_public_booking_interview(interview)
 
     def create_episode(self, payload: Dict[str, Any], *, renumber_sequence: bool = True) -> Dict[str, Any]:
@@ -5816,12 +5823,15 @@ class GuestWebService:
             raise WebInterfaceError("Guest not found after sending the email.")
         return serialize_guest(refreshed)
 
-    def _send_booking_confirmation_email(self, guest: Dict[str, Any], interview: Dict[str, Any]) -> None:
-        """Best-effort booking confirmation with retry and outbox fallback."""
+    def _send_booking_confirmation_email(self, guest: Dict[str, Any], interview: Dict[str, Any]) -> Dict[str, str]:
+        """Send or durably queue a booking confirmation, returning guest-safe delivery state."""
         guest_email = _normalize_text(guest.get("email")) or _normalize_text(interview.get("guest_email"))
         scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
         if not guest_email or not scheduled_for:
-            return
+            return {
+                "status": "unavailable",
+                "message": "We could not prepare the confirmation email. Please contact Mirror Talk directly.",
+            }
 
         email_manager = self._build_email_manager()
         guest_name = _normalize_text(guest.get("full_name") or guest.get("name")) or "there"
@@ -5878,7 +5888,10 @@ class GuestWebService:
                 provider=provider,
                 notes=template["subject"],
             )
-            return
+            return {
+                "status": "sent",
+                "message": "Your confirmation email and calendar invite have been accepted for delivery.",
+            }
 
         attachments_json = json.dumps(
             [
@@ -5917,6 +5930,10 @@ class GuestWebService:
             provider=provider,
             notes=f"{template['subject']} | outbox:{outbox_id} | {last_error}".strip(),
         )
+        return {
+            "status": "queued",
+            "message": "Your booking is confirmed. We are preparing your confirmation email and calendar invite now.",
+        }
 
     def process_pending_email_outbox(self, *, limit: int = 10, worker_id: str = "") -> Dict[str, int]:
         """Retry queued emails and deliver any whose next attempt is due."""
