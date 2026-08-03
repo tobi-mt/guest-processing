@@ -211,6 +211,21 @@ class GuestDatabase:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def list_latest_guest_applications(self) -> Dict[int, Dict[str, Any]]:
+        """Return the latest immutable application projection for every guest."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT application.*
+                   FROM guest_applications AS application
+                   JOIN (
+                       SELECT guest_id, MAX(id) AS latest_id
+                       FROM guest_applications
+                       GROUP BY guest_id
+                   ) AS latest ON latest.latest_id = application.id"""
+            ).fetchall()
+            return {int(row["guest_id"]): dict(row) for row in rows}
+
     def transition_latest_guest_application(
         self,
         guest_id: int,

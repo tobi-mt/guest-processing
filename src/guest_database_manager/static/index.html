@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Guest Database Manager</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260802.10" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260803.1" />
   </head>
   <body>
     <div class="page-shell">
@@ -103,7 +103,10 @@
         </div>
       </header>
 
+      <section id="workspace-action-queue" class="action-queue-shell" aria-label="Today action queue" aria-live="polite"></section>
+
       <main class="main-grid">
+        <datalist id="dashboard-team-members"></datalist>
         <section class="panel form-panel">
           <details class="operations-tool">
             <summary>Administration: import, export, research, and identity review</summary>
@@ -352,9 +355,9 @@
         });
       })();
     </script>
-    <script src="/static/performance-utils.js?v=20260802.8"></script>
+    <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script
-      src="/static/app.js?v=20260802.10"
+      src="/static/app.js?v=20260803.1"
       defer
       onload="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_loaded?t='+Date.now();})();"
       onerror="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_error?t='+Date.now();})();"

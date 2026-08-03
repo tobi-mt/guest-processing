@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260802.10" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260803.1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260803.1" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260803.5" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -63,6 +63,8 @@
         </div>
       </header>
 
+      <section id="workspace-action-queue" class="action-queue-shell" aria-label="Today action queue" aria-live="polite"></section>
+
       <div class="workspace-tabs" role="tablist" aria-label="Planning modes">
         <button type="button" class="workspace-tab active" data-planning-tab="release_planning" role="tab" aria-selected="true">
           Release Planning
@@ -86,6 +88,19 @@
               </div>
               <button id="episode-editor-close" type="button" class="ghost-button" aria-label="Close episode editor">×</button>
             </div>
+
+            <section id="episode-conflict-panel" class="episode-conflict-panel hidden" role="alert" aria-live="assertive">
+              <div>
+                <p class="eyebrow">Concurrent edit detected</p>
+                <h3>Newer episode changes are available</h3>
+                <p id="episode-conflict-summary">Review the newer version before saving again.</p>
+                <p id="episode-conflict-fields" class="field-hint"></p>
+              </div>
+              <div class="episode-conflict-actions">
+                <button id="episode-conflict-use-latest" type="button" class="primary-button">Use latest version</button>
+                <button id="episode-conflict-keep-draft" type="button" class="secondary-button">Keep my draft for review</button>
+              </div>
+            </section>
 
             <form id="episode-form" class="guest-form" novalidate>
               <input name="id" type="hidden" />
@@ -129,8 +144,10 @@
               </label>
               <label>
                 Owner
-                <input name="owner" type="text" placeholder="Producer or editor" />
+                <input name="owner" type="text" list="planning-team-members" placeholder="Assign a configured team member" />
+                <small class="field-hint">Choose a signed-in team identity so accountability stays consistent.</small>
               </label>
+              <datalist id="planning-team-members"></datalist>
               <label>
                 Release Date
                 <input name="release_date" type="datetime-local" />
@@ -227,16 +244,18 @@
           </div>
 
           <div class="workspace-panel" data-planning-panel="scheduling_intelligence">
-          <section class="operations-section top-spaced">
-            <div class="section-heading">
-              <p class="eyebrow">Scheduling Intelligence</p>
-              <h2>Mirror Talk Weekly Release Rhythm</h2>
-              <p class="hero-copy section-copy">
-                This tab is the reference model. It explains the weekly release rhythm so the checklist and recommendations are grounded in the same system.
-              </p>
+          <details class="operations-tool scheduling-reference-tool">
+            <summary>
+              <div>
+                <p class="eyebrow">Reference &amp; safeguards</p>
+                <h2>Weekly Release Rhythm</h2>
+                <p class="tool-copy">Open the operating model behind the recommendation scores.</p>
+              </div>
+            </summary>
+            <div class="operations-tool-body">
+              <div id="planning-weekly-system" class="operations-preview"></div>
             </div>
-            <div id="planning-weekly-system" class="operations-preview"></div>
-          </section>
+          </details>
 
           <details class="operations-tool">
             <summary>
@@ -548,8 +567,8 @@
       <div class="modal-content episode-editor-modal-content"></div>
     </div>
 
-    <script src="/static/performance-utils.js?v=20260802.8"></script>
+    <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
-    <script src="/static/planning.js?v=20260803.2" defer></script>
+    <script src="/static/planning.js?v=20260803.5" defer></script>
   </body>
 </html>

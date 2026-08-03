@@ -532,6 +532,100 @@ function installSavedViews(container, scope) {
   render();
 }
 
+function escapeUtilityHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function renderActionQueue(container, queuePayload, options = {}) {
+  if (!container) return;
+  const payload = queuePayload || {};
+  const allItems = Array.isArray(payload.items) ? payload.items : [];
+  const activeDomain = String(options.activeDomain || "").trim();
+  const ownerFilter = container.dataset.ownerFilter || "";
+  const focusFilter = container.dataset.focusFilter || "all";
+  const availableOwners = [...new Set(allItems.map((item) => String(item.owner || "").trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+  const filtered = allItems.filter((item) => {
+    if (ownerFilter === "unassigned" && item.assignment_state !== "unassigned") return false;
+    if (ownerFilter && ownerFilter !== "unassigned" && item.owner !== ownerFilter) return false;
+    if (focusFilter === "urgent" && item.priority !== "urgent") return false;
+    if (focusFilter === "workspace" && activeDomain && item.domain !== activeDomain) return false;
+    return true;
+  });
+  const visible = filtered.slice(0, 6);
+  const counts = payload.counts || {};
+  const generatedAt = payload.generated_at
+    ? new Date(payload.generated_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+    : "Not available";
+  const safeHref = (value) => {
+    const candidate = String(value || "");
+    return candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "#";
+  };
+
+  container.innerHTML = `
+    <div class="action-queue-heading">
+      <div>
+        <p class="eyebrow">Today</p>
+        <h2>Action Queue</h2>
+        <p>One prioritized view of guest decisions, interview risks, and release work.</p>
+      </div>
+      <div class="action-queue-counts" aria-label="Action queue summary">
+        <span><strong>${escapeUtilityHtml(payload.total || 0)}</strong> open</span>
+        <span class="urgent"><strong>${escapeUtilityHtml(counts.urgent || 0)}</strong> urgent</span>
+        <span><strong>${escapeUtilityHtml(counts.unassigned || 0)}</strong> unassigned</span>
+      </div>
+    </div>
+    <div class="action-queue-controls">
+      <div class="view-presets" aria-label="Action queue focus">
+        <button type="button" class="preset-chip ${focusFilter === "all" ? "active" : ""}" data-action-focus="all">All</button>
+        <button type="button" class="preset-chip ${focusFilter === "urgent" ? "active" : ""}" data-action-focus="urgent">Urgent</button>
+        ${activeDomain ? `<button type="button" class="preset-chip ${focusFilter === "workspace" ? "active" : ""}" data-action-focus="workspace">This workspace</button>` : ""}
+      </div>
+      <label class="toolbar-field action-owner-filter">
+        <span>Owner</span>
+        <select data-action-owner>
+          <option value="">All owners</option>
+          <option value="unassigned" ${ownerFilter === "unassigned" ? "selected" : ""}>Unassigned</option>
+          ${availableOwners.map((owner) => `<option value="${escapeUtilityHtml(owner)}" ${ownerFilter === owner ? "selected" : ""}>${escapeUtilityHtml(owner)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+    <div class="action-queue-list">
+      ${visible.length ? visible.map((item) => `
+        <article class="action-queue-item ${escapeUtilityHtml(item.priority || "normal")}">
+          <div class="action-queue-item-copy">
+            <div class="action-queue-item-heading">
+              <span class="action-domain ${escapeUtilityHtml(item.domain)}">${escapeUtilityHtml(item.domain)}</span>
+              <span class="action-priority">${escapeUtilityHtml(item.priority || "normal")}</span>
+              <span class="action-owner">${escapeUtilityHtml(item.owner || "Unassigned")}</span>
+            </div>
+            <h3>${escapeUtilityHtml(item.title || "Work item")}</h3>
+            <p><strong>${escapeUtilityHtml(item.next_action || "Review")}</strong> · ${escapeUtilityHtml(item.reason || "Needs attention")}</p>
+          </div>
+          <a class="secondary-button action-queue-link" href="${escapeUtilityHtml(safeHref(item.href))}">${escapeUtilityHtml(item.action_label || "Open")}</a>
+        </article>
+      `).join("") : `<p class="action-queue-empty">No actions match this view. The current queue is clear.</p>`}
+    </div>
+    <p class="action-queue-meta">Showing ${escapeUtilityHtml(visible.length)} of ${escapeUtilityHtml(filtered.length)} matching actions${payload.remaining ? ` · ${escapeUtilityHtml(payload.remaining)} lower-priority actions remain outside this focused payload` : ""}. Updated ${escapeUtilityHtml(generatedAt)}.</p>
+  `;
+
+  container.querySelectorAll("[data-action-focus]").forEach((button) => {
+    button.addEventListener("click", () => {
+      container.dataset.focusFilter = button.dataset.actionFocus || "all";
+      renderActionQueue(container, payload, options);
+    });
+  });
+  container.querySelector("[data-action-owner]")?.addEventListener("change", (event) => {
+    container.dataset.ownerFilter = event.currentTarget.value;
+    renderActionQueue(container, payload, options);
+  });
+}
+
 // ==================== Export ====================
 
 window.PerformanceUtils = {
@@ -546,5 +640,6 @@ window.PerformanceUtils = {
   getUserFriendlyError,
   updateWorkspaceUrlState,
   installKeyboardTabs,
-  installSavedViews
+  installSavedViews,
+  renderActionQueue
 };

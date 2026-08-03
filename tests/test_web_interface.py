@@ -38,6 +38,7 @@ from guest_database_manager.web_interface import (
     EMAIL_USERNAME_ENV_VAR,
     FORM_SOURCE_NAME,
     INTAKE_SOURCE_NAME,
+    EpisodeConflictError,
     PUBLIC_INTAKE_URL_ENV_VAR,
     GuestWebRequestHandler,
     GuestWebService,
@@ -221,6 +222,107 @@ def test_assignments_and_editorial_disposition_persist_across_workspaces(temp_db
     assert episode["interview_id"] is None
     assert episode["owner"] == "editor@example.com"
     assert episode["editorial_disposition"] == "hold"
+
+
+def test_unified_action_queue_prioritizes_cross_workspace_next_actions(monkeypatch, temp_db):
+    monkeypatch.setenv(
+        "MIRROR_TALK_DASHBOARD_USERS_JSON",
+        json.dumps(
+            {
+                "producer@example.com": {"password": "secret", "role": "operator"},
+                "editor@example.com": {"password": "secret", "role": "viewer"},
+            }
+        ),
+    )
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest({"full_name": "Queue Guest", "email": "queue-guest@example.com"})
+    service.create_interview(
+        {
+            "guest_name": "Queue Interview",
+            "guest_email": "queue-interview@example.com",
+            "scheduled_for": (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M"),
+            "confirmation_status": "pending",
+            "owner": "producer@example.com",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_name": "Queue Episode Guest",
+            "episode_title": "Queue Episode",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+
+    queue = service._build_action_queue()
+    domains = {item["domain"] for item in queue["items"]}
+    members = service._team_members_payload()
+
+    assert {"guest", "interview", "episode"} <= domains
+    assert queue["total"] >= 3
+    assert queue["counts"]["unassigned"] >= 2
+    assert queue["items"][0]["priority_score"] >= queue["items"][-1]["priority_score"]
+    assert members == [
+        {"username": "editor@example.com", "label": "editor@example.com", "role": "viewer"},
+        {"username": "producer@example.com", "label": "producer@example.com", "role": "operator"},
+    ]
+    assert all("password" not in member for member in members)
+
+
+def test_episode_conflict_exposes_latest_safe_version_without_losing_draft(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    created = service.create_episode(
+        {
+            "guest_name": "Concurrent Guest",
+            "episode_title": "Original Working Title",
+            "transcript_text": "Private full transcript content",
+            "production_status": "recorded",
+        }
+    )
+    stale_payload = dict(created)
+    service.update_episode(
+        created["id"],
+        {
+            "row_version": created["row_version"],
+            "episode_title": "Newer Saved Title",
+        },
+    )
+
+    stale_payload["episode_title"] = "Operator Draft Title"
+    with pytest.raises(EpisodeConflictError) as conflict_info:
+        service.update_episode(created["id"], stale_payload)
+
+    conflict = conflict_info.value
+    assert str(conflict) == "A newer version of this episode was saved while you were editing."
+    assert conflict.current["episode_title"] == "Newer Saved Title"
+    assert conflict.current["row_version"] == created["row_version"] + 1
+    safe_current = service._summarize_episode_for_list(service._normalize_episode_record(conflict.current))
+    assert safe_current["transcript_text"] == ""
+    assert safe_current["transcript_omitted"] is True
+
+
+def test_action_queue_payload_keeps_each_workspace_represented_under_large_backlog(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    for index in range(22):
+        service.create_guest(
+            {
+                "full_name": f"Backlog Guest {index:02d}",
+                "email": f"backlog-{index:02d}@example.com",
+            }
+        )
+    service.create_episode(
+        {
+            "guest_name": "Production Queue Guest",
+            "episode_title": "Production Queue Episode",
+            "production_status": "recorded",
+        }
+    )
+
+    queue = service._build_action_queue(limit=18)
+
+    assert queue["total"] == 23
+    assert len(queue["items"]) > 18
+    assert any(item["domain"] == "episode" for item in queue["items"])
 
 
 def test_incomplete_information_workflow_updates_latest_application(temp_db):

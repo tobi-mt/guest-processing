@@ -7,6 +7,7 @@ const episodeResetButton = document.getElementById("episode-reset-button");
 const exportListName = document.getElementById("export-list-name");
 const exportFields = document.getElementById("export-fields");
 const episodeCategoryOptions = document.getElementById("episode-category-options");
+const planningTeamMembers = document.getElementById("planning-team-members");
 const episodeMessage = document.getElementById("episode-message");
 const planningWorkspaceMessage = document.getElementById("planning-workspace-message");
 const episodeImportMessage = document.getElementById("episode-import-message");
@@ -15,6 +16,7 @@ const askSyncBreakdown = document.getElementById("ask-sync-breakdown");
 const askSyncAmbiguous = document.getElementById("ask-sync-ambiguous");
 const planningExportMessage = document.getElementById("planning-export-message");
 const planningWeeklySystem = document.getElementById("planning-weekly-system");
+const workspaceActionQueue = document.getElementById("workspace-action-queue");
 const aiCopilotStatus = document.getElementById("planning-ai-copilot-status");
 const episodeList = document.getElementById("episode-list");
 const releaseCalendar = document.getElementById("release-calendar");
@@ -62,6 +64,11 @@ const episodeEditorSection = document.getElementById("episode-editor-section");
 const episodeEditorCreate = document.getElementById("episode-editor-create");
 const episodeEditorClose = document.getElementById("episode-editor-close");
 const episodeEditorTitle = document.getElementById("episode-editor-title");
+const episodeConflictPanel = document.getElementById("episode-conflict-panel");
+const episodeConflictSummary = document.getElementById("episode-conflict-summary");
+const episodeConflictFields = document.getElementById("episode-conflict-fields");
+const episodeConflictUseLatest = document.getElementById("episode-conflict-use-latest");
+const episodeConflictKeepDraft = document.getElementById("episode-conflict-keep-draft");
 const IS_FILE_PROTOCOL = window.location.protocol === "file:";
 
 let latestPlanningPayload = {
@@ -76,6 +83,8 @@ let activeEpisodePreset = "all";
 let activeProductionStage = "";
 let activeEpisodeEditorId = null;
 let activeEpisodeFeedback = { id: null, text: "", tone: "" };
+let activeEpisodeBaseline = null;
+let activeEpisodeConflict = null;
 let activeEpisodeActionFeedback = { id: null, text: "", tone: "" };
 let visibleRecommendationCount = 6;
 let visibleEpisodeCount = 10;
@@ -334,7 +343,10 @@ async function fetchJSON(url, options = {}) {
         }
       }
       if (!response.ok) {
-        throw new Error(data.error || "Request failed");
+        const requestError = new Error(data.error || "Request failed");
+        requestError.status = response.status;
+        requestError.payload = data;
+        throw requestError;
       }
       window.clearTimeout(timeoutId);
       return data;
@@ -1392,6 +1404,17 @@ function populatePlanningFilters(categories, episodes) {
   populateSelect(episodeYearFilter, years, "All Years");
 }
 
+function renderTeamMemberOptions(container, members) {
+  if (!container) return;
+  container.replaceChildren();
+  (members || []).forEach((member) => {
+    const option = document.createElement("option");
+    option.value = member.username || "";
+    option.label = `${member.label || member.username || "Team member"} · ${member.role || "member"}`;
+    container.appendChild(option);
+  });
+}
+
 function resetEpisodeForm() {
   episodeForm.reset();
   episodeForm.elements.id.value = "";
@@ -1405,7 +1428,78 @@ function resetEpisodeForm() {
   episodeForm.elements.legacy_episode_number.value = computeNextLegacyEpisodeNumber(latestPlanningPayload.episodes || []);
   episodeSubmitButton.textContent = "Save Episode";
   episodeResetButton.hidden = true;
+  activeEpisodeBaseline = null;
+  clearEpisodeConflict();
   if (episodeEditorTitle) episodeEditorTitle.textContent = "Add episode";
+}
+
+function clearEpisodeConflict() {
+  activeEpisodeConflict = null;
+  episodeConflictPanel?.classList.add("hidden");
+  if (episodeConflictFields) episodeConflictFields.textContent = "";
+}
+
+function episodeEditorSnapshot() {
+  if (!episodeForm) return {};
+  return Object.fromEntries(new FormData(episodeForm).entries());
+}
+
+function conflictFieldLabels(conflictCurrent) {
+  const latest = conflictCurrent || {};
+  const baseline = activeEpisodeBaseline || {};
+  const labels = {
+    guest_name: "guest name",
+    guest_email: "guest email",
+    episode_title: "working title",
+    published_title: "published title",
+    topic: "topic",
+    category: "category",
+    interview_date: "interview date",
+    recording_date: "recording date",
+    owner: "owner",
+    release_date: "release date",
+    release_status: "release status",
+    production_status: "production status",
+    promotion_status: "promotion status",
+    editorial_disposition: "editorial disposition",
+    priority_score: "priority",
+    show_notes_url: "show notes",
+    release_files_url: "files link",
+    recommendation_reason: "recommendation reason",
+    notes: "notes",
+  };
+  return Object.entries(labels)
+    .filter(([field]) => String(latest[field] ?? "") !== String(baseline[field] ?? ""))
+    .map(([, label]) => label);
+}
+
+function showEpisodeConflict(conflict) {
+  activeEpisodeConflict = conflict;
+  const changedFields = conflictFieldLabels(conflict?.current);
+  episodeConflictPanel?.classList.remove("hidden");
+  if (episodeConflictSummary) {
+    episodeConflictSummary.textContent = "Someone or an automated workflow saved a newer version. Your draft is still intact.";
+  }
+  if (episodeConflictFields) {
+    episodeConflictFields.textContent = changedFields.length
+      ? `Newer fields: ${changedFields.join(", ")}.`
+      : "The stored version changed. Load it or rebase your draft before saving.";
+  }
+  episodeConflictPanel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function promoteInlineConflictToEditor(episode, draftPayload, conflict) {
+  loadEpisodeIntoForm(episode);
+  const staleBaseline = episodeEditorSnapshot();
+  loadEpisodeIntoForm({ ...episode, ...draftPayload, id: episode.id });
+  activeEpisodeBaseline = staleBaseline;
+  showEpisodeConflict(conflict);
+  activeEpisodeEditorId = null;
+  setMessage(
+    episodeMessage,
+    "A newer version exists. Your quick-edit draft is open in the full editor so you can resolve it safely.",
+    "warning",
+  );
 }
 
 function openEpisodeEditor({ restoreFocusTo = document.activeElement } = {}) {
@@ -1437,6 +1531,7 @@ function initializeEpisodeEditor() {
 }
 
 function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } = {}) {
+  clearEpisodeConflict();
   const effectiveReleaseStatus = releaseStatus || episode.release_status || "unplanned";
   const effectiveProductionStatus = episode.production_status || "idea";
   const effectivePromotionStatus = episode.promotion_status || "unknown";
@@ -1480,6 +1575,7 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeSubmitButton.textContent = "Update Episode";
   episodeResetButton.hidden = false;
   if (episodeEditorTitle) episodeEditorTitle.textContent = "Edit episode";
+  activeEpisodeBaseline = episodeEditorSnapshot();
   openEpisodeEditor();
 }
 
@@ -1576,7 +1672,11 @@ function renderEpisodeInlineEditor(container, episode) {
       renderPlanning();
       refreshPlanningQuietly();
     } catch (error) {
-      setMessage(messageNode, error.message, "error");
+      if (error.status === 409 && error.payload?.conflict) {
+        promoteInlineConflictToEditor(episode, payload, error.payload.conflict);
+      } else {
+        setMessage(messageNode, error.message, "error");
+      }
       saveButton.disabled = false;
       saveButton.textContent = "Save Changes";
     }
@@ -1618,7 +1718,11 @@ function renderEpisodeInlineEditor(container, episode) {
       renderPlanning();
       refreshPlanningQuietly();
     } catch (error) {
-      setMessage(messageNode, error.message, "error");
+      if (error.status === 409 && error.payload?.conflict) {
+        promoteInlineConflictToEditor(episode, payload, error.payload.conflict);
+      } else {
+        setMessage(messageNode, error.message, "error");
+      }
       scheduleButton.disabled = false;
       scheduleButton.textContent = "Schedule Recommended Slot";
     }
@@ -1805,6 +1909,84 @@ function closeScheduleModal() {
   setMessage(scheduleModalMessage, "", "");
 }
 
+function deriveEpisodeNextAction(episode) {
+  const releaseStatus = normalizeText(episode.release_status);
+  const productionStatus = normalizeText(episode.production_status);
+  const promotionStatus = normalizeText(episode.promotion_status);
+  const releaseDate = parseDate(episode.release_date);
+  const releaseIsDue = releaseDate && releaseDate <= new Date();
+  if (releaseStatus === "released") {
+    return {
+      label: "Review post-release workflow",
+      reason: episode.outreach_summary?.next_step || "Confirm guest follow-up and distribution are complete.",
+      action: "form",
+      button: "Review episode",
+      tone: "complete",
+    };
+  }
+  if (releaseStatus === "scheduled") {
+    if (productionStatus !== "ready" || promotionStatus !== "ready") {
+      return {
+        label: "Resolve release blockers",
+        reason: "The episode has a release date, but production or promotion is not ready.",
+        action: "form",
+        button: "Fix readiness",
+        tone: "urgent",
+      };
+    }
+    if (releaseIsDue) {
+      return {
+        label: "Confirm publication",
+        reason: "The scheduled release time has arrived and all readiness gates pass.",
+        action: "release",
+        button: "Mark released",
+        tone: "high",
+      };
+    }
+    return {
+      label: "Verify the release plan",
+      reason: `Scheduled for ${formatDateTime(episode.release_date)} and currently ready.`,
+      action: "form",
+      button: "Review plan",
+      tone: "normal",
+    };
+  }
+  if (productionStatus === "ready") {
+    return {
+      label: "Choose a release slot",
+      reason: promotionStatus === "ready" ? "Production and promotional assets are ready." : "Production is ready; review remaining promotion needs while scheduling.",
+      action: "schedule",
+      button: "Schedule episode",
+      tone: promotionStatus === "ready" ? "high" : "normal",
+    };
+  }
+  if (promotionStatus === "needs_assets") {
+    return {
+      label: "Complete promotional assets",
+      reason: "The release cannot be considered ready until its promotional package is complete.",
+      action: "form",
+      button: "Update assets",
+      tone: "high",
+    };
+  }
+  if (["recorded", "editing"].includes(productionStatus)) {
+    return {
+      label: productionStatus === "recorded" ? "Start production" : "Advance the edit",
+      reason: `The episode is currently in the ${productionStatus} stage.`,
+      action: "edit",
+      button: "Quick edit",
+      tone: "normal",
+    };
+  }
+  return {
+    label: "Complete episode setup",
+    reason: "Confirm the title, topic, owner, and production stage.",
+    action: "form",
+    button: "Open full editor",
+    tone: "normal",
+  };
+}
+
 function renderEpisodes(episodes, totalCount, episodeNumberMap) {
   episodeList.innerHTML = "";
   updateResultsMeta(
@@ -1836,6 +2018,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     const releaseEmailReady = hasEmail && isReleased && hasShowNotes && hasFilesLink;
     const releaseActionLabel = releaseEmailReady ? "Send Release Email" : "Prepare Release Email";
     const releaseTone = isReleased ? "success" : isScheduled ? "pending" : "warning";
+    const nextAction = deriveEpisodeNextAction(episode);
     const card = document.createElement("article");
     card.className = "operations-card";
     card.innerHTML = `
@@ -1851,63 +2034,69 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
         </div>
       </div>
       ${renderEpisodeBadges(episode)}
-      <div class="operations-meta">
+      <div class="episode-card-summary">
         <span>${episodeNumberLabel}</span>
-        <span>Published title: ${escapeHtml(episode.published_title || "Not set")}</span>
-        <span>Topic: ${escapeHtml(episode.topic || "Not set")}</span>
         <span>Category: ${escapeHtml(episode.category || "Not set")}</span>
-        <span>Email: ${renderLinkedValue(episode.guest_email)}</span>
-        <span>Website: ${renderLinkedValue(episode.website)}</span>
-        <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
         <span>Release: ${formatDateTime(episode.release_date)}</span>
-        <span>Status: ${escapeHtml(episode.release_status || "unplanned")} / ${escapeHtml(episode.production_status || "idea")}</span>
         <span>Owner: ${escapeHtml(episode.owner || "Unassigned")}</span>
-        <span>Disposition: ${escapeHtml(episode.editorial_disposition || "active")}</span>
-        <span>Promo: ${escapeHtml(episode.promotion_status || "unknown")}</span>
         <span>Readiness: ${episode.promotion_readiness?.score ?? 0}/100</span>
-        <span>Priority: ${episode.priority_score ?? 0}</span>
-        <span>Show Notes: ${renderLinkedValue(episode.show_notes_url, "Missing")}</span>
-        <span>Files: ${renderLinkedValue(episode.release_files_url, "Missing")}</span>
-        <span>Transcript: ${transcriptStatusLabel(episode)}</span>
-        <span>Source: ${escapeHtml(episode.source_file_name || "Manual entry")}</span>
       </div>
-      ${renderPromoReadiness(episode.promotion_readiness)}
-      ${renderAiSchedulingCopilot(episode.ai_copilot)}
-      ${renderMonthlyAngleDecision(episode)}
-      ${renderGuestResearchCopilot(episode.guest_research)}
-      ${renderCopyAssist(episode.copy_assist)}
-      <div class="context-links">
-        <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
-        <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
-      </div>
-      <div class="operations-actions">
-        <div class="action-group">
-          <span class="action-group-label">Core Actions</span>
-          <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
-          <button type="button" class="ghost-button" data-episode-action="form">Open Full Editor</button>
-          <button type="button" class="ghost-button" data-episode-action="activity">Activity</button>
-          <button type="button" class="ghost-button" data-episode-action="refresh">Refresh</button>
-          ${isScheduled && normalizeText(episode.production_status) === "ready" && normalizeText(episode.promotion_status) === "ready" ? `<button type="button" class="primary-button" data-episode-action="release">Mark Released</button>` : ""}
-          ${!isReleased ? `<button type="button" class="ghost-button" data-episode-action="accelerate">Accelerate</button>` : ""}
-          <button type="button" class="ghost-button" data-episode-action="hold">Hold</button>
-          <button type="button" class="ghost-button" data-episode-action="archive">Archive</button>
-          <button type="button" class="ghost-button" data-episode-action="retire">Retire</button>
-          ${!isReleased ? `
-            ${!isScheduled ? `<button type="button" class="secondary-button" data-episode-action="schedule">Schedule for Release</button>` : `
-              <button type="button" class="secondary-button" data-episode-action="reschedule">Change Release Date</button>
-              <button type="button" class="ghost-button" data-episode-action="unschedule">Unschedule</button>
-            `}
-          ` : ""}
+      <div class="episode-next-action ${escapeHtml(nextAction.tone)}">
+        <div>
+          <span class="insight-label">Next action</span>
+          <h4>${escapeHtml(nextAction.label)}</h4>
+          <p>${escapeHtml(nextAction.reason)}</p>
         </div>
-        <div class="action-group">
-          <span class="action-group-label">Guest Email Flow</span>
-          <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${hasEmail ? "" : "disabled"}>Preview Thank You</button>
-          <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${hasEmail ? "" : "disabled"}>Send Thank You</button>
-          <button type="button" class="ghost-button" data-episode-action="preview-release-email" ${hasEmail ? "" : "disabled"}>Preview Release Email</button>
-          <button type="button" class="secondary-button" data-episode-action="send-release-email" ${hasEmail ? "" : "disabled"}>${releaseActionLabel}</button>
-          <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
-        </div>
+        <button type="button" class="primary-button" data-episode-primary-action="${escapeHtml(nextAction.action)}">${escapeHtml(nextAction.button)}</button>
       </div>
+      <details class="episode-card-disclosure">
+        <summary>Details, evidence, and all actions</summary>
+        <div class="operations-meta">
+          <span>Published title: ${escapeHtml(episode.published_title || "Not set")}</span>
+          <span>Topic: ${escapeHtml(episode.topic || "Not set")}</span>
+          <span>Email: ${renderLinkedValue(episode.guest_email)}</span>
+          <span>Website: ${renderLinkedValue(episode.website)}</span>
+          <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
+          <span>Disposition: ${escapeHtml(episode.editorial_disposition || "active")}</span>
+          <span>Priority: ${episode.priority_score ?? 0}</span>
+          <span>Show Notes: ${renderLinkedValue(episode.show_notes_url, "Missing")}</span>
+          <span>Files: ${renderLinkedValue(episode.release_files_url, "Missing")}</span>
+          <span>Transcript: ${transcriptStatusLabel(episode)}</span>
+          <span>Source: ${escapeHtml(episode.source_file_name || "Manual entry")}</span>
+        </div>
+        ${renderPromoReadiness(episode.promotion_readiness)}
+        ${renderAiSchedulingCopilot(episode.ai_copilot)}
+        ${renderMonthlyAngleDecision(episode)}
+        ${renderGuestResearchCopilot(episode.guest_research)}
+        ${renderCopyAssist(episode.copy_assist)}
+        <div class="context-links">
+          <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
+          <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
+        </div>
+        <div class="operations-actions">
+          <div class="action-group">
+            <span class="action-group-label">Episode workflow</span>
+            <button type="button" class="secondary-button" data-episode-action="edit">${activeEpisodeEditorId === episode.id ? "Hide Quick Edit" : "Quick Edit"}</button>
+            <button type="button" class="ghost-button" data-episode-action="form">Open Full Editor</button>
+            <button type="button" class="ghost-button" data-episode-action="activity">Activity</button>
+            <button type="button" class="ghost-button" data-episode-action="refresh">Refresh</button>
+            ${isScheduled && normalizeText(episode.production_status) === "ready" && normalizeText(episode.promotion_status) === "ready" ? `<button type="button" class="primary-button" data-episode-action="release">Mark Released</button>` : ""}
+            ${!isReleased ? `<button type="button" class="ghost-button" data-episode-action="accelerate">Accelerate</button>` : ""}
+            <button type="button" class="ghost-button" data-episode-action="hold">Hold</button>
+            <button type="button" class="ghost-button" data-episode-action="archive">Archive</button>
+            <button type="button" class="ghost-button" data-episode-action="retire">Retire</button>
+            ${!isReleased ? `${!isScheduled ? `<button type="button" class="secondary-button" data-episode-action="schedule">Schedule for Release</button>` : `<button type="button" class="secondary-button" data-episode-action="reschedule">Change Release Date</button><button type="button" class="ghost-button" data-episode-action="unschedule">Unschedule</button>`}` : ""}
+          </div>
+          <div class="action-group">
+            <span class="action-group-label">Guest communication</span>
+            <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${hasEmail ? "" : "disabled"}>Preview Thank You</button>
+            <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${hasEmail ? "" : "disabled"}>Send Thank You</button>
+            <button type="button" class="ghost-button" data-episode-action="preview-release-email" ${hasEmail ? "" : "disabled"}>Preview Release Email</button>
+            <button type="button" class="secondary-button" data-episode-action="send-release-email" ${hasEmail ? "" : "disabled"}>${releaseActionLabel}</button>
+            <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
+          </div>
+        </div>
+      </details>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
       <div class="operations-preview hidden" data-episode-appreciation-preview></div>
       <div class="operations-preview hidden" data-episode-release-preview></div>
@@ -1929,6 +2118,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     const previewReleaseButton = card.querySelector("[data-episode-action='preview-release-email']");
     const sendReleaseButton = card.querySelector("[data-episode-action='send-release-email']");
     const deleteButton = card.querySelector("[data-episode-action='delete']");
+    const primaryActionButton = card.querySelector("[data-episode-primary-action]");
     const editorNode = card.querySelector("[data-episode-editor]");
     const actionFeedbackNode = card.querySelector(".card-action-feedback");
     const appreciationPreviewNode = card.querySelector("[data-episode-appreciation-preview]");
@@ -1970,6 +2160,16 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
       }
     });
     refreshButton.addEventListener("click", () => loadPlanning({ forceRefresh: true }));
+    primaryActionButton?.addEventListener("click", () => {
+      const actionTargets = {
+        edit: editButton,
+        form: formButton,
+        release: releaseButton,
+        schedule: scheduleButton,
+        reschedule: rescheduleButton,
+      };
+      actionTargets[primaryActionButton.dataset.episodePrimaryAction]?.click();
+    });
     if (accelerateButton) accelerateButton.addEventListener("click", () => openScheduleModal(episode));
     if (releaseButton) {
       releaseButton.addEventListener("click", async () => {
@@ -2349,41 +2549,56 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
           <span class="status-chip">${escapeHtml(episode.promotion_status || "unknown")}</span>
         </div>
       </div>
-      <div class="operations-meta">
-        <span>${episodeNumberLabel}</span>
-        <span>Recommended Slot: ${formatDateTime(episode.recommended_release_date)}</span>
-        <span>Category: ${escapeHtml(episode.category || "Not set")}</span>
-        <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
-        <span>Production: ${escapeHtml(episode.production_status || "idea")}</span>
-        <span>Promo: ${escapeHtml(episode.promotion_status || "unknown")}</span>
+      <div class="recommendation-decision">
+        <div>
+          <span class="insight-label">Recommended release decision</span>
+          <h4>${formatDateTime(episode.recommended_release_date)}</h4>
+          <p>${escapeHtml(insights.summary || "This is the strongest available fit for the next release slot.")}</p>
+        </div>
+        <div class="recommendation-primary-actions">
+          <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
+          <button type="button" class="secondary-button" data-recommendation-action="edit">Review in editor</button>
+        </div>
       </div>
       ${signals.length ? `<div class="signal-list">${signals.map((signal) => `<span class="signal-chip ${signal.tone}">${signal.label}</span>`).join("")}</div>` : ""}
-      <div class="operations-preview">
-        <p>${escapeHtml(insights.summary)}</p>
+      <details class="recommendation-evidence">
+        <summary>Why this recommendation</summary>
+        <div class="operations-meta">
+          <span>${episodeNumberLabel}</span>
+          <span>Category: ${escapeHtml(episode.category || "Not set")}</span>
+          <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
+          <span>Production: ${escapeHtml(episode.production_status || "idea")}</span>
+          <span>Promo: ${escapeHtml(episode.promotion_status || "unknown")}</span>
+        </div>
+        <div class="operations-preview">
         ${insights.strengths.length ? `<div class="insight-stack"><strong class="insight-label">Why now</strong><ul>${insights.strengths.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
         ${insights.cautions.length ? `<div class="insight-stack caution"><strong class="insight-label">Watchouts</strong><ul>${insights.cautions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
-      </div>
-      ${episode.why_now?.length ? `<div class="operations-preview"><strong class="insight-label">Why this next</strong><ul>${episode.why_now.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
-      ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
-      ${renderSeasonalFit(episode.seasonal_fit)}
-      ${renderAiSchedulingCopilot(episode.ai_copilot)}
-      ${renderMonthlyAngleDecision(episode, { always: true })}
-      ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
-      ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${escapeHtml(episode.archive_overlap.message)}</p></div>` : ""}
-      ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${escapeHtml(episode.topic_cluster_warning.message)}</p></div>` : ""}
-      ${renderPromoReadiness(episode.promotion_readiness)}
-      ${renderGuestResearchCopilot(episode.guest_research)}
-      ${renderCopyAssist(episode.copy_assist)}
-      <div class="context-links">
-        <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
-        <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
-      </div>
-      <div class="operations-actions">
-        <div class="action-group">
-          <span class="action-group-label">Release Decision</span>
-          <button type="button" class="primary-button" data-recommendation-action="schedule">Use Recommended Slot</button>
-          <button type="button" class="secondary-button" data-recommendation-action="edit">Open Full Editor</button>
         </div>
+        ${episode.why_now?.length ? `<div class="operations-preview"><strong class="insight-label">Why this next</strong><ul>${episode.why_now.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+        ${episode.watchouts?.length ? `<div class="operations-preview"><strong class="insight-label">Why not now</strong><ul>${episode.watchouts.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+        ${renderSeasonalFit(episode.seasonal_fit)}
+        ${renderAiSchedulingCopilot(episode.ai_copilot)}
+        ${renderMonthlyAngleDecision(episode, { always: true })}
+        ${episode.sequence_warnings?.length ? `<div class="operations-preview"><strong class="insight-label">Sequence warnings</strong><ul>${episode.sequence_warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+        ${episode.archive_overlap?.message ? `<div class="operations-preview"><strong class="insight-label">Archive overlap</strong><p>${escapeHtml(episode.archive_overlap.message)}</p></div>` : ""}
+        ${episode.topic_cluster_warning?.message ? `<div class="operations-preview"><strong class="insight-label">Recent topic cluster</strong><p>${escapeHtml(episode.topic_cluster_warning.message)}</p></div>` : ""}
+        ${renderPromoReadiness(episode.promotion_readiness)}
+        ${renderGuestResearchCopilot(episode.guest_research)}
+        ${renderCopyAssist(episode.copy_assist)}
+        <div class="context-links">
+          <a class="context-link" href="${buildScopedLink("/dashboard", episode.guest_name || episode.guest_email)}">View Guest</a>
+          <a class="context-link" href="${buildScopedLink("/operations", episode.guest_name || episode.guest_email)}">View Interview Ops</a>
+        </div>
+        <div class="operations-actions">
+          <div class="action-group">
+            <span class="action-group-label">Monthly Angle Review</span>
+            <button type="button" class="ghost-button" data-recommendation-action="pin-angle">Pin Angle</button>
+            <button type="button" class="ghost-button" data-recommendation-action="reject-angle">Reject Angle</button>
+            <button type="button" class="ghost-button" data-recommendation-action="clear-angle">Clear Angle Review</button>
+          </div>
+        </div>
+      </details>
+      <div class="recommendation-secondary-actions">
         <details class="recommendation-reject-control action-group">
           <summary class="ghost-button">Reject recommendation</summary>
           <form class="recommendation-reject-form">
@@ -2407,24 +2622,6 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
             <button type="submit" class="secondary-button danger-button">Confirm rejection</button>
           </form>
         </details>
-        <div class="action-group">
-          <span class="action-group-label">Monthly Angle Review</span>
-          <button 
-            type="button" 
-            class="ghost-button" 
-            data-recommendation-action="pin-angle" 
-          >Pin Angle</button>
-          <button 
-            type="button" 
-            class="ghost-button" 
-            data-recommendation-action="reject-angle" 
-          >Reject Angle</button>
-          <button 
-            type="button" 
-            class="ghost-button" 
-            data-recommendation-action="clear-angle" 
-          >Clear Angle Review</button>
-        </div>
       </div>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
     `;
@@ -2657,9 +2854,16 @@ function renderPlanning() {
   const categories = latestPlanningPayload.available_categories || [];
   const episodeNumberMap = buildEpisodeNumberMap(episodes, recommendations);
 
+  window.PerformanceUtils?.renderActionQueue(
+    workspaceActionQueue,
+    latestPlanningPayload.action_queue,
+    { activeDomain: "episode" },
+  );
+
   updatePresetButtons(recommendationPresetButtons, activeRecommendationPreset, "recommendationPreset");
   updatePresetButtons(episodePresetButtons, activeEpisodePreset, "episodePreset");
   populatePlanningFilters(categories, episodes);
+  renderTeamMemberOptions(planningTeamMembers, latestPlanningPayload.team_members);
   renderCategoryOptions(categories);
   renderWeeklySystemPanel(latestPlanningPayload.weekly_system);
   renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
@@ -2967,7 +3171,12 @@ if (episodeForm && episodeSubmitButton) {
       refreshPlanningQuietly();
     } catch (error) {
       console.error("Episode save error:", error);
-      setMessage(episodeMessage, error.message || "Failed to save episode", "error");
+      if (error.status === 409 && error.payload?.conflict) {
+        showEpisodeConflict(error.payload.conflict);
+        setMessage(episodeMessage, "A newer version exists. Choose how to resolve it; your draft has not been lost.", "warning");
+      } else {
+        setMessage(episodeMessage, error.message || "Failed to save episode", "error");
+      }
     } finally {
       submitButton.disabled = false;
       submitButton.textContent = episodeId ? "Update Episode" : "Save Episode";
@@ -2976,6 +3185,39 @@ if (episodeForm && episodeSubmitButton) {
 } else {
   console.error("Episode form or submit button not found in DOM");
 }
+
+episodeConflictUseLatest?.addEventListener("click", async () => {
+  const episodeId = activeEpisodeConflict?.id || episodeForm?.elements?.id?.value;
+  if (!episodeId) return;
+  episodeConflictUseLatest.disabled = true;
+  episodeConflictUseLatest.textContent = "Loading latest…";
+  try {
+    const latestEpisode = await fetchJSON(`/api/episodes/${episodeId}`);
+    replaceEpisodeInPayload(latestEpisode);
+    loadEpisodeIntoForm(latestEpisode);
+    setMessage(episodeMessage, "Latest saved version loaded. Review it before making further changes.", "success");
+  } catch (error) {
+    setMessage(episodeMessage, error.message || "Could not load the latest version.", "error");
+  } finally {
+    episodeConflictUseLatest.disabled = false;
+    episodeConflictUseLatest.textContent = "Use latest version";
+  }
+});
+
+episodeConflictKeepDraft?.addEventListener("click", () => {
+  const latestRowVersion = activeEpisodeConflict?.current_row_version;
+  if (!latestRowVersion) {
+    setMessage(episodeMessage, "The latest version could not be identified. Load the latest version instead.", "error");
+    return;
+  }
+  episodeForm.elements.row_version.value = latestRowVersion;
+  clearEpisodeConflict();
+  setMessage(
+    episodeMessage,
+    "Your draft is preserved and rebased onto the latest version. Review every field, then select Update Episode again to confirm.",
+    "warning",
+  );
+});
 
 if (episodeResetButton) {
   episodeResetButton.addEventListener("click", () => {

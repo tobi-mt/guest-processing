@@ -146,6 +146,8 @@ const recommendationInsights = {
 
 let emailEnabled = false;
 let latestPayload = null;
+const workspaceActionQueue = document.getElementById("workspace-action-queue");
+const dashboardTeamMembers = document.getElementById("dashboard-team-members");
 let activeEmailComposer = null;
 let activeGuestEditor = null;
 let activeGuestPreset = "needs_review";
@@ -949,7 +951,7 @@ function renderInlineEditor(editorNode, guest) {
       </label>
       <label>
         Owner
-        <input name="owner" type="text" value="${escapeHtml(activeGuestEditor.owner)}" placeholder="Producer or assistant" />
+        <input name="owner" type="text" list="dashboard-team-members" value="${escapeHtml(activeGuestEditor.owner)}" placeholder="Assign a configured team member" />
       </label>
       <label class="full-width">
         Social Handles
@@ -1046,6 +1048,20 @@ function renderInlineEditor(editorNode, guest) {
 
 function renderGuests(payload) {
   latestPayload = payload;
+  window.PerformanceUtils?.renderActionQueue(
+    workspaceActionQueue,
+    payload.action_queue,
+    { activeDomain: "guest" },
+  );
+  if (dashboardTeamMembers) {
+    dashboardTeamMembers.replaceChildren();
+    (payload.team_members || []).forEach((member) => {
+      const option = document.createElement("option");
+      option.value = member.username || "";
+      option.label = `${member.label || member.username || "Team member"} · ${member.role || "member"}`;
+      dashboardTeamMembers.appendChild(option);
+    });
+  }
   emailEnabled = Boolean(payload.email_enabled);
   if (metrics.total) {
     metrics.total.textContent = payload.stats.total ?? 0;

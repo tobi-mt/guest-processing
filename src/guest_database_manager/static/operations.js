@@ -22,6 +22,8 @@ const syncCalendarButton = document.getElementById("sync-calendar-button");
 const backupDataButton = document.getElementById("backup-data-button");
 const operationsWeeklyOutreach = document.getElementById("operations-weekly-outreach");
 const operationsAlerts = document.getElementById("operations-alerts");
+const workspaceActionQueue = document.getElementById("workspace-action-queue");
+const operationsTeamMembers = document.getElementById("operations-team-members");
 const outboxHealth = document.getElementById("outbox-health");
 const outboxFailures = document.getElementById("outbox-failures");
 const outboxMessage = document.getElementById("outbox-message");
@@ -1657,6 +1659,20 @@ function renderReminderCandidates(interviews, totalCount) {
 function renderOperations() {
   const interviews = latestOperationsPayload.interviews || [];
   const reminders = latestOperationsPayload.reminder_candidates || [];
+  window.PerformanceUtils?.renderActionQueue(
+    workspaceActionQueue,
+    latestOperationsPayload.action_queue,
+    { activeDomain: "interview" },
+  );
+  if (operationsTeamMembers) {
+    operationsTeamMembers.replaceChildren();
+    (latestOperationsPayload.team_members || []).forEach((member) => {
+      const option = document.createElement("option");
+      option.value = member.username || "";
+      option.label = `${member.label || member.username || "Team member"} · ${member.role || "member"}`;
+      operationsTeamMembers.appendChild(option);
+    });
+  }
 
   updatePresetButtons(reminderPresetButtons, activeReminderPreset, "reminderPreset");
   updatePresetButtons(interviewPresetButtons, activeInterviewPreset, "interviewPreset");

@@ -362,6 +362,14 @@ class WebInterfaceError(Exception):
     """Raised when a web request payload is invalid."""
 
 
+class EpisodeConflictError(WebInterfaceError):
+    """Raised when an episode edit was based on an older persisted version."""
+
+    def __init__(self, message: str, current: Dict[str, Any]):
+        super().__init__(message)
+        self.current = current
+
+
 def _word_count(text: str) -> int:
     """Count words in a text block."""
     return len(re.findall(r"\b\w+\b", text))
@@ -808,6 +816,274 @@ class GuestWebService:
             return 5.0
         return 3.0
 
+    @staticmethod
+    def _team_members_payload() -> list[Dict[str, str]]:
+        """Expose configured dashboard identities without credential material."""
+        return [
+            {
+                "username": username,
+                "label": username,
+                "role": record["role"],
+            }
+            for username, record in sorted(_configured_dashboard_users().items(), key=lambda item: item[0].casefold())
+        ]
+
+    @staticmethod
+    def _action_priority(score: int) -> str:
+        if score >= 90:
+            return "urgent"
+        if score >= 70:
+            return "high"
+        return "normal"
+
+    def _build_action_queue(self, *, limit: int = 18) -> Dict[str, Any]:
+        """Build one deterministic next-action queue across the three workspaces."""
+        reference = datetime.now()
+        guests = self.database.get_all_guests()
+        interviews = self.database.list_interviews()
+        episodes = [self._normalize_episode_record(item) for item in self.database.list_episodes()]
+        latest_applications = self.database.list_latest_guest_applications()
+        reminder_ids = {
+            int(item["id"])
+            for item in self.get_due_weekly_reminders(reference=reference)
+            if item.get("id") is not None
+        }
+        items: list[Dict[str, Any]] = []
+
+        def add_item(
+            *,
+            key: str,
+            domain: str,
+            title: str,
+            next_action: str,
+            reason: str,
+            href: str,
+            action_label: str,
+            owner: Any,
+            score: int,
+            due_at: Any = None,
+        ) -> None:
+            normalized_owner = _normalize_text(owner)
+            items.append(
+                {
+                    "key": key,
+                    "domain": domain,
+                    "title": title,
+                    "next_action": next_action,
+                    "reason": reason,
+                    "href": href,
+                    "action_label": action_label,
+                    "owner": normalized_owner,
+                    "assignment_state": "assigned" if normalized_owner else "unassigned",
+                    "priority": self._action_priority(score),
+                    "priority_score": score,
+                    "due_at": due_at,
+                }
+            )
+
+        for guest in guests:
+            guest_id = int(guest.get("id") or 0)
+            application = latest_applications.get(guest_id) or {}
+            application_status = _normalize_text(application.get("status")).lower()
+            if bool(guest.get("is_processed")) or application_status not in {
+                "submitted",
+                "triage",
+                "needs_information",
+            }:
+                continue
+            submitted_at = self._parse_datetime_static(application.get("submitted_at"))
+            age_days = max(0, (reference - submitted_at).days) if submitted_at else 0
+            score = 95 if age_days >= 7 else 68
+            title = _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest application"
+            next_action = "Request missing information" if application_status == "needs_information" else "Review guest application"
+            reason = (
+                f"Waiting {age_days} days; the 7-day review SLA is breached."
+                if age_days >= 7
+                else f"Application is waiting for an editorial decision ({age_days} days old)."
+            )
+            add_item(
+                key=f"guest:{guest_id}",
+                domain="guest",
+                title=title,
+                next_action=next_action,
+                reason=reason,
+                href=f"/dashboard?{urlencode({'q': title})}",
+                action_label="Review guest",
+                owner=guest.get("owner"),
+                score=score,
+                due_at=application.get("submitted_at"),
+            )
+
+        for interview in interviews:
+            interview_id = int(interview.get("id") or 0)
+            status = _normalize_text(interview.get("status")).lower()
+            confirmation = _normalize_text(interview.get("confirmation_status")).lower()
+            scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
+            if scheduled_for:
+                comparison_reference = self._align_reference_datetime(reference, scheduled_for)
+                days_until = (scheduled_for - comparison_reference).total_seconds() / 86400
+            else:
+                days_until = None
+            guest_name = _normalize_text(interview.get("guest_name")) or "Interview"
+            href = f"/operations?{urlencode({'q': guest_name})}"
+            if _normalize_text(interview.get("calendar_event_id")) and (
+                status == "cancelled" or confirmation in {"declined", "reschedule_requested"}
+            ):
+                add_item(
+                    key=f"interview:{interview_id}:calendar",
+                    domain="interview",
+                    title=guest_name,
+                    next_action="Reconcile calendar hold",
+                    reason="The booking decision and linked calendar event no longer agree.",
+                    href=href,
+                    action_label="Resolve booking",
+                    owner=interview.get("owner"),
+                    score=100,
+                    due_at=interview.get("scheduled_for"),
+                )
+                continue
+            if status == "cancelled" or confirmation == "declined" or days_until is None or days_until < -1:
+                continue
+            if interview_id in reminder_ids:
+                add_item(
+                    key=f"interview:{interview_id}:reminder",
+                    domain="interview",
+                    title=guest_name,
+                    next_action="Review and send confirmation reminder",
+                    reason="This interview is inside the weekly reminder window.",
+                    href=href,
+                    action_label="Review reminder",
+                    owner=interview.get("owner"),
+                    score=88 if confirmation == "pending" else 78,
+                    due_at=interview.get("scheduled_for"),
+                )
+            elif days_until <= 7 and confirmation != "confirmed":
+                add_item(
+                    key=f"interview:{interview_id}:confirmation",
+                    domain="interview",
+                    title=guest_name,
+                    next_action="Confirm interview details",
+                    reason=f"Interview is due in {max(0, int(days_until))} days and is still {confirmation or 'pending'}.",
+                    href=href,
+                    action_label="Open interview",
+                    owner=interview.get("owner"),
+                    score=92,
+                    due_at=interview.get("scheduled_for"),
+                )
+
+        for episode in episodes:
+            episode_id = int(episode.get("id") or 0)
+            release_status = _normalize_text(episode.get("release_status")).lower()
+            production_status = _normalize_text(episode.get("production_status")).lower()
+            promotion_status = _normalize_text(episode.get("promotion_status")).lower()
+            disposition = _normalize_text(episode.get("editorial_disposition") or "active").lower()
+            if release_status == "released" or disposition != "active":
+                continue
+            title = _normalize_text(episode.get("episode_title")) or _normalize_text(episode.get("guest_name")) or "Episode"
+            href = f"/planning?{urlencode({'tab': 'release_planning', 'episode_id': episode_id})}"
+            release_date = self._parse_datetime_static(episode.get("release_date"))
+            days_until_release = (release_date - reference).total_seconds() / 86400 if release_date else None
+            readiness = build_promotion_readiness(episode)
+            if release_status == "scheduled" and (days_until_release is None or days_until_release <= 14):
+                if readiness.get("blockers"):
+                    blockers = ", ".join(str(item) for item in readiness["blockers"][:2])
+                    add_item(
+                        key=f"episode:{episode_id}:readiness",
+                        domain="episode",
+                        title=title,
+                        next_action="Resolve release blockers",
+                        reason=f"Scheduled release is approaching; still blocked by {blockers}.",
+                        href=href,
+                        action_label="Fix episode",
+                        owner=episode.get("owner"),
+                        score=98 if days_until_release is not None and days_until_release <= 3 else 90,
+                        due_at=episode.get("release_date"),
+                    )
+                else:
+                    add_item(
+                        key=f"episode:{episode_id}:release",
+                        domain="episode",
+                        title=title,
+                        next_action="Verify release execution",
+                        reason="The episode is scheduled and release-ready.",
+                        href=href,
+                        action_label="Open release plan",
+                        owner=episode.get("owner"),
+                        score=82,
+                        due_at=episode.get("release_date"),
+                    )
+            elif production_status == "ready" and release_status != "scheduled":
+                add_item(
+                    key=f"episode:{episode_id}:schedule",
+                    domain="episode",
+                    title=title,
+                    next_action="Choose a release slot",
+                    reason="Production is ready but no release date is committed.",
+                    href=href,
+                    action_label="Schedule episode",
+                    owner=episode.get("owner"),
+                    score=76 if promotion_status == "ready" else 70,
+                    due_at=episode.get("interview_date"),
+                )
+            elif production_status in {"recorded", "editing"} or promotion_status == "needs_assets":
+                next_action = "Complete promotional assets" if promotion_status == "needs_assets" else "Advance production"
+                add_item(
+                    key=f"episode:{episode_id}:production",
+                    domain="episode",
+                    title=title,
+                    next_action=next_action,
+                    reason="This episode is active in the production backlog.",
+                    href=href,
+                    action_label="Open episode",
+                    owner=episode.get("owner"),
+                    score=58,
+                    due_at=episode.get("interview_date"),
+                )
+
+        def due_sort_value(item: Dict[str, Any]) -> datetime:
+            parsed = self._parse_datetime_static(item.get("due_at"))
+            return parsed or datetime.max
+
+        items.sort(
+            key=lambda item: (
+                -int(item["priority_score"]),
+                due_sort_value(item),
+                item["domain"],
+                item["title"].casefold(),
+            )
+        )
+        total = len(items)
+        global_limit = max(1, int(limit))
+        visible_by_key = {item["key"]: item for item in items[:global_limit]}
+        # Keep the queue globally prioritized while guaranteeing that each
+        # workspace filter has useful candidates even when one domain has a
+        # large overdue backlog.
+        for domain in ("guest", "interview", "episode"):
+            domain_items = [item for item in items if item["domain"] == domain][:12]
+            visible_by_key.update({item["key"]: item for item in domain_items})
+        visible = sorted(
+            visible_by_key.values(),
+            key=lambda item: (
+                -int(item["priority_score"]),
+                due_sort_value(item),
+                item["domain"],
+                item["title"].casefold(),
+            ),
+        )
+        return {
+            "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "items": visible,
+            "total": total,
+            "remaining": max(total - len(visible), 0),
+            "counts": {
+                "urgent": sum(1 for item in items if item["priority"] == "urgent"),
+                "unassigned": sum(1 for item in items if item["assignment_state"] == "unassigned"),
+                "guest": sum(1 for item in items if item["domain"] == "guest"),
+                "interview": sum(1 for item in items if item["domain"] == "interview"),
+                "episode": sum(1 for item in items if item["domain"] == "episode"),
+            },
+        }
+
     def list_guests(self, skip_expensive_enrichment: bool = False) -> Dict[str, Any]:
         """Return all guests for the frontend.
         
@@ -879,6 +1155,8 @@ class GuestWebService:
                 status: sum(1 for guest in guests if (guest.get("application_summary") or {}).get("status") == status)
                 for status in ("submitted", "triage", "needs_information", "accepted", "declined", "withdrawn")
             },
+            "action_queue": self._build_action_queue(),
+            "team_members": self._team_members_payload(),
         }
         
         # Only include recommendation stats if we did the expensive enrichment
@@ -921,6 +1199,8 @@ class GuestWebService:
                 "failures": self.database.list_email_outbox_failures(),
             },
             "operational_metrics": build_operational_metrics(self.db_path),
+            "action_queue": self._build_action_queue(),
+            "team_members": self._team_members_payload(),
         })
 
     def retry_dead_letter_email(self, outbox_id: int) -> Dict[str, Any]:
@@ -1022,6 +1302,8 @@ class GuestWebService:
                 "diagnostics": recommendation_diagnostics,
             },
             "weekly_system": self._build_weekly_system_payload(),
+            "action_queue": self._build_action_queue(),
+            "team_members": self._team_members_payload(),
         })
 
     def list_planning_ai_copilot(self) -> Dict[str, Any]:
@@ -3742,7 +4024,15 @@ class GuestWebService:
 
         try:
             episode_id, _ = self.database.upsert_episode(episode_data)
-        except (sqlite3.IntegrityError, ValueError, RuntimeError) as exc:
+        except RuntimeError as exc:
+            if "Episode was changed by another request" in str(exc):
+                current = self.database.get_episode_by_id(int(episode_data["id"])) or {}
+                raise EpisodeConflictError(
+                    "A newer version of this episode was saved while you were editing.",
+                    current,
+                ) from exc
+            raise WebInterfaceError(f"Episode could not be saved: {exc}") from exc
+        except (sqlite3.IntegrityError, ValueError) as exc:
             raise WebInterfaceError(f"Episode could not be saved: {exc}") from exc
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
@@ -7130,6 +7420,24 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json_payload()
             try:
                 episode = self.service.update_episode(episode_id, payload)
+            except EpisodeConflictError as exc:
+                current = self.service._summarize_episode_for_list(
+                    self.service._normalize_episode_record(exc.current)
+                )
+                self._send_json(
+                    HTTPStatus.CONFLICT,
+                    {
+                        "error": str(exc),
+                        "conflict": {
+                            "entity": "episode",
+                            "id": episode_id,
+                            "current": current,
+                            "current_row_version": current.get("row_version"),
+                            "updated_at": current.get("updated_at"),
+                        },
+                    },
+                )
+                return
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
