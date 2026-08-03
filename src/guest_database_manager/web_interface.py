@@ -4038,8 +4038,35 @@ class GuestWebService:
         if not episode:
             raise WebInterfaceError("Episode could not be saved.")
         if renumber_sequence:
-            self._renumber_future_scheduled_episodes()
+            sequence_error: Optional[Exception] = None
+            for attempt in range(2):
+                try:
+                    self._renumber_future_scheduled_episodes()
+                    sequence_error = None
+                    break
+                except RuntimeError as exc:
+                    sequence_error = exc
+                    if attempt == 0:
+                        continue
+                except (sqlite3.Error, ValueError) as exc:
+                    sequence_error = exc
+                    break
             episode = self.database.get_episode_by_id(episode_id) or episode
+            if sequence_error is not None:
+                episode = dict(episode)
+                episode["sequence_maintenance_status"] = "pending"
+                try:
+                    self.database.append_audit_event(
+                        entity_type="episode",
+                        entity_id=episode_id,
+                        event_type="sequence_maintenance_deferred",
+                        actor="system",
+                        source="planning_sequence",
+                        reason="Automatic sequence maintenance will be retried after a database consistency check.",
+                        after={"sequence_maintenance_status": "pending"},
+                    )
+                except sqlite3.Error:
+                    pass
         self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
         return episode
 
@@ -4087,18 +4114,22 @@ class GuestWebService:
         anchors.sort(key=lambda item: (item[0], item[1]), reverse=True)
         next_number = anchors[0][1] + 1
         number_template = anchors[0][2]
-        changed = False
+        updates: list[tuple[int, str, Optional[int]]] = []
         for _release_dt, episode in future_scheduled:
             desired = self._format_episode_number(next_number, number_template)
             next_number += 1
             if _normalize_text(episode.get("legacy_episode_number")) == desired:
                 continue
-            updated = dict(episode)
-            updated["legacy_episode_number"] = desired
-            self.database.upsert_episode(updated)
-            changed = True
+            updates.append(
+                (
+                    int(episode["id"]),
+                    desired,
+                    int(episode.get("row_version") or 1),
+                )
+            )
 
-        if changed:
+        if updates:
+            self.database.update_episode_sequence_numbers(updates)
             self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
 
     def create_episode_from_interview(self, interview_id: int) -> Dict[str, Any]:
@@ -7108,6 +7139,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
+            except (sqlite3.Error, RuntimeError, ValueError):
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "Planning handoff could not be confirmed. Refresh Planning before retrying."},
+                )
+                return
 
             self._send_json(HTTPStatus.OK, episode)
             return
@@ -7192,6 +7229,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     episode = self.service.create_episode_from_interview(interview_id)
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except (sqlite3.Error, RuntimeError, ValueError):
+                    self._send_json(
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                        {"error": "Planning handoff could not be confirmed. Refresh Planning before retrying."},
+                    )
                     return
 
                 self._send_json(HTTPStatus.OK, episode)

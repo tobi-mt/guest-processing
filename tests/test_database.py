@@ -515,6 +515,32 @@ def test_episode_update_rejects_stale_row_version(temp_db):
     assert temp_db.get_episode_by_id(episode_id)["episode_title"] == "Version Two"
 
 
+def test_episode_sequence_renumbering_is_atomic_on_concurrent_change(temp_db):
+    first_id, _ = temp_db.upsert_episode(
+        {"guest_name": "First Sequence Guest", "episode_title": "First Sequence Episode"}
+    )
+    second_id, _ = temp_db.upsert_episode(
+        {"guest_name": "Second Sequence Guest", "episode_title": "Second Sequence Episode"}
+    )
+    first = temp_db.get_episode_by_id(first_id)
+    second = temp_db.get_episode_by_id(second_id)
+
+    with pytest.raises(RuntimeError, match="changed by another request"):
+        temp_db.update_episode_sequence_numbers(
+            [
+                (first_id, "501", first["row_version"]),
+                (second_id, "502", second["row_version"] + 1),
+            ]
+        )
+
+    assert temp_db.get_episode_by_id(first_id)["legacy_episode_number"] is None
+    assert temp_db.get_episode_by_id(second_id)["legacy_episode_number"] is None
+    assert all(
+        event["event_type"] != "sequence_renumbered"
+        for event in temp_db.list_audit_events("episode", first_id)
+    )
+
+
 def test_episode_lifecycle_changes_create_before_after_audit_events(temp_db):
     episode_id, _ = temp_db.upsert_episode(
         {

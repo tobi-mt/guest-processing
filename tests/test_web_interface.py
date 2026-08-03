@@ -2309,6 +2309,75 @@ def test_future_scheduled_episode_numbers_adjust_when_earlier_slot_is_added(temp
     assert refreshed_later["legacy_episode_number"] == "304"
 
 
+def test_dashboard_handoff_renumbers_orphaned_future_episode_without_request_failure(temp_db):
+    """Sequence maintenance must not rewrite unrelated legacy foreign-key fields."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode(
+        {
+            "guest_name": "Released Anchor",
+            "episode_title": "Released Anchor",
+            "release_date": "2026-06-02T17:00",
+            "release_status": "released",
+            "production_status": "released",
+            "legacy_episode_number": "500",
+        }
+    )
+    future = service.create_episode(
+        {
+            "guest_name": "Legacy Future Guest",
+            "episode_title": "Legacy Future Episode",
+            "release_date": "2099-06-16T17:00",
+            "release_status": "scheduled",
+            "production_status": "ready",
+            "legacy_episode_number": "999",
+        }
+    )
+    with sqlite3.connect(temp_db.db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "UPDATE episodes SET interview_id = ?, legacy_episode_number = ? WHERE id = ?",
+            (999999, "999", future["id"]),
+        )
+
+    guest = service.create_guest(
+        {"full_name": "Dashboard Handoff Guest", "email": "handoff-orphan@example.com"}
+    )
+    handoff = service.create_episode_from_guest(guest["id"])
+    refreshed_future = service.get_episode(future["id"])
+
+    assert handoff["dashboard_handoff"] is True
+    assert handoff.get("sequence_maintenance_status") is None
+    assert refreshed_future["legacy_episode_number"] == "501"
+    assert refreshed_future["interview_id"] == 999999
+    sequence_events = temp_db.list_audit_events("episode", future["id"])
+    assert sequence_events[0]["event_type"] == "sequence_renumbered"
+
+
+def test_dashboard_handoff_remains_idempotent_when_sequence_maintenance_is_deferred(monkeypatch, temp_db):
+    """A post-save maintenance failure must not invite duplicate handoffs on retry."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {"full_name": "Retry Safe Guest", "email": "retry-safe@example.com"}
+    )
+
+    def fail_sequence_maintenance():
+        raise sqlite3.IntegrityError("simulated legacy consistency failure")
+
+    monkeypatch.setattr(service, "_renumber_future_scheduled_episodes", fail_sequence_maintenance)
+
+    first = service.create_episode_from_guest(guest["id"])
+    second = service.create_episode_from_guest(guest["id"])
+
+    assert first["id"] == second["id"]
+    assert first["sequence_maintenance_status"] == "pending"
+    assert second["sequence_maintenance_status"] == "pending"
+    assert len(service.database.list_episodes()) == 1
+    event_types = {
+        event["event_type"] for event in temp_db.list_audit_events("episode", first["id"])
+    }
+    assert "sequence_maintenance_deferred" in event_types
+
+
 def test_future_scheduled_episode_numbers_adjust_when_episode_is_rescheduled(temp_db):
     """Moving a planned release earlier should resequence the future schedule."""
     service = GuestWebService(temp_db.db_path)

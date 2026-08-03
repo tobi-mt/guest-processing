@@ -1183,6 +1183,53 @@ class GuestDatabase:
             conn.commit()
             return episode_id, "created"
 
+    def update_episode_sequence_numbers(
+        self,
+        updates: List[tuple[int, str, Optional[int]]],
+    ) -> int:
+        """Atomically renumber episodes without rewriting unrelated record fields."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            changed = 0
+            for episode_id, legacy_episode_number, expected_row_version in updates:
+                existing_row = conn.execute(
+                    "SELECT * FROM episodes WHERE id = ? LIMIT 1",
+                    (episode_id,),
+                ).fetchone()
+                if not existing_row:
+                    raise ValueError("Episode not found")
+                before = dict(existing_row)
+                if str(before.get("legacy_episode_number") or "") == str(legacy_episode_number or ""):
+                    continue
+
+                row_version = int(expected_row_version or before.get("row_version") or 1)
+                cursor = conn.execute(
+                    """UPDATE episodes
+                       SET legacy_episode_number = ?, row_version = row_version + 1,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ? AND row_version = ?""",
+                    (legacy_episode_number, episode_id, row_version),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("Episode was changed by another request")
+                after = dict(
+                    conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+                )
+                self._append_audit_event_conn(
+                    conn,
+                    entity_type="episode",
+                    entity_id=episode_id,
+                    event_type="sequence_renumbered",
+                    actor="system",
+                    source="planning_sequence",
+                    reason="Keep future scheduled episode numbers aligned to release order.",
+                    before=before,
+                    after=after,
+                )
+                changed += 1
+            conn.commit()
+            return changed
+
     def _find_existing_episode_row(self, conn: sqlite3.Connection, episode_data: Dict[str, Any]) -> Optional[sqlite3.Row]:
         """Find an existing episode using normalized archive/import identity fields."""
         guest_name = _normalized_episode_identity(episode_data.get("guest_name"))
