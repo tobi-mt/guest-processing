@@ -324,6 +324,7 @@ EXPORTABLE_FIELDS: Dict[str, list[str]] = {
         "topic",
         "category",
         "interview_date",
+        "recording_date",
         "release_date",
         "release_status",
         "production_status",

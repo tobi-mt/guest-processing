@@ -82,6 +82,19 @@ def _normalize_row(row: Dict[str, Any]) -> Dict[str, str]:
     return normalized
 
 
+def _row_value(row: Dict[str, str], *headers: str) -> str:
+    """Return the first populated CSV field matching a supported header.
+
+    Legacy exports are not consistent about header capitalization, so date
+    fields must not depend on one exact spelling.
+    """
+    wanted = {header.casefold() for header in headers}
+    for header, value in row.items():
+        if header.casefold() in wanted and _clean_text(value):
+            return _clean_text(value)
+    return ""
+
+
 def _map_queue_status_to_production_status(status: str) -> str:
     normalized = _clean_text(status).lower()
     if normalized in {"processing", "restoring"}:
@@ -150,7 +163,17 @@ def parse_episode_import_csv(content: bytes, filename: str, *, reference: dateti
         topic = row.get("Topic", "")
         category = row.get("Category", "")
         release_date = _parse_legacy_date(row.get("Release Date", ""))
-        interview_date = _parse_legacy_date(row.get("Interview Date", ""))
+        interview_date = _parse_legacy_date(
+            _row_value(row, "Interview Date", "Interviewed Date")
+        )
+        recording_date = _parse_legacy_date(
+            _row_value(row, "Recording Date", "Record Date")
+        )
+        # Older exports supplied one date for the interview/recording session.
+        # Preserve distinct dates when available, otherwise retain that legacy
+        # one-date behavior without leaving the counterpart unexpectedly blank.
+        interview_date = interview_date or recording_date
+        recording_date = recording_date or interview_date
         legacy_episode_number = row.get("Episode Number") or row.get("") or ""
         riverside_status = row.get("Riverside FM Status", "")
         release_status = _infer_release_status(
@@ -186,7 +209,7 @@ def parse_episode_import_csv(content: bytes, filename: str, *, reference: dateti
                 "topic": topic,
                 "category": category,
                 "interview_date": interview_date,
-                "recording_date": interview_date,
+                "recording_date": recording_date,
                 "release_date": release_date,
                 "release_status": release_status,
                 "production_status": production_status,

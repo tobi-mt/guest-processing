@@ -2005,6 +2005,25 @@ def test_web_service_can_import_episode_history_and_queue_csvs(temp_db):
     assert queue_episode["website"] == "https://jordan.example.com"
 
 
+def test_web_service_episode_import_preserves_distinct_recording_dates(temp_db):
+    """Episode imports retain an actual recording date when it differs from the interview."""
+    service = GuestWebService(temp_db.db_path)
+    episode_csv = (
+        "Name,Email,Topic,Interview Date,Recording Date,Release Date\n"
+        "Amina Hart,amina@example.com,Healing With Honesty,14/10/2024,16/10/2024,07/01/2025\n"
+        "Jordan Rivers,jordan@example.com,Building Calm,,11/03/2026,07/04/2026\n"
+    ).encode("utf-8")
+
+    result = service.import_episode_file("MT Guest List - 2026.csv", episode_csv)
+    episodes = {item["guest_name"]: item for item in service.list_planning()["episodes"]}
+
+    assert result["imported"] == 2
+    assert episodes["Amina Hart"]["interview_date"] == "2024-10-14"
+    assert episodes["Amina Hart"]["recording_date"] == "2024-10-16"
+    assert episodes["Jordan Rivers"]["interview_date"] == "2026-03-11"
+    assert episodes["Jordan Rivers"]["recording_date"] == "2026-03-11"
+
+
 def test_imported_queue_rows_generate_release_recommendations_without_guest_profiles(temp_db):
     """Not Yet Released rows should be usable recommendations even before guest profiles exist."""
     service = GuestWebService(temp_db.db_path)
