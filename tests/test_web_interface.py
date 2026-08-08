@@ -269,6 +269,45 @@ def test_unified_action_queue_prioritizes_cross_workspace_next_actions(monkeypat
     assert all("password" not in member for member in members)
 
 
+def test_action_queue_omits_guest_intake_after_released_or_cancelled_workflow(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    released_guest = service.create_guest(
+        {"full_name": "Released Queue Guest", "email": "released-queue@example.com"}
+    )
+    cancelled_guest = service.create_guest(
+        {"full_name": "Cancelled Queue Guest", "email": "cancelled-queue@example.com"}
+    )
+    active_guest = service.create_guest(
+        {"full_name": "Active Queue Guest", "email": "active-queue@example.com"}
+    )
+    service.create_episode(
+        {
+            "guest_id": released_guest["id"],
+            "guest_name": "Released Queue Guest",
+            "guest_email": "released-queue@example.com",
+            "episode_title": "Released Queue Episode",
+            "release_status": "released",
+            "production_status": "released",
+        }
+    )
+    service.create_interview(
+        {
+            "guest_id": cancelled_guest["id"],
+            "guest_name": "Cancelled Queue Guest",
+            "guest_email": "cancelled-queue@example.com",
+            "scheduled_for": (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M"),
+            "status": "cancelled",
+        }
+    )
+
+    queue = service._build_action_queue()
+    guest_titles = {item["title"] for item in queue["items"] if item["domain"] == "guest"}
+
+    assert "Released Queue Guest" not in guest_titles
+    assert "Cancelled Queue Guest" not in guest_titles
+    assert "Active Queue Guest" in guest_titles
+
+
 def test_episode_conflict_exposes_latest_safe_version_without_losing_draft(temp_db):
     service = GuestWebService(temp_db.db_path)
     created = service.create_episode(

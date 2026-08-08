@@ -886,11 +886,33 @@ class GuestWebService:
             guest_id = int(guest.get("id") or 0)
             application = latest_applications.get(guest_id) or {}
             application_status = _normalize_text(application.get("status")).lower()
-            if bool(guest.get("is_processed")) or application_status not in {
-                "submitted",
-                "triage",
-                "needs_information",
-            }:
+            # An intake application is no longer actionable once that guest has
+            # reached a terminal downstream outcome.  These records are often
+            # imported or updated independently, so is_processed may still be
+            # false even though planning or operations has already finished.
+            has_released_episode = any(
+                self._episode_belongs_to_guest(episode, guest)
+                and _normalize_text(episode.get("release_status")).lower() == "released"
+                for episode in episodes
+            )
+            has_cancelled_interview = any(
+                self._interview_belongs_to_guest(interview, guest)
+                and (
+                    _normalize_text(interview.get("status")).lower() == "cancelled"
+                    or _normalize_text(interview.get("confirmation_status")).lower() == "declined"
+                )
+                for interview in interviews
+            )
+            if (
+                bool(guest.get("is_processed"))
+                or has_released_episode
+                or has_cancelled_interview
+                or application_status not in {
+                    "submitted",
+                    "triage",
+                    "needs_information",
+                }
+            ):
                 continue
             submitted_at = self._parse_datetime_static(application.get("submitted_at"))
             age_days = max(0, (reference - submitted_at).days) if submitted_at else 0
