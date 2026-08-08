@@ -3495,8 +3495,9 @@ class GuestWebService:
                 override = {}
         override = override if isinstance(override, dict) else {}
 
-        timezone_name = self._resolve_booking_timezone_name(override.get("timezone")) or self._booking_timezone_name()
-        configured_weekdays = tuple(self._booking_slot_weekdays())
+        defaults = self.get_booking_availability()
+        timezone_name = self._resolve_booking_timezone_name(override.get("timezone")) or defaults["timezone"]
+        configured_weekdays = tuple(BOOKING_WEEKDAY_CODE_TO_INT[code] for code in defaults["weekdays"])
         reverse_weekday_codes = {value: key for key, value in BOOKING_WEEKDAY_CODE_TO_INT.items()}
         weekday_codes = [
             code for code in override.get("weekdays", [])
@@ -3508,14 +3509,14 @@ class GuestWebService:
         slot_times = tuple(
             item for item in override.get("slot_times", [])
             if isinstance(item, str) and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", item)
-        ) or self._booking_slot_times()
+        ) or tuple(defaults["slot_times"])
 
         days_ahead = override.get("days_ahead")
         if not isinstance(days_ahead, int):
-            days_ahead = self._booking_days_ahead()
+            days_ahead = defaults["days_ahead"]
         min_notice_hours = override.get("min_notice_hours")
         if not isinstance(min_notice_hours, int):
-            min_notice_hours = self._booking_min_notice_hours()
+            min_notice_hours = defaults["min_notice_hours"]
 
         months_ahead = max(1, min(12, (days_ahead + 30) // 31))
         return {
@@ -3529,6 +3530,44 @@ class GuestWebService:
             "min_notice_hours": min_notice_hours,
             "has_override": bool(override),
         }
+
+    def get_booking_availability(self) -> Dict[str, Any]:
+        """Return the effective operator availability, with environment defaults for first use."""
+        stored = self.database.get_booking_availability()
+        if stored:
+            try:
+                weekdays = json.loads(stored["weekdays_json"])
+                slot_times = json.loads(stored["slot_times_json"])
+            except (TypeError, json.JSONDecodeError):
+                weekdays, slot_times = [], []
+            if weekdays and slot_times:
+                return {"timezone": stored["timezone"], "weekdays": weekdays, "slot_times": slot_times,
+                        "days_ahead": stored["days_ahead"], "min_notice_hours": stored["min_notice_hours"],
+                        "source": "saved", "updated_at": stored["updated_at"], "updated_by": stored["updated_by"]}
+        reverse = {value: key for key, value in BOOKING_WEEKDAY_CODE_TO_INT.items()}
+        return {"timezone": self._booking_timezone_name(), "weekdays": [reverse[value] for value in self._booking_slot_weekdays()],
+                "slot_times": list(self._booking_slot_times()), "days_ahead": self._booking_days_ahead(),
+                "min_notice_hours": self._booking_min_notice_hours(), "source": "environment", "updated_at": None, "updated_by": None}
+
+    def save_booking_availability(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        timezone_name = self._resolve_booking_timezone_name(payload.get("timezone"))
+        weekdays = [str(day).strip().upper() for day in payload.get("weekdays", [])]
+        slot_times = [str(item).strip() for item in payload.get("slot_times", [])]
+        if not timezone_name or not weekdays or not slot_times:
+            raise WebInterfaceError("Choose a timezone, at least one day, and at least one time.")
+        if any(day not in BOOKING_WEEKDAY_CODE_TO_INT for day in weekdays) or len(set(weekdays)) != len(weekdays):
+            raise WebInterfaceError("Booking days are invalid.")
+        if any(not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", item) for item in slot_times) or len(set(slot_times)) != len(slot_times):
+            raise WebInterfaceError("Booking times must be unique 24-hour times.")
+        try:
+            days_ahead, min_notice = int(payload.get("days_ahead")), int(payload.get("min_notice_hours"))
+        except (TypeError, ValueError) as exc:
+            raise WebInterfaceError("Booking window and notice must be whole numbers.") from exc
+        if not 7 <= days_ahead <= 180 or not 2 <= min_notice <= 168:
+            raise WebInterfaceError("Booking window must be 7–180 days and notice 2–168 hours.")
+        saved = self.database.save_booking_availability({"timezone": timezone_name, "weekdays": weekdays,
+            "slot_times": sorted(slot_times), "days_ahead": days_ahead, "min_notice_hours": min_notice}, actor=actor)
+        return self.get_booking_availability() | {"updated_at": saved["updated_at"], "updated_by": saved["updated_by"]}
 
     def _find_future_interview_for_guest(self, guest: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Return the next still-active interview for a guest, if one exists."""
@@ -6268,6 +6307,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._serve_static("planning.html", set_session_cookie=True)
             return
 
+        if request_path in {"/availability", "/availability.html"}:
+            if not self._is_authorized_dashboard_request():
+                self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
+                return
+            self._serve_static("availability.html", set_session_cookie=True)
+            return
+
         if request_path.startswith("/static/"):
             relative_path = request_path.removeprefix("/static/")
             self._serve_static(relative_path)
@@ -6381,6 +6427,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.list_operations())
+            return
+
+        if request_path == "/api/availability":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.get_booking_availability())
             return
 
         if request_path == "/api/planning":
@@ -6725,6 +6778,16 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 require_csrf=True,
             ):
                 return
+
+        if self.path == "/api/availability":
+            payload = self._read_json_payload()
+            try:
+                result = self.service.save_booking_availability(payload, actor=str((self._session_claims() or {}).get("sub") or "operator"))
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
 
         if self.path == "/api/guests":
             if not self._is_authorized_dashboard_request():

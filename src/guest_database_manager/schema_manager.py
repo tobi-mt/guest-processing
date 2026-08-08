@@ -523,6 +523,22 @@ class SchemaManager:
                 FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
             )"""
         )
+
+    @staticmethod
+    def _migration_011_booking_availability(conn: sqlite3.Connection) -> None:
+        """Persist operator-controlled default booking availability."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS booking_availability (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                timezone TEXT NOT NULL,
+                weekdays_json TEXT NOT NULL,
+                slot_times_json TEXT NOT NULL,
+                days_ahead INTEGER NOT NULL,
+                min_notice_hours INTEGER NOT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by TEXT NOT NULL DEFAULT 'system'
+            )"""
+        )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_recommendation_feedback_episode_latest "
             "ON recommendation_feedback(episode_id, id DESC)"
@@ -544,6 +560,7 @@ class SchemaManager:
             (8, "release_baseline", SchemaManager._migration_008_release_baseline),
             (9, "episode_title_provenance", SchemaManager._migration_009_episode_title_provenance),
             (10, "recommendation_feedback", SchemaManager._migration_010_recommendation_feedback),
+            (11, "booking_availability", SchemaManager._migration_011_booking_availability),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

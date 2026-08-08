@@ -138,6 +138,29 @@ class GuestDatabase:
         """Open a configured connection with integrity enforcement enabled."""
         return connect_database(self.db_path)
 
+    def get_booking_availability(self) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM booking_availability WHERE id = 1").fetchone()
+            return dict(row) if row else None
+
+    def save_booking_availability(self, values: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            before_row = conn.execute("SELECT * FROM booking_availability WHERE id = 1").fetchone()
+            before = dict(before_row) if before_row else None
+            conn.execute("""INSERT INTO booking_availability (id, timezone, weekdays_json, slot_times_json, days_ahead, min_notice_hours, updated_at, updated_by)
+                VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                ON CONFLICT(id) DO UPDATE SET timezone=excluded.timezone, weekdays_json=excluded.weekdays_json,
+                slot_times_json=excluded.slot_times_json, days_ahead=excluded.days_ahead,
+                min_notice_hours=excluded.min_notice_hours, updated_at=CURRENT_TIMESTAMP, updated_by=excluded.updated_by""",
+                (values['timezone'], dumps(values['weekdays']), dumps(values['slot_times']), values['days_ahead'], values['min_notice_hours'], actor))
+            after = dict(conn.execute("SELECT * FROM booking_availability WHERE id = 1").fetchone())
+            self._append_audit_event_conn(conn, entity_type="booking_availability", entity_id=1,
+                event_type="availability_updated", actor=actor, source="availability_page", before=before, after=after)
+            conn.commit()
+            return after
+
     @staticmethod
     def get_column_value(row: Any, possible_columns: List[str]) -> str:
         """Preserve the legacy import helper while delegating to ``DataMapper``."""

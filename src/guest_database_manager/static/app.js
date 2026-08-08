@@ -724,6 +724,19 @@ function renderGuestPlanningSummary(guest) {
   `;
 }
 
+function renderGuestProductionTimeline(guest) {
+  const context = guest.workflow_context || {};
+  const accepted = String(guest.email_status || "").toLowerCase() === "accepted";
+  const booked = Number(context.future_interview_count || 0) > 0;
+  const recorded = Number(context.past_interview_count || 0) > 0;
+  const planning = Number(context.planning_episode_count || 0) > 0;
+  const scheduled = Number(context.scheduled_episode_count || 0) > 0;
+  const released = Number(context.released_episode_count || 0) > 0;
+  const stages = [["Review", Boolean(guest.is_processed)], ["Accepted", accepted], ["Booked", booked], ["Recorded", recorded], ["In production", planning], ["Scheduled", scheduled], ["Published", released]];
+  const next = stages.find(([, complete]) => !complete)?.[0] || "Complete";
+  return `<section class="guest-production-flow" aria-label="Production timeline"><div><strong>Production timeline</strong><span>Next: ${escapeHtml(next)}</span></div><ol>${stages.map(([label, complete]) => `<li class="${complete ? "complete" : ""}"><span></span>${escapeHtml(label)}</li>`).join("")}</ol></section>`;
+}
+
 function buildGuestResearchSearchUrl(guest) {
   const parts = [];
   const name = String(guest.full_name || "").trim();
@@ -1138,6 +1151,7 @@ function renderGuests(payload) {
     const aiSummaryNode = node.querySelector(".guest-ai-summary");
     const copilotSummaryNode = node.querySelector(".guest-copilot-summary");
     const planningSummaryNode = node.querySelector(".guest-planning-summary");
+    const productionTimelineNode = node.querySelector(".guest-production-timeline");
     const promotionSummaryNode = node.querySelector(".guest-promotion-summary");
 
     node.querySelector(".guest-name").textContent = guest.full_name || "Unnamed Guest";
@@ -1147,6 +1161,7 @@ function renderGuests(payload) {
     aiSummaryNode.innerHTML = renderGuestAiSummary(guest);
     copilotSummaryNode.innerHTML = renderGuestCopilotSummary(guest);
     planningSummaryNode.innerHTML = renderGuestPlanningSummary(guest);
+    productionTimelineNode.innerHTML = renderGuestProductionTimeline(guest);
     promotionSummaryNode.innerHTML = renderPromotionProfile(guest);
 
     statusPill.textContent = guestStatusLabel(guest);
