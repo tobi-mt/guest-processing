@@ -3543,16 +3543,18 @@ class GuestWebService:
             if weekdays and slot_times:
                 return {"timezone": stored["timezone"], "weekdays": weekdays, "slot_times": slot_times,
                         "days_ahead": stored["days_ahead"], "min_notice_hours": stored["min_notice_hours"],
+                        "blackouts": json.loads(stored.get("blackouts_json") or "[]"),
                         "source": "saved", "updated_at": stored["updated_at"], "updated_by": stored["updated_by"]}
         reverse = {value: key for key, value in BOOKING_WEEKDAY_CODE_TO_INT.items()}
         return {"timezone": self._booking_timezone_name(), "weekdays": [reverse[value] for value in self._booking_slot_weekdays()],
                 "slot_times": list(self._booking_slot_times()), "days_ahead": self._booking_days_ahead(),
-                "min_notice_hours": self._booking_min_notice_hours(), "source": "environment", "updated_at": None, "updated_by": None}
+                "min_notice_hours": self._booking_min_notice_hours(), "blackouts": [], "source": "environment", "updated_at": None, "updated_by": None}
 
     def save_booking_availability(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         timezone_name = self._resolve_booking_timezone_name(payload.get("timezone"))
         weekdays = [str(day).strip().upper() for day in payload.get("weekdays", [])]
         slot_times = [str(item).strip() for item in payload.get("slot_times", [])]
+        blackouts = sorted({str(item).strip() for item in payload.get("blackouts", [])})
         if not timezone_name or not weekdays or not slot_times:
             raise WebInterfaceError("Choose a timezone, at least one day, and at least one time.")
         if any(day not in BOOKING_WEEKDAY_CODE_TO_INT for day in weekdays) or len(set(weekdays)) != len(weekdays):
@@ -3565,8 +3567,10 @@ class GuestWebService:
             raise WebInterfaceError("Booking window and notice must be whole numbers.") from exc
         if not 7 <= days_ahead <= 180 or not 2 <= min_notice <= 168:
             raise WebInterfaceError("Booking window must be 7–180 days and notice 2–168 hours.")
+        if any(not re.fullmatch(r"\d{4}-\d{2}-\d{2}", item) for item in blackouts):
+            raise WebInterfaceError("Blackout dates must use YYYY-MM-DD.")
         saved = self.database.save_booking_availability({"timezone": timezone_name, "weekdays": weekdays,
-            "slot_times": sorted(slot_times), "days_ahead": days_ahead, "min_notice_hours": min_notice}, actor=actor)
+            "slot_times": sorted(slot_times), "days_ahead": days_ahead, "min_notice_hours": min_notice, "blackouts": blackouts}, actor=actor)
         return self.get_booking_availability() | {"updated_at": saved["updated_at"], "updated_by": saved["updated_by"]}
 
     def _find_future_interview_for_guest(self, guest: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -3765,6 +3769,8 @@ class GuestWebService:
         current_local = min_notice.astimezone(timezone_obj)
         for day_offset in range(booking_settings["days_ahead"] + 1):
             candidate_day = (current_local + timedelta(days=day_offset)).date()
+            if candidate_day.isoformat() in self.get_booking_availability().get("blackouts", []):
+                continue
             weekday = datetime(candidate_day.year, candidate_day.month, candidate_day.day).weekday()
             if weekday not in weekdays:
                 continue

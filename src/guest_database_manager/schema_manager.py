@@ -539,6 +539,10 @@ class SchemaManager:
                 updated_by TEXT NOT NULL DEFAULT 'system'
             )"""
         )
+
+    @staticmethod
+    def _migration_012_booking_blackouts(conn: sqlite3.Connection) -> None:
+        SchemaManager._add_column_if_missing(conn, "booking_availability", "blackouts_json", "TEXT NOT NULL DEFAULT '[]'")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_recommendation_feedback_episode_latest "
             "ON recommendation_feedback(episode_id, id DESC)"
@@ -561,6 +565,7 @@ class SchemaManager:
             (9, "episode_title_provenance", SchemaManager._migration_009_episode_title_provenance),
             (10, "recommendation_feedback", SchemaManager._migration_010_recommendation_feedback),
             (11, "booking_availability", SchemaManager._migration_011_booking_availability),
+            (12, "booking_blackouts", SchemaManager._migration_012_booking_blackouts),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:
