@@ -3572,6 +3572,33 @@ class GuestWebService:
                 "slot_times": list(self._booking_slot_times()), "days_ahead": self._booking_days_ahead(),
                 "min_notice_hours": self._booking_min_notice_hours(), "blackouts": [], "source": "environment", "updated_at": None, "updated_by": None}
 
+    def get_availability_calendar_snapshot(self, *, year: int, month: int) -> Dict[str, Any]:
+        """Read-only calendar view for operators; never reconciles or changes interviews."""
+        if not 1 <= month <= 12:
+            raise WebInterfaceError("Month is invalid.")
+        start = datetime(year, month, 1, tzinfo=timezone.utc)
+        end = datetime(year + (month == 12), 1 if month == 12 else month + 1, 1, tzinfo=timezone.utc)
+        events: list[Dict[str, Any]] = []
+        client = self._build_google_calendar_client()
+        if client is None:
+            status = {"connected": False, "message": "Google Calendar is not configured."}
+        else:
+            try:
+                for item in client.list_calendar_snapshot(start=start, end=end):
+                    event_start = item.get("start") or {}
+                    event_end = item.get("end") or {}
+                    events.append({"source": "google", "title": _normalize_text(item.get("summary")) or "Busy",
+                        "all_day": bool(event_start.get("date")), "start": event_start.get("date") or event_start.get("dateTime"),
+                        "end": event_end.get("date") or event_end.get("dateTime")})
+                status = {"connected": True, "message": "Live Google Calendar read."}
+            except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
+                status = {"connected": False, "message": str(exc)}
+        for item in self.database.list_interviews():
+            scheduled = self._parse_datetime(item.get("scheduled_for"))
+            if scheduled and start <= scheduled.astimezone(timezone.utc) < end and _normalize_text(item.get("status")).lower() != "cancelled":
+                events.append({"source": "app", "title": _normalize_text(item.get("guest_name")) or "Interview", "all_day": False, "start": scheduled.isoformat(), "end": None})
+        return {"events": events, "status": status, "read_only": True, "generated_at": datetime.now(timezone.utc).isoformat()}
+
     def save_booking_availability(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         timezone_name = self._resolve_booking_timezone_name(payload.get("timezone"))
         weekdays = [str(day).strip().upper() for day in payload.get("weekdays", [])]
@@ -6462,6 +6489,19 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.get_booking_availability())
+            return
+
+        if request_path == "/api/availability/calendar":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            query = self._query_params(self.path)
+            try:
+                payload = self.service.get_availability_calendar_snapshot(year=int(query.get("year", "0")), month=int(query.get("month", "0")))
+            except (ValueError, WebInterfaceError) as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, payload)
             return
 
         if request_path == "/api/planning":

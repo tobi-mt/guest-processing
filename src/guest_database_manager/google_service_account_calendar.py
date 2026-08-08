@@ -322,6 +322,20 @@ class GoogleServiceAccountCalendarClient(GoogleCalendarSyncClient):
         payload = response.json()
         items = payload.get("items", [])
         return [item for item in items if item.get("start", {}).get("dateTime")]
+
+    def list_calendar_snapshot(self, *, start: datetime, end: datetime) -> List[Dict[str, Any]]:
+        """Read calendar events, including all-day holds, without altering calendar state."""
+        access_token = self._get_access_token()
+        params = {"singleEvents": "true", "orderBy": "startTime", "timeMin": start.astimezone(timezone.utc).isoformat(),
+                  "timeMax": end.astimezone(timezone.utc).isoformat(), "maxResults": 250}
+        url = self.EVENTS_URL_TEMPLATE.format(calendar_id=requests.utils.quote(self.calendar_id, safe=""))
+        try:
+            response = requests.get(url, headers={"Authorization": f"Bearer {access_token}"}, params=params, timeout=20)
+        except requests.RequestException as exc:
+            raise GoogleCalendarServiceAccountError(f"Could not reach Google Calendar: {exc}") from exc
+        if not response.ok:
+            self._raise_calendar_api_error("reading calendar events", response)
+        return [item for item in response.json().get("items", []) if item.get("status") != "cancelled"]
     
     def get_event(self, event_id: str) -> Dict[str, Any]:
         """
