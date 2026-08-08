@@ -269,13 +269,19 @@ def test_unified_action_queue_prioritizes_cross_workspace_next_actions(monkeypat
     assert all("password" not in member for member in members)
 
 
-def test_action_queue_omits_guest_intake_after_released_or_cancelled_workflow(temp_db):
+def test_action_queue_omits_guest_intake_after_any_downstream_workflow(temp_db):
     service = GuestWebService(temp_db.db_path)
     released_guest = service.create_guest(
         {"full_name": "Released Queue Guest", "email": "released-queue@example.com"}
     )
     cancelled_guest = service.create_guest(
         {"full_name": "Cancelled Queue Guest", "email": "cancelled-queue@example.com"}
+    )
+    operations_guest = service.create_guest(
+        {"full_name": "Operations Queue Guest", "email": "operations-queue@example.com"}
+    )
+    planning_guest = service.create_guest(
+        {"full_name": "Planning Queue Guest", "email": "planning-queue@example.com"}
     )
     active_guest = service.create_guest(
         {"full_name": "Active Queue Guest", "email": "active-queue@example.com"}
@@ -299,13 +305,37 @@ def test_action_queue_omits_guest_intake_after_released_or_cancelled_workflow(te
             "status": "cancelled",
         }
     )
+    service.create_interview(
+        {
+            "guest_id": operations_guest["id"],
+            "guest_name": "Operations Queue Guest",
+            "guest_email": "operations-queue@example.com",
+            "scheduled_for": (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M"),
+            "confirmation_status": "pending",
+        }
+    )
+    service.create_episode(
+        {
+            "guest_id": planning_guest["id"],
+            "guest_name": "Planning Queue Guest",
+            "guest_email": "planning-queue@example.com",
+            "episode_title": "Planning Queue Episode",
+            "production_status": "recorded",
+        }
+    )
 
     queue = service._build_action_queue()
     guest_titles = {item["title"] for item in queue["items"] if item["domain"] == "guest"}
+    interview_titles = {item["title"] for item in queue["items"] if item["domain"] == "interview"}
+    episode_titles = {item["title"] for item in queue["items"] if item["domain"] == "episode"}
 
     assert "Released Queue Guest" not in guest_titles
     assert "Cancelled Queue Guest" not in guest_titles
+    assert "Operations Queue Guest" not in guest_titles
+    assert "Planning Queue Guest" not in guest_titles
     assert "Active Queue Guest" in guest_titles
+    assert "Operations Queue Guest" in interview_titles
+    assert "Planning Queue Episode" in episode_titles
 
 
 def test_episode_conflict_exposes_latest_safe_version_without_losing_draft(temp_db):

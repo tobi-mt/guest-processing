@@ -886,27 +886,15 @@ class GuestWebService:
             guest_id = int(guest.get("id") or 0)
             application = latest_applications.get(guest_id) or {}
             application_status = _normalize_text(application.get("status")).lower()
-            # An intake application is no longer actionable once that guest has
-            # reached a terminal downstream outcome.  These records are often
-            # imported or updated independently, so is_processed may still be
-            # false even though planning or operations has already finished.
-            has_released_episode = any(
-                self._episode_belongs_to_guest(episode, guest)
-                and _normalize_text(episode.get("release_status")).lower() == "released"
-                for episode in episodes
-            )
-            has_cancelled_interview = any(
-                self._interview_belongs_to_guest(interview, guest)
-                and (
-                    _normalize_text(interview.get("status")).lower() == "cancelled"
-                    or _normalize_text(interview.get("confirmation_status")).lower() == "declined"
-                )
-                for interview in interviews
-            )
+            # Review Queue is for intake only. Downstream records are maintained
+            # independently, so is_processed may still be false after the guest
+            # has moved into interview operations or episode planning.
+            has_downstream_work = any(
+                self._interview_belongs_to_guest(interview, guest) for interview in interviews
+            ) or any(self._episode_belongs_to_guest(episode, guest) for episode in episodes)
             if (
                 bool(guest.get("is_processed"))
-                or has_released_episode
-                or has_cancelled_interview
+                or has_downstream_work
                 or application_status not in {
                     "submitted",
                     "triage",
