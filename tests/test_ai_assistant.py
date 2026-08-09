@@ -1,5 +1,9 @@
 """Regression coverage for AI guest-context preparation and structured analysis."""
 
+import logging
+
+import requests
+
 from guest_database_manager.ai_assistant import AIAssistant
 
 
@@ -66,3 +70,28 @@ def test_questions_receive_full_application_context(monkeypatch):
     assert "Why they want to appear" in captured["prompt"]
     assert "Faith or spiritual practice" in captured["prompt"]
     assert "Message they want listeners to take away" in captured["prompt"]
+
+
+def test_analysis_returns_empty_result_when_the_model_returns_no_content(monkeypatch):
+    assistant = AIAssistant(api_key="test")
+    monkeypatch.setattr(assistant, "_call_openai", lambda *args, **kwargs: None)
+
+    result = assistant.research_guest_from_text(_guest())
+
+    assert result == {}
+
+
+def test_openai_http_error_logs_safe_provider_metadata(monkeypatch, caplog):
+    assistant = AIAssistant(api_key="test")
+    response = requests.Response()
+    response.status_code = 400
+    response._content = b'{"error":{"message":"Unsupported parameter","type":"invalid_request_error","code":"unsupported_parameter"}}'
+    error = requests.HTTPError(response=response)
+
+    monkeypatch.setattr("guest_database_manager.ai_assistant.requests.post", lambda *args, **kwargs: (_ for _ in ()).throw(error))
+
+    with caplog.at_level(logging.ERROR):
+        assert assistant._call_openai([]) is None
+
+    assert "status=400" in caplog.text
+    assert "code=unsupported_parameter" in caplog.text

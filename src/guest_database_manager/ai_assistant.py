@@ -58,8 +58,29 @@ class AIAssistant:
             )
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            logger.error(f"Error calling OpenAI API: {e}")
+        except requests.HTTPError as exc:
+            # The status alone is not actionable (a 400 can mean an invalid model,
+            # parameter, or project policy).  Log only OpenAI's structured error
+            # metadata, never the prompt, response payload, or credentials.
+            error_payload: Dict[str, Any] = {}
+            if exc.response is not None:
+                try:
+                    error_payload = exc.response.json().get("error") or {}
+                except (ValueError, AttributeError):
+                    pass
+            logger.error(
+                "OpenAI API request rejected: status=%s type=%s code=%s message=%s",
+                exc.response.status_code if exc.response is not None else "unknown",
+                error_payload.get("type", "unknown"),
+                error_payload.get("code", "unknown"),
+                error_payload.get("message", "No provider error message returned"),
+            )
+            return None
+        except requests.RequestException as exc:
+            logger.error("OpenAI API request failed: %s", exc)
+            return None
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.error("OpenAI API returned an unexpected response shape: %s", exc)
             return None
 
     @staticmethod
@@ -222,7 +243,10 @@ Return a JSON object only, with keys: summary, themes, fit_score, fit_rationale,
         # does not support Chat Completions JSON mode.
         if not result:
             result = self._call_openai(messages, temperature=0.5)
-        
+
+        if not result:
+            return {}
+
         try:
             # Try to parse JSON response
             # Be tolerant of responses from older models that wrap valid JSON in fences.
