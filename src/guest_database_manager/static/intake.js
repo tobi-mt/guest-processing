@@ -469,12 +469,16 @@ function focusFieldByName(fieldName) {
 }
 
 function revealServerValidationTarget(errorMessage) {
-  const match = errorMessage.match(/Please provide a more complete answer for:\s*(.+)$/i);
+  const match = errorMessage.match(/Please (?:provide a more complete answer for|complete the required field):\s*(.+)$/i);
   if (!match) {
     return false;
   }
 
   const normalizedFieldName = match[1].trim().toLowerCase().replace(/\s+/g, "_");
+  if (normalizedFieldName === "experience") {
+    const experienceChoice = form.elements.namedItem("experience_choice");
+    return focusFieldByName(experienceChoice?.value === "Yes" ? "experience_detail" : "experience_choice");
+  }
   return focusFieldByName(normalizedFieldName);
 }
 

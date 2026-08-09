@@ -55,6 +55,17 @@ from guest_database_manager.google_service_account_calendar import GoogleService
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
 
 
+SELF_INTAKE_DEFAULTS = {
+    "application_role": "self",
+    "self_attestation": "yes",
+    "website": "https://example.com",
+    "motivation": "I am motivated by helping people find clarity, connection, and hope through honest conversations.",
+    "life_experiences": "Loss, recovery, and community care have shaped my perspective and taught me to lead with compassion.",
+    "core_values": "Compassion, courage, honesty, and curiosity guide my work, relationships, and decisions.",
+    "alignment": "No",
+}
+
+
 def test_build_guest_payload_requires_name():
     """Direct entry should reject nameless guests."""
     with pytest.raises(WebInterfaceError):
@@ -343,7 +354,7 @@ def test_action_queue_omits_guest_intake_after_any_downstream_workflow(temp_db):
     planning_guest = service.create_guest(
         {"full_name": "Planning Queue Guest", "email": "planning-queue@example.com"}
     )
-    active_guest = service.create_guest(
+    service.create_guest(
         {"full_name": "Active Queue Guest", "email": "active-queue@example.com"}
     )
     service.create_episode(
@@ -1341,10 +1352,17 @@ def test_web_service_can_create_public_intake_submission(temp_db):
 
     created_guest = service.create_intake_submission(
         {
+            "application_role": "self",
+            "self_attestation": "yes",
             "full_name": "Amara Stone",
             "email": "amara@example.com",
+            "website": "https://amarastone.example",
             "background": "I am a speaker and advocate whose work focuses on healing, resilience, and community storytelling.",
             "profession": "I work as a coach and facilitator after years of leading programs centered on recovery and growth.",
+            "motivation": "I am motivated by helping people find language, support, and hope during the seasons that test them most.",
+            "life_experiences": "Grief, recovery, and rebuilding community after loss taught me to value honesty, patience, and shared healing.",
+            "core_values": "Compassion, courage, curiosity, and integrity guide how I support others and share my own story.",
+            "alignment": "Yes — I believe honest, reflective conversations can help people feel seen and less alone.",
             "passionate_topics": "I love discussing healing, resilience, faith, emotional honesty, and what it takes to rebuild after hard seasons.",
             "message": "I want listeners to remember that healing is possible, honesty is powerful, and small consistent steps can change a life.",
             "experience": "I have spoken on podcasts, live panels, and community events where I share my story and practical lessons from it.",
@@ -1370,6 +1388,7 @@ def test_public_intake_submission_does_not_inherit_previous_acceptance(temp_db):
 
     created_guest = service.create_intake_submission(
         {
+            **SELF_INTAKE_DEFAULTS,
             "full_name": "Amar Dhall",
             "email": "amar@example.com",
             "website": "https://example.com",
@@ -1410,6 +1429,49 @@ def test_public_intake_requires_self_attestation(temp_db):
                 "experience": "Yes - I have joined a few meaningful podcast conversations before.",
                 "additional_info": "I would love to encourage your audience with honest, grounded hope.",
                 "social_handles": "Instagram: @amarastone",
+            }
+        )
+
+
+def test_public_intake_requires_an_explicit_self_application_role(temp_db):
+    """Direct requests cannot bypass guest ownership by omitting the application role."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="choose whether you are applying"):
+        service.create_intake_submission({"full_name": "Amara Stone", "email": "amara@example.com"})
+
+
+def test_public_intake_requires_server_side_required_answers(temp_db):
+    """Direct requests cannot omit fields that the browser marks as required."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="required field: motivation"):
+        service.create_intake_submission(
+            {
+                "application_role": "self",
+                "self_attestation": "yes",
+                "full_name": "Amara Stone",
+                "email": "amara@example.com",
+                "website": "https://amarastone.example",
+                "background": "I am a speaker and advocate whose work focuses on healing, resilience, and community storytelling.",
+                "profession": "Coach",
+            }
+        )
+
+
+def test_public_intake_requires_email_server_side(temp_db):
+    """Direct requests cannot bypass the browser's required email field."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="required field: email"):
+        service.create_intake_submission(
+            {
+                **SELF_INTAKE_DEFAULTS,
+                "full_name": "Amara Stone",
+                "background": "I am a speaker and advocate whose work focuses on healing, resilience, and community storytelling.",
+                "profession": "Coach",
+                "passionate_topics": "Healing",
+                "message": "Hope",
             }
         )
 
@@ -1686,6 +1748,7 @@ def test_list_guests_exposes_self_submission_meta(temp_db):
     service = GuestWebService(temp_db.db_path)
     service.create_intake_submission(
         {
+            **SELF_INTAKE_DEFAULTS,
             "application_role": "self",
             "self_attestation": "yes",
             "full_name": "Amara Stone",
@@ -1904,6 +1967,7 @@ def test_public_intake_submission_sends_confirmation_email_when_configured(monke
     service = GuestWebService(temp_db.db_path)
     created_guest = service.create_intake_submission(
         {
+            **SELF_INTAKE_DEFAULTS,
             "full_name": "Amara Stone",
             "email": "amara@example.com",
             "background": "I am a speaker and advocate whose work focuses on healing, resilience, and community storytelling.",
@@ -1941,6 +2005,7 @@ def test_public_intake_submission_ignores_confirmation_email_failures(monkeypatc
     service = GuestWebService(temp_db.db_path)
     created_guest = service.create_intake_submission(
         {
+            **SELF_INTAKE_DEFAULTS,
             "full_name": "Amara Stone",
             "email": "amara@example.com",
             "background": "I am a speaker and advocate whose work focuses on healing, resilience, and community storytelling.",
@@ -1960,6 +2025,7 @@ def test_public_intake_validation_allows_concise_profession_answer(temp_db):
 
     created_guest = service.create_intake_submission(
         {
+            **SELF_INTAKE_DEFAULTS,
             "full_name": "Amara Stone",
             "email": "amara@example.com",
             "website": "www.amarastone.com",
@@ -1981,6 +2047,7 @@ def test_public_intake_validation_allows_one_word_profession_answer(temp_db):
 
     created_guest = service.create_intake_submission(
         {
+            **SELF_INTAKE_DEFAULTS,
             "full_name": "Jordan Hale",
             "email": "jordan@example.com",
             "background": "I am a storyteller and coach who helps people rebuild confidence after difficult seasons of life.",
@@ -2000,6 +2067,7 @@ def test_public_intake_validation_allows_one_word_passionate_topics_answer(temp_
 
     created_guest = service.create_intake_submission(
         {
+            **SELF_INTAKE_DEFAULTS,
             "full_name": "Amina Lane",
             "email": "amina@example.com",
             "background": "I am a coach and storyteller who helps people rebuild confidence after painful seasons of life.",
@@ -2019,6 +2087,7 @@ def test_public_intake_validation_allows_one_word_message_answer(temp_db):
 
     created_guest = service.create_intake_submission(
         {
+            **SELF_INTAKE_DEFAULTS,
             "full_name": "Amina Lane",
             "email": "amina@example.com",
             "background": "I am a coach and storyteller who helps people rebuild confidence after painful seasons of life.",
@@ -6650,6 +6719,19 @@ def test_validate_intake_payload_allows_many_relevant_links():
             "passionate_topics": "Faith",
             "message": "Hope",
             "experience": "I have spoken on https://f.example and hosted conversations at https://g.example.",
+        }
+    )
+
+
+def test_validate_intake_payload_allows_no_prior_speaking_experience():
+    """Applicants may answer no to the optional prior-speaking question."""
+    validate_intake_payload(
+        {
+            "background": "I am a writer and community volunteer shaped by grief, recovery, and a desire to help people feel less alone.",
+            "profession": "Writer",
+            "passionate_topics": "Healing",
+            "message": "Hope",
+            "experience": "No",
         }
     )
 

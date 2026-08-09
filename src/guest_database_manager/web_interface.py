@@ -189,6 +189,18 @@ LONG_TEXT_FIELDS = [
     "experience",
     "additional_info",
 ]
+REQUIRED_INTAKE_FIELDS = (
+    "full_name",
+    "email",
+    "background",
+    "profession",
+    "motivation",
+    "life_experiences",
+    "core_values",
+    "alignment",
+    "passionate_topics",
+    "message",
+)
 MIN_WORDS_BY_FIELD = {
     "background": 8,
     "profession": 1,
@@ -456,16 +468,30 @@ def _normalize_episode_release_status(release_date: str, release_status: str) ->
     return normalized_status or "unplanned"
 
 
-def validate_intake_payload(payload: Dict[str, str]) -> None:
-    """Reject obviously spammy or low-effort intake submissions."""
+def validate_intake_payload(payload: Dict[str, str], *, require_required_fields: bool = False) -> None:
+    """Reject incomplete, spammy, or low-effort intake submissions."""
     combined_text = " ".join(str(payload.get(field_name, "")) for field_name in payload).lower()
 
     if any(keyword in combined_text for keyword in SPAM_KEYWORDS):
         raise WebInterfaceError("Your submission was flagged as spam.")
 
+    if require_required_fields:
+        for field_name in REQUIRED_INTAKE_FIELDS:
+            if not _normalize_text(payload.get(field_name)):
+                field_label = field_name.replace("_", " ")
+                raise WebInterfaceError(f"Please complete the required field: {field_label}")
+
+        if not (_normalize_text(payload.get("website")) or _normalize_text(payload.get("social_handles"))):
+            raise WebInterfaceError("Please provide a website or social/public profile.")
+
     for field_name in LONG_TEXT_FIELDS:
         value = str(payload.get(field_name, "")).strip()
         if not value:
+            continue
+        # "No" is a complete response to the optional prior-speaking-experience
+        # question. Requiring it to meet the long-answer threshold blocks valid
+        # applicants who have not appeared on podcasts or spoken at events.
+        if field_name == "experience" and value.casefold() == "no":
             continue
         if _word_count(value) < MIN_WORDS_BY_FIELD.get(field_name, 8):
             field_label = field_name.replace("_", " ")
@@ -1770,10 +1796,12 @@ class GuestWebService:
         if guest_host and episode_host and guest_host == episode_host:
             return True
 
+        # Name-only linkage must be exact after normalizing honorifics. A fuzzy
+        # match can incorrectly remove an unrelated guest from the review queue.
         return self._name_match_score(
             episode.get("guest_name"),
             guest.get("full_name") or guest.get("name"),
-        ) >= 85
+        ) == 100
 
     def _interview_belongs_to_guest(self, interview: Dict[str, Any], guest: Dict[str, Any]) -> bool:
         """Return whether an interview record likely belongs to a given guest."""
@@ -1787,10 +1815,12 @@ class GuestWebService:
         if guest_email and interview_email and guest_email == interview_email:
             return True
 
+        # The same conservative rule prevents unrelated interviews from
+        # suppressing an intake-review action.
         return self._name_match_score(
             interview.get("guest_name") or interview.get("title"),
             guest.get("full_name") or guest.get("name"),
-        ) >= 85
+        ) == 100
 
     def _build_guest_planning_summary(
         self,
@@ -2859,17 +2889,18 @@ class GuestWebService:
         if application_role == "on_behalf":
             return self._create_agency_referral(payload)
 
-        if application_role not in {"", "self"}:
+        if application_role != "self":
             raise WebInterfaceError("Please choose whether you are applying for yourself or on behalf of someone else.")
 
         full_name = _normalize_text(payload.get("full_name"))
         email = _normalize_text(payload.get("email"))
-        if application_role == "self" and _normalize_text(payload.get("self_attestation")).lower() != "yes":
+        if _normalize_text(payload.get("self_attestation")).lower() != "yes":
             raise WebInterfaceError("Please confirm that you are the guest applying for yourself before submitting.")
         if self._email_used_by_other_guest(email, full_name):
             raise WebInterfaceError(
                 "Please use the guest's own personal or professional email address. We noticed this email is already associated with a different guest."
             )
+        validate_intake_payload(payload, require_required_fields=True)
         guest = self.create_guest(payload, source_name=INTAKE_SOURCE_NAME)
         self._send_intake_confirmation_email(guest)
         return guest
