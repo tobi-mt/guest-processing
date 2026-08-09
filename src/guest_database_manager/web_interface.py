@@ -6216,7 +6216,8 @@ class GuestWebService:
             analysis = ai_assistant.research_guest_from_text(guest)
             
             if not analysis:
-                raise WebInterfaceError("AI analysis failed. Please try again.")
+                detail = ai_assistant.last_error or "No analysis was returned"
+                raise WebInterfaceError(f"AI analysis failed: {detail}. Please try again.")
             
             return {
                 "guest_id": guest_id,

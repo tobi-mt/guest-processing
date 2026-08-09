@@ -95,3 +95,25 @@ def test_openai_http_error_logs_safe_provider_metadata(monkeypatch, caplog):
 
     assert "status=400" in caplog.text
     assert "code=unsupported_parameter" in caplog.text
+    assert assistant.last_error == "OpenAI rejected the request (invalid_request_error: unsupported_parameter)"
+
+
+def test_reasoning_models_omit_temperature_for_chat_completions(monkeypatch):
+    assistant = AIAssistant(api_key="test", model="gpt-5")
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "OK"}}]}
+
+    def fake_post(*args, **kwargs):
+        captured["payload"] = kwargs["json"]
+        return Response()
+
+    monkeypatch.setattr("guest_database_manager.ai_assistant.requests.post", fake_post)
+
+    assert assistant._call_openai([{"role": "user", "content": "Hello"}]) == "OK"
+    assert "temperature" not in captured["payload"]

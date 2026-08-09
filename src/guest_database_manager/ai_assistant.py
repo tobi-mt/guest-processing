@@ -29,6 +29,7 @@ class AIAssistant:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.model = model
         self.base_url = "https://api.openai.com/v1/chat/completions"
+        self.last_error: Optional[str] = None
     
     def _call_openai(
         self,
@@ -39,21 +40,30 @@ class AIAssistant:
         """Make API call to OpenAI."""
         if not self.api_key:
             logger.warning("OpenAI API key not configured")
+            self.last_error = "OpenAI API key is not configured"
             return None
-        
+
+        self.last_error = None
         try:
+            request_payload: Dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+                **({"response_format": response_format} if response_format else {}),
+            }
+            # GPT-5 and reasoning-model Chat Completions requests reject custom
+            # sampling settings.  Omitting temperature uses the provider default
+            # and keeps the assistant compatible with the model configured at run
+            # time, rather than assuming the legacy gpt-4o-mini default.
+            model_name = self.model.lower()
+            if not model_name.startswith(("gpt-5", "o1", "o3", "o4")):
+                request_payload["temperature"] = temperature
             response = requests.post(
                 self.base_url,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json"
                 },
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    **({"response_format": response_format} if response_format else {}),
-                },
+                json=request_payload,
                 timeout=30
             )
             response.raise_for_status()
@@ -75,12 +85,17 @@ class AIAssistant:
                 error_payload.get("code", "unknown"),
                 error_payload.get("message", "No provider error message returned"),
             )
+            error_type = str(error_payload.get("type") or "request_error")
+            error_code = str(error_payload.get("code") or "unknown")
+            self.last_error = f"OpenAI rejected the request ({error_type}: {error_code})"
             return None
         except requests.RequestException as exc:
             logger.error("OpenAI API request failed: %s", exc)
+            self.last_error = "OpenAI could not be reached"
             return None
         except (KeyError, TypeError, ValueError) as exc:
             logger.error("OpenAI API returned an unexpected response shape: %s", exc)
+            self.last_error = "OpenAI returned an unexpected response"
             return None
 
     @staticmethod
