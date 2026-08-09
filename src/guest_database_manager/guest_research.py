@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 USER_AGENT = "MirrorTalkGuestCopilot/1.0 (+https://mirrortalkpodcast.com)"
 MAX_SOURCES = 3
 FETCH_TIMEOUT_SECONDS = 8
+GENERIC_INSTAGRAM_RETRY_ATTEMPTS = 2
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q={query}&hl=en"
 GENERIC_SOURCE_PATTERNS = (
     r"create an account or log in to instagram",
@@ -290,6 +291,12 @@ def _is_generic_source(source: dict[str, Any]) -> bool:
     return bool(low_signal_parts) and all(part in GENERIC_SOURCE_LABELS for part in low_signal_parts)
 
 
+def _is_instagram_url(url: str) -> bool:
+    """Return whether a source is hosted by Instagram, including its www host."""
+    host = urlparse(url).netloc.casefold().split(":", 1)[0]
+    return host in {"instagram.com", "www.instagram.com"}
+
+
 def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
     """Fetch a few public profile pages and extract grounded copilot notes."""
     urls = _candidate_urls(guest)
@@ -301,10 +308,20 @@ def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
     errors: list[str] = []
 
     for url in urls:
-        try:
-            source = _fetch_page(url)
-        except (HTTPError, URLError, TimeoutError, ValueError, InvalidURL) as exc:
-            errors.append(f"{url}: {exc}")
+        attempts = GENERIC_INSTAGRAM_RETRY_ATTEMPTS if _is_instagram_url(url) else 1
+        source: dict[str, Any] | None = None
+        for attempt in range(attempts):
+            try:
+                candidate = _fetch_page(url)
+            except (HTTPError, URLError, TimeoutError, ValueError, InvalidURL) as exc:
+                errors.append(f"{url}: {exc}")
+                break
+            if _is_generic_source(candidate) and attempt + 1 < attempts:
+                continue
+            source = candidate
+            break
+
+        if source is None:
             continue
         source["host"] = urlparse(url).netloc
         source["evidence"] = _evidence_snippets(source)

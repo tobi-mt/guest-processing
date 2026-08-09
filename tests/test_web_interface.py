@@ -138,6 +138,39 @@ def test_guest_research_rejects_generic_instagram_login_page(monkeypatch):
         )
 
 
+def test_guest_research_retries_transient_generic_instagram_login_page(monkeypatch):
+    """A transient Instagram login shell should not discard a readable profile retry."""
+    sources = iter(
+        [
+            {
+                "url": "https://www.instagram.com/amy_mckiernan_author",
+                "title": "Login • Instagram",
+                "description": "Create an account or log in to Instagram",
+                "heading": "",
+                "text": "Create an account or log in to Instagram",
+            },
+            {
+                "url": "https://www.instagram.com/amy_mckiernan_author",
+                "title": "Amy McKiernan (@amy_mckiernan_author) • Instagram photos and videos",
+                "description": "Author of More Than a Survivor and speaker on healing from trauma.",
+                "heading": "Amy McKiernan",
+                "text": "Author and speaker on healing from trauma.",
+            },
+        ]
+    )
+    monkeypatch.setattr(guest_research, "_fetch_page", lambda url: next(sources))
+
+    research = guest_research.research_guest_from_public_web(
+        {
+            "website": "",
+            "social_media_handles": "Instagram: amy_mckiernan_author",
+        }
+    )
+
+    assert research["likely_topics"] == ["Healing", "Trauma", "Authorship", "Speaking"]
+    assert research["sources"][0]["title"].startswith("Amy McKiernan")
+
+
 def test_guest_research_rejects_generic_facebook_shell_page(monkeypatch):
     """Generic Facebook shell pages should not be stored as useful guest research."""
     monkeypatch.setattr(
