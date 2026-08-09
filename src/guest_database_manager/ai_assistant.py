@@ -30,7 +30,12 @@ class AIAssistant:
         self.model = model
         self.base_url = "https://api.openai.com/v1/chat/completions"
     
-    def _call_openai(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> Optional[str]:
+    def _call_openai(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        response_format: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
         """Make API call to OpenAI."""
         if not self.api_key:
             logger.warning("OpenAI API key not configured")
@@ -46,7 +51,8 @@ class AIAssistant:
                 json={
                     "model": self.model,
                     "messages": messages,
-                    "temperature": temperature
+                    "temperature": temperature,
+                    **({"response_format": response_format} if response_format else {}),
                 },
                 timeout=30
             )
@@ -55,6 +61,37 @@ class AIAssistant:
         except Exception as e:
             logger.error(f"Error calling OpenAI API: {e}")
             return None
+
+    @staticmethod
+    def _guest_context(guest_data: Dict[str, Any]) -> str:
+        """Return the complete, non-empty application context using persisted field names.
+
+        Older import paths still use a few legacy aliases, so accept those as a
+        compatibility measure.  The AI must see the same information an editor sees.
+        """
+        fields = (
+            ("Name", ("full_name", "name")),
+            ("Profession", ("profession",)),
+            ("Background", ("background",)),
+            ("Why they want to appear", ("motivation",)),
+            ("Life experiences", ("life_experiences",)),
+            ("Core values", ("core_values",)),
+            ("Faith or spiritual practice", ("faith_practice", "faith")),
+            ("Alignment with the show", ("beliefs_align", "alignment")),
+            ("Favourite quote", ("favorite_quote",)),
+            ("Passionate topics", ("passionate_topics",)),
+            ("Message they want listeners to take away", ("message_takeaway", "message")),
+            ("Podcast experience", ("podcast_experience", "experience")),
+            ("Additional information", ("additional_info",)),
+            ("Website", ("website",)),
+            ("Social media", ("social_media_handles", "social_handles")),
+        )
+        lines = []
+        for label, keys in fields:
+            value = next((str(guest_data.get(key)).strip() for key in keys if guest_data.get(key) and str(guest_data[key]).strip()), "")
+            if value:
+                lines.append(f"- {label}: {value}")
+        return "\n".join(lines) or "- No application details were provided beyond the guest record."
     
     def generate_acceptance_email(
         self,
@@ -64,20 +101,12 @@ class AIAssistant:
         custom_message: Optional[str] = None
     ) -> Optional[str]:
         """Generate a personalized acceptance email for a guest."""
-        guest_name = guest_data.get("full_name") or guest_data.get("name", "there")
-        background = guest_data.get("background", "")
-        passionate_topics = guest_data.get("passionate_topics", "")
-        message_takeaway = guest_data.get("message_takeaway", "")
-        profession = guest_data.get("profession", "")
+        application_context = self._guest_context(guest_data)
         
         prompt = f"""You are writing a warm, authentic acceptance email for the {podcast_name} podcast.
 
-Guest Information:
-- Name: {guest_name}
-- Profession: {profession}
-- Background: {background}
-- Passionate Topics: {passionate_topics}
-- Message They Want to Share: {message_takeaway}
+Guest application (use only details present here; do not invent achievements or facts):
+{application_context}
 
 {f"Host's Custom Note: {custom_message}" if custom_message else ""}
 
@@ -87,7 +116,7 @@ Write a personalized acceptance email that:
 3. Explains what Mirror Talk is about (soulful conversations, faith, purpose, resilience)
 4. Mentions next steps (scheduling, preparation)
 5. Sounds authentic and conversational, not corporate
-6. Keep it concise (2-3 short paragraphs)
+6. Keep it concise (2-3 short paragraphs), while including one concrete application detail and why it belongs on Mirror Talk
 
 The email should feel personal, not templated. Sign it from {host_name}."""
         
@@ -166,48 +195,44 @@ Keep it to 2-3 sentences."""
     
     def research_guest_from_text(self, guest_data: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze guest data and generate insights using AI."""
-        guest_name = guest_data.get("full_name") or guest_data.get("name", "Unknown")
-        background = guest_data.get("background", "")
-        profession = guest_data.get("profession", "")
-        passionate_topics = guest_data.get("passionate_topics", "")
-        message_takeaway = guest_data.get("message_takeaway", "")
-        life_experiences = guest_data.get("life_experiences", "")
-        core_values = guest_data.get("core_values", "")
-        faith_practice = guest_data.get("faith_practice", "")
+        application_context = self._guest_context(guest_data)
         
         prompt = f"""Analyze this podcast guest application and provide insights.
 
-Guest: {guest_name}
-Profession: {profession}
-Background: {background}
-Life Experiences: {life_experiences}
-Core Values: {core_values}
-Faith/Spiritual Practice: {faith_practice}
-Passionate Topics: {passionate_topics}
-Message: {message_takeaway}
+Guest application (treat missing information as unknown, not a negative):
+{application_context}
 
 Provide:
-1. Key Themes (3-5 bullet points of main topics they could discuss)
-2. Fit Score (1-10 for Mirror Talk podcast which focuses on: faith, purpose, healing, resilience, authentic stories)
-3. Conversation Angles (3 specific questions or angles to explore)
-4. Potential Concerns (any red flags or areas needing clarity)
-5. Best Timing (when would their story be most relevant - any seasonal/current event tie-ins)
+1. A 2-4 sentence evidence-grounded summary
+2. Key themes (3-5 specific topics)
+3. Fit score (1-10 for Mirror Talk: faith, purpose, healing, resilience, authentic stories) and a short rationale tied to application facts
+4. Conversation angles (3 specific, non-generic angles)
+5. Concerns or clarification questions (empty list if none; missing information is a clarification, never a red flag)
+6. Best timing (or "No evidence for a timing hook")
 
-Format as JSON with keys: themes, fit_score, conversation_angles, concerns, best_timing"""
+Return a JSON object only, with keys: summary, themes, fit_score, fit_rationale, conversation_angles, concerns, best_timing, evidence_used."""
         
         messages = [
             {"role": "system", "content": "You are an expert podcast producer analyzing guest applications."},
             {"role": "user", "content": prompt}
         ]
         
-        result = self._call_openai(messages, temperature=0.5)
+        result = self._call_openai(messages, temperature=0.5, response_format={"type": "json_object"})
+        # Keep the feature usable when an intentionally configured legacy model
+        # does not support Chat Completions JSON mode.
+        if not result:
+            result = self._call_openai(messages, temperature=0.5)
         
         try:
             # Try to parse JSON response
-            research_data = json.loads(result)
+            # Be tolerant of responses from older models that wrap valid JSON in fences.
+            clean_result = re.sub(r"^```(?:json)?\s*|\s*```$", "", result.strip(), flags=re.IGNORECASE)
+            research_data = json.loads(clean_result)
+            if not isinstance(research_data, dict):
+                raise ValueError("Analysis response was not a JSON object")
             research_data["analyzed_at"] = datetime.now().isoformat()
             return research_data
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError, ValueError):
             # Fallback to text format
             return {
                 "summary": result,
@@ -236,18 +261,13 @@ Format as JSON with keys: themes, fit_score, conversation_angles, concerns, best
     def generate_interview_questions(self, guest_data: Dict[str, Any], num_questions: int = 10) -> List[str]:
         """Generate thoughtful interview questions based on guest information."""
         guest_name = guest_data.get("full_name") or guest_data.get("name", "the guest")
-        background = guest_data.get("background", "")
-        passionate_topics = guest_data.get("passionate_topics", "")
-        life_experiences = guest_data.get("life_experiences", "")
-        profession = guest_data.get("profession", "")
+        application_context = self._guest_context(guest_data)
         
         prompt = f"""Generate {num_questions} thoughtful, deep interview questions for a Mirror Talk podcast episode.
 
 Guest: {guest_name}
-Profession: {profession}
-Background: {background}
-Life Experiences: {life_experiences}
-Passionate Topics: {passionate_topics}
+Guest application (use only these facts; do not make assumptions):
+{application_context}
 
 Mirror Talk focuses on: faith, purpose, healing, resilience, authentic personal stories.
 
@@ -256,7 +276,8 @@ Generate questions that:
 2. Invite vulnerability and authenticity
 3. Connect to universal human experiences
 4. Build on each other naturally
-5. Are specific to this guest's story
+5. Are specific to this guest's story: each question must clearly draw on a concrete detail from the application
+6. Progress from origin story, through tension or change, to practical meaning for listeners; avoid duplicate themes and generic prompts
 
 Return ONLY the questions, numbered 1-{num_questions}, one per line."""
         

@@ -2169,9 +2169,21 @@ async function analyzeGuestWithAI(guestId, guestName) {
     const angles = Array.isArray(analysis.conversation_angles)
       ? analysis.conversation_angles.map(a => `<li>${escapeHtml(a)}</li>`).join("")
       : `<p>${escapeHtml(analysis.conversation_angles || "N/A")}</p>`;
+    const concerns = Array.isArray(analysis.concerns)
+      ? (analysis.concerns.length ? `<ul>${analysis.concerns.map(c => `<li>${escapeHtml(c)}</li>`).join("")}</ul>` : "<p>None identified from the application.</p>")
+      : `<p>${escapeHtml(analysis.concerns || "None identified from the application.")}</p>`;
+    const evidence = Array.isArray(analysis.evidence_used)
+      ? `<ul>${analysis.evidence_used.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+      : "";
     
     const content = `
       <div class="ai-analysis">
+        ${analysis.summary ? `
+          <div class="analysis-section">
+            <strong>Producer Summary:</strong>
+            <p>${escapeHtml(analysis.summary)}</p>
+          </div>
+        ` : ""}
         <div class="analysis-metric">
           <strong>Fit Score</strong>
           <span class="score-large">${analysis.fit_score || 5}/10</span>
@@ -2184,6 +2196,12 @@ async function analyzeGuestWithAI(guestId, guestName) {
           <strong>Conversation Angles:</strong>
           ${Array.isArray(analysis.conversation_angles) ? `<ul>${angles}</ul>` : angles}
         </div>
+        ${analysis.fit_rationale ? `
+          <div class="analysis-section">
+            <strong>Fit Rationale:</strong>
+            <p>${escapeHtml(analysis.fit_rationale)}</p>
+          </div>
+        ` : ""}
         ${analysis.best_timing ? `
           <div class="analysis-section">
             <strong>Best Timing:</strong>
@@ -2193,7 +2211,13 @@ async function analyzeGuestWithAI(guestId, guestName) {
         ${analysis.concerns ? `
           <div class="analysis-section caution">
             <strong>Potential Concerns:</strong>
-            <p>${escapeHtml(analysis.concerns)}</p>
+            ${concerns}
+          </div>
+        ` : ""}
+        ${evidence ? `
+          <div class="analysis-section">
+            <strong>Application Evidence Used:</strong>
+            ${evidence}
           </div>
         ` : ""}
         <p class="ai-note">💡 <em>This analysis is based on the guest's application. Use it to guide your decision and interview prep.</em></p>
