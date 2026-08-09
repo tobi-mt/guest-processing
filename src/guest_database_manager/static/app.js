@@ -2178,6 +2178,7 @@ async function analyzeGuestWithAI(guestId, guestName) {
     
     const content = `
       <div class="ai-analysis">
+        ${data.cached ? `<p class="ai-note">💾 <em>Saved analysis${data.analyzed_at ? ` from ${escapeHtml(data.analyzed_at)}` : ""}. Update the guest application to generate a new one.</em></p>` : ""}
         ${analysis.summary ? `
           <div class="analysis-section">
             <strong>Producer Summary:</strong>

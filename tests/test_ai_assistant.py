@@ -81,6 +81,20 @@ def test_analysis_returns_empty_result_when_the_model_returns_no_content(monkeyp
     assert result == {}
 
 
+def test_analysis_does_not_retry_after_a_network_failure(monkeypatch):
+    assistant = AIAssistant(api_key="test")
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise requests.Timeout("timed out")
+
+    monkeypatch.setattr("guest_database_manager.ai_assistant.requests.post", fail)
+
+    assert assistant.research_guest_from_text(_guest()) == {}
+    assert len(calls) == 1
+
+
 def test_openai_http_error_logs_safe_provider_metadata(monkeypatch, caplog):
     assistant = AIAssistant(api_key="test")
     response = requests.Response()

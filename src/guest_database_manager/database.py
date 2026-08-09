@@ -642,6 +642,42 @@ class GuestDatabase:
             cursor = conn.execute("SELECT * FROM guests WHERE id = ?", (guest_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def get_guest_ai_analysis(self, guest_id: int, *, input_fingerprint: str, model: str) -> Optional[Dict[str, Any]]:
+        """Return a saved analysis only when it matches the current guest data and model."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT analysis_json, created_at FROM guest_ai_analyses
+                   WHERE guest_id = ? AND input_fingerprint = ? AND model = ?""",
+                (guest_id, input_fingerprint, model),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                analysis = loads(str(row["analysis_json"]))
+            except (TypeError, ValueError):
+                logger.warning("Ignoring malformed saved AI analysis for guest_id=%s", guest_id)
+                return None
+            if not isinstance(analysis, dict):
+                return None
+            return {"analysis": analysis, "created_at": row["created_at"]}
+
+    def save_guest_ai_analysis(self, guest_id: int, *, analysis: Dict[str, Any], input_fingerprint: str, model: str) -> None:
+        """Upsert a completed analysis without altering guest application provenance."""
+        serialized = dumps(analysis, ensure_ascii=False, sort_keys=True)
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO guest_ai_analyses (guest_id, analysis_json, input_fingerprint, model)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(guest_id) DO UPDATE SET
+                     analysis_json = excluded.analysis_json,
+                     input_fingerprint = excluded.input_fingerprint,
+                     model = excluded.model,
+                     created_at = CURRENT_TIMESTAMP""",
+                (guest_id, serialized, input_fingerprint, model),
+            )
+            conn.commit()
     
     def get_guest_by_name(self, name: str) -> Optional[Dict]:
         """Get a guest by name (case-insensitive)."""

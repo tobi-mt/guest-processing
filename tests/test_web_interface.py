@@ -182,6 +182,33 @@ def test_web_service_can_create_and_update_guest(temp_db):
     assert listed_guests[0]["full_name"] == "Jordan Rivers"
 
 
+def test_ai_analysis_is_saved_and_reused_for_the_same_guest_data(monkeypatch, temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Cached Guest", "email": "cached@example.com", "background": "A test story"})
+
+    class StubAssistant:
+        model = "test-model"
+
+        @staticmethod
+        def _guest_context(data):
+            return "|".join(str(data.get(key) or "") for key in ("full_name", "background"))
+
+        def research_guest_from_text(self, data):
+            return {"summary": "Saved result", "fit_score": 8, "analyzed_at": "2026-08-09T12:00:00"}
+
+    assistant = StubAssistant()
+    monkeypatch.setattr(service, "_get_ai_assistant", lambda: assistant)
+
+    first = service.analyze_guest_with_ai(guest["id"])
+    assert first["cached"] is False
+    assert first["analysis"]["summary"] == "Saved result"
+
+    monkeypatch.setattr(assistant, "research_guest_from_text", lambda data: pytest.fail("OpenAI should not be called for saved analysis"))
+    second = service.analyze_guest_with_ai(guest["id"])
+    assert second["cached"] is True
+    assert second["analysis"] == first["analysis"]
+
+
 def test_created_guest_invalidates_preloaded_guest_list_cache(temp_db):
     service = GuestWebService(temp_db.db_path)
     assert service.list_guests(skip_expensive_enrichment=True)["stats"]["total"] == 0

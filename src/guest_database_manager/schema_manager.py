@@ -549,6 +549,20 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_013_ai_analysis_cache(conn: sqlite3.Connection) -> None:
+        """Persist completed AI analyses separately from source research data."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS guest_ai_analyses (
+                guest_id INTEGER PRIMARY KEY,
+                analysis_json TEXT NOT NULL,
+                input_fingerprint TEXT NOT NULL,
+                model TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (guest_id) REFERENCES guests(id) ON DELETE CASCADE
+            )"""
+        )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -566,6 +580,7 @@ class SchemaManager:
             (10, "recommendation_feedback", SchemaManager._migration_010_recommendation_feedback),
             (11, "booking_availability", SchemaManager._migration_011_booking_availability),
             (12, "booking_blackouts", SchemaManager._migration_012_booking_blackouts),
+            (13, "ai_analysis_cache", SchemaManager._migration_013_ai_analysis_cache),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

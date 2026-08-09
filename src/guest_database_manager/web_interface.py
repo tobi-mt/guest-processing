@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import mimetypes
@@ -6227,6 +6228,20 @@ class GuestWebService:
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest not found.")
+
+        application_context = AIAssistant._guest_context(guest)
+        fingerprint = hashlib.sha256(application_context.encode("utf-8")).hexdigest()
+        cached = self.database.get_guest_ai_analysis(
+            guest_id, input_fingerprint=fingerprint, model=ai_assistant.model
+        )
+        if cached:
+            return {
+                "guest_id": guest_id,
+                "guest_name": _normalize_text(guest.get("full_name")) or "Unknown",
+                "analysis": cached["analysis"],
+                "cached": True,
+                "analyzed_at": cached["created_at"],
+            }
         
         try:
             analysis = ai_assistant.research_guest_from_text(guest)
@@ -6234,11 +6249,20 @@ class GuestWebService:
             if not analysis:
                 detail = ai_assistant.last_error or "No analysis was returned"
                 raise WebInterfaceError(f"AI analysis failed: {detail}. Please try again.")
+
+            self.database.save_guest_ai_analysis(
+                guest_id,
+                analysis=analysis,
+                input_fingerprint=fingerprint,
+                model=ai_assistant.model,
+            )
             
             return {
                 "guest_id": guest_id,
                 "guest_name": _normalize_text(guest.get("full_name")) or "Unknown",
-                "analysis": analysis
+                "analysis": analysis,
+                "cached": False,
+                "analyzed_at": analysis.get("analyzed_at"),
             }
         
         except Exception as exc:

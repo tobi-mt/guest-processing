@@ -30,6 +30,7 @@ class AIAssistant:
         self.model = model
         self.base_url = "https://api.openai.com/v1/chat/completions"
         self.last_error: Optional[str] = None
+        self.last_error_supports_json_fallback = False
     
     def _call_openai(
         self,
@@ -44,6 +45,7 @@ class AIAssistant:
             return None
 
         self.last_error = None
+        self.last_error_supports_json_fallback = False
         try:
             request_payload: Dict[str, Any] = {
                 "model": self.model,
@@ -88,6 +90,11 @@ class AIAssistant:
             error_type = str(error_payload.get("type") or "request_error")
             error_code = str(error_payload.get("code") or "unknown")
             self.last_error = f"OpenAI rejected the request ({error_type}: {error_code})"
+            self.last_error_supports_json_fallback = bool(
+                response_format
+                and error_type == "invalid_request_error"
+                and error_code in {"unsupported_parameter", "unsupported_value"}
+            )
             return None
         except requests.RequestException as exc:
             logger.error("OpenAI API request failed: %s", exc)
@@ -256,7 +263,7 @@ Return a JSON object only, with keys: summary, themes, fit_score, fit_rationale,
         result = self._call_openai(messages, temperature=0.5, response_format={"type": "json_object"})
         # Keep the feature usable when an intentionally configured legacy model
         # does not support Chat Completions JSON mode.
-        if not result:
+        if not result and self.last_error_supports_json_fallback:
             result = self._call_openai(messages, temperature=0.5)
 
         if not result:
