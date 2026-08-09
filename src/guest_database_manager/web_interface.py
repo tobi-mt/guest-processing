@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -27,6 +28,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 from openpyxl import Workbook
@@ -3066,8 +3069,12 @@ class GuestWebService:
             "motivation": _normalize_text(payload.get("motivation")) or _normalize_text(current.get("motivation")),
             "life_experiences": _normalize_text(payload.get("life_experiences")) or _normalize_text(current.get("life_experiences")),
             "core_values": _normalize_text(payload.get("core_values")) or _normalize_text(current.get("core_values")),
+            "faith": _normalize_text(payload.get("faith")) or _normalize_text(current.get("faith_practice")),
+            "alignment": _normalize_text(payload.get("alignment")) or _normalize_text(current.get("beliefs_align")),
             "favorite_quote": _normalize_text(payload.get("favorite_quote")) or _normalize_text(current.get("favorite_quote")),
             "passionate_topics": _normalize_text(payload.get("passionate_topics")) or _normalize_text(current.get("passionate_topics")),
+            "message": _normalize_text(payload.get("message")) or _normalize_text(current.get("message_takeaway")),
+            "experience": _normalize_text(payload.get("experience")) or _normalize_text(current.get("podcast_experience")),
             "additional_info": _normalize_text(payload.get("additional_info")) or _normalize_text(current.get("additional_info")),
             "has_social_media": _normalize_text(payload.get("has_social_media")) or _normalize_text(current.get("following_us")),
             "is_processed": current.get("is_processed"),
@@ -3090,7 +3097,16 @@ class GuestWebService:
         if updated_guest["email"] and "@" not in updated_guest["email"]:
             raise WebInterfaceError("Email address must contain '@'.")
 
-        self.database.update_guest_by_id(guest_id, updated_guest)
+        try:
+            self.database.update_guest_by_id(guest_id, updated_guest)
+        except RuntimeError as exc:
+            # The editor carries a row version.  A background refresh or another
+            # operator may have saved first; never turn that expected conflict into
+            # an opaque 500 response.
+            raise WebInterfaceError("This guest changed while you were editing. Refresh and apply your changes again.") from exc
+        except sqlite3.Error as exc:
+            logger.exception("Guest save failed for guest_id=%s", guest_id)
+            raise WebInterfaceError("Guest could not be saved. Check the name and email, then try again.") from exc
         self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:

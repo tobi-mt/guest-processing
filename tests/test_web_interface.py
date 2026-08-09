@@ -476,6 +476,39 @@ def test_web_service_can_update_guest_details_without_resetting_status(temp_db):
     assert updated_guest["email_status"] == "accepted"
 
 
+def test_guest_editor_preserves_unedited_application_fields(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest(
+        {
+            "full_name": "Jordan Rivers",
+            "email": "jordan@example.com",
+            "faith": "Contemplative prayer",
+            "alignment": "Values honest stories",
+            "message": "Boundaries are an act of care",
+            "experience": "Two prior podcast appearances",
+        }
+    )
+
+    updated = service.update_guest(guest["id"], {"row_version": guest["row_version"], "profession": "Coach"})
+
+    assert updated["faith_practice"] == "Contemplative prayer"
+    assert updated["beliefs_align"] == "Values honest stories"
+    assert updated["message_takeaway"] == "Boundaries are an act of care"
+    assert updated["podcast_experience"] == "Two prior podcast appearances"
+
+
+def test_guest_editor_reports_stale_save_as_a_refreshable_conflict(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    current = temp_db.get_guest_by_id(guest["id"])
+    assert current is not None
+    current["background"] = "Saved by another operator"
+    temp_db.update_guest_by_id(guest["id"], current)
+
+    with pytest.raises(WebInterfaceError, match="changed while you were editing"):
+        service.update_guest(guest["id"], {"row_version": guest["row_version"], "profession": "Coach"})
+
+
 def test_delete_processed_guest_requires_exact_name_confirmation(temp_db):
     """Processed guests should need a typed full-name confirmation before deletion."""
     service = GuestWebService(temp_db.db_path)
