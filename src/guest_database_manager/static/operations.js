@@ -497,7 +497,7 @@ function renderOutboxConsole() {
   const health = outbox.health || {};
   const failures = outbox.failures || [];
   const pending = Number(health.pending || 0) + Number(health.retrying || 0);
-  const terminal = Number(health.dead_letter || 0) + Number(health.failed || 0);
+  const terminal = Number(health.dead_letter || 0) + Number(health.failed || 0) + Number(health.preflight_failed || 0);
 
   outboxHealth.innerHTML = `
     <div class="delivery-health-grid">
@@ -516,11 +516,11 @@ function renderOutboxConsole() {
     <article class="mini-card outbox-failure-card">
       <div>
         <strong>${escapeHtml(item.email_type || "Email delivery")}</strong>
-        <p>${escapeHtml(item.sent_to || "Recipient unavailable")} · ${escapeHtml(item.status || "failed")}</p>
+        <p>${escapeHtml(item.sent_to || "Recipient unavailable")} · ${escapeHtml(item.failure_source === "preflight" ? "needs recipient details" : (item.status || "failed"))}</p>
         <p>${escapeHtml(item.last_error || "No provider error was recorded.")}</p>
         <small>Attempts: ${Number(item.attempts || 0)} / ${Number(item.max_attempts || 0)} · Correlation: ${escapeHtml(item.correlation_id || "not set")}</small>
       </div>
-      ${item.status === "dead_letter" ? `<button type="button" class="secondary-button" data-outbox-retry="${Number(item.id)}">Retry reviewed item</button>` : ""}
+      ${item.status === "dead_letter" && item.failure_source !== "preflight" ? `<button type="button" class="secondary-button" data-outbox-retry="${Number(item.id)}">Retry reviewed item</button>` : ""}
     </article>
   `).join("");
 

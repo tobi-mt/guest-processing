@@ -1227,6 +1227,9 @@ class GuestWebService:
             for interview in self._sort_interviews_by_upcoming_priority(raw_interviews)
         ]
         reminder_candidates = [self._serialize_interview_reminder(candidate) for candidate in self.get_due_weekly_reminders()]
+        outbox_health = self.database.get_email_outbox_health()
+        preflight_failures = self.database.list_booking_confirmation_preflight_failures()
+        outbox_health["preflight_failed"] = len(preflight_failures)
         return self._store_cached_payload("operations", {
             "stats": self.database.get_operations_stats(),
             "interviews": interviews,
@@ -1236,8 +1239,8 @@ class GuestWebService:
             "weekly_system": self._build_weekly_system_payload(),
             "booking_alerts": self._build_operations_alerts(raw_interviews),
             "outbox": {
-                "health": self.database.get_email_outbox_health(),
-                "failures": self.database.list_email_outbox_failures(),
+                "health": outbox_health,
+                "failures": self.database.list_email_outbox_failures() + preflight_failures,
             },
             "operational_metrics": build_operational_metrics(self.db_path),
             "action_queue": self._build_action_queue(),
@@ -5959,9 +5962,17 @@ class GuestWebService:
         guest_email = _normalize_text(guest.get("email")) or _normalize_text(interview.get("guest_email"))
         scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
         if not guest_email or not scheduled_for:
+            missing = "guest email address" if not guest_email else "scheduled interview time"
+            self.database.log_interview_email(
+                interview_id=int(interview["id"]),
+                email_type="booking_confirmation",
+                sent_to=guest_email or "(missing guest email)",
+                status="unavailable",
+                notes=f"Booking confirmation could not enter the delivery pipeline: missing {missing}.",
+            )
             return {
                 "status": "unavailable",
-                "message": "We could not prepare the confirmation email. Please contact Mirror Talk directly.",
+                "message": "We could not prepare the confirmation email. Mirror Talk has been notified and will follow up directly.",
             }
 
         email_manager = self._build_email_manager()

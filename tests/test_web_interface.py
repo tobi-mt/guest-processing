@@ -4754,6 +4754,30 @@ def test_public_booking_repairs_existing_interview_without_calendar_event(monkey
     assert sent == {"guest": "Jordan Rivers", "interview_id": existing["id"]}
 
 
+def test_unavailable_booking_confirmation_is_visible_in_delivery_health(temp_db):
+    """A booking without a recipient must not disappear from operator review."""
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "",
+            "title": "Soulful Conversation with Jordan Rivers",
+            "scheduled_for": "2026-08-20 18:00:00",
+            "timezone": "Europe/Berlin",
+        }
+    )
+
+    delivery = service._send_booking_confirmation_email({}, interview)
+
+    assert delivery["status"] == "unavailable"
+    operations = service.list_operations()
+    assert operations["outbox"]["health"]["preflight_failed"] == 1
+    failure = operations["outbox"]["failures"][-1]
+    assert failure["interview_id"] == interview["id"]
+    assert failure["failure_source"] == "preflight"
+    assert "missing guest email address" in failure["last_error"]
+
+
 def test_public_booking_queues_confirmation_email_after_retry_failure(monkeypatch, temp_db):
     """Public bookings should still succeed if the confirmation email has to be queued after retries."""
     service = GuestWebService(temp_db.db_path)

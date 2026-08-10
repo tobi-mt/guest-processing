@@ -1827,6 +1827,36 @@ class GuestDatabase:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def list_booking_confirmation_preflight_failures(self, limit: int = 50) -> List[Dict]:
+        """Return booking emails that could not enter the delivery pipeline.
+
+        An outbox item without a usable recipient must never be retried
+        automatically. A later successful manual confirmation clears this alert.
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT log.id, log.interview_id, log.reminder_type AS email_type,
+                          log.sent_to, '' AS subject, log.provider, log.status,
+                          0 AS attempts, 0 AS max_attempts, log.notes AS last_error,
+                          log.sent_at AS created_at, log.sent_at AS updated_at,
+                          NULL AS dead_letter_at, NULL AS correlation_id,
+                          0 AS row_version, 'preflight' AS failure_source
+                   FROM reminder_log AS log
+                   WHERE log.reminder_type = 'booking_confirmation'
+                     AND log.status = 'unavailable'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM reminder_log AS later
+                         WHERE later.interview_id = log.interview_id
+                           AND later.reminder_type = 'booking_confirmation'
+                           AND later.status = 'sent'
+                           AND later.id > log.id
+                     )
+                   ORDER BY log.id DESC LIMIT ?""",
+                (max(1, int(limit)),),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def retry_dead_letter_email(self, outbox_id: int) -> Dict[str, Any]:
         """Return one terminal failure to the retry queue after operator review."""
         with self._connect() as conn:
