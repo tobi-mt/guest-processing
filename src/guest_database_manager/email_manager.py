@@ -11,10 +11,12 @@ from datetime import datetime, timedelta, timezone
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Dict, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
+
+from .intake_receipt_pdf import build_intake_receipt_pdf
 
 try:
     import streamlit as st
@@ -126,7 +128,28 @@ class EmailManager:
         else:
             st.error(f"❌ **Failed to send email:** {error_msg}")
 
-    def get_acceptance_template(self, guest_name: str, custom_message: str = "", booking_url: str = "") -> Dict[str, str]:
+    EMAIL_TEMPLATE_VARIANTS = {
+        "accepted": (("warm", "Warm and welcoming"), ("concise", "Warm and concise")),
+        "rejected": (("considered", "Considered and compassionate"), ("concise", "Kind and concise")),
+        "reminder": (("gentle", "Gentle confirmation"), ("concise", "Clear and concise")),
+        "booking_confirmation": (("warm", "Warm and welcoming"), ("concise", "Clear and concise")),
+    }
+
+    @classmethod
+    def template_variants(cls, email_type: str) -> list[Dict[str, str]]:
+        """Return the operator-visible, reviewed variants for an email type."""
+        return [{"id": variant_id, "label": label} for variant_id, label in cls.EMAIL_TEMPLATE_VARIANTS.get(email_type, ())]
+
+    @classmethod
+    def _template_variant(cls, email_type: str, variant: str, default: str) -> str:
+        """Validate a stable template variant; never silently choose a random one."""
+        selected = (variant or default).strip().lower()
+        allowed = {item[0] for item in cls.EMAIL_TEMPLATE_VARIANTS.get(email_type, ())}
+        if selected not in allowed:
+            raise ValueError(f"Unknown {email_type} email template variant.")
+        return selected
+
+    def get_acceptance_template(self, guest_name: str, custom_message: str = "", booking_url: str = "", variant: str = "warm") -> Dict[str, str]:
         """Get the email template for guest acceptance.
 
         Args:
@@ -136,10 +159,23 @@ class EmailManager:
         Returns:
             Dictionary with subject and body
         """
-        subject = "Your Mirror Talk Podcast application has been accepted"
+        variant = self._template_variant("accepted", variant, "warm")
+        subject = "Your Mirror Talk Podcast application has been accepted" if variant == "warm" else "You’re invited to join Mirror Talk Podcast"
         booking_line = booking_url or "https://mirrortalkpodcast.com/be-our-next-guest/"
 
-        if custom_message:
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+{custom_message + chr(10) + chr(10) if custom_message else ""}Thank you for sharing your story with Mirror Talk. We’d be delighted to welcome you as a guest.
+
+Please choose a recording time that works for you:
+{booking_line}
+
+Once you’re booked, we’ll send everything you need to prepare. We’re looking forward to our conversation.
+
+Warmly,
+Mirror Talk Podcast"""
+        elif custom_message:
             body = f"""Hi {guest_name},
 
 {custom_message}
@@ -174,7 +210,7 @@ Mirror Talk Podcast"""
 
         return {"subject": subject, "body": body}
 
-    def get_rejection_template(self, guest_name: str, custom_message: str = "") -> Dict[str, str]:
+    def get_rejection_template(self, guest_name: str, custom_message: str = "", variant: str = "considered") -> Dict[str, str]:
         """Get the email template for guest rejection.
 
         Args:
@@ -184,9 +220,21 @@ Mirror Talk Podcast"""
         Returns:
             Dictionary with subject and body
         """
+        variant = self._template_variant("rejected", variant, "considered")
         subject = "Thank you for your Mirror Talk Podcast application"
 
-        if custom_message:
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+{custom_message + chr(10) + chr(10) if custom_message else ""}Thank you for taking the time to apply to Mirror Talk and share your story.
+
+After careful consideration, we will not be moving forward with your application at this time. This decision reflects our current programme needs and timing, not the value of your work or voice.
+
+We appreciate your interest and wish you every success.
+
+Warmly,
+Mirror Talk Podcast"""
+        elif custom_message:
             body = f"""Hi {guest_name},
 
 {custom_message}
@@ -224,9 +272,10 @@ Mirror Talk Podcast"""
         guest_name: str,
         scheduled_for: datetime,
         timezone_label: str,
-        join_url: str,
+        join_url: str, variant: str = "gentle",
     ) -> Dict[str, str]:
         """Build the weekly confirmation reminder template for an upcoming interview."""
+        variant = self._template_variant("reminder", variant, "gentle")
         localized = self._localize_datetime(scheduled_for, timezone_label)
         subject = f"Please confirm our Soulful Conversation on {localized.strftime('%A %d %B')}"
         formatted_date = localized.strftime("%A %d %B, %Y")
@@ -256,6 +305,19 @@ https://mirrortalkpodcast.com/join-our-family/
 Ask Mirror Talk:
 https://mirrortalkpodcast.com/ask-mirror-talk/
 """
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+Please confirm that our Mirror Talk conversation on {formatted_date} at {formatted_time} {timezone_label} still works for you.
+
+Join us on Riverside FM:
+{join_line}
+
+If you need to change the time, simply reply to this email.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
 
         return {"subject": subject, "body": body}
 
@@ -292,9 +354,10 @@ Mirror Talk Podcast"""
         guest_name: str,
         scheduled_for: datetime,
         timezone_label: str,
-        join_url: str,
+        join_url: str, variant: str = "warm",
     ) -> Dict[str, str]:
         """Build the initial booking confirmation email for a newly scheduled interview."""
+        variant = self._template_variant("booking_confirmation", variant, "warm")
         localized = self._localize_datetime(scheduled_for, timezone_label)
         subject = f"Your Soulful Conversation is booked for {localized.strftime('%A %d %B')}"
         formatted_date = localized.strftime("%A %d %B, %Y")
@@ -313,6 +376,19 @@ We’ll be recording on Riverside FM, and you can join the session here:
 If anything changes and you need to reschedule, just reply to this email and we’ll sort it out together.
 
 Looking forward to the conversation.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+Your Soulful Conversation is confirmed for {formatted_date} at {formatted_time} {timezone_label}.
+
+Join the Riverside FM session here:
+{join_line}
+
+We’ve also attached a calendar invitation. If you need to reschedule, please reply to this email.
 
 Warm regards,
 Tobi Ojekunle
@@ -406,6 +482,8 @@ Mirror Talk Podcast
 Thank you for taking the time to apply to be a guest on Mirror Talk.
 
 We’ve received your application successfully and will review it with care. If your story feels like a strong fit for an upcoming soulful conversation, we will reach out by email with the next steps.
+
+For your records, we have attached a PDF copy of the answers you shared.
 
 In the meantime, you are warmly invited to stay connected with Mirror Talk here:
 - Website: https://mirrortalkpodcast.com/
@@ -770,10 +848,24 @@ Mirror Talk Podcast
         template = self.get_rejection_template(guest_name, custom_message)
         return self.send_email(to_email, template["subject"], template["body"], idempotency_key=idempotency_key)
 
-    def send_intake_confirmation_email(self, guest_name: str, to_email: str, idempotency_key: str = "") -> bool:
+    def send_intake_confirmation_email(
+        self,
+        guest_name: str,
+        to_email: str,
+        intake_submission: Optional[Mapping[str, Any]] = None,
+        idempotency_key: str = "",
+    ) -> bool:
         """Send a submission-confirmation email to an intake applicant."""
         template = self.get_intake_confirmation_template(guest_name)
-        return self.send_email(to_email, template["subject"], template["body"], idempotency_key=idempotency_key)
+        receipt_submission = intake_submission or {"full_name": guest_name, "email": to_email}
+        attachments = [{"filename": "mirror-talk-application.pdf", "content": build_intake_receipt_pdf(receipt_submission)}]
+        return self.send_email(
+            to_email,
+            template["subject"],
+            template["body"],
+            attachments=attachments,
+            idempotency_key=idempotency_key,
+        )
 
     def send_personal_application_request_email(
         self,

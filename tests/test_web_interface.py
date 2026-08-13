@@ -1954,9 +1954,10 @@ def test_public_intake_submission_sends_confirmation_email_when_configured(monke
         def is_configured(self):
             return self.configured
 
-        def send_intake_confirmation_email(self, guest_name, to_email, idempotency_key=""):
+        def send_intake_confirmation_email(self, guest_name, to_email, intake_submission=None, idempotency_key=""):
             assert guest_name == "Amara Stone"
             assert to_email == "amara@example.com"
+            assert intake_submission["full_name"] == "Amara Stone"
             return True
 
     monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
@@ -1981,6 +1982,48 @@ def test_public_intake_submission_sends_confirmation_email_when_configured(monke
     assert created_guest["original_file_name"] == INTAKE_SOURCE_NAME
 
 
+def test_intake_confirmation_email_attaches_a_pdf_copy_of_answers(monkeypatch):
+    """Applicants should receive a readable copy of the answers they submitted."""
+    from guest_database_manager.email_manager import EmailManager
+
+    captured = {}
+    manager = EmailManager()
+
+    def fake_send_email(to_email, subject, body, attachments=None, idempotency_key=""):
+        captured["to_email"] = to_email
+        captured["attachments"] = attachments or []
+        return True
+
+    monkeypatch.setattr(manager, "send_email", fake_send_email)
+    sent = manager.send_intake_confirmation_email(
+        "Amara Stone",
+        "amara@example.com",
+        intake_submission={
+            "full_name": "Amara Stone",
+            "email": "amara@example.com",
+            "original_data": json.dumps(
+                {
+                    "full_name": "Amara Stone",
+                    "email": "amara@example.com",
+                    "background": "I help people build resilient communities through honest storytelling.",
+                    "profession": "Community coach",
+                    "alignment_choice": "Yes",
+                    "alignment_detail": "My work makes room for healing, reflection, and connection.",
+                    "message": "Hope can be practised together.",
+                }
+            ),
+        },
+    )
+
+    assert sent is True
+    assert captured["to_email"] == "amara@example.com"
+    assert len(captured["attachments"]) == 1
+    attachment = captured["attachments"][0]
+    assert attachment["filename"] == "mirror-talk-application.pdf"
+    assert bytes(attachment["content"]).startswith(b"%PDF-")
+    assert len(bytes(attachment["content"])) > 1_000
+
+
 def test_public_intake_submission_ignores_confirmation_email_failures(monkeypatch, temp_db):
     """Confirmation email failures should not block the intake submission itself."""
 
@@ -1994,7 +2037,7 @@ def test_public_intake_submission_ignores_confirmation_email_failures(monkeypatc
         def is_configured(self):
             return self.configured
 
-        def send_intake_confirmation_email(self, guest_name, to_email, idempotency_key=""):
+        def send_intake_confirmation_email(self, guest_name, to_email, intake_submission=None, idempotency_key=""):
             raise RuntimeError("delivery failed")
 
     monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
@@ -2389,6 +2432,7 @@ def test_web_service_can_export_guests_to_csv(temp_db):
             "email": "amina@example.com",
             "website": "https://amina.example.com",
             "background": "Author and speaker",
+            "marketing_opt_in": True,
         }
     )
 
@@ -2396,6 +2440,29 @@ def test_web_service_can_export_guests_to_csv(temp_db):
 
     assert "full_name,email,website" in exported_csv
     assert "Amina Hart,amina@example.com,https://amina.example.com" in exported_csv
+    assert "marketing_opt_in" in exported_csv
+    assert ",1,0," in exported_csv
+
+
+def test_marketing_opt_in_is_explicit_and_available_for_flexible_export(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Consent Guest", "email": "consent@example.com", "marketing_opt_in": True})
+
+    assert guest["marketing_opt_in"] == 1
+    content, filename, _content_type = service.export_records("guests", ["full_name", "email", "marketing_opt_in"], "csv")
+
+    assert filename == "mirror-talk-guests.csv"
+    assert content.decode("utf-8") == "full_name,email,marketing_opt_in\r\nConsent Guest,consent@example.com,1\r\n"
+
+
+def test_guest_updates_without_a_consent_value_preserve_existing_marketing_opt_in(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Consent Guest", "email": "consent@example.com", "marketing_opt_in": True})
+
+    updated = service.create_guest({"full_name": "Consent Guest", "email": "consent@example.com", "background": "Updated profile"})
+
+    assert updated["id"] == guest["id"]
+    assert updated["marketing_opt_in"] == 1
 
 
 def test_create_episode_with_release_date_defaults_to_scheduled(temp_db):

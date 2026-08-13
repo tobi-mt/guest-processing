@@ -80,8 +80,24 @@ class DataMapper:
             'experience': DataMapper.get_column_value(row, COLUMN_MAPPINGS["experience"]),
             'has_social_media': DataMapper.get_column_value(row, COLUMN_MAPPINGS["social_media"]),
             'social_handles': DataMapper.get_column_value(row, COLUMN_MAPPINGS["social_handles"]),
+            'marketing_opt_in': (
+                DataMapper.marketing_opt_in_value(DataMapper.get_column_value(row, COLUMN_MAPPINGS["marketing_opt_in"]))
+                if DataMapper.has_column(row, COLUMN_MAPPINGS["marketing_opt_in"])
+                else None
+            ),
             'is_processed': False
         }
+
+    @staticmethod
+    def marketing_opt_in_value(value: Any) -> bool:
+        """Interpret common CSV consent values; unknown values are not consent."""
+        return str(value or "").strip().casefold() in {"1", "true", "yes", "y", "on", "opted in", "opt-in"}
+
+    @staticmethod
+    def has_column(row: pd.Series, possible_columns: List[str]) -> bool:
+        """Return whether an import supplied a column, even when its value is blank."""
+        normalized = {str(column).strip().casefold() for column in row.index}
+        return any(column.strip().casefold() in normalized for column in possible_columns)
     
     @staticmethod
     def validate_guest_data(guest_data: Dict[str, Any]) -> tuple[bool, Optional[str]]:

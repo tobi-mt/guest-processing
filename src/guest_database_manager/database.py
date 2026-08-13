@@ -176,11 +176,11 @@ class GuestDatabase:
                     name, full_name, email, website, social_media_handles, 
                     background, profession, motivation, life_experiences, core_values, 
                     faith_practice, beliefs_align, favorite_quote, passionate_topics, message_takeaway,
-                    podcast_experience, additional_info, following_us, is_processed,
+                    podcast_experience, additional_info, following_us, marketing_opt_in, is_processed,
                     original_file_name, original_data, guest_research, guest_research_updated_at,
                     booking_token, booking_token_created_at, booking_override,
                     normalized_name, normalized_email, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """, (
                 guest_data.get('full_name'), guest_data.get('full_name'), guest_data.get('email'), 
                 guest_data.get('website'), guest_data.get('social_handles'),
@@ -188,7 +188,7 @@ class GuestDatabase:
                 guest_data.get('life_experiences'), guest_data.get('core_values'), guest_data.get('faith'), 
                 guest_data.get('alignment'), guest_data.get('favorite_quote'), guest_data.get('passionate_topics'), 
                 guest_data.get('message'), guest_data.get('experience'), guest_data.get('additional_info'), 
-                guest_data.get('has_social_media'), guest_data.get('is_processed', False),
+                guest_data.get('has_social_media'), bool(guest_data.get('marketing_opt_in', False)), guest_data.get('is_processed', False),
                 guest_data.get('original_file_name'), guest_data.get('original_data'),
                 guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
                 guest_data.get('booking_token'), guest_data.get('booking_token_created_at'),
@@ -525,6 +525,8 @@ class GuestDatabase:
 
             merged_guest = dict(existing_guest)
             merged_guest.update(guest_data)
+            if guest_data.get("marketing_opt_in") is None:
+                merged_guest["marketing_opt_in"] = existing_guest.get("marketing_opt_in", False)
             merged_guest["full_name"] = guest_data.get("full_name") or existing_guest.get("full_name") or existing_guest.get("name")
             merged_guest["email"] = (
                 guest_data.get("email")
@@ -586,7 +588,7 @@ class GuestDatabase:
                     background = ?, profession = ?, motivation = ?, life_experiences = ?, 
                     core_values = ?, faith_practice = ?, beliefs_align = ?, favorite_quote = ?,
                     passionate_topics = ?, message_takeaway = ?, podcast_experience = ?, 
-                    additional_info = ?, following_us = ?, is_processed = ?, email_status = ?,
+                    additional_info = ?, following_us = ?, marketing_opt_in = ?, is_processed = ?, email_status = ?,
                     email_sent_at = ?, skip_reason = ?, original_file_name = ?, original_data = ?,
                     guest_research = ?, guest_research_updated_at = ?, booking_token = ?, booking_token_created_at = ?,
                     booking_override = ?, owner = ?,
@@ -599,8 +601,8 @@ class GuestDatabase:
                 guest_data.get('profession'), guest_data.get('motivation'), guest_data.get('life_experiences'), 
                 guest_data.get('core_values'), guest_data.get('faith'), guest_data.get('alignment'), 
                 guest_data.get('favorite_quote'), guest_data.get('passionate_topics'), guest_data.get('message'), 
-                guest_data.get('experience'), guest_data.get('additional_info'), guest_data.get('has_social_media'), 
-                guest_data.get('is_processed'), guest_data.get('email_status'),
+                guest_data.get('experience'), guest_data.get('additional_info'), guest_data.get('has_social_media'),
+                bool(guest_data.get('marketing_opt_in', False)), guest_data.get('is_processed'), guest_data.get('email_status'),
                 guest_data.get('email_sent_at'), guest_data.get('skip_reason'),
                 guest_data.get('original_file_name'), guest_data.get('original_data'),
                 guest_data.get('guest_research'), guest_data.get('guest_research_updated_at'),
@@ -2161,6 +2163,8 @@ class GuestDatabase:
                 
                 if existing_guest:
                     # Update existing guest while preserving status
+                    if guest_data.get("marketing_opt_in") is None:
+                        guest_data["marketing_opt_in"] = existing_guest.get("marketing_opt_in", False)
                     guest_data['is_processed'] = existing_guest['is_processed']
                     guest_data['email_status'] = existing_guest.get('email_status')
                     guest_data['email_sent_at'] = existing_guest.get('email_sent_at')

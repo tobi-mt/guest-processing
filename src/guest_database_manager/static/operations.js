@@ -1023,6 +1023,28 @@ function renderInterviews(interviews, totalCount) {
     const editorNode = card.querySelector("[data-interview-editor]");
     const reminderPreviewNode = card.querySelector("[data-interview-reminder-preview]");
     const actionFeedbackNode = card.querySelector(".card-action-feedback");
+    let bookingTemplatePreview = null;
+    let reminderTemplatePreview = null;
+
+    const renderTemplatePreview = (preview, kind) => {
+      const select = (preview.variants || []).length
+        ? `<label class="composer-field"><span>Approved tone</span><select data-template-kind="${kind}">${preview.variants.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === preview.variant ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select></label>`
+        : "";
+      reminderPreviewNode.classList.remove("hidden");
+      reminderPreviewNode.innerHTML = `${select}<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p><pre>${escapeHtml(preview.body)}</pre>`;
+      reminderPreviewNode.querySelector("[data-template-kind]")?.addEventListener("change", async (event) => {
+        const selectedKind = event.target.dataset.templateKind;
+        const endpoint = selectedKind === "booking" ? "booking-confirmation-template" : "reminder-template";
+        try {
+          const updated = await fetchJSON(`/api/interviews/${interview.id}/${endpoint}?variant=${encodeURIComponent(event.target.value)}`);
+          if (selectedKind === "booking") bookingTemplatePreview = updated;
+          else reminderTemplatePreview = updated;
+          renderTemplatePreview(updated, selectedKind);
+        } catch (error) {
+          setMessage(interviewMessage, error.message, "error");
+        }
+      });
+    };
 
     editButton.addEventListener("click", () => {
       activeInterviewEditorId = activeInterviewEditorId === interview.id ? null : interview.id;
@@ -1252,12 +1274,8 @@ function renderInterviews(interviews, totalCount) {
         actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         try {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/booking-confirmation-template`);
-          reminderPreviewNode.classList.remove("hidden");
-          reminderPreviewNode.innerHTML = `
-            <h4>${escapeHtml(preview.subject)}</h4>
-            <p>To: ${renderLinkedValue(interview.guest_email)}</p>
-            <pre>${escapeHtml(preview.body)}</pre>
-          `;
+          bookingTemplatePreview = preview;
+          renderTemplatePreview(preview, "booking");
           activeInterviewActionFeedback = { id: interview.id, text: `Booking confirmation preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         } catch (error) {
@@ -1286,7 +1304,7 @@ function renderInterviews(interviews, totalCount) {
         try {
           await fetchJSON(`/api/interviews/${interview.id}/send-booking-confirmation`, {
             method: "POST",
-            body: JSON.stringify({}),
+            body: JSON.stringify(bookingTemplatePreview ? { subject: bookingTemplatePreview.subject, body: bookingTemplatePreview.body } : {}),
           });
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Booking confirmation sent to ${escapeHtml(interview.guest_name || interview.guest_email)}, including the calendar invite.</p>`;
@@ -1314,12 +1332,8 @@ function renderInterviews(interviews, totalCount) {
         actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         try {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/reminder-template`);
-          reminderPreviewNode.classList.remove("hidden");
-          reminderPreviewNode.innerHTML = `
-            <h4>${escapeHtml(preview.subject)}</h4>
-            <p>To: ${renderLinkedValue(interview.guest_email)}</p>
-            <pre>${escapeHtml(preview.body)}</pre>
-          `;
+          reminderTemplatePreview = preview;
+          renderTemplatePreview(preview, "reminder");
           activeInterviewActionFeedback = { id: interview.id, text: `Reminder preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
         } catch (error) {
@@ -1350,7 +1364,7 @@ function renderInterviews(interviews, totalCount) {
         try {
           await fetchJSON(`/api/interviews/${interview.id}/send-reminder`, {
             method: "POST",
-            body: JSON.stringify({}),
+            body: JSON.stringify(reminderTemplatePreview ? { subject: reminderTemplatePreview.subject, body: reminderTemplatePreview.body } : {}),
           });
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Reminder sent to ${escapeHtml(interview.guest_name || interview.guest_email)}.</p>`;

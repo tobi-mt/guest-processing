@@ -966,6 +966,13 @@ function renderInlineEditor(editorNode, guest) {
         Owner
         <input name="owner" type="text" list="dashboard-team-members" value="${escapeHtml(activeGuestEditor.owner)}" placeholder="Assign a configured team member" />
       </label>
+      <label>
+        Newsletter Consent
+        <select name="marketing_opt_in">
+          <option value="false" ${activeGuestEditor.marketing_opt_in ? "" : "selected"}>Not opted in</option>
+          <option value="true" ${activeGuestEditor.marketing_opt_in ? "selected" : ""}>Opted in</option>
+        </select>
+      </label>
       <label class="full-width">
         Social Handles
         <input name="social_handles" type="text" value="${escapeHtml(activeGuestEditor.social_handles)}" />
@@ -1035,6 +1042,7 @@ function renderInlineEditor(editorNode, guest) {
           website: activeGuestEditor.website,
           profession: activeGuestEditor.profession,
           owner: activeGuestEditor.owner,
+          marketing_opt_in: activeGuestEditor.marketing_opt_in,
           social_handles: activeGuestEditor.social_handles,
           background: activeGuestEditor.background,
           passionate_topics: activeGuestEditor.passionate_topics,
@@ -1239,6 +1247,12 @@ function renderGuests(payload) {
           <p class="composer-meta">${guest.email || "No email address"}</p>
         </div>
         <label class="composer-field">
+          <span>Approved tone</span>
+          <select data-composer-variant ${activeEmailComposer.sending ? "disabled" : ""}>
+            ${(activeEmailComposer.variants || []).map((variant) => `<option value="${escapeHtml(variant.id)}" ${variant.id === activeEmailComposer.variant ? "selected" : ""}>${escapeHtml(variant.label)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="composer-field">
           <span>Subject</span>
           <input type="text" data-composer-field="subject" value="${escapeHtml(activeEmailComposer.subject)}" />
         </label>
@@ -1259,6 +1273,19 @@ function renderGuests(payload) {
         field.addEventListener("input", (event) => {
           activeEmailComposer[event.target.dataset.composerField] = event.target.value;
         });
+      });
+      composer.querySelector("[data-composer-variant]")?.addEventListener("change", async (event) => {
+        const variant = event.target.value;
+        try {
+          const template = await fetchTemplate(`/api/guests/${guest.id}/email-template`, { status: activeEmailComposer.status, variant });
+          activeEmailComposer.variant = template.variant;
+          activeEmailComposer.variants = template.variants || [];
+          activeEmailComposer.subject = template.subject || "";
+          activeEmailComposer.body = template.body || "";
+          renderGuests(latestPayload);
+        } catch (error) {
+          setMessage(error.message, "error");
+        }
       });
 
       composer.querySelector("[data-composer-action='cancel']").addEventListener("click", () => {
@@ -1365,6 +1392,7 @@ function renderGuests(payload) {
               website: guest.website || "",
               profession: guest.profession || "",
               owner: guest.owner || "",
+              marketing_opt_in: Boolean(guest.marketing_opt_in),
               social_handles: guest.social_media_handles || "",
               background: guest.background || "",
               passionate_topics: guest.passionate_topics || "",
@@ -1497,6 +1525,8 @@ function renderGuests(payload) {
               status: decision,
               subject: templateData.subject || "",
               body: templateData.body || "",
+              variant: templateData.variant || "",
+              variants: templateData.variants || [],
               sending: false,
               feedback: null,
             };

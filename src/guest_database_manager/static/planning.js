@@ -135,6 +135,7 @@ const EXPORT_FIELD_CONFIG = {
     ["background", "Background"],
     ["passionate_topics", "Passionate Topics"],
     ["email_status", "Decision"],
+    ["marketing_opt_in", "Newsletter Consent"],
     ["original_file_name", "Source"],
     ["date_added", "Date Added"],
   ],

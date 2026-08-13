@@ -1,10 +1,12 @@
 """Transactional outbox reliability tests."""
 
 from threading import Event
+from datetime import datetime, timezone
 
 import pytest
 
 from guest_database_manager.database import GuestDatabase
+from guest_database_manager.email_manager import EmailManager
 from guest_database_manager.web_interface import GuestWebService
 
 
@@ -201,3 +203,17 @@ def test_continuous_worker_starts_processes_and_stops(monkeypatch, temp_db):
 
     assert service._outbox_thread is not None
     assert not service._outbox_thread.is_alive()
+
+
+def test_reviewed_email_template_variants_are_explicit_and_preserve_required_links():
+    manager = EmailManager()
+
+    acceptance = manager.get_acceptance_template("Amina", booking_url="https://example.test/book", variant="concise")
+    reminder = manager.get_interview_reminder_template(
+        "Amina", datetime(2026, 8, 20, 10, tzinfo=timezone.utc), "UTC", "https://example.test/join", variant="concise"
+    )
+
+    assert acceptance["subject"] == "You’re invited to join Mirror Talk Podcast"
+    assert "https://example.test/book" in acceptance["body"]
+    assert "https://example.test/join" in reminder["body"]
+    assert {item["id"] for item in manager.template_variants("accepted")} == {"warm", "concise"}

@@ -183,6 +183,14 @@
                 <option value="No">No</option>
               </select>
             </label>
+            <label>
+              Newsletter Consent
+              <select name="marketing_opt_in">
+                <option value="false">Not opted in</option>
+                <option value="true">Opted in</option>
+              </select>
+              <small>Record consent before adding this guest to a newsletter platform.</small>
+            </label>
             <label class="full-width">
               Background
               <textarea name="background" rows="3"></textarea>
@@ -359,7 +367,7 @@
     </script>
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script
-      src="/static/app.js?v=20260809.2"
+      src="/static/app.js?v=20260813.2"
       defer
       onload="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_loaded?t='+Date.now();})();"
       onerror="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_error?t='+Date.now();})();"

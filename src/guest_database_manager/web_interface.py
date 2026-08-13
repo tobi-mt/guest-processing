@@ -64,6 +64,7 @@ from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCop
 from guest_database_manager.security import LoginRateLimiter, SessionError, SessionSigner, role_allows
 from guest_database_manager.maintenance import build_integrity_report, is_database_ready
 from guest_database_manager.metrics import build_operational_metrics
+from guest_database_manager.partner_intelligence import PartnerIntelligence, PartnerIntelligenceError
 
 # Import new AI assistant features
 try:
@@ -180,6 +181,7 @@ FORM_FIELDS = {
     "additional_info",
     "social_handles",
     "has_social_media",
+    "marketing_opt_in",
 }
 LONG_TEXT_FIELDS = [
     "background",
@@ -314,6 +316,7 @@ EXPORTABLE_FIELDS: Dict[str, list[str]] = {
         "background",
         "passionate_topics",
         "email_status",
+        "marketing_opt_in",
         "original_file_name",
         "date_added",
     ],
@@ -503,6 +506,11 @@ def build_guest_payload(payload: Dict[str, Any], source_name: str = FORM_SOURCE_
     guest_data = {field: _normalize_text(payload.get(field)) for field in FORM_FIELDS}
     guest_data["full_name"] = guest_data["full_name"] or _normalize_text(payload.get("name"))
     guest_data["website"] = _normalize_website(payload.get("website"))
+    guest_data["marketing_opt_in"] = (
+        _is_marketing_opted_in(payload.get("marketing_opt_in"))
+        if "marketing_opt_in" in payload
+        else None
+    )
     guest_data["is_processed"] = False
     guest_data["original_file_name"] = source_name
     guest_data["original_data"] = json.dumps(payload, ensure_ascii=False)
@@ -518,6 +526,13 @@ def build_guest_payload(payload: Dict[str, Any], source_name: str = FORM_SOURCE_
         validate_intake_payload(guest_data)
 
     return guest_data
+
+
+def _is_marketing_opted_in(value: Any) -> bool:
+    """Return true only for an explicit affirmative newsletter consent value."""
+    if isinstance(value, bool):
+        return value
+    return _normalize_text(value).casefold() in {"1", "true", "yes", "y", "on", "opted in", "opt-in"}
 
 
 def _website_host_for_identity(value: Any) -> str:
@@ -678,6 +693,28 @@ class GuestWebService:
 
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
+        self.partner_intelligence = PartnerIntelligence(self.database)
+
+    def list_partner_prospects(self) -> Dict[str, Any]:
+        prospects = self.partner_intelligence.list_prospects()
+        return {"prospects": prospects, "sending_enabled": False}
+
+    def create_partner_prospect(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.create_prospect(payload, actor=actor)
+
+    def add_partner_evidence(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.add_evidence(prospect_id, payload, actor=actor)
+
+    def draft_partner_pitch(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.draft_pitch(prospect_id, actor=actor)
+
+    def review_partner_pitch(self, draft_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.review_draft(
+            draft_id, _normalize_text(payload.get("decision")), actor=actor, reason=_normalize_text(payload.get("reason"))
+        )
+
+    def record_partner_outcome(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.record_outcome(prospect_id, payload, actor=actor)
 
     def start_outbox_worker(self, *, interval_seconds: float = 30.0) -> None:
         """Start one daemon worker that continuously drains due communications."""
@@ -1546,6 +1583,7 @@ class GuestWebService:
             "podcast_experience",
             "additional_info",
             "following_us",
+            "marketing_opt_in",
             "is_processed",
             "email_status",
             "email_sent_at",
@@ -2980,7 +3018,7 @@ class GuestWebService:
         """Send an approval/decline email and persist the resulting decision."""
         return self.send_guest_decision_email_message(guest_id, status, subject="", body="", custom_message=custom_message)
 
-    def get_guest_decision_email_template(self, guest_id: int, status: str) -> Dict[str, str]:
+    def get_guest_decision_email_template(self, guest_id: int, status: str, variant: str = "") -> Dict[str, Any]:
         """Return the default approval/decline email template for dashboard editing."""
         normalized_status = status.strip().lower()
         if normalized_status not in {"accepted", "rejected"}:
@@ -2994,12 +3032,20 @@ class GuestWebService:
         email_manager = self._build_email_manager()
 
         if normalized_status == "accepted":
-            return email_manager.get_acceptance_template(
-                guest_name,
-                booking_url=self._booking_link_for_guest(guest_id),
-            )
-
-        return email_manager.get_rejection_template(guest_name)
+            acceptance_kwargs = {"booking_url": self._booking_link_for_guest(guest_id)}
+            if variant:
+                acceptance_kwargs["variant"] = variant
+            try:
+                template = email_manager.get_acceptance_template(guest_name, **acceptance_kwargs)
+            except ValueError as exc:
+                raise WebInterfaceError(str(exc)) from exc
+        else:
+            try:
+                template = email_manager.get_rejection_template(guest_name, **({"variant": variant} if variant else {}))
+            except ValueError as exc:
+                raise WebInterfaceError(str(exc)) from exc
+        variants = email_manager.template_variants(normalized_status) if hasattr(email_manager, "template_variants") else []
+        return {**template, "variant": variant or ("warm" if normalized_status == "accepted" else "considered"), "variants": variants}
 
     def send_guest_decision_email_message(
         self,
@@ -3112,6 +3158,11 @@ class GuestWebService:
             "experience": _normalize_text(payload.get("experience")) or _normalize_text(current.get("podcast_experience")),
             "additional_info": _normalize_text(payload.get("additional_info")) or _normalize_text(current.get("additional_info")),
             "has_social_media": _normalize_text(payload.get("has_social_media")) or _normalize_text(current.get("following_us")),
+            "marketing_opt_in": (
+                _is_marketing_opted_in(payload.get("marketing_opt_in"))
+                if "marketing_opt_in" in payload
+                else bool(current.get("marketing_opt_in"))
+            ),
             "is_processed": current.get("is_processed"),
             "email_status": current.get("email_status"),
             "email_sent_at": current.get("email_sent_at"),
@@ -4814,7 +4865,7 @@ class GuestWebService:
 
         return sorted(interviews, key=sort_key)
 
-    def preview_interview_reminder(self, interview_id: int) -> Dict[str, Any]:
+    def preview_interview_reminder(self, interview_id: int, variant: str = "") -> Dict[str, Any]:
         """Return the reminder email template for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -4829,16 +4880,22 @@ class GuestWebService:
         join_url = _normalize_text(interview.get("join_url"))
 
         email_manager = self._build_email_manager()
-        template = email_manager.get_interview_reminder_template(
-            guest_name=guest_name,
-            scheduled_for=scheduled_for,
-            timezone_label=timezone_label,
-            join_url=join_url,
-        )
+        reminder_kwargs = {
+            "guest_name": guest_name, "scheduled_for": scheduled_for,
+            "timezone_label": timezone_label, "join_url": join_url,
+        }
+        if variant:
+            reminder_kwargs["variant"] = variant
+        try:
+            template = email_manager.get_interview_reminder_template(**reminder_kwargs)
+        except ValueError as exc:
+            raise WebInterfaceError(str(exc)) from exc
         return {
             "interview": self._serialize_interview_reminder(interview),
             "subject": template["subject"],
             "body": template["body"],
+            "variant": variant or "gentle",
+            "variants": email_manager.template_variants("reminder") if hasattr(email_manager, "template_variants") else [],
         }
 
     def preview_interview_cancellation(self, interview_id: int) -> Dict[str, Any]:
@@ -4884,7 +4941,7 @@ class GuestWebService:
             "body": template["body"],
         }
 
-    def preview_interview_booking_confirmation(self, interview_id: int) -> Dict[str, Any]:
+    def preview_interview_booking_confirmation(self, interview_id: int, variant: str = "") -> Dict[str, Any]:
         """Return the booking confirmation email template for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -4902,16 +4959,22 @@ class GuestWebService:
         join_url = _normalize_text(interview.get("join_url")) or self._booking_join_url()
 
         email_manager = self._build_email_manager()
-        template = email_manager.get_booking_confirmation_template(
-            guest_name=guest_name,
-            scheduled_for=scheduled_for,
-            timezone_label=timezone_label,
-            join_url=join_url,
-        )
+        confirmation_kwargs = {
+            "guest_name": guest_name, "scheduled_for": scheduled_for,
+            "timezone_label": timezone_label, "join_url": join_url,
+        }
+        if variant:
+            confirmation_kwargs["variant"] = variant
+        try:
+            template = email_manager.get_booking_confirmation_template(**confirmation_kwargs)
+        except ValueError as exc:
+            raise WebInterfaceError(str(exc)) from exc
         return {
             "interview": self._serialize_interview_reminder(interview),
             "subject": template["subject"],
             "body": template["body"],
+            "variant": variant or "warm",
+            "variants": email_manager.template_variants("booking_confirmation") if hasattr(email_manager, "template_variants") else [],
         }
 
     def preview_interview_reschedule_link(self, interview_id: int) -> Dict[str, Any]:
@@ -5844,7 +5907,10 @@ class GuestWebService:
         effect_id = applications[0]["id"] if applications else guest.get("id") or guest_email
         try:
             email_manager.send_intake_confirmation_email(
-                guest_name, guest_email, idempotency_key=f"intake_confirmation:{effect_id}"
+                guest_name,
+                guest_email,
+                intake_submission=guest,
+                idempotency_key=f"intake_confirmation:{effect_id}",
             )
         except Exception:
             return
@@ -6426,6 +6492,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._serve_static("operations.html", set_session_cookie=True)
             return
 
+        if request_path in {"/partners", "/partners.html"}:
+            if not self._is_authorized_dashboard_request():
+                self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
+                return
+            self._serve_static("partners.html", set_session_cookie=True)
+            return
+
         if request_path in {"/planning", "/planning.html"}:
             if not self._is_authorized_dashboard_request():
                 self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
@@ -6555,6 +6628,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, self.service.list_operations())
             return
 
+        if request_path == "/api/partners":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.list_partner_prospects())
+            return
+
         if request_path == "/api/availability":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -6617,7 +6697,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                payload = self.service.preview_interview_reminder(interview_id)
+                payload = self.service.preview_interview_reminder(interview_id, self._query_params(self.path).get("variant", ""))
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -6636,7 +6716,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                payload = self.service.preview_interview_booking_confirmation(interview_id)
+                payload = self.service.preview_interview_booking_confirmation(interview_id, self._query_params(self.path).get("variant", ""))
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -6940,6 +7020,78 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(HTTPStatus.CREATED, guest)
+            return
+
+        if self.path == "/api/partners":
+            payload = self._read_json_payload()
+            try:
+                result = self.service.create_partner_prospect(
+                    payload, actor=str((self._session_claims() or {}).get("sub") or "operator")
+                )
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.CREATED, result)
+            return
+
+        if self.path.startswith("/api/partners/") and self.path.endswith("/evidence"):
+            prospect_id = self._extract_record_id(self.path.removesuffix("/evidence"), "/api/partners/")
+            if prospect_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid prospect id"})
+                return
+            try:
+                result = self.service.add_partner_evidence(
+                    prospect_id, self._read_json_payload(), actor=str((self._session_claims() or {}).get("sub") or "operator")
+                )
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partners/") and self.path.endswith("/draft"):
+            prospect_id = self._extract_record_id(self.path.removesuffix("/draft"), "/api/partners/")
+            if prospect_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid prospect id"})
+                return
+            try:
+                result = self.service.draft_partner_pitch(
+                    prospect_id, actor=str((self._session_claims() or {}).get("sub") or "operator")
+                )
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partner-pitches/") and self.path.endswith("/review"):
+            draft_id = self._extract_record_id(self.path.removesuffix("/review"), "/api/partner-pitches/")
+            if draft_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid pitch draft id"})
+                return
+            try:
+                result = self.service.review_partner_pitch(
+                    draft_id, self._read_json_payload(), actor=str((self._session_claims() or {}).get("sub") or "operator")
+                )
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partners/") and self.path.endswith("/outcomes"):
+            prospect_id = self._extract_record_id(self.path.removesuffix("/outcomes"), "/api/partners/")
+            if prospect_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid prospect id"})
+                return
+            try:
+                result = self.service.record_partner_outcome(
+                    prospect_id, self._read_json_payload(), actor=str((self._session_claims() or {}).get("sub") or "operator")
+                )
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
             return
 
         if self.path == "/api/identity-merge":
@@ -7426,7 +7578,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             payload = self._read_json_payload()
             try:
-                template = self.service.get_guest_decision_email_template(guest_id, payload.get("status", ""))
+                template = self.service.get_guest_decision_email_template(guest_id, payload.get("status", ""), payload.get("variant", ""))
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return

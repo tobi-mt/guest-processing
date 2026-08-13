@@ -45,6 +45,7 @@ class SchemaManager:
             -- Engagement
             following_us TEXT,
             following_status TEXT,
+            marketing_opt_in BOOLEAN NOT NULL DEFAULT 0,
             
             -- System fields
             is_processed BOOLEAN DEFAULT 0,
@@ -563,6 +564,89 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_014_partner_intelligence(conn: sqlite3.Connection) -> None:
+        """Create the isolated, review-first partner intelligence data boundary."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS partner_prospects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organisation_name TEXT NOT NULL,
+                website TEXT,
+                contact_name TEXT,
+                contact_email TEXT,
+                partner_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'research'
+                    CHECK (status IN ('research', 'draft', 'approved', 'rejected', 'contacted', 'responded', 'booked', 'suppressed')),
+                research_summary TEXT NOT NULL DEFAULT '',
+                fit_score INTEGER NOT NULL DEFAULT 0 CHECK (fit_score BETWEEN 0 AND 100),
+                score_json TEXT NOT NULL DEFAULT '{}',
+                row_version INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS partner_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prospect_id INTEGER NOT NULL,
+                source_url TEXT NOT NULL,
+                source_title TEXT NOT NULL,
+                published_at TEXT,
+                collected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                fact_text TEXT NOT NULL,
+                source_hash TEXT NOT NULL,
+                UNIQUE(prospect_id, source_url, source_hash),
+                FOREIGN KEY (prospect_id) REFERENCES partner_prospects(id) ON DELETE CASCADE
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS partner_pitch_drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prospect_id INTEGER NOT NULL,
+                version INTEGER NOT NULL,
+                subject TEXT NOT NULL,
+                body TEXT NOT NULL,
+                evidence_ids_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'rejected', 'retired')),
+                generated_by TEXT NOT NULL DEFAULT 'system',
+                review_reason TEXT,
+                approved_by TEXT,
+                approved_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(prospect_id, version),
+                FOREIGN KEY (prospect_id) REFERENCES partner_prospects(id) ON DELETE CASCADE
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS partner_outreach_outcomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prospect_id INTEGER NOT NULL,
+                pitch_draft_id INTEGER,
+                outcome TEXT NOT NULL CHECK (outcome IN ('handed_off', 'contacted', 'replied', 'meeting', 'booked', 'declined', 'opted_out')),
+                notes TEXT,
+                actor TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (prospect_id) REFERENCES partner_prospects(id) ON DELETE CASCADE,
+                FOREIGN KEY (pitch_draft_id) REFERENCES partner_pitch_drafts(id) ON DELETE SET NULL
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS partner_suppressions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                normalized_contact TEXT NOT NULL UNIQUE,
+                reason TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_prospects_status ON partner_prospects(status, fit_score DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_evidence_prospect ON partner_evidence(prospect_id, collected_at DESC)")
+
+    @staticmethod
+    def _migration_015_marketing_opt_in(conn: sqlite3.Connection) -> None:
+        """Add an explicit, safe-by-default newsletter consent flag."""
+        SchemaManager._add_column_if_missing(conn, "guests", "marketing_opt_in", "BOOLEAN NOT NULL DEFAULT 0")
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -581,6 +665,8 @@ class SchemaManager:
             (11, "booking_availability", SchemaManager._migration_011_booking_availability),
             (12, "booking_blackouts", SchemaManager._migration_012_booking_blackouts),
             (13, "ai_analysis_cache", SchemaManager._migration_013_ai_analysis_cache),
+            (14, "partner_intelligence", SchemaManager._migration_014_partner_intelligence),
+            (15, "marketing_opt_in", SchemaManager._migration_015_marketing_opt_in),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

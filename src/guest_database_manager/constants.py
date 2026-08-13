@@ -45,6 +45,10 @@ COLUMN_MAPPINGS: Dict[str, List[str]] = {
         "Kindly list your active social media handles?", "social_handles", 
         "Social handles", "Active social media"
     ],
+    "marketing_opt_in": [
+        "marketing_opt_in", "Marketing Opt In", "Marketing Consent", "Newsletter Consent",
+        "Newsletter Opt In", "Newsletter Opt-In", "Email Marketing Consent",
+    ],
     
     # Location & Business
     "location": [
@@ -161,6 +165,7 @@ DB_COLUMN_MAP: Dict[str, str] = {
     "experience": "podcast_experience",
     "additional_info": "additional_info",
     "has_social_media": "following_us",
+    "marketing_opt_in": "marketing_opt_in",
 }
 
 # Email templates
