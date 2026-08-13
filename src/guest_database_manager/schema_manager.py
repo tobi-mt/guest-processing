@@ -642,6 +642,25 @@ class SchemaManager:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_evidence_prospect ON partner_evidence(prospect_id, collected_at DESC)")
 
     @staticmethod
+    def _migration_016_partner_contact_research(conn: sqlite3.Connection) -> None:
+        """Store source-backed contact context separately from organisation evidence."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS partner_contact_research (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prospect_id INTEGER NOT NULL,
+                contact_name TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                source_title TEXT NOT NULL,
+                fact_text TEXT NOT NULL,
+                collected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                source_hash TEXT NOT NULL,
+                UNIQUE(prospect_id, contact_name, source_url, source_hash),
+                FOREIGN KEY (prospect_id) REFERENCES partner_prospects(id) ON DELETE CASCADE
+            )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_contact_research_prospect ON partner_contact_research(prospect_id, collected_at DESC)")
+
+    @staticmethod
     def _migration_015_marketing_opt_in(conn: sqlite3.Connection) -> None:
         """Add an explicit, safe-by-default newsletter consent flag."""
         SchemaManager._add_column_if_missing(conn, "guests", "marketing_opt_in", "BOOLEAN NOT NULL DEFAULT 0")
@@ -667,6 +686,7 @@ class SchemaManager:
             (13, "ai_analysis_cache", SchemaManager._migration_013_ai_analysis_cache),
             (14, "partner_intelligence", SchemaManager._migration_014_partner_intelligence),
             (15, "marketing_opt_in", SchemaManager._migration_015_marketing_opt_in),
+            (16, "partner_contact_research", SchemaManager._migration_016_partner_contact_research),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

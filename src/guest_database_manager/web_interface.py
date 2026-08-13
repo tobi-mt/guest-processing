@@ -65,6 +65,7 @@ from guest_database_manager.security import LoginRateLimiter, SessionError, Sess
 from guest_database_manager.maintenance import build_integrity_report, is_database_ready
 from guest_database_manager.metrics import build_operational_metrics
 from guest_database_manager.partner_intelligence import PartnerIntelligence, PartnerIntelligenceError
+from guest_database_manager.partner_discovery import curated_signals
 
 # Import new AI assistant features
 try:
@@ -699,11 +700,33 @@ class GuestWebService:
         prospects = self.partner_intelligence.list_prospects()
         return {"prospects": prospects, "sending_enabled": False}
 
+    def list_partner_suggestions(self) -> Dict[str, Any]:
+        return {"suggestions": curated_signals(), "generated_at": datetime.now(timezone.utc).isoformat(), "auto_contact": False}
+
+    def import_partner_suggestion(self, index: int, *, actor: str) -> Dict[str, Any]:
+        suggestions = curated_signals()
+        if index < 0 or index >= len(suggestions):
+            raise PartnerIntelligenceError("Unknown partner suggestion.")
+        suggestion = suggestions[index]
+        if any(
+            _normalize_text(item.get("organisation_name")).casefold()
+            == _normalize_text(suggestion["organisation_name"]).casefold()
+            for item in self.partner_intelligence.list_prospects()
+        ):
+            raise PartnerIntelligenceError("This suggestion has already been imported for review.")
+        prospect = self.partner_intelligence.create_prospect(suggestion, actor=actor)
+        for evidence in suggestion["evidence"]:
+            self.partner_intelligence.add_evidence(int(prospect["id"]), evidence, actor=actor)
+        return self.partner_intelligence.get_prospect(int(prospect["id"])) or {}
+
     def create_partner_prospect(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         return self.partner_intelligence.create_prospect(payload, actor=actor)
 
     def add_partner_evidence(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         return self.partner_intelligence.add_evidence(prospect_id, payload, actor=actor)
+
+    def add_partner_contact_research(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.add_contact_research(prospect_id, payload, actor=actor)
 
     def draft_partner_pitch(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
         return self.partner_intelligence.draft_pitch(prospect_id, actor=actor)
@@ -6635,6 +6658,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, self.service.list_partner_prospects())
             return
 
+        if request_path == "/api/partners/suggestions":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.list_partner_suggestions())
+            return
+
         if request_path == "/api/availability":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -7034,6 +7064,18 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.CREATED, result)
             return
 
+        if self.path.startswith("/api/partners/suggestions/") and self.path.endswith("/import"):
+            value = self.path.removesuffix("/import").removeprefix("/api/partners/suggestions/")
+            try:
+                result = self.service.import_partner_suggestion(
+                    int(value), actor=str((self._session_claims() or {}).get("sub") or "operator")
+                )
+            except (ValueError, PartnerIntelligenceError) as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.CREATED, result)
+            return
+
         if self.path.startswith("/api/partners/") and self.path.endswith("/evidence"):
             prospect_id = self._extract_record_id(self.path.removesuffix("/evidence"), "/api/partners/")
             if prospect_id is None:
@@ -7041,6 +7083,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
             try:
                 result = self.service.add_partner_evidence(
+                    prospect_id, self._read_json_payload(), actor=str((self._session_claims() or {}).get("sub") or "operator")
+                )
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partners/") and self.path.endswith("/contact-research"):
+            prospect_id = self._extract_record_id(self.path.removesuffix("/contact-research"), "/api/partners/")
+            if prospect_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid prospect id"})
+                return
+            try:
+                result = self.service.add_partner_contact_research(
                     prospect_id, self._read_json_payload(), actor=str((self._session_claims() or {}).get("sub") or "operator")
                 )
             except PartnerIntelligenceError as exc:

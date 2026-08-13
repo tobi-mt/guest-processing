@@ -126,6 +126,9 @@ class PartnerIntelligence:
             prospect["drafts"] = [dict(item) for item in conn.execute(
                 "SELECT * FROM partner_pitch_drafts WHERE prospect_id = ? ORDER BY version DESC", (prospect_id,)
             ).fetchall()]
+            prospect["contact_research"] = [dict(item) for item in conn.execute(
+                "SELECT * FROM partner_contact_research WHERE prospect_id = ? ORDER BY collected_at DESC, id DESC", (prospect_id,)
+            ).fetchall()]
             return prospect
 
     def list_prospects(self) -> List[Dict[str, Any]]:
@@ -166,6 +169,30 @@ class PartnerIntelligence:
             conn.commit()
         return self.get_prospect(prospect_id) or {}
 
+    def add_contact_research(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        """Record an attributable public fact about the intended recipient only."""
+        prospect = self.get_prospect(prospect_id)
+        if not prospect:
+            raise PartnerIntelligenceError("Prospect not found.")
+        name = _text(payload.get("contact_name"))
+        if not name or name.casefold() != _text(prospect.get("contact_name")).casefold():
+            raise PartnerIntelligenceError("Contact research must match the named prospect contact.")
+        fact = _text(payload.get("fact_text"))
+        if len(fact) < 20:
+            raise PartnerIntelligenceError("Contact research needs a concise public factual summary.")
+        url = _safe_url(payload.get("source_url"))
+        digest = hashlib.sha256(f"{name}|{url}|{fact}".encode()).hexdigest()
+        with self.database._connect() as conn:
+            conn.execute("""INSERT OR IGNORE INTO partner_contact_research
+                         (prospect_id, contact_name, source_url, source_title, fact_text, source_hash)
+                         VALUES (?, ?, ?, ?, ?, ?)""",
+                         (prospect_id, name, url, _text(payload.get("source_title")) or url, fact, digest))
+            self.database._append_audit_event_conn(conn, entity_type="partner_prospect", entity_id=prospect_id,
+                event_type="contact_research_added", actor=actor, source="partner_intelligence", before=None,
+                after={"contact_name": name, "source_url": url})
+            conn.commit()
+        return self.get_prospect(prospect_id) or {}
+
     def draft_pitch(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
         prospect = self.get_prospect(prospect_id)
         if not prospect:
@@ -176,12 +203,18 @@ class PartnerIntelligence:
             raise PartnerIntelligenceError("At least two independent public sources are required before drafting a pitch.")
         if prospect["fit_score"] < 50:
             raise PartnerIntelligenceError("This prospect needs a stronger, source-backed fit before drafting.")
+        contact_name = _text(prospect.get("contact_name"))
+        contact_research = prospect["contact_research"]
+        if contact_name and not contact_research:
+            raise PartnerIntelligenceError("Add source-backed public research about the named contact before personalizing a pitch.")
         factual_hook = _text(evidence[0]["fact_text"]).rstrip(".")
+        recipient_hook = _text(contact_research[0]["fact_text"]).rstrip(".") if contact_research else ""
         themes = "faith, resilience, purpose, relationships, healing, and personal growth"
         subject = f"A thoughtful Mirror Talk conversation on {prospect['organisation_name']}’s work"
         body = (
-            f"Hello {prospect.get('contact_name') or 'there'},\n\n"
+            f"Hello {contact_name or 'there'},\n\n"
             f"I came across {prospect['organisation_name']}’s work and noted that {factual_hook}.\n\n"
+        ) + (f"I also saw that {recipient_hook}.\n\n" if recipient_hook else "") + (
             f"Mirror Talk: Soulful Conversations creates thoughtful conversations around {themes}. "
             "We believe there may be an audience-first conversation here that gives listeners practical clarity while allowing your work to be understood in depth.\n\n"
             "Would you be open to exploring a 30–45 minute conversation focused on the human problem your work addresses, what is timely now, and the insight you most want people to carry forward?\n\n"
@@ -196,7 +229,7 @@ class PartnerIntelligence:
             conn.execute("UPDATE partner_prospects SET status = 'draft', updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1 WHERE id = ?", (prospect_id,))
             self.database._append_audit_event_conn(conn, entity_type="partner_pitch", entity_id=draft_id,
                 event_type="pitch_drafted", actor=actor, source="partner_intelligence", before=None,
-                after={"prospect_id": prospect_id, "evidence_ids": [item["id"] for item in evidence]})
+                after={"prospect_id": prospect_id, "evidence_ids": [item["id"] for item in evidence], "contact_research_ids": [item["id"] for item in contact_research]})
             conn.commit()
         return self.get_prospect(prospect_id) or {}
 
