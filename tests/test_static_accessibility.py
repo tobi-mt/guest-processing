@@ -9,7 +9,7 @@ import pytest
 
 
 STATIC_ROOT = Path(__file__).parents[1] / "src" / "guest_database_manager" / "static"
-WORKSPACES = ("index.html", "operations.html", "planning.html")
+WORKSPACES = ("index.html", "operations.html", "planning.html", "booking.html")
 
 
 def _strip_markup(value: str) -> str:
@@ -89,6 +89,13 @@ def test_accessibility_media_preferences_are_supported() -> None:
 
     assert "prefers-reduced-motion: reduce" in styles
     assert "forced-colors: active" in styles
+
+
+def test_booking_confirmation_form_stays_hidden_after_a_booking_is_found() -> None:
+    styles = (STATIC_ROOT / "booking.css").read_text(encoding="utf-8")
+
+    assert ".booking-form.hidden" in styles
+    assert re.search(r"\.booking-form\.hidden\s*\{\s*display:\s*none", styles)
 
 
 def test_workspace_heroes_use_compact_responsive_stats_layouts() -> None:

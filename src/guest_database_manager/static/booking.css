@@ -567,6 +567,12 @@ body {
   gap: 16px;
 }
 
+/* Keep the confirmation controls out of view after an existing booking is found.
+   This selector must win over .booking-form's display:grid rule above. */
+.booking-form.hidden {
+  display: none;
+}
+
 .form-step-heading {
   margin-bottom: 2px;
 }
