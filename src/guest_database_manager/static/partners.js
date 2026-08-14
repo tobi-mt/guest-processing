@@ -15,5 +15,5 @@
   }
   $('#suggestions').addEventListener('click', async (event) => { const button = event.target.closest('[data-import]'); if (!button) return; try { button.disabled = true; await request(`/api/partners/suggestions/${button.dataset.import}/import`, {method:'POST', body:'{}'}); $('#message').textContent = 'Suggestion imported for review.'; await load(); } catch (error) { $('#message').textContent = error.message; button.disabled = false; } });
   $('#prospect-form').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); try { await request('/api/partners', {method:'POST', body:JSON.stringify(Object.fromEntries(form))}); $('#message').textContent = 'Research record created.'; event.currentTarget.reset(); await load(); } catch (error) { $('#message').textContent = error.message; } });
-  load().catch((error) => { $('#prospects').textContent = error.message; });
+  load().catch((error) => { $('#suggestions').textContent = `Could not load research suggestions: ${error.message}`; $('#prospects').textContent = `Could not load prospects: ${error.message}`; });
 })();
