@@ -56,6 +56,13 @@ def test_review_gate_blocks_handoff_until_approved(intelligence: PartnerIntellig
     assert "Ava leads Hope Press" in drafted["drafts"][0]["body"]
 
 
+def test_contact_can_be_added_after_imported_research(intelligence: PartnerIntelligence):
+    prospect = intelligence.create_prospect({"organisation_name": "New Partner", "website": "https://new.example", "partner_type": "wellbeing"}, actor="tester")
+    updated = intelligence.set_contact(prospect["id"], {"contact_name": "Jordan", "contact_email": "jordan@new.example"}, actor="tester")
+    assert updated["contact_name"] == "Jordan"
+    assert updated["contact_email"] == "jordan@new.example"
+
+
 def test_opt_out_creates_suppression_and_audit_event(intelligence: PartnerIntelligence):
     prospect = _prospect(intelligence)
     result = intelligence.record_outcome(prospect["id"], {"outcome": "opted_out", "notes": "Requested no future contact"}, actor="editor")

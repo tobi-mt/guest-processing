@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from guest_database_manager.database import GuestDatabase
+from guest_database_manager.guest_research import research_guest_from_google_search
 
 
 class PartnerIntelligenceError(ValueError):
@@ -129,6 +130,14 @@ class PartnerIntelligence:
             prospect["contact_research"] = [dict(item) for item in conn.execute(
                 "SELECT * FROM partner_contact_research WHERE prospect_id = ? ORDER BY collected_at DESC, id DESC", (prospect_id,)
             ).fetchall()]
+            domains = {urlparse(item["source_url"]).netloc.casefold() for item in prospect["evidence"]}
+            prospect["readiness"] = {
+                "independent_source_domains": len(domains),
+                "needs_independent_source": len(domains) < 2,
+                "needs_contact": not bool(_text(prospect.get("contact_name"))),
+                "needs_contact_research": bool(_text(prospect.get("contact_name"))) and not prospect["contact_research"],
+                "pitch_ready": len(domains) >= 2 and bool(prospect["contact_research"] or not _text(prospect.get("contact_name"))),
+            }
             return prospect
 
     def list_prospects(self) -> List[Dict[str, Any]]:
@@ -136,6 +145,25 @@ class PartnerIntelligence:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM partner_prospects ORDER BY fit_score DESC, updated_at DESC, id DESC").fetchall()
         return [self.get_prospect(int(row["id"])) for row in rows if row]
+
+    def set_contact(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        prospect = self.get_prospect(prospect_id)
+        if not prospect:
+            raise PartnerIntelligenceError("Prospect not found.")
+        name, email = _text(payload.get("contact_name")), _text(payload.get("contact_email"))
+        if not name or "@" not in email:
+            raise PartnerIntelligenceError("A contact name and valid email address are required.")
+        if _normalise_contact(email) != _normalise_contact(prospect.get("contact_email")):
+            with self.database._connect() as conn:
+                if conn.execute("SELECT 1 FROM partner_suppressions WHERE normalized_contact = ?", (_normalise_contact(email),)).fetchone():
+                    raise PartnerIntelligenceError("This contact has opted out and cannot be used for outreach.")
+        with self.database._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            before = dict(conn.execute("SELECT * FROM partner_prospects WHERE id = ?", (prospect_id,)).fetchone())
+            conn.execute("UPDATE partner_prospects SET contact_name = ?, contact_email = ?, updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1 WHERE id = ?", (name, email, prospect_id))
+            self.database._append_audit_event_conn(conn, entity_type="partner_prospect", entity_id=prospect_id, event_type="contact_set", actor=actor, source="partner_intelligence", before=before, after={"contact_name": name, "contact_email": email})
+            conn.commit()
+        return self.get_prospect(prospect_id) or {}
 
     def add_evidence(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         prospect = self.get_prospect(prospect_id)
@@ -192,6 +220,21 @@ class PartnerIntelligence:
                 after={"contact_name": name, "source_url": url})
             conn.commit()
         return self.get_prospect(prospect_id) or {}
+
+    def research_contact_from_public_web(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
+        """Collect public, attributable context for the chosen recipient on demand."""
+        prospect = self.get_prospect(prospect_id)
+        if not prospect or not _text(prospect.get("contact_name")):
+            raise PartnerIntelligenceError("Set the intended contact before researching them.")
+        try:
+            research = research_guest_from_google_search({"full_name": prospect["contact_name"], "website": prospect.get("website", "")})
+        except ValueError as exc:
+            raise PartnerIntelligenceError(f"Contact research could not find a reliable public source: {exc}") from exc
+        source = next((item for item in research.get("sources", []) if item.get("url")), None)
+        fact = _text(research.get("summary")) or _text((research.get("evidence") or [""])[0])
+        if not source or len(fact) < 20:
+            raise PartnerIntelligenceError("Contact research did not produce a usable public factual summary.")
+        return self.add_contact_research(prospect_id, {"contact_name": prospect["contact_name"], "source_url": source["url"], "source_title": source.get("title") or source["url"], "fact_text": fact}, actor=actor)
 
     def draft_pitch(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
         prospect = self.get_prospect(prospect_id)

@@ -725,8 +725,14 @@ class GuestWebService:
     def add_partner_evidence(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         return self.partner_intelligence.add_evidence(prospect_id, payload, actor=actor)
 
+    def set_partner_contact(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.set_contact(prospect_id, payload, actor=actor)
+
     def add_partner_contact_research(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         return self.partner_intelligence.add_contact_research(prospect_id, payload, actor=actor)
+
+    def research_partner_contact(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.research_contact_from_public_web(prospect_id, actor=actor)
 
     def draft_partner_pitch(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
         return self.partner_intelligence.draft_pitch(prospect_id, actor=actor)
@@ -7091,6 +7097,19 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, result)
             return
 
+        if self.path.startswith("/api/partners/") and self.path.endswith("/contact"):
+            prospect_id = self._extract_record_id(self.path.removesuffix("/contact"), "/api/partners/")
+            if prospect_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid prospect id"})
+                return
+            try:
+                result = self.service.set_partner_contact(prospect_id, self._read_json_payload(), actor=str((self._session_claims() or {}).get("sub") or "operator"))
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
         if self.path.startswith("/api/partners/") and self.path.endswith("/contact-research"):
             prospect_id = self._extract_record_id(self.path.removesuffix("/contact-research"), "/api/partners/")
             if prospect_id is None:
@@ -7100,6 +7119,19 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 result = self.service.add_partner_contact_research(
                     prospect_id, self._read_json_payload(), actor=str((self._session_claims() or {}).get("sub") or "operator")
                 )
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partners/") and self.path.endswith("/research-contact"):
+            prospect_id = self._extract_record_id(self.path.removesuffix("/research-contact"), "/api/partners/")
+            if prospect_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid prospect id"})
+                return
+            try:
+                result = self.service.research_partner_contact(prospect_id, actor=str((self._session_claims() or {}).get("sub") or "operator"))
             except PartnerIntelligenceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
