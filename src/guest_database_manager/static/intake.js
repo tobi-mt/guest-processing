@@ -330,23 +330,39 @@ function validateFields(fields) {
     if ((field.hasAttribute("required") || isConditionallyRequired) && !trimmedValue) {
       const fieldLabel = getFieldLabel(field);
       setMessage(`Please complete ${fieldLabel} before continuing.`, "error");
-      field.classList.add("field-error");
-      field.focus({ preventScroll: true });
-      field.scrollIntoView({ behavior: "smooth", block: "center" });
+      showFieldValidation(field);
       return false;
     }
 
     if (trimmedValue && !field.checkValidity()) {
       const fieldLabel = getFieldLabel(field);
       setMessage(`Please enter a valid ${fieldLabel} before continuing.`, "error");
-      field.classList.add("field-error");
-      field.focus({ preventScroll: true });
-      field.scrollIntoView({ behavior: "smooth", block: "center" });
+      showFieldValidation(field);
       return false;
     }
   }
 
   return true;
+}
+
+function showFieldValidation(field, customMessage = "") {
+  field.classList.add("field-error");
+
+  // The form uses novalidate so it can tailor conditional requirements. Invoke
+  // the browser's validation UI explicitly: a message below a long form is too
+  // easy to miss and made Continue look unresponsive on smaller screens.
+  if (customMessage && typeof field.setCustomValidity === "function") {
+    field.setCustomValidity(customMessage);
+  }
+  if (typeof field.reportValidity === "function") {
+    field.reportValidity();
+  } else {
+    field.focus();
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  if (customMessage && typeof field.setCustomValidity === "function") {
+    field.setCustomValidity("");
+  }
 }
 
 function getFieldLabel(field) {
@@ -372,8 +388,9 @@ function validateCurrentStep() {
   }
 
   if (isSelfApplicationMode() && selfAttestationField && !selfAttestationField.checked) {
-    setMessage("Please confirm that you are the guest applying for yourself before continuing.", "error");
-    selfAttestationField.focus({ preventScroll: true });
+    const errorText = "Please confirm that you are the guest applying for yourself before continuing.";
+    setMessage(errorText, "error");
+    showFieldValidation(selfAttestationField, errorText);
     return false;
   }
 
@@ -388,9 +405,9 @@ function validateCurrentStep() {
     if (!hasWebsite && !hasSocial) {
       setMessage("Please share at least a website or one social/public profile so we can verify and understand your public voice.", "error");
       const focusTarget = getSocialPresenceFocusTarget();
-      focusTarget?.classList.add("field-error");
-      focusTarget?.focus({ preventScroll: true });
-      focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (focusTarget) {
+        showFieldValidation(focusTarget, "Please provide a website or social/public profile.");
+      }
       return false;
     }
 
@@ -426,9 +443,9 @@ function validateEntireForm() {
         syncStepUI();
         setMessage("Please share at least a website or one social/public profile so we can verify and understand your public voice.", "error");
         const focusTarget = getSocialPresenceFocusTarget();
-        focusTarget?.classList.add("field-error");
-        focusTarget?.focus({ preventScroll: true });
-        focusTarget?.scrollIntoView({ behavior: "smooth", block: "center" });
+        if (focusTarget) {
+          showFieldValidation(focusTarget, "Please provide a website or social/public profile.");
+        }
         return false;
       }
 

@@ -98,6 +98,16 @@ def test_booking_confirmation_form_stays_hidden_after_a_booking_is_found() -> No
     assert re.search(r"\.booking-form\.hidden\s*\{\s*display:\s*none", styles)
 
 
+def test_intake_continue_uses_immediate_browser_validation_feedback() -> None:
+    """Validation failures must not look like an unresponsive Continue button."""
+    javascript = (STATIC_ROOT / "intake.js").read_text(encoding="utf-8")
+
+    assert "function showFieldValidation(field, customMessage = \"\")" in javascript
+    assert "field.reportValidity();" in javascript
+    assert "showFieldValidation(selfAttestationField, errorText);" in javascript
+    assert 'intake.js?v=20260817.1' in (STATIC_ROOT / "intake.html").read_text(encoding="utf-8")
+
+
 def test_workspace_heroes_use_compact_responsive_stats_layouts() -> None:
     dashboard = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
     operations = (STATIC_ROOT / "operations.html").read_text(encoding="utf-8")
