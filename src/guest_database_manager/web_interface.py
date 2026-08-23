@@ -26,7 +26,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -3083,6 +3083,7 @@ class GuestWebService:
         subject: str = "",
         body: str = "",
         custom_message: str = "",
+        additional_recipients: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """Send an approval/decline email and persist the resulting decision."""
         normalized_status = status.strip().lower()
@@ -3097,6 +3098,8 @@ class GuestWebService:
         if not guest_email:
             raise WebInterfaceError("This guest does not have an email address.")
 
+        recipients = self._resolve_email_recipients(guest_email, additional_recipients)
+
         email_manager = self._build_email_manager()
         if not email_manager.is_configured():
             raise WebInterfaceError("Dashboard email is not configured on the server.")
@@ -3110,7 +3113,8 @@ class GuestWebService:
         body = body.strip()
 
         if subject and body:
-            sent = email_manager.send_email(guest_email, subject, body, idempotency_key=decision_key)
+            send_target = recipients if len(recipients) > 1 else guest_email
+            sent = email_manager.send_email(send_target, subject, body, idempotency_key=decision_key)
         else:
             if normalized_status == "accepted":
                 sent = email_manager.send_acceptance_email(
@@ -3141,6 +3145,33 @@ class GuestWebService:
         if not updated_guest:
             raise WebInterfaceError("Guest not found after email send.")
         return serialize_guest(updated_guest)
+
+    @staticmethod
+    def _resolve_email_recipients(
+        primary_recipient: str,
+        additional_recipients: Optional[Sequence[str]] = None,
+    ) -> list[str]:
+        """Validate and deduplicate operator-supplied recipients while retaining the primary address."""
+        if isinstance(additional_recipients, str):
+            additional_recipients = [additional_recipients]
+        recipients = [primary_recipient]
+        seen_recipients = {primary_recipient.casefold()}
+        for raw_recipient in additional_recipients or []:
+            recipient = str(raw_recipient).strip()
+            if not recipient:
+                continue
+            if any(character in recipient for character in "\r\n,;") or recipient.count("@") != 1:
+                raise WebInterfaceError(f"Invalid additional recipient email address: {recipient}")
+            local_part, domain = recipient.rsplit("@", 1)
+            if not local_part or "." not in domain or domain.startswith(".") or domain.endswith("."):
+                raise WebInterfaceError(f"Invalid additional recipient email address: {recipient}")
+            normalized_recipient = recipient.casefold()
+            if normalized_recipient not in seen_recipients:
+                recipients.append(recipient)
+                seen_recipients.add(normalized_recipient)
+        if len(recipients) > 20:
+            raise WebInterfaceError("A maximum of 20 recipients can be included in one email.")
+        return recipients
 
     def delete_guest(self, guest_id: int, confirm_name: str = "") -> Dict[str, Any]:
         """Delete a guest and return a small confirmation payload."""
@@ -5106,7 +5137,7 @@ class GuestWebService:
             "count": len(sent),
         }
 
-    def send_interview_appreciation(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+    def send_interview_appreciation(self, interview_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         """Send a thank-you email after an interview."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -5123,9 +5154,10 @@ class GuestWebService:
         preview = self.preview_interview_appreciation(interview_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
+        recipients = self._resolve_email_recipients(guest_email, additional_recipients)
 
         sent = email_manager.send_email(
-            guest_email, resolved_subject, resolved_body,
+            recipients if len(recipients) > 1 else guest_email, resolved_subject, resolved_body,
             idempotency_key=f"interview_appreciation:{interview_id}",
         )
         if not sent:
@@ -5360,7 +5392,7 @@ class GuestWebService:
             "body": template["body"],
         }
 
-    def send_episode_appreciation(self, episode_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+    def send_episode_appreciation(self, episode_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         """Send a thank-you email from an episode record after recording."""
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
@@ -5377,9 +5409,10 @@ class GuestWebService:
         preview = self.preview_episode_appreciation(episode_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
+        recipients = self._resolve_email_recipients(guest_email, additional_recipients)
 
         sent = email_manager.send_email(
-            guest_email, resolved_subject, resolved_body,
+            recipients if len(recipients) > 1 else guest_email, resolved_subject, resolved_body,
             idempotency_key=f"episode_appreciation:{episode_id}",
         )
         if not sent:
@@ -5428,7 +5461,7 @@ class GuestWebService:
             "body": template["body"],
         }
 
-    def send_episode_release_email(self, episode_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+    def send_episode_release_email(self, episode_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         """Send the released-episode follow-up email from an episode record."""
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
@@ -5449,9 +5482,10 @@ class GuestWebService:
         preview = self.preview_episode_release_email(episode_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
+        recipients = self._resolve_email_recipients(guest_email, additional_recipients)
 
         sent = email_manager.send_email(
-            guest_email, resolved_subject, resolved_body,
+            recipients if len(recipients) > 1 else guest_email, resolved_subject, resolved_body,
             idempotency_key=f"episode_release:{episode_id}:{_normalize_text(episode.get('release_date'))}",
         )
         if not sent:
@@ -7647,6 +7681,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     payload.get("subject", ""),
                     payload.get("body", ""),
                     payload.get("custom_message", ""),
+                    payload.get("additional_recipients", []),
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -7826,6 +7861,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         interview_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),
+                        payload.get("additional_recipients", []),
                     )
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -7888,6 +7924,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         episode_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),
+                        payload.get("additional_recipients", []),
                     )
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -7908,6 +7945,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         episode_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),
+                        payload.get("additional_recipients", []),
                     )
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

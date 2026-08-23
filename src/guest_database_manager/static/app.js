@@ -1247,6 +1247,11 @@ function renderGuests(payload) {
           <p class="composer-meta">${guest.email || "No email address"}</p>
         </div>
         <label class="composer-field">
+          <span>Additional recipients <small>(optional)</small></span>
+          <input type="text" data-composer-field="additionalRecipients" value="${escapeHtml(activeEmailComposer.additionalRecipients || "")}" placeholder="name@example.com, other@example.com" inputmode="email" autocomplete="off" />
+          <small>Separate multiple email addresses with commas.</small>
+        </label>
+        <label class="composer-field">
           <span>Approved tone</span>
           <select data-composer-variant ${activeEmailComposer.sending ? "disabled" : ""}>
             ${(activeEmailComposer.variants || []).map((variant) => `<option value="${escapeHtml(variant.id)}" ${variant.id === activeEmailComposer.variant ? "selected" : ""}>${escapeHtml(variant.label)}</option>`).join("")}
@@ -1295,7 +1300,12 @@ function renderGuests(payload) {
 
       composer.querySelector("[data-composer-action='send']").addEventListener("click", async () => {
         const guestLabel = guest.full_name || "guest";
-        if (!confirmCriticalAction(`Send this ${activeEmailComposer.status === "accepted" ? "approval" : "decline"} email to ${guestLabel}?`)) {
+        const additionalRecipients = (activeEmailComposer.additionalRecipients || "")
+          .split(",")
+          .map((email) => email.trim())
+          .filter(Boolean);
+        const recipientCount = 1 + additionalRecipients.length;
+        if (!confirmCriticalAction(`Send this ${activeEmailComposer.status === "accepted" ? "approval" : "decline"} email to ${guestLabel}${recipientCount > 1 ? ` and ${recipientCount - 1} additional recipient${recipientCount === 2 ? "" : "s"}` : ""}?`)) {
           return;
         }
         activeEmailComposer.sending = true;
@@ -1314,6 +1324,7 @@ function renderGuests(payload) {
               status: activeEmailComposer.status,
               subject: activeEmailComposer.subject,
               body: activeEmailComposer.body,
+              additional_recipients: additionalRecipients,
             }),
           });
           setMessage(
@@ -1527,6 +1538,7 @@ function renderGuests(payload) {
               body: templateData.body || "",
               variant: templateData.variant || "",
               variants: templateData.variants || [],
+              additionalRecipients: "",
               sending: false,
               feedback: null,
             };

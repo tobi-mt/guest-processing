@@ -1276,6 +1276,11 @@ function renderReleaseComposer(node, episode, preview) {
   node.innerHTML = `
     <div class="inline-editor-title">Release Email</div>
     <label class="full-width">
+      <span>Additional recipients <small>(optional)</small></span>
+      <input data-release-field="additionalRecipients" type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" />
+      <small>Separate multiple email addresses with commas.</small>
+    </label>
+    <label class="full-width">
       <span>Subject</span>
       <input data-release-field="subject" type="text" value="${escapeHtml(preview.subject || "")}" />
     </label>
@@ -1292,6 +1297,7 @@ function renderReleaseComposer(node, episode, preview) {
 
   const subjectField = node.querySelector("[data-release-field='subject']");
   const bodyField = node.querySelector("[data-release-field='body']");
+  const additionalRecipientsField = node.querySelector("[data-release-field='additionalRecipients']");
   const sendButton = node.querySelector("[data-release-composer-action='send']");
   const closeButton = node.querySelector("[data-release-composer-action='close']");
   const messageNode = node.querySelector("[data-release-composer-message]");
@@ -1306,11 +1312,13 @@ function renderReleaseComposer(node, episode, preview) {
     sendButton.textContent = "Sending...";
     setMessage(messageNode, "Sending edited release email...", "pending");
     try {
+      const additionalRecipients = additionalRecipientsField.value.split(",").map((email) => email.trim()).filter(Boolean);
       await fetchJSON(`/api/episodes/${episode.id}/send-release-email`, {
         method: "POST",
         body: JSON.stringify({
           subject: subjectField.value,
           body: bodyField.value,
+          additional_recipients: additionalRecipients,
         }),
       });
       setMessage(
@@ -2285,6 +2293,11 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
           appreciationPreviewNode.innerHTML = `
             <h4>${escapeHtml(preview.subject)}</h4>
             <p>To: ${renderLinkedValue(episode.guest_email)}</p>
+            <label class="full-width">
+              <span>Additional recipients <small>(optional)</small></span>
+              <input data-appreciation-additional-recipients type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" />
+              <small>Separate multiple email addresses with commas, then use Send Thank You.</small>
+            </label>
             <pre>${escapeHtml(preview.body)}</pre>
           `;
           releasePreviewNode.classList.add("hidden");
@@ -2311,7 +2324,11 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
           setMessage(episodeMessage, "This episode does not have a guest email yet.", "error");
           return;
         }
-        if (!confirmCriticalAction(`Send the thank-you email to ${episode.guest_name || episode.guest_email || "this guest"} now?`)) {
+        const additionalRecipients = (appreciationPreviewNode.querySelector("[data-appreciation-additional-recipients]")?.value || "")
+          .split(",")
+          .map((email) => email.trim())
+          .filter(Boolean);
+        if (!confirmCriticalAction(`Send the thank-you email to ${episode.guest_name || episode.guest_email || "this guest"}${additionalRecipients.length ? ` and ${additionalRecipients.length} additional recipient${additionalRecipients.length === 1 ? "" : "s"}` : ""} now?`)) {
           return;
         }
 
@@ -2326,7 +2343,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
         try {
           await fetchJSON(`/api/episodes/${episode.id}/send-appreciation`, {
             method: "POST",
-            body: JSON.stringify({}),
+            body: JSON.stringify({ additional_recipients: additionalRecipients }),
           });
           sendAppreciationButton.disabled = false;
           sendAppreciationButton.textContent = "Send Thank You";

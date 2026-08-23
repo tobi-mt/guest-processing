@@ -5283,6 +5283,59 @@ def test_web_service_can_send_custom_email_body(monkeypatch, temp_db):
     assert updated_guest["email_status"] == "accepted"
 
 
+def test_web_service_can_send_custom_email_to_additional_recipients(monkeypatch, temp_db):
+    """The dashboard composer can add validated, deduplicated To recipients."""
+
+    class StubEmailManager:
+        def __init__(self):
+            self.configured = False
+
+        def configure_smtp(self, **kwargs):
+            self.configured = True
+
+        def is_configured(self):
+            return self.configured
+
+        def send_email(self, to_email, subject, body, idempotency_key=""):
+            assert to_email == ["amina@example.com", "producer@example.com", "agent@example.org"]
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_SMTP_SERVER_ENV_VAR, "smtp.example.com")
+    monkeypatch.setenv(EMAIL_SMTP_PORT_ENV_VAR, "587")
+    monkeypatch.setenv(EMAIL_USERNAME_ENV_VAR, "mirror@example.com")
+    monkeypatch.setenv(EMAIL_PASSWORD_ENV_VAR, "top-secret")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "mirror@example.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Amina Hart", "email": "amina@example.com"})
+
+    updated_guest = service.send_guest_decision_email_message(
+        guest["id"],
+        "accepted",
+        subject="Custom Subject",
+        body="Custom Body",
+        additional_recipients=[" producer@example.com ", "AMINA@example.com", "agent@example.org"],
+    )
+
+    assert updated_guest["email_status"] == "accepted"
+
+
+def test_web_service_rejects_invalid_additional_email_recipient(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Amina Hart", "email": "amina@example.com"})
+
+    with pytest.raises(WebInterfaceError, match="Invalid additional recipient"):
+        service.send_guest_decision_email_message(
+            guest["id"],
+            "accepted",
+            subject="Custom Subject",
+            body="Custom Body",
+            additional_recipients=["not-an-email"],
+        )
+
+
 def test_web_service_rejects_email_send_without_server_config(temp_db):
     """Hosted dashboard should not pretend email works when SMTP env vars are missing."""
     service = GuestWebService(temp_db.db_path)
@@ -6243,7 +6296,7 @@ def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp
             return {"subject": "Thank You", "body": "We appreciate you."}
 
         def send_email(self, to_email, subject, body, idempotency_key=""):
-            assert to_email == "natalie@example.com"
+            assert to_email == ["natalie@example.com", "producer@example.com"]
             assert subject == "Thank You"
             assert "appreciate" in body.lower()
             return True
@@ -6268,7 +6321,9 @@ def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp
     assert preview["subject"] == "Thank You"
     assert preview["body"] == "We appreciate you."
 
-    sent_episode = service.send_episode_appreciation(episode["id"])
+    sent_episode = service.send_episode_appreciation(
+        episode["id"], additional_recipients=["producer@example.com"]
+    )
     assert sent_episode["guest_email"] == "natalie@example.com"
 
 
@@ -6294,7 +6349,7 @@ def test_web_service_can_preview_and_send_released_episode_email(monkeypatch, te
             return {"subject": "Your Mirror Talk episode is now live", "body": "Show notes and files are ready."}
 
         def send_email(self, to_email, subject, body, idempotency_key=""):
-            assert to_email == "jordan@example.com"
+            assert to_email == ["jordan@example.com", "agent@example.org"]
             assert subject == "Your Mirror Talk episode is now live"
             assert "files" in body.lower()
             return True
@@ -6323,7 +6378,9 @@ def test_web_service_can_preview_and_send_released_episode_email(monkeypatch, te
     preview = service.preview_episode_release_email(episode["id"])
     assert preview["subject"] == "Your Mirror Talk episode is now live"
 
-    sent_episode = service.send_episode_release_email(episode["id"])
+    sent_episode = service.send_episode_release_email(
+        episode["id"], additional_recipients=["agent@example.org"]
+    )
     assert sent_episode["guest_email"] == "jordan@example.com"
 
 

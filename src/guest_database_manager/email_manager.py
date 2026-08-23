@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -653,7 +653,7 @@ Mirror Talk Podcast
 
     def _send_via_resend(
         self,
-        to_email: str,
+        to_email: Union[str, Sequence[str]],
         subject: str,
         body: str,
         attachments: Optional[Sequence[Dict[str, object]]] = None,
@@ -664,9 +664,10 @@ Mirror Talk Podcast
             self.last_error = "Resend is not configured."
             return False
 
+        recipients = self._normalize_recipients(to_email)
         payload = {
             "from": self._resend_from_address(),
-            "to": [to_email],
+            "to": recipients,
             "subject": subject,
             "text": body,
             "html": self._build_html_body(body),
@@ -725,7 +726,7 @@ Mirror Talk Podcast
 
     def send_email(
         self,
-        to_email: str,
+        to_email: Union[str, Sequence[str]],
         subject: str,
         body: str,
         attachments: Optional[Sequence[Dict[str, object]]] = None,
@@ -734,7 +735,7 @@ Mirror Talk Podcast
         """Send an email.
 
         Args:
-            to_email: Recipient email address
+            to_email: Recipient email address or a sequence of recipient addresses
             subject: Email subject
             body: Email body
 
@@ -763,7 +764,8 @@ Mirror Talk Podcast
             # Create message
             msg = MIMEMultipart()
             msg['From'] = f"{self.from_name} <{self.from_email}>" if self.from_name else self.from_email
-            msg['To'] = to_email
+            recipients = self._normalize_recipients(to_email)
+            msg['To'] = ", ".join(recipients)
             msg['Subject'] = subject
             if idempotency_key:
                 # Resend's SMTP gateway honors this header. Other SMTP servers
@@ -785,10 +787,10 @@ Mirror Talk Podcast
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls(context=context)
                 server.login(self.username, self.password)
-                recipients = [to_email]
+                envelope_recipients = list(recipients)
                 if self.cc_email:
-                    recipients.append(self.cc_email)
-                server.send_message(msg, to_addrs=recipients)
+                    envelope_recipients.append(self.cc_email)
+                server.send_message(msg, to_addrs=envelope_recipients)
 
             return True
 
@@ -797,6 +799,22 @@ Mirror Talk Podcast
             self.last_error = error_msg
             self._report_send_failure(error_msg)
             return False
+
+    @staticmethod
+    def _normalize_recipients(to_email: Union[str, Sequence[str]]) -> list[str]:
+        """Return a non-empty, ordered, case-insensitively deduplicated recipient list."""
+        raw_recipients = [to_email] if isinstance(to_email, str) else list(to_email)
+        recipients: list[str] = []
+        seen: set[str] = set()
+        for value in raw_recipients:
+            recipient = str(value).strip()
+            normalized = recipient.casefold()
+            if recipient and normalized not in seen:
+                recipients.append(recipient)
+                seen.add(normalized)
+        if not recipients:
+            raise ValueError("At least one recipient email address is required.")
+        return recipients
 
     def send_acceptance_email(self, guest_name: str, to_email: str, custom_message: str = "", booking_url: str = "", idempotency_key: str = "") -> bool:
         """Send acceptance email to a guest.
