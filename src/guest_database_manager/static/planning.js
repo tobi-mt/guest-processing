@@ -16,6 +16,11 @@ const askSyncBreakdown = document.getElementById("ask-sync-breakdown");
 const askSyncAmbiguous = document.getElementById("ask-sync-ambiguous");
 const planningExportMessage = document.getElementById("planning-export-message");
 const planningWeeklySystem = document.getElementById("planning-weekly-system");
+const learningStatus = document.getElementById("learning-status");
+const learningMessage = document.getElementById("learning-message");
+const learningRefresh = document.getElementById("learning-refresh");
+const learningEvaluate = document.getElementById("learning-evaluate");
+const learningRollback = document.getElementById("learning-rollback");
 const workspaceActionQueue = document.getElementById("workspace-action-queue");
 const aiCopilotStatus = document.getElementById("planning-ai-copilot-status");
 const episodeList = document.getElementById("episode-list");
@@ -106,6 +111,48 @@ const LEGACY_PLANNING_PAYLOAD_CACHE_KEYS = [
 
 const RECOMMENDATION_PAGE_SIZE = 6;
 const EPISODE_PAGE_SIZE = 10;
+
+function renderLearningStatus(payload) {
+  if (!learningStatus) return;
+  const active = payload.active_policy || {};
+  const settings = payload.settings || {};
+  const counts = payload.counts || {};
+  const monitoring = payload.monitoring || {};
+  const candidates = (payload.policies || []).filter((policy) => policy.status === "draft");
+  const candidateMarkup = candidates.length
+    ? candidates.map((policy) => `
+      <article class="compact-card">
+        <strong>${escapeHtml(policy.version)}</strong>
+        <span>${escapeHtml(String(policy.training_summary?.sample_count || 0))} samples</span>
+        <button type="button" class="secondary-button" data-promote-policy="${escapeHtml(policy.version)}" data-row-version="${Number(policy.row_version || 0)}">Promote passed challenger</button>
+      </article>`).join("")
+    : "<p>No draft challengers. Run an offline evaluation after enough linked outcomes are available.</p>";
+  learningStatus.innerHTML = `
+    <div class="stack-list">
+      <article class="compact-card"><strong>Active policy</strong><span>${escapeHtml(active.version || "Unavailable")}</span></article>
+      <article class="compact-card"><strong>Evidence</strong><span>${Number(counts.observations || 0)} observations · ${Number(counts.outcomes || 0)} outcomes</span></article>
+      <article class="compact-card"><strong>Automation safety</strong><span>${settings.automation_enabled ? "Enabled" : "Disabled"} · kill switch ${settings.kill_switch ? "on" : "off"}</span></article>
+      <article class="compact-card"><strong>Outcome drift</strong><span>${monitoring.alert ? "Alert — automation blocked" : "No alert"}</span></article>
+    </div>
+    <div class="stack-list">${candidateMarkup}</div>`;
+}
+
+async function loadLearningStatus() {
+  if (!learningStatus) return;
+  const payload = await fetchJSON("/api/recommendation-learning");
+  renderLearningStatus(payload);
+}
+
+async function runLearningAction(path, body, pendingText) {
+  setMessage(learningMessage, pendingText, "pending");
+  try {
+    const result = await fetchJSON(path, { method: "POST", body: JSON.stringify(body || {}) });
+    await loadLearningStatus();
+    setMessage(learningMessage, result.status === "insufficient_data" ? "More linked outcomes are required before training." : "Learning workflow completed and audited.", "success");
+  } catch (error) {
+    setMessage(learningMessage, error.message || "Learning workflow failed", "error");
+  }
+}
 const PRODUCTION_RAIL_STAGES = [
   ["recorded", "Recorded"],
   ["editing", "Editing"],
@@ -3511,6 +3558,28 @@ episodeEditorModal?.addEventListener("click", (event) => {
     closeEpisodeEditor();
   }
 });
+learningRefresh?.addEventListener("click", () => {
+  loadLearningStatus().catch((error) => setMessage(learningMessage, error.message, "error"));
+});
+learningEvaluate?.addEventListener("click", () => runLearningAction(
+  "/api/recommendation-learning/evaluate", {}, "Running offline holdout evaluation…",
+));
+learningRollback?.addEventListener("click", () => {
+  const reason = window.prompt("Why are you rolling back the active recommendation policy?");
+  if (!reason?.trim()) return;
+  runLearningAction("/api/recommendation-learning/rollback", { reason: reason.trim() }, "Rolling back policy…");
+});
+learningStatus?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-promote-policy]");
+  if (!button) return;
+  const reason = window.prompt(`Why should ${button.dataset.promotePolicy} become active?`);
+  if (!reason?.trim()) return;
+  runLearningAction("/api/recommendation-learning/promote", {
+    version: button.dataset.promotePolicy,
+    row_version: Number(button.dataset.rowVersion || 0),
+    reason: reason.trim(),
+  }, "Promoting validated challenger…");
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && episodeDetailsModal && !episodeDetailsModal.classList.contains("hidden")) {
     closeEpisodeDetailsModal();
@@ -3573,6 +3642,7 @@ if (modalCancelButton) {
 }
 
 if (!enforceHostedMode()) {
+  loadLearningStatus().catch((error) => setMessage(learningMessage, error.message, "error"));
   loadPlanning().catch((error) => {
     console.error("Planning load error:", error);
     setMessage(episodeMessage, error.message || "Failed to load planning data", "error");

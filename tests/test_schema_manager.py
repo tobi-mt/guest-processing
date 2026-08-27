@@ -18,7 +18,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
@@ -30,6 +30,12 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
         "calendar_reconciliation_proposals",
         "recommendation_feedback",
         "guest_ai_analyses",
+        "recommendation_policies",
+        "recommendation_observations",
+        "recommendation_outcomes",
+        "recommendation_evaluations",
+        "recommendation_deployments",
+        "recommendation_learning_settings",
     } <= tables
     assert {"normalized_name", "normalized_email", "row_version", "identity_status", "owner", "marketing_opt_in"} <= guest_columns
     assert {
@@ -113,6 +119,38 @@ def test_failed_migration_rolls_back_its_schema_and_ledger(monkeypatch, tmp_path
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'should_rollback'"
         ).fetchone()
     assert table is None
+
+
+def test_recommendation_learning_migration_rolls_back_all_ddl(monkeypatch, tmp_path):
+    db_path = tmp_path / "migration-seventeen.db"
+    SchemaManager.create_tables(str(db_path))
+    learning_tables = (
+        "recommendation_policies",
+        "recommendation_observations",
+        "recommendation_outcomes",
+        "recommendation_evaluations",
+        "recommendation_deployments",
+        "recommendation_learning_settings",
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM schema_migrations WHERE version = 17")
+        for table in learning_tables:
+            conn.execute(f"DROP TABLE {table}")
+
+    original = SchemaManager._migration_017_recommendation_learning
+
+    def fail_after_all_ddl(conn):
+        original(conn)
+        raise RuntimeError("migration 17 failed")
+
+    monkeypatch.setattr(SchemaManager, "_migration_017_recommendation_learning", fail_after_all_ddl)
+    with pytest.raises(RuntimeError, match="migration 17 failed"):
+        SchemaManager.create_tables(str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert not set(learning_tables) & tables
+    assert 17 not in _versions(db_path)
 
 
 def test_validation_triggers_reject_invalid_external_statuses(tmp_path):

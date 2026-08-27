@@ -661,6 +661,108 @@ class SchemaManager:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_contact_research_prospect ON partner_contact_research(prospect_id, collected_at DESC)")
 
     @staticmethod
+    def _migration_017_recommendation_learning(conn: sqlite3.Connection) -> None:
+        """Create the governed, append-only recommendation learning subsystem."""
+        schema_sql = """
+            CREATE TABLE IF NOT EXISTS recommendation_policies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version TEXT NOT NULL UNIQUE,
+                parent_version TEXT,
+                status TEXT NOT NULL CHECK(status IN ('draft', 'approved', 'active', 'retired', 'rejected')),
+                weights_json TEXT NOT NULL,
+                training_summary_json TEXT NOT NULL DEFAULT '{}',
+                created_by TEXT NOT NULL,
+                approved_by TEXT,
+                approval_reason TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                approved_at TIMESTAMP,
+                row_version INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_recommendation_policy_active
+                ON recommendation_policies(status) WHERE status = 'active';
+            CREATE TABLE IF NOT EXISTS recommendation_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER NOT NULL,
+                policy_version TEXT NOT NULL,
+                feature_schema_version TEXT NOT NULL,
+                features_json TEXT NOT NULL,
+                score REAL NOT NULL,
+                rank INTEGER,
+                recommendation_snapshot TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(episode_id, policy_version, correlation_id),
+                FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS recommendation_outcomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER NOT NULL,
+                observation_id INTEGER,
+                outcome_type TEXT NOT NULL CHECK(outcome_type IN ('accepted', 'rejected', 'booked', 'released', 'delayed', 'cancelled', 'performance')),
+                value REAL NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                actor TEXT NOT NULL,
+                source TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                occurred_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE,
+                FOREIGN KEY (observation_id) REFERENCES recommendation_observations(id) ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS recommendation_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_version TEXT NOT NULL,
+                champion_version TEXT NOT NULL,
+                sample_count INTEGER NOT NULL,
+                baseline_metric REAL NOT NULL,
+                candidate_metric REAL NOT NULL,
+                uplift REAL NOT NULL,
+                guardrails_json TEXT NOT NULL,
+                report_json TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('passed', 'failed', 'insufficient_data')),
+                created_by TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS recommendation_deployments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                policy_version TEXT NOT NULL,
+                previous_version TEXT,
+                action TEXT NOT NULL CHECK(action IN ('activated', 'rolled_back', 'auto_activated')),
+                actor TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                evaluation_id INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS recommendation_learning_settings (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                automation_enabled INTEGER NOT NULL DEFAULT 0 CHECK(automation_enabled IN (0, 1)),
+                kill_switch INTEGER NOT NULL DEFAULT 1 CHECK(kill_switch IN (0, 1)),
+                min_samples INTEGER NOT NULL DEFAULT 30,
+                min_uplift REAL NOT NULL DEFAULT 0.03,
+                max_weight_change REAL NOT NULL DEFAULT 0.25,
+                updated_by TEXT NOT NULL DEFAULT 'system',
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_recommendation_observations_episode
+                ON recommendation_observations(episode_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_recommendation_outcomes_episode
+                ON recommendation_outcomes(episode_id, occurred_at DESC);
+            """
+        # sqlite3.Connection.executescript() implicitly commits any pending
+        # transaction. Execute each DDL statement separately so the migration
+        # runner's BEGIN IMMEDIATE/rollback boundary remains authoritative.
+        for statement in schema_sql.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+        conn.execute(
+            """INSERT OR IGNORE INTO recommendation_policies
+               (version, status, weights_json, training_summary_json, created_by, approved_by, approval_reason, approved_at)
+               VALUES ('release-planner-v1', 'active', '{}', '{"mode":"rules_baseline"}',
+                       'system', 'system', 'Initial governed baseline', CURRENT_TIMESTAMP)"""
+        )
+        conn.execute("INSERT OR IGNORE INTO recommendation_learning_settings (id) VALUES (1)")
+
+    @staticmethod
     def _migration_015_marketing_opt_in(conn: sqlite3.Connection) -> None:
         """Add an explicit, safe-by-default newsletter consent flag."""
         SchemaManager._add_column_if_missing(conn, "guests", "marketing_opt_in", "BOOLEAN NOT NULL DEFAULT 0")
@@ -687,6 +789,7 @@ class SchemaManager:
             (14, "partner_intelligence", SchemaManager._migration_014_partner_intelligence),
             (15, "marketing_opt_in", SchemaManager._migration_015_marketing_opt_in),
             (16, "partner_contact_research", SchemaManager._migration_016_partner_contact_research),
+            (17, "recommendation_learning", SchemaManager._migration_017_recommendation_learning),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

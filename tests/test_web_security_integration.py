@@ -131,6 +131,49 @@ def test_operator_can_reject_scheduling_recommendation_with_audited_reason(monke
         assert event["actor"] == "producer"
 
 
+def test_learning_routes_enforce_operator_and_admin_boundaries(monkeypatch, temp_db):
+    configure_auth(monkeypatch, role="operator")
+    with running_server(temp_db.db_path) as base_url:
+        session = requests.Session()
+        assert login(session, base_url).status_code == 200
+        csrf = {"X-CSRF-Token": session.cookies["dashboard_csrf"]}
+
+        assert session.get(f"{base_url}/api/recommendation-learning", timeout=5).status_code == 200
+        evaluation = session.post(
+            f"{base_url}/api/recommendation-learning/evaluate", json={}, headers=csrf, timeout=5
+        )
+        forbidden = session.post(
+            f"{base_url}/api/recommendation-learning/settings",
+            json={"automation_enabled": False, "kill_switch": True}, headers=csrf, timeout=5,
+        )
+
+        assert evaluation.status_code == 200
+        assert evaluation.json()["status"] == "insufficient_data"
+        assert forbidden.status_code == 403
+
+
+def test_admin_can_update_bounded_learning_safety_settings(monkeypatch, temp_db):
+    configure_auth(monkeypatch, role="admin")
+    with running_server(temp_db.db_path) as base_url:
+        session = requests.Session()
+        assert login(session, base_url).status_code == 200
+        response = session.post(
+            f"{base_url}/api/recommendation-learning/settings",
+            json={
+                "automation_enabled": False,
+                "kill_switch": True,
+                "min_samples": 40,
+                "min_uplift": 0.05,
+                "max_weight_change": 0.2,
+            },
+            headers={"X-CSRF-Token": session.cookies["dashboard_csrf"]}, timeout=5,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["min_samples"] == 40
+        assert response.json()["kill_switch"] == 1
+
+
 def test_versioned_assets_cache_but_private_api_does_not(monkeypatch, temp_db):
     configure_auth(monkeypatch)
     with running_server(temp_db.db_path) as base_url:

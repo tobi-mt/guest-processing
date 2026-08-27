@@ -386,8 +386,10 @@ class GuestDatabase:
         recommendation_snapshot: Any = None,
         correlation_id: str = "",
         idempotency_key: str = "",
+        learning_features: Any = None,
+        feature_schema_version: str = "",
     ) -> Dict[str, Any]:
-        """Append a reversible scheduling-recommendation decision and its audit event."""
+        """Append feedback and any derived learning evidence in one transaction."""
         normalized_action = str(action or "").strip().lower()
         normalized_reason = str(reason or "").strip()
         if normalized_action not in {"rejected", "restored"}:
@@ -407,6 +409,12 @@ class GuestDatabase:
             episode = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
             if not episode:
                 raise ValueError("Episode not found")
+            active_policy = conn.execute(
+                "SELECT version FROM recommendation_policies WHERE status = 'active'"
+            ).fetchone()
+            effective_recommendation_version = (
+                active_policy["version"] if active_policy else str(recommendation_version or "").strip() or None
+            )
             previous = conn.execute(
                 "SELECT * FROM recommendation_feedback WHERE episode_id = ? ORDER BY id DESC LIMIT 1",
                 (episode_id,),
@@ -427,7 +435,7 @@ class GuestDatabase:
                     normalized_reason or None,
                     str(actor or "system").strip() or "system",
                     str(source or "scheduling_intelligence").strip() or "scheduling_intelligence",
-                    str(recommendation_version or "").strip() or None,
+                    effective_recommendation_version,
                     snapshot_json,
                     str(correlation_id or "").strip() or None,
                     request_key,
@@ -446,6 +454,56 @@ class GuestDatabase:
                 before=dict(previous) if previous else None,
                 after=saved,
             )
+            # Rejection is a valid negative label. Restoration only removes a
+            # suppression and must never be treated as positive acceptance.
+            if normalized_action == "rejected" and learning_features is not None:
+                if not active_policy:
+                    raise ValueError("No active recommendation policy is configured")
+                observation_correlation_id = str(correlation_id or "").strip() or request_key
+                conn.execute(
+                    """INSERT OR IGNORE INTO recommendation_observations
+                       (episode_id, policy_version, feature_schema_version, features_json, score, rank,
+                        recommendation_snapshot, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        episode_id,
+                        active_policy["version"],
+                        str(feature_schema_version or "").strip(),
+                        dumps(learning_features, ensure_ascii=False, sort_keys=True),
+                        float((recommendation_snapshot or {}).get("priority_score") or 0),
+                        (recommendation_snapshot or {}).get("rank"),
+                        snapshot_json or "{}",
+                        observation_correlation_id,
+                    ),
+                )
+                observation = conn.execute(
+                    """SELECT id FROM recommendation_observations
+                       WHERE episode_id = ? AND policy_version = ? AND correlation_id = ?""",
+                    (episode_id, active_policy["version"], observation_correlation_id),
+                ).fetchone()
+                conn.execute(
+                    """INSERT OR IGNORE INTO recommendation_outcomes
+                       (episode_id, observation_id, outcome_type, value, metadata_json, actor, source,
+                        idempotency_key, occurred_at) VALUES (?, ?, 'rejected', 0, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                    (
+                        episode_id,
+                        observation["id"],
+                        dumps({"feedback_action": normalized_action, "reason": normalized_reason}, ensure_ascii=False, sort_keys=True),
+                        saved["actor"],
+                        saved["source"],
+                        f"recommendation-feedback:{saved['id']}",
+                    ),
+                )
+                self._append_audit_event_conn(
+                    conn,
+                    entity_type="recommendation_policy",
+                    entity_id=active_policy["version"],
+                    event_type="recommendation_outcome_recorded",
+                    actor=saved["actor"],
+                    source="recommendation_learning",
+                    reason="rejected",
+                    correlation_id=observation_correlation_id,
+                    after={"episode_id": episode_id, "outcome_type": "rejected", "value": 0},
+                )
             conn.commit()
             return saved
 

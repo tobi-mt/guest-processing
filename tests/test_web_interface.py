@@ -48,6 +48,7 @@ from guest_database_manager.web_interface import (
 )
 from guest_database_manager.guest_research import _candidate_urls
 from guest_database_manager import guest_research
+from guest_database_manager import web_interface
 from guest_database_manager.email_manager import EmailManager
 from guest_database_manager.episode_planner import build_release_recommendations, next_release_slot
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
@@ -5553,8 +5554,15 @@ def test_episode_recommendations_prefer_variety_and_ready_queue(temp_db):
     assert planning["recommendations"][0]["recommended_release_date"].endswith("17:00:00")
 
 
-def test_episode_recommendations_factor_seasonality_promo_readiness_and_guest_diversity(temp_db):
+def test_episode_recommendations_factor_seasonality_promo_readiness_and_guest_diversity(temp_db, monkeypatch):
     """The smarter planner should consider seasonal fit, promo readiness, and recent guest/category fatigue."""
+    class PlanningDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 4, 4, 12, 0, 0)
+            return value.replace(tzinfo=tz) if tz else value
+
+    monkeypatch.setattr(web_interface, "datetime", PlanningDateTime)
     service = GuestWebService(temp_db.db_path)
 
     for offset in range(4):
@@ -5693,8 +5701,15 @@ def test_episode_recommendations_include_multi_week_sequence_warnings(temp_db):
     assert any(item["sequence_warnings"] for item in finance_recommendations)
 
 
-def test_episode_recommendations_do_not_overweight_recording_age(temp_db):
+def test_episode_recommendations_do_not_overweight_recording_age(temp_db, monkeypatch):
     """Older recordings can help, but fresher seasonal fits should still compete strongly."""
+    class PlanningDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 15, 12, 0, 0)
+            return value.replace(tzinfo=tz) if tz else value
+
+    monkeypatch.setattr(web_interface, "datetime", PlanningDateTime)
     service = GuestWebService(temp_db.db_path)
 
     service.create_episode(

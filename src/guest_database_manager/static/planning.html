@@ -244,6 +244,22 @@
           </div>
 
           <div class="workspace-panel" data-planning-panel="scheduling_intelligence">
+          <section class="operations-tool" aria-labelledby="learning-system-title">
+            <div class="section-heading section-heading-inline">
+              <div>
+                <p class="eyebrow">Governed improvement</p>
+                <h2 id="learning-system-title">Recommendation learning</h2>
+                <p class="hero-copy section-copy">Outcome-backed challengers stay offline until they pass guardrails and an administrator promotes them.</p>
+              </div>
+              <button id="learning-refresh" type="button" class="ghost-button">Refresh</button>
+            </div>
+            <div id="learning-status" class="operations-preview" aria-live="polite">Loading learning status…</div>
+            <div class="form-actions">
+              <button id="learning-evaluate" type="button" class="secondary-button">Run offline evaluation</button>
+              <button id="learning-rollback" type="button" class="ghost-button">Rollback active policy</button>
+            </div>
+            <p id="learning-message" class="message" aria-live="polite"></p>
+          </section>
           <details class="operations-tool scheduling-reference-tool">
             <summary>
               <div>
@@ -569,6 +585,6 @@
 
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
-    <script src="/static/planning.js?v=20260823.1" defer></script>
+    <script src="/static/planning.js?v=20260826.1" defer></script>
   </body>
 </html>

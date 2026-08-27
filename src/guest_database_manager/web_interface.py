@@ -66,6 +66,13 @@ from guest_database_manager.maintenance import build_integrity_report, is_databa
 from guest_database_manager.metrics import build_operational_metrics
 from guest_database_manager.partner_intelligence import PartnerIntelligence, PartnerIntelligenceError
 from guest_database_manager.partner_discovery import curated_signals
+from guest_database_manager.recommendation_learning import (
+    FEATURE_SCHEMA_VERSION,
+    LearningError,
+    RecommendationLearning,
+    apply_active_policy,
+    extract_features,
+)
 
 # Import new AI assistant features
 try:
@@ -695,6 +702,38 @@ class GuestWebService:
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
         self.partner_intelligence = PartnerIntelligence(self.database)
+        self.recommendation_learning = RecommendationLearning(self.db_path)
+
+    def get_recommendation_learning_status(self) -> Dict[str, Any]:
+        return self.recommendation_learning.status()
+
+    def evaluate_recommendation_policy(self, *, actor: str) -> Dict[str, Any]:
+        return self.recommendation_learning.evaluate(actor=actor)
+
+    def update_recommendation_learning_settings(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.recommendation_learning.update_settings(payload, actor=actor)
+
+    def promote_recommendation_policy(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.recommendation_learning.promote(
+            _normalize_text(payload.get("version")), actor=actor,
+            reason=_normalize_text(payload.get("reason")),
+            expected_row_version=int(payload.get("row_version") or 0),
+        )
+
+    def rollback_recommendation_policy(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.recommendation_learning.rollback(actor=actor, reason=_normalize_text(payload.get("reason")))
+
+    def run_recommendation_learning_cycle(self, *, actor: str) -> Dict[str, Any]:
+        return self.recommendation_learning.run_cycle(actor=actor)
+
+    def record_recommendation_outcome(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.recommendation_learning.record_outcome(
+            int(payload.get("episode_id") or 0), outcome_type=_normalize_text(payload.get("outcome_type")),
+            value=payload.get("value"), metadata=payload.get("metadata"), actor=actor,
+            source=_normalize_text(payload.get("source")) or "operator",
+            occurred_at=_normalize_text(payload.get("occurred_at")),
+            idempotency_key=_normalize_text(payload.get("idempotency_key")),
+        )
 
     def list_partner_prospects(self) -> Dict[str, Any]:
         prospects = self.partner_intelligence.list_prospects()
@@ -1371,7 +1410,9 @@ class GuestWebService:
             
             enriched_episodes.append(enriched)
         
-        recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
+        recommendations = apply_active_policy(
+            self.db_path, build_release_recommendations(enriched_episodes, reference=datetime.now())
+        )
         
         filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
         rejected_recommendations = [
@@ -1444,7 +1485,9 @@ class GuestWebService:
             
             enriched_episodes.append(enriched)
 
-        recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
+        recommendations = apply_active_policy(
+            self.db_path, build_release_recommendations(enriched_episodes, reference=datetime.now())
+        )
         
         filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
         
@@ -1470,7 +1513,9 @@ class GuestWebService:
                     if previous_updated_at != _normalize_text(auto_research.get("updated_at")) or previous_mode != _normalize_text(auto_research.get("research_mode")):
                         auto_researched_count += 1
             if auto_researched_count:
-                recommendations = build_release_recommendations(enriched_episodes, reference=datetime.now())
+                recommendations = apply_active_policy(
+                    self.db_path, build_release_recommendations(enriched_episodes, reference=datetime.now())
+                )
                 filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
         
         ai_diagnostics = self._build_ai_candidate_diagnostics(filtered_recommendations)
@@ -1669,7 +1714,9 @@ class GuestWebService:
         interviews = self._sort_interviews_by_upcoming_priority(self.database.list_interviews())
         episodes = self.database.list_episodes()
         self._attach_recommendation_feedback(episodes)
-        recommendations = build_release_recommendations(episodes, reference=datetime.now())
+        recommendations = apply_active_policy(
+            self.db_path, build_release_recommendations(episodes, reference=datetime.now())
+        )
 
         guest_csv = self._records_to_csv(guests, list(EXPORTABLE_FIELDS["guests"]))
         interview_csv = self._records_to_csv(interviews, list(EXPORTABLE_FIELDS["interviews"]))
@@ -1743,7 +1790,9 @@ class GuestWebService:
             self._attach_recommendation_feedback(episodes)
             guests = [serialize_guest(guest) for guest in self.database.get_all_guests()]
             guest_indexes = self._build_guest_lookup_indexes(guests)
-            recommendations = build_release_recommendations(episodes, reference=datetime.now())
+            recommendations = apply_active_policy(
+                self.db_path, build_release_recommendations(episodes, reference=datetime.now())
+            )
             
             # Filter out recommendations for episodes without a corresponding guest
             # STRICT FILTERING: Only allow exact email or website matches
@@ -4839,6 +4888,8 @@ class GuestWebService:
                 recommendation_snapshot=snapshot,
                 correlation_id=_normalize_text(payload.get("correlation_id")),
                 idempotency_key=_normalize_text(payload.get("idempotency_key")),
+                learning_features=extract_features({**snapshot_input, **snapshot}) if action == "rejected" else None,
+                feature_schema_version=FEATURE_SCHEMA_VERSION,
             )
         except ValueError as exc:
             raise WebInterfaceError(str(exc)) from exc
@@ -6742,6 +6793,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, self.service.list_planning_ai_copilot())
             return
 
+        if request_path == "/api/recommendation-learning":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.get_recommendation_learning_status())
+            return
+
         if request_path == "/api/google-calendar/sync":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -7067,6 +7125,32 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 require_csrf=True,
             ):
                 return
+
+        if self.path.startswith("/api/recommendation-learning/"):
+            payload = self._read_json_payload()
+            actor = str((self._session_claims() or {}).get("sub") or "operator")
+            try:
+                if self.path == "/api/recommendation-learning/evaluate":
+                    result = self.service.evaluate_recommendation_policy(actor=actor)
+                elif self.path == "/api/recommendation-learning/outcomes":
+                    result = self.service.record_recommendation_outcome(payload, actor=actor)
+                elif self.path == "/api/recommendation-learning/settings":
+                    result = self.service.update_recommendation_learning_settings(payload, actor=actor)
+                elif self.path == "/api/recommendation-learning/promote":
+                    result = self.service.promote_recommendation_policy(payload, actor=actor)
+                elif self.path == "/api/recommendation-learning/rollback":
+                    result = self.service.rollback_recommendation_policy(payload, actor=actor)
+                elif self.path == "/api/recommendation-learning/cycle":
+                    result = self.service.run_recommendation_learning_cycle(actor=actor)
+                else:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+                    return
+            except (LearningError, ValueError) as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._invalidate_learning_cache()
+            self._send_json(HTTPStatus.OK, result)
+            return
 
         if self.path == "/api/availability":
             payload = self._read_json_payload()
@@ -8187,9 +8271,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def _required_role_for_request(method: str, path: str) -> str:
         if method == "GET":
             return "viewer"
-        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge"}:
+        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge", "/api/recommendation-learning/settings", "/api/recommendation-learning/promote", "/api/recommendation-learning/rollback", "/api/recommendation-learning/cycle"}:
             return "admin"
         return "operator"
+
+    def _invalidate_learning_cache(self) -> None:
+        self.service._invalidate_payload_cache("planning", "planning_ai_copilot")
 
     def _enforce_dashboard_security(self, *, required_role: str, require_csrf: bool) -> bool:
         claims = self._session_claims()
