@@ -658,7 +658,71 @@ class SchemaManager:
                 FOREIGN KEY (prospect_id) REFERENCES partner_prospects(id) ON DELETE CASCADE
             )"""
         )
+
+    @staticmethod
+    def _migration_018_partner_automation(conn: sqlite3.Connection) -> None:
+        """Add explainable strategy, editable drafts, and outbox handoff metadata."""
+        SchemaManager._add_column_if_missing(conn, "partner_prospects", "confidence", "TEXT NOT NULL DEFAULT 'low'")
+        SchemaManager._add_column_if_missing(conn, "partner_prospects", "strategy_json", "TEXT NOT NULL DEFAULT '{}'")
+        SchemaManager._add_column_if_missing(conn, "partner_pitch_drafts", "angle_title", "TEXT NOT NULL DEFAULT ''")
+        SchemaManager._add_column_if_missing(conn, "partner_pitch_drafts", "updated_at", "TIMESTAMP")
+        SchemaManager._add_column_if_missing(conn, "partner_pitch_drafts", "outbox_id", "INTEGER")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS partner_contact_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prospect_id INTEGER NOT NULL,
+                contact_name TEXT NOT NULL DEFAULT '',
+                contact_email TEXT NOT NULL DEFAULT '',
+                role_title TEXT NOT NULL DEFAULT '',
+                confidence TEXT NOT NULL CHECK (confidence IN ('low', 'medium', 'high')),
+                source_url TEXT NOT NULL,
+                evidence_text TEXT NOT NULL,
+                selected_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(prospect_id, contact_email, source_url),
+                FOREIGN KEY (prospect_id) REFERENCES partner_prospects(id) ON DELETE CASCADE
+            )"""
+        )
+
+    @staticmethod
+    def _migration_019_apollo_partner_enrichment(conn: sqlite3.Connection) -> None:
+        """Retain provider provenance without exposing provider credentials."""
+        SchemaManager._add_column_if_missing(conn, "partner_contact_candidates", "provider", "TEXT NOT NULL DEFAULT 'public_web'")
+        SchemaManager._add_column_if_missing(conn, "partner_contact_candidates", "provider_record_id", "TEXT NOT NULL DEFAULT ''")
+        SchemaManager._add_column_if_missing(conn, "partner_contact_candidates", "verification_status", "TEXT NOT NULL DEFAULT ''")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_contact_research_prospect ON partner_contact_research(prospect_id, collected_at DESC)")
+
+    @staticmethod
+    def _migration_020_partner_pitch_studio(conn: sqlite3.Connection) -> None:
+        """Track pitch intent, selection, and variant performance."""
+        SchemaManager._add_column_if_missing(conn, "partner_pitch_drafts", "template_id", "TEXT NOT NULL DEFAULT 'editorial_conversation'")
+        SchemaManager._add_column_if_missing(conn, "partner_pitch_drafts", "tone", "TEXT NOT NULL DEFAULT 'warm'")
+        SchemaManager._add_column_if_missing(conn, "partner_pitch_drafts", "objective", "TEXT NOT NULL DEFAULT ''")
+        SchemaManager._add_column_if_missing(conn, "partner_pitch_drafts", "angle_rationale", "TEXT NOT NULL DEFAULT ''")
+        SchemaManager._add_column_if_missing(conn, "partner_pitch_drafts", "selected_at", "TIMESTAMP")
+        SchemaManager._add_column_if_missing(conn, "partner_pitch_drafts", "selected_by", "TEXT")
+
+    @staticmethod
+    def _migration_021_partner_source_intelligence(conn: sqlite3.Connection) -> None:
+        """Track normalized free-source evidence and provider coverage."""
+        SchemaManager._add_column_if_missing(conn, "partner_evidence", "provider", "TEXT NOT NULL DEFAULT 'manual'")
+        SchemaManager._add_column_if_missing(conn, "partner_evidence", "evidence_type", "TEXT NOT NULL DEFAULT 'organisation_fact'")
+        SchemaManager._add_column_if_missing(conn, "partner_evidence", "confidence", "TEXT NOT NULL DEFAULT 'medium'")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS partner_enrichment_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prospect_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('completed', 'empty', 'failed', 'skipped')),
+                result_count INTEGER NOT NULL DEFAULT 0,
+                error_code TEXT NOT NULL DEFAULT '',
+                started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(prospect_id, provider, started_at),
+                FOREIGN KEY (prospect_id) REFERENCES partner_prospects(id) ON DELETE CASCADE
+            )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_enrichment_runs_prospect ON partner_enrichment_runs(prospect_id, started_at DESC)")
 
     @staticmethod
     def _migration_017_recommendation_learning(conn: sqlite3.Connection) -> None:
@@ -790,6 +854,10 @@ class SchemaManager:
             (15, "marketing_opt_in", SchemaManager._migration_015_marketing_opt_in),
             (16, "partner_contact_research", SchemaManager._migration_016_partner_contact_research),
             (17, "recommendation_learning", SchemaManager._migration_017_recommendation_learning),
+            (18, "partner_automation", SchemaManager._migration_018_partner_automation),
+            (19, "apollo_partner_enrichment", SchemaManager._migration_019_apollo_partner_enrichment),
+            (20, "partner_pitch_studio", SchemaManager._migration_020_partner_pitch_studio),
+            (21, "partner_source_intelligence", SchemaManager._migration_021_partner_source_intelligence),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

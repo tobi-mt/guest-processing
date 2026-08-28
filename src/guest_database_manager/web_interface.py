@@ -39,6 +39,7 @@ from openpyxl import Workbook
 load_dotenv()
 
 from guest_database_manager.ask_mirror_talk_client import AskMirrorTalkClient, AskMirrorTalkClientError
+from guest_database_manager.apollo_client import ApolloClient
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.db_connection import connect_database
@@ -66,6 +67,7 @@ from guest_database_manager.maintenance import build_integrity_report, is_databa
 from guest_database_manager.metrics import build_operational_metrics
 from guest_database_manager.partner_intelligence import PartnerIntelligence, PartnerIntelligenceError
 from guest_database_manager.partner_discovery import curated_signals
+from guest_database_manager.partner_pitch_templates import list_pitch_templates
 from guest_database_manager.recommendation_learning import (
     FEATURE_SCHEMA_VERSION,
     LearningError,
@@ -701,7 +703,9 @@ class GuestWebService:
 
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
-        self.partner_intelligence = PartnerIntelligence(self.database)
+        self.partner_intelligence = PartnerIntelligence(
+            self.database, ai_factory=self._get_ai_assistant, apollo_factory=self._get_apollo_client
+        )
         self.recommendation_learning = RecommendationLearning(self.db_path)
 
     def get_recommendation_learning_status(self) -> Dict[str, Any]:
@@ -737,10 +741,23 @@ class GuestWebService:
 
     def list_partner_prospects(self) -> Dict[str, Any]:
         prospects = self.partner_intelligence.list_prospects()
-        return {"prospects": prospects, "sending_enabled": False}
+        apollo_key_present = bool(os.environ.get("APOLLO_API_KEY", "").strip())
+        apollo_live_enabled = os.environ.get("APOLLO_LIVE_ENRICHMENT_ENABLED", "false").strip().lower() == "true"
+        return {"prospects": prospects, "sending_enabled": False,
+                "apollo_configured": apollo_key_present,
+                "apollo_live_enabled": apollo_key_present and apollo_live_enabled,
+                "apollo_csv_import_enabled": True,
+                "pitch_templates": list_pitch_templates(),
+                "pitch_performance": self.partner_intelligence.pitch_performance()}
 
     def list_partner_suggestions(self) -> Dict[str, Any]:
         return {"suggestions": curated_signals(), "generated_at": datetime.now(timezone.utc).isoformat(), "auto_contact": False}
+
+    def preview_apollo_contacts_csv(self, csv_text: str) -> Dict[str, Any]:
+        return self.partner_intelligence.preview_apollo_csv(csv_text)
+
+    def import_apollo_contacts_csv(self, csv_text: str, *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.import_apollo_csv(csv_text, actor=actor)
 
     def import_partner_suggestion(self, index: int, *, actor: str) -> Dict[str, Any]:
         suggestions = curated_signals()
@@ -773,13 +790,57 @@ class GuestWebService:
     def research_partner_contact(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
         return self.partner_intelligence.research_contact_from_public_web(prospect_id, actor=actor)
 
-    def draft_partner_pitch(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
-        return self.partner_intelligence.draft_pitch(prospect_id, actor=actor)
+    def automate_partner_research(self, prospect_id: int, *, actor: str) -> Dict[str, Any]:
+        errors = []
+        try:
+            self.partner_intelligence.discover_contacts_with_apollo(prospect_id, actor=actor)
+        except PartnerIntelligenceError as exc:
+            errors.append(str(exc))
+        try:
+            self.partner_intelligence.enrich_from_free_sources(prospect_id, actor=actor)
+        except PartnerIntelligenceError as exc:
+            errors.append(str(exc))
+        prospect = self.partner_intelligence.get_prospect(prospect_id) or {}
+        if errors and not prospect.get("evidence") and not prospect.get("contact_candidates"):
+            raise PartnerIntelligenceError(" ".join(errors))
+        return self.analyze_partner_fit(prospect_id, actor=actor)
+
+    def select_partner_contact(self, prospect_id: int, candidate_id: int, *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.select_contact_candidate(prospect_id, candidate_id, actor=actor)
+
+    def analyze_partner_fit(self, prospect_id: int, *, actor: str, pitch_preferences: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        episodes = self.database.list_episodes()
+        context = [{
+            "title": item.get("published_title") or item.get("working_title") or item.get("episode_title"),
+            "topic": item.get("topic"), "description": item.get("description"),
+            "transcript_excerpt": _normalize_text(item.get("transcript_text"))[:1200],
+        } for item in episodes[-8:]]
+        return self.partner_intelligence.analyze_fit(prospect_id, actor=actor, episode_context=context,
+                                                     pitch_preferences=pitch_preferences)
+
+    def draft_partner_pitch(self, prospect_id: int, *, actor: str, preferences: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        preferences = preferences or {}
+        self.analyze_partner_fit(prospect_id, actor=actor, pitch_preferences=preferences)
+        return self.partner_intelligence.draft_pitch(prospect_id, actor=actor, preferences=preferences)
 
     def review_partner_pitch(self, draft_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         return self.partner_intelligence.review_draft(
             draft_id, _normalize_text(payload.get("decision")), actor=actor, reason=_normalize_text(payload.get("reason"))
         )
+
+    def update_partner_pitch(self, draft_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.update_draft(draft_id, payload, actor=actor)
+
+    def select_partner_pitch(self, draft_id: int, *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.select_draft(draft_id, actor=actor)
+
+    def approve_and_handoff_partner_pitch(self, draft_id: int, *, actor: str) -> Dict[str, Any]:
+        self.partner_intelligence.select_draft(draft_id, actor=actor)
+        self.partner_intelligence.review_draft(draft_id, "approved", actor=actor, reason="Approved in Pitch Studio")
+        return self.partner_intelligence.queue_approved_draft(draft_id, actor=actor)
+
+    def handoff_partner_pitch(self, draft_id: int, *, actor: str) -> Dict[str, Any]:
+        return self.partner_intelligence.queue_approved_draft(draft_id, actor=actor)
 
     def record_partner_outcome(self, prospect_id: int, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         return self.partner_intelligence.record_outcome(prospect_id, payload, actor=actor)
@@ -6375,6 +6436,20 @@ class GuestWebService:
         model = os.getenv(OPENAI_MODEL_ENV_VAR, "gpt-4o-mini")
         return AIAssistant(api_key=api_key, model=model)
 
+    def _get_apollo_client(self) -> Optional[ApolloClient]:
+        """Return a server-side Apollo client without exposing its credential."""
+        if os.environ.get("APOLLO_LIVE_ENRICHMENT_ENABLED", "false").strip().lower() != "true":
+            return None
+        api_key = os.environ.get("APOLLO_API_KEY", "").strip()
+        if not api_key:
+            return None
+        base_url = os.environ.get("APOLLO_API_BASE_URL", "https://api.apollo.io/api/v1").strip()
+        try:
+            timeout = float(os.environ.get("APOLLO_API_TIMEOUT_SECONDS", "12") or "12")
+        except ValueError:
+            timeout = 12.0
+        return ApolloClient(api_key=api_key, base_url=base_url, timeout_seconds=max(1.0, min(timeout, 30.0)))
+
     def generate_ai_email_draft(self, guest_id: int, email_type: str, custom_note: str = "") -> Dict[str, Any]:
         """Generate AI-powered email draft for acceptance/rejection."""
         ai_assistant = self._get_ai_assistant()
@@ -7188,6 +7263,22 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.CREATED, result)
             return
 
+        if self.path in {"/api/partners/apollo-import/preview", "/api/partners/apollo-import"}:
+            payload = self._read_json_payload()
+            csv_text = str(payload.get("csv_text") or "")
+            try:
+                if self.path.endswith("/preview"):
+                    result = self.service.preview_apollo_contacts_csv(csv_text)
+                else:
+                    result = self.service.import_apollo_contacts_csv(
+                        csv_text, actor=str((self._session_claims() or {}).get("sub") or "operator")
+                    )
+            except (ValueError, PartnerIntelligenceError) as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
         if self.path.startswith("/api/partners/suggestions/") and self.path.endswith("/import"):
             value = self.path.removesuffix("/import").removeprefix("/api/partners/suggestions/")
             try:
@@ -7256,6 +7347,43 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, result)
             return
 
+        if self.path.startswith("/api/partners/") and self.path.endswith("/automate"):
+            prospect_id = self._extract_record_id(self.path.removesuffix("/automate"), "/api/partners/")
+            try:
+                if prospect_id is None:
+                    raise PartnerIntelligenceError("Invalid prospect id")
+                result = self.service.automate_partner_research(prospect_id, actor=str((self._session_claims() or {}).get("sub") or "operator"))
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partners/") and self.path.endswith("/analyze"):
+            prospect_id = self._extract_record_id(self.path.removesuffix("/analyze"), "/api/partners/")
+            try:
+                if prospect_id is None:
+                    raise PartnerIntelligenceError("Invalid prospect id")
+                result = self.service.analyze_partner_fit(prospect_id, actor=str((self._session_claims() or {}).get("sub") or "operator"))
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partners/") and self.path.endswith("/select-contact"):
+            prospect_id = self._extract_record_id(self.path.removesuffix("/select-contact"), "/api/partners/")
+            try:
+                if prospect_id is None:
+                    raise PartnerIntelligenceError("Invalid prospect id")
+                candidate_id = int(self._read_json_payload().get("candidate_id") or 0)
+                result = self.service.select_partner_contact(prospect_id, candidate_id, actor=str((self._session_claims() or {}).get("sub") or "operator"))
+            except (ValueError, PartnerIntelligenceError) as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
         if self.path.startswith("/api/partners/") and self.path.endswith("/draft"):
             prospect_id = self._extract_record_id(self.path.removesuffix("/draft"), "/api/partners/")
             if prospect_id is None:
@@ -7263,7 +7391,8 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
             try:
                 result = self.service.draft_partner_pitch(
-                    prospect_id, actor=str((self._session_claims() or {}).get("sub") or "operator")
+                    prospect_id, actor=str((self._session_claims() or {}).get("sub") or "operator"),
+                    preferences=self._read_json_payload(),
                 )
             except PartnerIntelligenceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -7280,6 +7409,54 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 result = self.service.review_partner_pitch(
                     draft_id, self._read_json_payload(), actor=str((self._session_claims() or {}).get("sub") or "operator")
                 )
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partner-pitches/") and self.path.endswith("/edit"):
+            draft_id = self._extract_record_id(self.path.removesuffix("/edit"), "/api/partner-pitches/")
+            try:
+                if draft_id is None:
+                    raise PartnerIntelligenceError("Invalid pitch draft id")
+                result = self.service.update_partner_pitch(draft_id, self._read_json_payload(), actor=str((self._session_claims() or {}).get("sub") or "operator"))
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partner-pitches/") and self.path.endswith("/select"):
+            draft_id = self._extract_record_id(self.path.removesuffix("/select"), "/api/partner-pitches/")
+            try:
+                if draft_id is None:
+                    raise PartnerIntelligenceError("Invalid pitch draft id")
+                result = self.service.select_partner_pitch(draft_id, actor=str((self._session_claims() or {}).get("sub") or "operator"))
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partner-pitches/") and self.path.endswith("/approve-handoff"):
+            draft_id = self._extract_record_id(self.path.removesuffix("/approve-handoff"), "/api/partner-pitches/")
+            try:
+                if draft_id is None:
+                    raise PartnerIntelligenceError("Invalid pitch draft id")
+                result = self.service.approve_and_handoff_partner_pitch(draft_id, actor=str((self._session_claims() or {}).get("sub") or "operator"))
+            except PartnerIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path.startswith("/api/partner-pitches/") and self.path.endswith("/handoff"):
+            draft_id = self._extract_record_id(self.path.removesuffix("/handoff"), "/api/partner-pitches/")
+            try:
+                if draft_id is None:
+                    raise PartnerIntelligenceError("Invalid pitch draft id")
+                result = self.service.handoff_partner_pitch(draft_id, actor=str((self._session_claims() or {}).get("sub") or "operator"))
             except PartnerIntelligenceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return

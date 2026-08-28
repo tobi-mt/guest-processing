@@ -169,6 +169,43 @@ The email should feel personal, not templated. Sign it from {host_name}."""
         ]
         
         return self._call_openai(messages, temperature=0.8)
+
+    def generate_partner_strategy(self, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create a grounded partner assessment and several outreach variants."""
+        prompt = f"""You are the partnership editor for Mirror Talk: Soulful Conversations.
+Use only the supplied evidence. Do not invent a person, email address, audience metric,
+relationship, achievement, or claim. Return JSON with these keys:
+- score: integer 0-100
+- confidence: one of low, medium, high
+- rationale: concise evidence-grounded explanation
+- risks: array of concise strings
+- angles: array of exactly three objects with title, value_exchange, episode_connection
+- emails: array of exactly three objects with angle_title, angle_rationale, subject, body
+
+Each email must be genuinely specific, warm, concise, and written from Tobi. Mention a
+verified detail, explain the mutual audience value, make one clear low-friction request,
+and avoid generic praise. If a named recipient is unavailable, address the partnerships
+or communications team. Never imply that the message has been sent.
+Follow the requested template objective and tone in the context while keeping facts grounded.
+
+Context:
+{json.dumps(context, ensure_ascii=False, sort_keys=True)}"""
+        raw = self._call_openai(
+            [
+                {"role": "system", "content": "You produce conservative, source-grounded partnership intelligence as strict JSON."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            response_format={"type": "json_object"},
+        )
+        if not raw:
+            return None
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            self.last_error = "OpenAI returned invalid partner strategy JSON"
+            return None
+        return value if isinstance(value, dict) else None
     
     def generate_rejection_email(
         self,
