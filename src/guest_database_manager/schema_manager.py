@@ -175,6 +175,23 @@ class SchemaManager:
         )
     """
 
+    CREATE_RESCHEDULE_PROPOSALS_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS interview_reschedule_proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interview_id INTEGER NOT NULL,
+            mode TEXT NOT NULL CHECK (mode IN ('open_calendar', 'specific', 'alternatives')),
+            timezone TEXT NOT NULL,
+            options_json TEXT NOT NULL DEFAULT '[]',
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent', 'accepted', 'superseded', 'expired')),
+            created_by TEXT NOT NULL DEFAULT 'operator',
+            sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (interview_id) REFERENCES interviews(id) ON DELETE CASCADE
+        )
+    """
+
     CREATE_MIGRATIONS_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -832,6 +849,15 @@ class SchemaManager:
         SchemaManager._add_column_if_missing(conn, "guests", "marketing_opt_in", "BOOLEAN NOT NULL DEFAULT 0")
 
     @staticmethod
+    def _migration_022_reschedule_proposals(conn: sqlite3.Connection) -> None:
+        """Persist the exact structured alternatives included in reschedule emails."""
+        conn.execute(SchemaManager.CREATE_RESCHEDULE_PROPOSALS_TABLE_SQL)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reschedule_proposals_interview "
+            "ON interview_reschedule_proposals(interview_id, sent_at DESC)"
+        )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -858,6 +884,7 @@ class SchemaManager:
             (19, "apollo_partner_enrichment", SchemaManager._migration_019_apollo_partner_enrichment),
             (20, "partner_pitch_studio", SchemaManager._migration_020_partner_pitch_studio),
             (21, "partner_source_intelligence", SchemaManager._migration_021_partner_source_intelligence),
+            (22, "reschedule_proposals", SchemaManager._migration_022_reschedule_proposals),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

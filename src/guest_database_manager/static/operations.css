@@ -453,6 +453,18 @@
   color: var(--muted);
 }
 
+.reschedule-composer {
+  display: grid;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.reschedule-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
 .hidden {
   display: none !important;
 }

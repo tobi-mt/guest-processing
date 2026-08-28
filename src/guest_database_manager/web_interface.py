@@ -5149,7 +5149,63 @@ class GuestWebService:
             "variants": email_manager.template_variants("booking_confirmation") if hasattr(email_manager, "template_variants") else [],
         }
 
-    def preview_interview_reschedule_link(self, interview_id: int) -> Dict[str, Any]:
+    def _normalize_reschedule_proposal(
+        self,
+        *,
+        mode: Any = "open_calendar",
+        proposed_times: Any = None,
+        timezone_name: Any = "",
+    ) -> Dict[str, Any]:
+        """Validate proposed local times without reserving or changing a calendar slot."""
+        normalized_mode = _normalize_text(mode).lower() or "open_calendar"
+        if normalized_mode not in {"open_calendar", "specific", "alternatives"}:
+            raise WebInterfaceError("Reschedule mode must be open calendar, specific, or alternatives.")
+        normalized_timezone = _normalize_text(timezone_name) or self._booking_timezone_name()
+        try:
+            timezone_obj = ZoneInfo(normalized_timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise WebInterfaceError("Please choose a valid guest timezone.") from exc
+        raw_times = proposed_times if isinstance(proposed_times, list) else []
+        if normalized_mode == "open_calendar":
+            raw_times = []
+        required_count = 1 if normalized_mode == "specific" else 2 if normalized_mode == "alternatives" else 0
+        if len(raw_times) < required_count:
+            message = "Choose a proposed date and time." if required_count == 1 else "Choose at least two alternative dates and times."
+            raise WebInterfaceError(message)
+        if normalized_mode == "specific" and len(raw_times) != 1:
+            raise WebInterfaceError("A specific proposal must contain exactly one date and time.")
+        if len(raw_times) > 8:
+            raise WebInterfaceError("You can offer up to eight alternative times in one email.")
+        parsed_times: list[datetime] = []
+        for raw_value in raw_times:
+            parsed = self._parse_datetime(raw_value)
+            if not parsed:
+                raise WebInterfaceError("Each proposed date and time must be valid.")
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone_obj)
+            else:
+                parsed = parsed.astimezone(timezone_obj)
+            if parsed.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+                raise WebInterfaceError("Proposed dates and times must be in the future.")
+            parsed_times.append(parsed)
+        unique_times = {value.astimezone(timezone.utc).isoformat() for value in parsed_times}
+        if len(unique_times) != len(parsed_times):
+            raise WebInterfaceError("Proposed dates and times must be unique.")
+        parsed_times.sort()
+        return {
+            "mode": normalized_mode,
+            "timezone": normalized_timezone,
+            "parsed_times": parsed_times,
+            "proposed_times": [value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") for value in parsed_times],
+        }
+
+    def preview_interview_reschedule_link(
+        self,
+        interview_id: int,
+        proposal_mode: str = "open_calendar",
+        proposed_times: Any = None,
+        proposal_timezone: str = "",
+    ) -> Dict[str, Any]:
         """Return the reschedule-link email template for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -5163,21 +5219,30 @@ class GuestWebService:
             interview.get("guest_name"),
             interview.get("title"),
         ) or "Guest"
-        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        proposal = self._normalize_reschedule_proposal(
+            mode=proposal_mode,
+            proposed_times=proposed_times,
+            timezone_name=proposal_timezone or interview.get("timezone"),
+        )
+        timezone_label = proposal["timezone"]
         reschedule_url = self._reschedule_link_for_interview(interview_id)
 
         email_manager = self._build_email_manager()
-        template = email_manager.get_reschedule_link_template(
-            guest_name=guest_name,
-            scheduled_for=scheduled_for,
-            timezone_label=timezone_label,
-            reschedule_url=reschedule_url,
-        )
+        template_kwargs = dict(guest_name=guest_name, scheduled_for=scheduled_for, timezone_label=timezone_label, reschedule_url=reschedule_url)
+        if proposal["mode"] == "open_calendar":
+            template = email_manager.get_reschedule_link_template(**template_kwargs)
+        else:
+            template = email_manager.get_reschedule_link_template(
+                **template_kwargs,
+                proposed_times=proposal["parsed_times"],
+                proposal_mode=proposal["mode"],
+            )
         return {
             "interview": self._serialize_interview_reminder(interview),
             "subject": template["subject"],
             "body": template["body"],
             "reschedule_url": reschedule_url,
+            "proposal": {key: proposal[key] for key in ("mode", "timezone", "proposed_times")},
         }
 
     def send_interview_reminder(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
@@ -5368,7 +5433,16 @@ class GuestWebService:
             raise WebInterfaceError("Interview not found after booking confirmation send.")
         return self._serialize_interview_reminder(refreshed)
 
-    def send_interview_reschedule_link(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+    def send_interview_reschedule_link(
+        self,
+        interview_id: int,
+        subject: str = "",
+        body: str = "",
+        proposal_mode: str = "open_calendar",
+        proposed_times: Any = None,
+        proposal_timezone: str = "",
+        actor: str = "operator",
+    ) -> Dict[str, Any]:
         """Send a personal reschedule link for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -5386,21 +5460,33 @@ class GuestWebService:
             interview.get("guest_name"),
             interview.get("title"),
         ) or "Guest"
-        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        proposal = self._normalize_reschedule_proposal(
+            mode=proposal_mode,
+            proposed_times=proposed_times,
+            timezone_name=proposal_timezone or interview.get("timezone"),
+        )
+        timezone_label = proposal["timezone"]
         reschedule_url = self._reschedule_link_for_interview(interview_id)
 
         email_manager = self._build_email_manager()
         if not email_manager.is_configured():
             raise WebInterfaceError("Dashboard email is not configured on the server.")
 
-        preview = self.preview_interview_reschedule_link(interview_id)
+        preview = self.preview_interview_reschedule_link(
+            interview_id, proposal["mode"], proposal["proposed_times"], timezone_label
+        )
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
 
-        if subject.strip() or body.strip():
+        proposal_fingerprint = hashlib.sha256(json.dumps(
+            {"mode": proposal["mode"], "times": proposal["proposed_times"], "subject": resolved_subject, "body": resolved_body},
+            sort_keys=True,
+        ).encode("utf-8")).hexdigest()[:20]
+        idempotency_key = f"reschedule_link:{interview_id}:{proposal_fingerprint}"
+        if subject.strip() or body.strip() or proposal["mode"] != "open_calendar":
             sent = email_manager.send_email(
                 guest_email, resolved_subject, resolved_body,
-                idempotency_key=f"reschedule_link:{interview_id}:{_normalize_text(interview.get('reschedule_token'))}",
+                idempotency_key=idempotency_key,
             )
         else:
             sent = email_manager.send_reschedule_link_email(
@@ -5409,7 +5495,7 @@ class GuestWebService:
                 scheduled_for,
                 timezone_label,
                 reschedule_url,
-                idempotency_key=f"reschedule_link:{interview_id}:{_normalize_text(interview.get('reschedule_token'))}",
+                idempotency_key=idempotency_key,
             )
 
         if not sent:
@@ -5427,6 +5513,15 @@ class GuestWebService:
             provider=provider,
             notes=resolved_subject,
         )
+        saved_proposal = self.database.create_interview_reschedule_proposal(
+            interview_id=interview_id,
+            mode=proposal["mode"],
+            timezone_name=timezone_label,
+            options=proposal["proposed_times"],
+            subject=resolved_subject,
+            body=resolved_body,
+            created_by=actor,
+        )
         updated = self.update_interview(
             interview_id,
             {
@@ -5434,7 +5529,9 @@ class GuestWebService:
                 "status": "scheduled",
             },
         )
-        return self._serialize_interview_reminder(updated)
+        serialized = self._serialize_interview_reminder(updated)
+        serialized["reschedule_proposal"] = saved_proposal
+        return serialized
 
     def send_interview_cancellation(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
         """Send a cancellation email for an interview and mark it cancelled."""
@@ -6938,7 +7035,14 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                payload = self.service.preview_interview_reschedule_link(interview_id)
+                query = self._query_params(self.path)
+                proposed_times = [value for value in query.get("times", "").split("|") if value]
+                payload = self.service.preview_interview_reschedule_link(
+                    interview_id,
+                    query.get("mode", "open_calendar"),
+                    proposed_times,
+                    query.get("timezone", ""),
+                )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -8082,6 +8186,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         interview_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),
+                        payload.get("proposal_mode", "open_calendar"),
+                        payload.get("proposed_times", []),
+                        payload.get("proposal_timezone", ""),
+                        actor=str((self._session_claims() or {}).get("sub") or "operator"),
                     )
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

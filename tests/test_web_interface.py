@@ -6291,6 +6291,79 @@ def test_reschedule_email_template_clarifies_old_slot_is_not_still_booked():
     assert "You are not currently booked for a new interview time yet." in template["body"]
 
 
+def test_reschedule_email_template_includes_specific_and_alternative_times():
+    manager = EmailManager()
+    proposed = [
+        datetime(2026, 9, 8, 13, 0, tzinfo=timezone.utc),
+        datetime(2026, 9, 10, 9, 30, tzinfo=timezone.utc),
+    ]
+
+    specific = manager.get_reschedule_link_template(
+        "Jordan", datetime(2026, 9, 1, 13, 0, tzinfo=timezone.utc), "Europe/Berlin",
+        "https://example.test/book?token=abc", proposed_times=proposed[:1], proposal_mode="specific",
+    )
+    alternatives = manager.get_reschedule_link_template(
+        "Jordan", datetime(2026, 9, 1, 13, 0, tzinfo=timezone.utc), "Europe/Berlin",
+        "https://example.test/book?token=abc", proposed_times=proposed, proposal_mode="alternatives",
+    )
+
+    assert "Tuesday 08 September, 2026 at 15:00 Europe/Berlin" in specific["body"]
+    assert "Thursday 10 September, 2026 at 11:30 Europe/Berlin" in alternatives["body"]
+    assert "subject to availability until you confirm" in alternatives["body"]
+
+
+def test_reschedule_alternatives_are_validated_persisted_and_do_not_change_booking(monkeypatch, temp_db):
+    class StubEmailManager:
+        last_error = ""
+        resend_api_key = "re_test"
+
+        def configure_resend(self, **kwargs):
+            pass
+
+        def is_configured(self):
+            return True
+
+        def get_reschedule_link_template(self, **kwargs):
+            assert kwargs["proposal_mode"] == "alternatives"
+            assert len(kwargs["proposed_times"]) == 2
+            return {"subject": "Two alternatives", "body": "Option one and option two"}
+
+        def send_email(self, to_email, subject, body, idempotency_key=""):
+            assert to_email == "options@example.com"
+            assert idempotency_key.startswith("reschedule_link:")
+            return True
+
+    monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
+    monkeypatch.setenv(EMAIL_RESEND_API_KEY_ENV_VAR, "re_test_123")
+    monkeypatch.setenv(EMAIL_FROM_ENV_VAR, "onboarding@updates.mirrortalkpodcast.com")
+    monkeypatch.setenv(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast")
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview({
+        "guest_name": "Options Guest", "guest_email": "options@example.com",
+        "scheduled_for": "2026-09-01 13:00:00", "timezone": "Europe/Berlin",
+        "confirmation_status": "confirmed",
+    })
+
+    with pytest.raises(WebInterfaceError, match="at least two"):
+        service.preview_interview_reschedule_link(
+            interview["id"], "alternatives", ["2026-09-08T15:00"], "Europe/Berlin"
+        )
+
+    sent = service.send_interview_reschedule_link(
+        interview["id"], proposal_mode="alternatives",
+        proposed_times=["2026-09-08T15:00", "2026-09-10T11:30"],
+        proposal_timezone="Europe/Berlin", actor="test-operator",
+    )
+
+    assert sent["confirmation_status"] == "reschedule_requested"
+    assert sent["scheduled_for"] == interview["scheduled_for"]
+    proposals = temp_db.list_interview_reschedule_proposals(interview["id"])
+    assert proposals[0]["mode"] == "alternatives"
+    assert proposals[0]["timezone"] == "Europe/Berlin"
+    assert proposals[0]["options"] == ["2026-09-08T13:00:00Z", "2026-09-10T09:30:00Z"]
+    assert proposals[0]["created_by"] == "test-operator"
+
+
 def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp_db):
     """Episode records should support the post-recording appreciation workflow."""
 

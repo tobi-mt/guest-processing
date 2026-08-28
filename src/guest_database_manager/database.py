@@ -1097,6 +1097,68 @@ class GuestDatabase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def create_interview_reschedule_proposal(
+        self,
+        *,
+        interview_id: int,
+        mode: str,
+        timezone_name: str,
+        options: List[str],
+        subject: str,
+        body: str,
+        created_by: str = "operator",
+    ) -> Dict[str, Any]:
+        """Record the exact proposal sent to a guest without changing their booked slot."""
+        if mode not in {"open_calendar", "specific", "alternatives"}:
+            raise ValueError("Unsupported reschedule proposal mode")
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            if not conn.execute("SELECT 1 FROM interviews WHERE id = ?", (interview_id,)).fetchone():
+                raise ValueError("Interview not found")
+            conn.execute(
+                "UPDATE interview_reschedule_proposals SET status = 'superseded' "
+                "WHERE interview_id = ? AND status = 'sent'",
+                (interview_id,),
+            )
+            cursor = conn.execute(
+                """INSERT INTO interview_reschedule_proposals
+                   (interview_id, mode, timezone, options_json, subject, body, created_by)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (interview_id, mode, timezone_name, dumps(options), subject, body, created_by or "operator"),
+            )
+            proposal_id = int(cursor.lastrowid)
+            proposal = dict(conn.execute(
+                "SELECT * FROM interview_reschedule_proposals WHERE id = ?", (proposal_id,)
+            ).fetchone())
+            self._append_audit_event_conn(
+                conn,
+                entity_type="interview_reschedule_proposal",
+                entity_id=proposal_id,
+                event_type="sent",
+                actor=created_by or "operator",
+                source="operations",
+                reason="Reschedule options emailed to guest",
+                after=proposal,
+            )
+            conn.commit()
+            proposal["options"] = loads(proposal.pop("options_json") or "[]")
+            return proposal
+
+    def list_interview_reschedule_proposals(self, interview_id: int) -> List[Dict[str, Any]]:
+        """Return newest proposals first for audit and operational context."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM interview_reschedule_proposals WHERE interview_id = ? ORDER BY id DESC",
+                (interview_id,),
+            ).fetchall()
+            results = []
+            for row in rows:
+                item = dict(row)
+                item["options"] = loads(item.pop("options_json") or "[]")
+                results.append(item)
+            return results
+
     def delete_interview(self, interview_id: int) -> None:
         """Delete an interview from the database."""
         with self._connect() as conn:

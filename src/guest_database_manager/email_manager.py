@@ -402,12 +402,29 @@ Mirror Talk Podcast"""
         scheduled_for: datetime,
         timezone_label: str,
         reschedule_url: str,
+        proposed_times: Optional[list[datetime]] = None,
+        proposal_mode: str = "open_calendar",
     ) -> Dict[str, str]:
         """Build the email that invites a guest to choose a new interview time."""
         localized = self._localize_datetime(scheduled_for, timezone_label)
         subject = "Choose a new time for your Soulful Conversation"
         formatted_date = localized.strftime("%A %d %B, %Y")
         formatted_time = localized.strftime("%H:%M")
+
+        proposal_copy = ""
+        localized_options = [self._localize_datetime(value, timezone_label) for value in (proposed_times or [])]
+        if proposal_mode == "specific" and localized_options:
+            proposed = localized_options[0]
+            proposal_copy = (
+                "\nWe would like to propose this new time:\n"
+                f"- {proposed.strftime('%A %d %B, %Y')} at {proposed.strftime('%H:%M')} {timezone_label}\n"
+            )
+        elif proposal_mode == "alternatives" and localized_options:
+            lines = "\n".join(
+                f"- {value.strftime('%A %d %B, %Y')} at {value.strftime('%H:%M')} {timezone_label}"
+                for value in localized_options
+            )
+            proposal_copy = f"\nWe would like to offer these alternative times:\n{lines}\n"
 
         body = f"""Hi {guest_name},
 
@@ -416,8 +433,10 @@ Thank you again for your willingness to join Mirror Talk.
 Your previous Soulful Conversation slot on {formatted_date} at {formatted_time} {timezone_label} is no longer active.
 
 You are not currently booked for a new interview time yet.
+{proposal_copy}
+Proposed times remain subject to availability until you confirm a new booking.
 
-You can choose a new time using your personal rescheduling link here:
+You can confirm an offered time if it is still available, or choose another time, using your personal rescheduling link here:
 {reschedule_url}
 
 If the available options still do not work for you, just reply to this email and we’ll gladly find a better time together.
@@ -910,6 +929,8 @@ Mirror Talk Podcast
         timezone_label: str,
         reschedule_url: str,
         idempotency_key: str = "",
+        proposed_times: Optional[list[datetime]] = None,
+        proposal_mode: str = "open_calendar",
     ) -> bool:
         """Send a guest their personal rescheduling link."""
         template = self.get_reschedule_link_template(
@@ -917,6 +938,8 @@ Mirror Talk Podcast
             scheduled_for,
             timezone_label,
             reschedule_url,
+            proposed_times=proposed_times,
+            proposal_mode=proposal_mode,
         )
         return self.send_email(to_email, template["subject"], template["body"], idempotency_key=idempotency_key)
 

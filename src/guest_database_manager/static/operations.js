@@ -914,8 +914,8 @@ function renderInterviews(interviews, totalCount) {
       ? `
         <button type="button" class="ghost-button" data-interview-action="preview-booking-confirmation">Preview Booking Confirmation</button>
         <button type="button" class="secondary-button" data-interview-action="send-booking-confirmation">Send Booking Confirmation</button>
-        <button type="button" class="ghost-button" data-interview-action="preview-reschedule-link">Preview Reschedule Link</button>
-        <button type="button" class="secondary-button" data-interview-action="send-reschedule-link">Send Reschedule Link</button>
+        <button type="button" class="ghost-button" data-interview-action="preview-reschedule-link">Compose Reschedule</button>
+        <button type="button" class="secondary-button" data-interview-action="send-reschedule-link">Reschedule Options</button>
         <button type="button" class="ghost-button" data-interview-action="preview-reminder">Preview Reminder</button>
         <button type="button" class="${primaryAction === "send-reminder" ? "primary-button" : "secondary-button"}" data-interview-action="send-reminder">Send Reminder</button>
         <button type="button" class="ghost-button" data-interview-action="preview-cancellation">Preview Cancellation</button>
@@ -1199,68 +1199,88 @@ function renderInterviews(interviews, totalCount) {
     });
 
     if (previewReminderButton) {
-      previewRescheduleLinkButton.addEventListener("click", async () => {
+      const openRescheduleComposer = () => {
         if (!interview.guest_email) {
           setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
           return;
         }
-
-        previewRescheduleLinkButton.disabled = true;
-        previewRescheduleLinkButton.textContent = "Loading...";
-        activeInterviewActionFeedback = { id: interview.id, text: `Loading reschedule email preview for ${interview.guest_name || "guest"}...`, tone: "pending" };
-        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
-        try {
-          const preview = await fetchJSON(`/api/interviews/${interview.id}/reschedule-template`);
-          reminderPreviewNode.classList.remove("hidden");
-          reminderPreviewNode.innerHTML = `
-            <h4>${escapeHtml(preview.subject)}</h4>
-            <p>To: ${renderLinkedValue(interview.guest_email)}</p>
-            <pre>${escapeHtml(preview.body)}</pre>
-            <p><strong>Reschedule link:</strong> <a class="inline-link" href="${preview.reschedule_url}" target="_blank" rel="noopener">${preview.reschedule_url}</a></p>
-          `;
-          activeInterviewActionFeedback = { id: interview.id, text: `Reschedule email preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
-          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
-        } catch (error) {
-          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
-          actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
-          setMessage(interviewMessage, error.message, "error");
-        } finally {
-          previewRescheduleLinkButton.disabled = false;
-          previewRescheduleLinkButton.textContent = "Preview Reschedule Link";
-        }
-      });
-
-      sendRescheduleLinkButton.addEventListener("click", async () => {
-        if (!interview.guest_email) {
-          setMessage(interviewMessage, "This interview does not have a guest email yet.", "error");
-          return;
-        }
-        if (!confirmCriticalAction(`Send the reschedule link to ${interview.guest_name || interview.guest_email || "this guest"} now?`)) {
-          return;
-        }
-
-        sendRescheduleLinkButton.disabled = true;
-        sendRescheduleLinkButton.textContent = "Sending...";
-        activeInterviewActionFeedback = { id: interview.id, text: `Sending reschedule link to ${interview.guest_name || interview.guest_email}...`, tone: "pending" };
-        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);
-        try {
-          await fetchJSON(`/api/interviews/${interview.id}/send-reschedule-link`, {
-            method: "POST",
-            body: JSON.stringify({}),
-          });
-          reminderPreviewNode.classList.remove("hidden");
-          reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Reschedule link sent to ${escapeHtml(interview.guest_name || interview.guest_email)}. They can now choose a new interview slot.</p>`;
-          activeInterviewActionFeedback = { id: interview.id, text: `Reschedule link sent to ${interview.guest_name || interview.guest_email}.`, tone: "success" };
-          setMessage(interviewMessage, `Reschedule link sent to ${interview.guest_name || interview.guest_email}.`, "success");
-          await loadOperations();
-        } catch (error) {
-          activeInterviewActionFeedback = { id: interview.id, text: error.message, tone: "error" };
-          renderOperations();
-          setMessage(interviewMessage, error.message, "error");
-          sendRescheduleLinkButton.disabled = false;
-          sendRescheduleLinkButton.textContent = "Send Reschedule Link";
-        }
-      });
+        reminderPreviewNode.classList.remove("hidden");
+        reminderPreviewNode.innerHTML = `
+          <h4>Compose rescheduling email</h4>
+          <div class="reschedule-composer">
+            <label class="composer-field"><span>Offer type</span><select data-reschedule-mode>
+              <option value="open_calendar">Open booking calendar</option>
+              <option value="specific">One specific time</option>
+              <option value="alternatives">Alternative times</option>
+            </select></label>
+            <label class="composer-field"><span>Guest timezone</span><input data-reschedule-timezone value="${escapeHtml(interview.timezone || "Europe/Berlin")}" /></label>
+            <div data-reschedule-options class="reschedule-options hidden"></div>
+            <button type="button" class="ghost-button hidden" data-add-reschedule-option>Add another option</button>
+            <div class="operations-actions">
+              <button type="button" class="ghost-button" data-preview-reschedule>Preview exact email</button>
+              <button type="button" class="secondary-button" data-send-reschedule>Send after confirmation</button>
+            </div>
+            <div data-reschedule-email-preview></div>
+          </div>`;
+        const modeNode = reminderPreviewNode.querySelector("[data-reschedule-mode]");
+        const optionsNode = reminderPreviewNode.querySelector("[data-reschedule-options]");
+        const addNode = reminderPreviewNode.querySelector("[data-add-reschedule-option]");
+        const emailPreviewNode = reminderPreviewNode.querySelector("[data-reschedule-email-preview]");
+        const addOption = () => {
+          if (optionsNode.querySelectorAll("input").length >= 8) return;
+          const label = document.createElement("label");
+          label.className = "composer-field";
+          label.innerHTML = `<span>Proposed date and time</span><input type="datetime-local" data-reschedule-time required />`;
+          optionsNode.appendChild(label);
+        };
+        const syncMode = () => {
+          const count = modeNode.value === "specific" ? 1 : modeNode.value === "alternatives" ? 2 : 0;
+          optionsNode.classList.toggle("hidden", count === 0);
+          addNode.classList.toggle("hidden", modeNode.value !== "alternatives");
+          while (optionsNode.querySelectorAll("input").length < count) addOption();
+          if (modeNode.value === "specific") {
+            [...optionsNode.querySelectorAll("label")].slice(1).forEach((node) => node.remove());
+          }
+          emailPreviewNode.innerHTML = "";
+        };
+        const proposalPayload = () => ({
+          proposal_mode: modeNode.value,
+          proposal_timezone: reminderPreviewNode.querySelector("[data-reschedule-timezone]").value.trim(),
+          proposed_times: [...optionsNode.querySelectorAll("input")].map((node) => node.value).filter(Boolean),
+        });
+        const fetchPreview = async () => {
+          const proposal = proposalPayload();
+          const params = new URLSearchParams({ mode: proposal.proposal_mode, timezone: proposal.proposal_timezone, times: proposal.proposed_times.join("|") });
+          const preview = await fetchJSON(`/api/interviews/${interview.id}/reschedule-template?${params}`);
+          emailPreviewNode.innerHTML = `<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p><pre>${escapeHtml(preview.body)}</pre>`;
+          return { preview, proposal };
+        };
+        modeNode.addEventListener("change", syncMode);
+        addNode.addEventListener("click", addOption);
+        reminderPreviewNode.querySelector("[data-preview-reschedule]").addEventListener("click", async () => {
+          try { await fetchPreview(); } catch (error) { setMessage(interviewMessage, error.message, "error"); }
+        });
+        reminderPreviewNode.querySelector("[data-send-reschedule]").addEventListener("click", async (event) => {
+          const button = event.currentTarget;
+          try {
+            const { preview, proposal } = await fetchPreview();
+            if (!confirmCriticalAction(`Send these rescheduling details to ${interview.guest_name || interview.guest_email} now?`)) return;
+            button.disabled = true;
+            button.textContent = "Sending...";
+            await fetchJSON(`/api/interviews/${interview.id}/send-reschedule-link`, { method: "POST", body: JSON.stringify({ ...proposal, subject: preview.subject, body: preview.body }) });
+            emailPreviewNode.innerHTML = `<p class="composer-feedback success">Rescheduling email sent. The proposed times are recorded, but the interview remains unchanged until the guest confirms.</p>`;
+            setMessage(interviewMessage, `Rescheduling email sent to ${interview.guest_name || interview.guest_email}.`, "success");
+            await loadOperations();
+          } catch (error) {
+            button.disabled = false;
+            button.textContent = "Send after confirmation";
+            setMessage(interviewMessage, error.message, "error");
+          }
+        });
+        syncMode();
+      };
+      previewRescheduleLinkButton.addEventListener("click", openRescheduleComposer);
+      sendRescheduleLinkButton.addEventListener("click", openRescheduleComposer);
 
       previewBookingConfirmationButton.addEventListener("click", async () => {
         if (!interview.guest_email) {
