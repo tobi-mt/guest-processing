@@ -134,7 +134,15 @@ This guide will help you switch from the problematic refresh token approach to a
    # Add new service account credentials
    export MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_FILE="$HOME/.google/mirror-talk-service-account.json"
    export MIRROR_TALK_GOOGLE_CALENDAR_ID="your-calendar@gmail.com"  # Replace with your calendar ID
+   # Google Workspace only, after an administrator enables Domain-Wide Delegation:
+   # export MIRROR_TALK_GOOGLE_DELEGATED_USER="organizer@your-workspace-domain.com"
    ```
+
+   Without `MIRROR_TALK_GOOGLE_DELEGATED_USER`, the service account creates the
+   host calendar event without Google attendees. Guests still receive the
+   confirmation email and attached `.ics` invitation from Mirror Talk. Google
+   requires Domain-Wide Delegation before a service account may populate an
+   event attendee list.
 
    **Finding Your Calendar ID:**
    - Open Google Calendar

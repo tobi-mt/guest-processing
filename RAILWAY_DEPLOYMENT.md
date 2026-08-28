@@ -287,9 +287,10 @@ dependencies = [
 | `MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_BASE64` | ✅ Yes | `ewogICJ0eXB...` | Base64-encoded service account JSON |
 | `MIRROR_TALK_GOOGLE_CALENDAR_ID` | ✅ Yes | `podcast.mirrortalk@gmail.com` | Your Google Calendar ID |
 | `MIRROR_TALK_GOOGLE_CALENDAR_TIMEZONE` | ❌ No | `Europe/Berlin` | Default timezone for events |
-| `MIRROR_TALK_GOOGLE_CLIENT_ID` | ❌ No | `123...apps.googleusercontent.com` | OAuth fallback (optional) |
-| `MIRROR_TALK_GOOGLE_CLIENT_SECRET` | ❌ No | `GOCSPX-...` | OAuth fallback (optional) |
-| `MIRROR_TALK_GOOGLE_REFRESH_TOKEN` | ❌ No | `1//04...` | OAuth fallback (optional) |
+| `MIRROR_TALK_GOOGLE_DELEGATED_USER` | ❌ No | `organizer@example.com` | Workspace organizer to impersonate after Domain-Wide Delegation is granted; enables Google attendee invitations |
+| `MIRROR_TALK_GOOGLE_CLIENT_ID` | ❌ No | `123...apps.googleusercontent.com` | Legacy OAuth variable; ignored by the direct web app |
+| `MIRROR_TALK_GOOGLE_CLIENT_SECRET` | ❌ No | `GOCSPX-...` | Legacy OAuth variable; ignored by the direct web app |
+| `MIRROR_TALK_GOOGLE_REFRESH_TOKEN` | ❌ No | `1//04...` | Legacy OAuth variable; ignored by the direct web app |
 
 ---
 

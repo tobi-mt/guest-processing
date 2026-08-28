@@ -28,6 +28,7 @@ from guest_database_manager.web_interface import (
     EMAIL_CC_ENV_VAR,
     EMAIL_RESEND_API_KEY_ENV_VAR,
     GOOGLE_CALENDAR_ID_ENV_VAR,
+    GOOGLE_DELEGATED_USER_ENV_VAR,
     GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR,
     GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR,
     GOOGLE_CLIENT_ID_ENV_VAR,
@@ -51,7 +52,7 @@ from guest_database_manager import guest_research
 from guest_database_manager import web_interface
 from guest_database_manager.email_manager import EmailManager
 from guest_database_manager.episode_planner import build_release_recommendations, next_release_slot
-from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient
+from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
 from guest_database_manager.google_service_account_calendar import GoogleServiceAccountCalendarClient
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
 
@@ -5190,6 +5191,45 @@ def test_public_reschedule_link_exposes_and_accepts_specific_proposal(monkeypatc
     assert temp_db.list_interview_reschedule_proposals(interview["id"])[0]["status"] == "accepted"
 
 
+def test_public_reschedule_calendar_failure_keeps_original_booking_and_token(monkeypatch, temp_db):
+    """A failed external calendar write must not partially confirm the reschedule locally."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Calendar Failure", "email": "failure@example.com"})
+    original_start = (datetime.now(timezone.utc) + timedelta(days=3)).replace(second=0, microsecond=0).isoformat()
+    proposed_start = (datetime.now(timezone.utc) + timedelta(days=5)).replace(second=0, microsecond=0).isoformat()
+    interview = service.create_interview({
+        "guest_id": guest["id"], "guest_name": "Calendar Failure", "guest_email": "failure@example.com",
+        "scheduled_for": original_start, "timezone": "Europe/Berlin", "status": "scheduled",
+        "confirmation_status": "reschedule_requested",
+    })
+    token = service._ensure_interview_reschedule_token(interview["id"])
+    proposal = temp_db.create_interview_reschedule_proposal(
+        interview_id=interview["id"], mode="specific", timezone_name="Europe/Berlin",
+        options=[proposed_start], subject="Proposed time", body="Please confirm", created_by="operator",
+    )
+    monkeypatch.setattr(
+        GuestWebService,
+        "list_public_booking_slots",
+        lambda self, booking_token, limit=None: {"slots": [{"start": proposed_start, "end": proposed_start}]},
+    )
+
+    class FailingCalendarClient:
+        def create_event_from_interview(self, payload):
+            raise GoogleCalendarSyncError("Calendar rejected the event")
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: FailingCalendarClient())
+
+    with pytest.raises(WebInterfaceError, match="Calendar rejected"):
+        service.create_public_booking(token, {"scheduled_for": proposed_start, "timezone": "Europe/Berlin"})
+
+    saved = temp_db.get_interview_by_id(interview["id"])
+    assert saved["scheduled_for"] == original_start
+    assert saved["reschedule_token"] == token
+    assert saved["confirmation_status"] == "reschedule_requested"
+    assert temp_db.list_interview_reschedule_proposals(interview["id"])[0]["id"] == proposal["id"]
+    assert temp_db.list_interview_reschedule_proposals(interview["id"])[0]["status"] == "sent"
+
+
 def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):
     """Booking confirmations should include an ICS invite attachment."""
     manager = EmailManager()
@@ -6627,6 +6667,76 @@ def test_build_google_calendar_client_supports_base64_service_account(monkeypatc
     assert client is not None
     assert client.calendar_id == "calendar@example.com"
     assert client.credentials["client_email"] == credentials["client_email"]
+
+
+def test_service_account_without_delegation_creates_host_event_without_attendee(monkeypatch):
+    """Consumer/non-delegated service accounts must not send Google an attendee list."""
+    client = GoogleServiceAccountCalendarClient.from_base64(
+        b64encode(json.dumps({
+            "client_email": "calendar-bot@example.iam.gserviceaccount.com",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }).encode("utf-8")).decode("ascii"),
+        calendar_id="calendar@example.com",
+    )
+    monkeypatch.setattr(client, "_get_access_token", lambda: "access-token")
+    captured = {}
+
+    class StubResponse:
+        ok = True
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"id": "event-1"}
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs)
+        return StubResponse()
+
+    monkeypatch.setattr("guest_database_manager.google_calendar_sync.requests.post", fake_post)
+    client.create_event_from_interview({
+        "guest_name": "Guest", "guest_email": "guest@example.com",
+        "scheduled_for": "2026-09-07T18:00:00+00:00", "timezone": "Europe/Berlin",
+    })
+
+    assert "attendees" not in captured["json"]
+
+
+def test_service_account_delegation_impersonates_user_and_keeps_attendee(monkeypatch, temp_db):
+    """Workspace delegation should use the configured organizer and allow invitations."""
+    credentials = {
+        "client_email": "calendar-bot@example.iam.gserviceaccount.com",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    monkeypatch.setenv(GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR, b64encode(json.dumps(credentials).encode()).decode())
+    monkeypatch.setenv(GOOGLE_CALENDAR_ID_ENV_VAR, "host@example.com")
+    monkeypatch.setenv(GOOGLE_DELEGATED_USER_ENV_VAR, "host@example.com")
+    service = GuestWebService(temp_db.db_path)
+    client = service._build_google_calendar_client()
+    captured_jwt = {}
+    captured_interview = {}
+    monkeypatch.setattr(
+        "guest_database_manager.google_service_account_calendar.jwt.encode",
+        lambda payload, key, algorithm: captured_jwt.update(payload) or "signed",
+    )
+
+    client._create_signed_jwt()
+    monkeypatch.setattr(
+        GoogleCalendarSyncClient,
+        "create_event_from_interview",
+        lambda self, interview: captured_interview.update(interview) or {"id": "event-1"},
+    )
+    client.create_event_from_interview({
+        "guest_name": "Guest", "guest_email": "guest@example.com",
+        "scheduled_for": "2026-09-07T18:00:00+00:00", "timezone": "Europe/Berlin",
+    })
+
+    assert client.delegated_user == "host@example.com"
+    assert captured_jwt["sub"] == "host@example.com"
+    assert captured_interview["guest_email"] == "guest@example.com"
 
 
 def test_service_account_calendar_client_supports_busy_event_listing(monkeypatch):

@@ -71,7 +71,8 @@ class GoogleServiceAccountCalendarClient(GoogleCalendarSyncClient):
         self,
         service_account_file: str | Path,
         calendar_id: str,
-        default_timezone: str = "Europe/Berlin"
+        default_timezone: str = "Europe/Berlin",
+        delegated_user: str = "",
     ):
         """
         Initialize with service account credentials.
@@ -83,6 +84,7 @@ class GoogleServiceAccountCalendarClient(GoogleCalendarSyncClient):
         """
         self.calendar_id = calendar_id
         self.default_timezone = default_timezone
+        self.delegated_user = delegated_user.strip()
         
         # Load service account credentials
         service_account_path = Path(service_account_file)
@@ -109,6 +111,7 @@ class GoogleServiceAccountCalendarClient(GoogleCalendarSyncClient):
         service_account_base64: str,
         calendar_id: str,
         default_timezone: str = "Europe/Berlin",
+        delegated_user: str = "",
     ) -> "GoogleServiceAccountCalendarClient":
         """Initialize directly from a base64-encoded service-account JSON payload."""
         try:
@@ -132,6 +135,7 @@ class GoogleServiceAccountCalendarClient(GoogleCalendarSyncClient):
         instance = cls.__new__(cls)
         instance.calendar_id = calendar_id
         instance.default_timezone = default_timezone
+        instance.delegated_user = delegated_user.strip()
         instance.credentials = cls._validate_credentials(credentials, source_label="Service account base64 payload")
         instance._access_token = None
         instance._token_expiry = None
@@ -143,7 +147,7 @@ class GoogleServiceAccountCalendarClient(GoogleCalendarSyncClient):
         
         payload = {
             "iss": self.credentials["client_email"],
-            "sub": self.credentials["client_email"],
+            "sub": self.delegated_user or self.credentials["client_email"],
             "aud": self.credentials.get("token_uri", self.TOKEN_URL),
             "iat": now,
             "exp": now + 3600,  # 1 hour expiration
@@ -524,6 +528,19 @@ class GoogleServiceAccountCalendarClient(GoogleCalendarSyncClient):
             )
         
         return response.json()
+
+    def create_event_from_interview(self, interview: Dict[str, Any]) -> Dict[str, Any]:
+        """Create an event, adding guests only when Workspace delegation is active.
+
+        Google rejects attendee lists from an undelegated service account. The
+        application still emails the guest an iCalendar invitation separately,
+        so a non-delegated account should create the host event without attendees
+        instead of failing the confirmed booking.
+        """
+        event_interview = dict(interview)
+        if not self.delegated_user:
+            event_interview["guest_email"] = ""
+        return super().create_event_from_interview(event_interview)
     
     def delete_event(self, event_id: str) -> Dict[str, bool]:
         """
@@ -577,6 +594,7 @@ def create_client_from_env() -> Optional[GoogleServiceAccountCalendarClient]:
     
     service_account_file = os.environ.get("MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
     calendar_id = os.environ.get("MIRROR_TALK_GOOGLE_CALENDAR_ID", "").strip()
+    delegated_user = os.environ.get("MIRROR_TALK_GOOGLE_DELEGATED_USER", "").strip()
     
     if not service_account_file or not calendar_id:
         return None
@@ -584,4 +602,5 @@ def create_client_from_env() -> Optional[GoogleServiceAccountCalendarClient]:
     return GoogleServiceAccountCalendarClient(
         service_account_file=service_account_file,
         calendar_id=calendar_id,
+        delegated_user=delegated_user,
     )

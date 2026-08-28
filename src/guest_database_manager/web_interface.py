@@ -118,6 +118,7 @@ GOOGLE_REFRESH_TOKEN_ENV_VAR = "MIRROR_TALK_GOOGLE_REFRESH_TOKEN"
 GOOGLE_CALENDAR_ID_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_ID"
 GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR = "MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_FILE"
 GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR = "MIRROR_TALK_GOOGLE_SERVICE_ACCOUNT_BASE64"
+GOOGLE_DELEGATED_USER_ENV_VAR = "MIRROR_TALK_GOOGLE_DELEGATED_USER"
 GOOGLE_CALENDAR_QUERY_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_QUERY"
 GOOGLE_CALENDAR_TIMEZONE_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_TIMEZONE"
 GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_DAYS_AHEAD"
@@ -4212,48 +4213,45 @@ class GuestWebService:
                 if normalized_scheduled_for not in available_starts:
                     raise WebInterfaceError("That slot is no longer available. Please choose another time.")
 
-                updated = self.update_interview(
-                    int(existing_interview["id"]),
-                    {
-                        "scheduled_for": normalized_scheduled_for,
-                        "timezone": timezone_label,
-                        "join_url": _normalize_text(existing_interview.get("join_url")) or self._booking_join_url(),
-                        "status": "scheduled",
-                        "confirmation_status": "confirmed",
-                        "reschedule_token": None,
-                        "reschedule_token_created_at": None,
-                        "notes": "\n".join(
-                            part
-                            for part in [
-                                _normalize_text(existing_interview.get("notes")),
-                                "Rescheduled through the Mirror Talk guest booking flow.",
-                                f"Guest browser timezone: {browser_timezone_label}" if browser_timezone_label else "",
-                                guest_note,
-                            ]
-                            if part
-                        ),
-                    },
-                )
+                update_payload = {
+                    "scheduled_for": normalized_scheduled_for,
+                    "timezone": timezone_label,
+                    "join_url": _normalize_text(existing_interview.get("join_url")) or self._booking_join_url(),
+                    "status": "scheduled",
+                    "confirmation_status": "confirmed",
+                    "reschedule_token": None,
+                    "reschedule_token_created_at": None,
+                    "notes": "\n".join(
+                        part
+                        for part in [
+                            _normalize_text(existing_interview.get("notes")),
+                            "Rescheduled through the Mirror Talk guest booking flow.",
+                            f"Guest browser timezone: {browser_timezone_label}" if browser_timezone_label else "",
+                            guest_note,
+                        ]
+                        if part
+                    ),
+                }
 
                 client = self._build_google_calendar_client()
                 if client is not None:
+                    calendar_candidate = dict(existing_interview)
+                    calendar_candidate.update(update_payload)
                     try:
-                        if _normalize_text(updated.get("calendar_event_id")):
-                            event_payload = client.update_event_from_interview(updated)
+                        if _normalize_text(calendar_candidate.get("calendar_event_id")):
+                            event_payload = client.update_event_from_interview(calendar_candidate)
                         else:
-                            event_payload = client.create_event_from_interview(updated)
+                            event_payload = client.create_event_from_interview(calendar_candidate)
                     except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
                         raise WebInterfaceError(str(exc)) from exc
-                    self.database.update_interview(
-                        updated["id"],
-                        {
-                            "calendar_event_id": event_payload.get("id") or updated.get("calendar_event_id"),
-                            "calendar_source": "google_calendar",
-                            "event_updated_at": event_payload.get("updated"),
-                            "last_synced_at": datetime.now().astimezone().isoformat(),
-                        },
-                    )
-                    updated = self.database.get_interview_by_id(updated["id"]) or updated
+                    update_payload.update({
+                        "calendar_event_id": event_payload.get("id") or existing_interview.get("calendar_event_id"),
+                        "calendar_source": "google_calendar",
+                        "event_updated_at": event_payload.get("updated"),
+                        "last_synced_at": datetime.now().astimezone().isoformat(),
+                    })
+
+                updated = self.update_interview(int(existing_interview["id"]), update_payload)
 
                 updated["booking_confirmation"] = self._send_booking_confirmation_email(guest, updated)
                 proposal = target.get("reschedule_proposal")
@@ -6004,10 +6002,11 @@ class GuestWebService:
         return reference
 
     def _build_google_calendar_client(self) -> Optional[GoogleServiceAccountCalendarClient]:
-        """Build the Google Calendar client from service-account configuration only."""
+        """Build a service-account client, optionally impersonating a Workspace user."""
         service_account_file = os.environ.get(GOOGLE_SERVICE_ACCOUNT_FILE_ENV_VAR, "").strip()
         service_account_base64 = os.environ.get(GOOGLE_SERVICE_ACCOUNT_BASE64_ENV_VAR, "").strip()
         calendar_id = os.environ.get(GOOGLE_CALENDAR_ID_ENV_VAR, "").strip()
+        delegated_user = os.environ.get(GOOGLE_DELEGATED_USER_ENV_VAR, "").strip()
 
         if not calendar_id or (not service_account_file and not service_account_base64):
             return None
@@ -6018,11 +6017,13 @@ class GuestWebService:
                     service_account_base64,
                     calendar_id=calendar_id,
                     default_timezone=os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin",
+                    delegated_user=delegated_user,
                 )
             return GoogleServiceAccountCalendarClient(
                 service_account_file=service_account_file,
                 calendar_id=calendar_id,
                 default_timezone=os.environ.get(GOOGLE_CALENDAR_TIMEZONE_ENV_VAR, "Europe/Berlin").strip() or "Europe/Berlin",
+                delegated_user=delegated_user,
             )
         except GoogleCalendarServiceAccountError as exc:
             raise WebInterfaceError(f"Google Calendar service account configuration is invalid: {exc}") from exc
