@@ -3647,10 +3647,28 @@ class GuestWebService:
                     "email": _normalize_text(reschedule_interview.get("guest_email")),
                     "booking_override": None,
                 }
-            return {"guest": guest, "reschedule_interview": reschedule_interview, "reschedule_mode": True}
+            proposal = self.database.get_active_interview_reschedule_proposal(int(reschedule_interview["id"]))
+            return {
+                "guest": guest,
+                "reschedule_interview": reschedule_interview,
+                "reschedule_mode": True,
+                "reschedule_proposal": proposal,
+            }
 
         guest = self._guest_from_booking_token(booking_token)
-        return {"guest": guest, "reschedule_interview": None, "reschedule_mode": False}
+        return {"guest": guest, "reschedule_interview": None, "reschedule_mode": False, "reschedule_proposal": None}
+
+    @staticmethod
+    def _serialize_public_reschedule_proposal(proposal: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Expose only proposal details needed by the secure guest booking page."""
+        if not proposal:
+            return None
+        return {
+            "id": proposal.get("id"),
+            "mode": proposal.get("mode"),
+            "timezone": proposal.get("timezone"),
+            "options": list(proposal.get("options") or []),
+        }
 
     def _serialize_public_booking_interview(self, interview: Dict[str, Any]) -> Dict[str, Any]:
         """Return a small safe booking summary for the guest-facing page."""
@@ -4047,13 +4065,15 @@ class GuestWebService:
         guest = target["guest"]
         existing_interview = target["reschedule_interview"] or self._find_future_interview_for_guest(guest)
         booking_settings = self._guest_booking_settings(guest)
+        proposal = target.get("reschedule_proposal")
         return {
             "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest",
             "guest_email": _normalize_text(guest.get("email")),
-            "booking_timezone": booking_settings["timezone"],
+            "booking_timezone": _normalize_text((proposal or {}).get("timezone")) or booking_settings["timezone"],
             "booking_override_active": booking_settings["has_override"],
             "reschedule_mode": bool(target["reschedule_mode"]),
             "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
+            "reschedule_proposal": self._serialize_public_reschedule_proposal(proposal),
         }
 
     def list_public_booking_slots(self, booking_token: str, *, limit: Optional[int] = None) -> Dict[str, Any]:
@@ -4073,6 +4093,7 @@ class GuestWebService:
         )
         weekdays = set(booking_settings["weekdays"])
         slot_times = booking_settings["slot_times"]
+        proposal = target.get("reschedule_proposal")
 
         slots: list[Dict[str, Any]] = []
         current_local = min_notice.astimezone(timezone_obj)
@@ -4115,12 +4136,49 @@ class GuestWebService:
                 )
                 if limit is not None and len(slots) >= limit:
                     break
-            if limit is not None and len(slots) >= limit:
-                break
+                if limit is not None and len(slots) >= limit:
+                    break
+
+        # Explicitly offered times are operator-approved exceptions to the regular
+        # weekday/time pattern, but remain unavailable when they are past or busy.
+        offered_availability: Dict[str, bool] = {}
+        existing_starts = {item["start"] for item in slots}
+        for option in (proposal or {}).get("options") or []:
+            proposed_start = self._parse_datetime(option)
+            if not proposed_start:
+                offered_availability[str(option)] = False
+                continue
+            if proposed_start.tzinfo is None:
+                proposed_start = proposed_start.replace(tzinfo=timezone.utc)
+            proposed_start = proposed_start.astimezone(timezone.utc)
+            normalized_start = proposed_start.isoformat()
+            is_available = proposed_start > reference and not self._slot_overlaps_busy(
+                proposed_start,
+                proposed_start + duration,
+                busy_windows,
+                buffer_minutes=self._booking_buffer_minutes(),
+            )
+            offered_availability[str(option)] = is_available
+            if is_available and normalized_start not in existing_starts:
+                slots.append({
+                    "start": normalized_start,
+                    "end": (proposed_start + duration).isoformat(),
+                    "timezone": _normalize_text((proposal or {}).get("timezone")) or booking_settings["timezone"],
+                    "proposed": True,
+                })
+                existing_starts.add(normalized_start)
+
+        slots.sort(key=lambda item: self._parse_datetime(item.get("start")) or datetime.max.replace(tzinfo=timezone.utc))
+        serialized_proposal = self._serialize_public_reschedule_proposal(proposal)
+        if serialized_proposal:
+            serialized_proposal["options"] = [
+                {"start": option, "available": bool(offered_availability.get(str(option)))}
+                for option in serialized_proposal["options"]
+            ]
 
         return {
             "guest_name": _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest",
-            "booking_timezone": booking_settings["timezone"],
+            "booking_timezone": _normalize_text((proposal or {}).get("timezone")) or booking_settings["timezone"],
             "booking_override_active": booking_settings["has_override"],
             "reschedule_mode": bool(target["reschedule_mode"]),
             "existing_booking": self._serialize_public_booking_interview(existing_interview) if existing_interview else None,
@@ -4129,6 +4187,7 @@ class GuestWebService:
                 "days_ahead": booking_settings["days_ahead"],
             },
             "slots": slots,
+            "reschedule_proposal": serialized_proposal,
         }
 
     def create_public_booking(self, booking_token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -4197,6 +4256,9 @@ class GuestWebService:
                     updated = self.database.get_interview_by_id(updated["id"]) or updated
 
                 updated["booking_confirmation"] = self._send_booking_confirmation_email(guest, updated)
+                proposal = target.get("reschedule_proposal")
+                if proposal:
+                    self.database.mark_interview_reschedule_proposal_accepted(int(proposal["id"]))
                 return self._serialize_public_booking_interview(updated)
 
             repaired = self._repair_existing_public_booking(

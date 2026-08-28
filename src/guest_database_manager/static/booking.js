@@ -2,6 +2,7 @@ const bookingMessage = document.getElementById("booking-message");
 const bookingSubtitle = document.getElementById("booking-subtitle");
 const bookingExisting = document.getElementById("booking-existing");
 const bookingMeta = document.getElementById("booking-meta");
+const bookingProposal = document.getElementById("booking-proposal");
 const bookingForm = document.getElementById("booking-form");
 const bookingSubmit = document.getElementById("booking-submit");
 const bookingTitle = document.getElementById("booking-title");
@@ -33,6 +34,7 @@ function showInvitationState() {
   bookingInvitation.classList.remove("hidden");
   bookingMeta.classList.add("hidden");
   bookingExisting.classList.add("hidden");
+  bookingProposal.classList.add("hidden");
   bookingAvailability.classList.add("hidden");
   bookingSelectedSlot.classList.add("hidden");
   bookingCalendarGrid.innerHTML = "";
@@ -174,6 +176,63 @@ function renderSelectedSlot(slot) {
   `;
 }
 
+function selectSlot(slot) {
+  selectedSlot = slot;
+  selectedDateKey = slotLocalDate(slot);
+  visibleMonthKey = slotMonthKey(slot);
+  bookingForm.elements.scheduled_for.value = slot.start;
+  bookingSubmit.disabled = false;
+  bookingSubmit.textContent = rescheduleMode ? "Confirm New Slot" : "Book This Slot";
+  renderSelectedSlot(slot);
+  renderCalendarMonth();
+  renderTimeOptions(selectedDateKey);
+}
+
+function renderRescheduleProposal(proposal) {
+  bookingProposal.innerHTML = "";
+  if (!proposal || proposal.mode === "open_calendar" || !Array.isArray(proposal.options) || !proposal.options.length) {
+    bookingProposal.classList.add("hidden");
+    return;
+  }
+  bookingProposal.classList.remove("hidden");
+  const heading = document.createElement("h3");
+  heading.id = "booking-proposal-heading";
+  heading.textContent = proposal.mode === "specific" ? "Your proposed new time" : "Choose from these proposed times";
+  const intro = document.createElement("p");
+  intro.textContent = proposal.mode === "specific"
+    ? "Mirror Talk has suggested this time for your conversation. Confirm it below if it still works for you."
+    : "Mirror Talk has suggested these alternatives. Choose the one that works best for you.";
+  const options = document.createElement("div");
+  options.className = "proposal-options";
+  proposal.options.forEach((option) => {
+    const row = document.createElement("div");
+    row.className = `proposal-option${option.available ? "" : " unavailable"}`;
+    const label = document.createElement("strong");
+    label.textContent = `${formatSlot(option.start)} · ${proposal.timezone || slotTimezone}`;
+    row.appendChild(label);
+    if (option.available) {
+      const slot = availableSlots.find((item) => new Date(item.start).getTime() === new Date(option.start).getTime());
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "primary-button";
+      button.textContent = proposal.mode === "specific" ? "Select this time" : "Choose this time";
+      button.addEventListener("click", () => {
+        if (slot) selectSlot(slot);
+        bookingForm.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      row.appendChild(button);
+    } else {
+      const unavailable = document.createElement("span");
+      unavailable.textContent = "No longer available";
+      row.appendChild(unavailable);
+    }
+    options.appendChild(row);
+  });
+  const another = document.createElement("p");
+  another.textContent = "Prefer another time? You can still use the full availability calendar below.";
+  bookingProposal.append(heading, intro, options, another);
+}
+
 function renderTimeOptions(dateKey) {
   bookingTimes.innerHTML = "";
   const daySlots = slotsForDate(dateKey);
@@ -202,13 +261,7 @@ function renderTimeOptions(dateKey) {
       button.classList.add("active");
     }
     button.addEventListener("click", () => {
-      selectedSlot = slot;
-      bookingForm.elements.scheduled_for.value = slot.start;
-      bookingSubmit.disabled = false;
-      bookingSubmit.textContent = rescheduleMode ? "Confirm New Slot" : "Book This Slot";
-      renderSelectedSlot(slot);
-      bookingTimes.querySelectorAll(".time-slot-button").forEach((item) => item.classList.remove("active"));
-      button.classList.add("active");
+      selectSlot(slot);
     });
     bookingTimes.appendChild(button);
   });
@@ -343,6 +396,7 @@ async function loadBookingPage() {
       bookingForm.classList.add("hidden");
     } else {
       setAvailableSlots(availability.slots || [], availability.booking_timezone || "Europe/Berlin", availability.booking_window || {});
+      renderRescheduleProposal(availability.reschedule_proposal || context.reschedule_proposal);
     }
     if (Intl.DateTimeFormat().resolvedOptions().timeZone) {
       bookingForm.elements.timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -350,7 +404,9 @@ async function loadBookingPage() {
     if (context.existing_booking && !rescheduleMode) {
       setMessage("Your interview is already booked. If you need any change, just reply to the Mirror Talk email and we’ll help you personally.", "success");
     } else if (rescheduleMode) {
-      setMessage("Choose a new date in the calendar, then select a time to reschedule your conversation.", "success");
+      setMessage(context.reschedule_proposal?.mode && context.reschedule_proposal.mode !== "open_calendar"
+        ? "Review the proposed time below, or choose another available slot from the calendar."
+        : "Choose a new date in the calendar, then select a time to reschedule your conversation.", "success");
     } else {
       setMessage("Choose a date in the calendar, then select a time and confirm your booking below.", "success");
     }

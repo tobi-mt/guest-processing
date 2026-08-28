@@ -5144,6 +5144,52 @@ def test_public_reschedule_updates_existing_interview(monkeypatch, temp_db):
     assert result["booking_confirmation"]["status"] == "sent"
 
 
+def test_public_reschedule_link_exposes_and_accepts_specific_proposal(monkeypatch, temp_db):
+    """The secure guest link should show an offered time and allow direct confirmation."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Richard Riccardi", "email": "richard@example.com"})
+    original_start = (datetime.now(timezone.utc) + timedelta(days=3)).replace(second=0, microsecond=0).isoformat()
+    proposed_start = (datetime.now(timezone.utc) + timedelta(days=5)).replace(minute=17, second=0, microsecond=0)
+    proposed_iso = proposed_start.isoformat().replace("+00:00", "Z")
+    interview = service.create_interview({
+        "guest_id": guest["id"], "guest_name": "Richard Riccardi", "guest_email": "richard@example.com",
+        "scheduled_for": original_start, "timezone": "Europe/Berlin", "status": "scheduled",
+        "confirmation_status": "reschedule_requested",
+    })
+    token = service._ensure_interview_reschedule_token(interview["id"])
+    proposal = temp_db.create_interview_reschedule_proposal(
+        interview_id=interview["id"], mode="specific", timezone_name="Europe/Berlin",
+        options=[proposed_iso], subject="Proposed time", body="Please confirm", created_by="operator",
+    )
+
+    context = service.get_public_booking_context(token)
+    availability = service.list_public_booking_slots(token)
+
+    assert context["reschedule_proposal"] == {
+        "id": proposal["id"], "mode": "specific", "timezone": "Europe/Berlin", "options": [proposed_iso]
+    }
+    offered = availability["reschedule_proposal"]["options"][0]
+    assert offered == {"start": proposed_iso, "available": True}
+    assert any(item.get("proposed") and item["start"] == proposed_start.isoformat() for item in availability["slots"])
+
+    class StubCalendarClient:
+        def list_busy_events(self, **kwargs):
+            return []
+
+        def create_event_from_interview(self, payload):
+            return {"id": "new-calendar-event", "updated": datetime.now(timezone.utc).isoformat()}
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: StubCalendarClient())
+    monkeypatch.setattr(
+        GuestWebService, "_send_booking_confirmation_email",
+        lambda self, guest_payload, updated: {"status": "sent", "message": "Confirmation sent."},
+    )
+    result = service.create_public_booking(token, {"scheduled_for": proposed_start.isoformat(), "timezone": "Europe/Berlin"})
+
+    assert result["scheduled_for"] == proposed_start.isoformat()
+    assert temp_db.list_interview_reschedule_proposals(interview["id"])[0]["status"] == "accepted"
+
+
 def test_booking_confirmation_email_includes_calendar_invite(monkeypatch):
     """Booking confirmations should include an ICS invite attachment."""
     manager = EmailManager()

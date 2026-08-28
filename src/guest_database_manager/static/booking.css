@@ -213,6 +213,42 @@ body {
   color: #765117;
 }
 
+.booking-proposal {
+  margin: 0 0 18px;
+  padding: 20px;
+  border: 1px solid rgba(15, 93, 79, 0.2);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(217, 239, 232, 0.72), rgba(255, 255, 255, 0.78));
+}
+
+.booking-proposal h3,
+.booking-proposal p {
+  margin-top: 0;
+}
+
+.proposal-options {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.proposal-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  padding: 12px 14px;
+  border: 1px solid rgba(15, 93, 79, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.proposal-option.unavailable {
+  color: var(--muted);
+  background: rgba(125, 90, 59, 0.06);
+}
+
 .invitation-panel {
   margin-bottom: 18px;
   padding: 22px;

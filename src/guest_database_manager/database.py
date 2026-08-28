@@ -1159,6 +1159,31 @@ class GuestDatabase:
                 results.append(item)
             return results
 
+    def get_active_interview_reschedule_proposal(self, interview_id: int) -> Optional[Dict[str, Any]]:
+        """Return the latest proposal that the guest can still act on."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT * FROM interview_reschedule_proposals
+                   WHERE interview_id = ? AND status = 'sent'
+                   ORDER BY id DESC LIMIT 1""",
+                (interview_id,),
+            ).fetchone()
+            if not row:
+                return None
+            proposal = dict(row)
+            proposal["options"] = loads(proposal.pop("options_json") or "[]")
+            return proposal
+
+    def mark_interview_reschedule_proposal_accepted(self, proposal_id: int) -> None:
+        """Mark an offered proposal accepted after the interview update succeeds."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE interview_reschedule_proposals SET status = 'accepted' WHERE id = ? AND status = 'sent'",
+                (proposal_id,),
+            )
+            conn.commit()
+
     def delete_interview(self, interview_id: int) -> None:
         """Delete an interview from the database."""
         with self._connect() as conn:
