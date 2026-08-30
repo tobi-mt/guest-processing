@@ -119,22 +119,48 @@ function renderLearningStatus(payload) {
   const counts = payload.counts || {};
   const monitoring = payload.monitoring || {};
   const candidates = (payload.policies || []).filter((policy) => policy.status === "draft");
+  const automationLocked = !settings.automation_enabled || Boolean(settings.kill_switch);
+  const driftAlert = Boolean(monitoring.alert);
   const candidateMarkup = candidates.length
     ? candidates.map((policy) => `
-      <article class="compact-card">
-        <strong>${escapeHtml(policy.version)}</strong>
-        <span>${escapeHtml(String(policy.training_summary?.sample_count || 0))} samples</span>
-        <button type="button" class="secondary-button" data-promote-policy="${escapeHtml(policy.version)}" data-row-version="${Number(policy.row_version || 0)}">Promote passed challenger</button>
+      <article class="learning-challenger-card">
+        <div>
+          <span class="learning-card-label">Draft challenger</span>
+          <strong>${escapeHtml(policy.version)}</strong>
+          <small>${escapeHtml(String(policy.training_summary?.sample_count || 0))} linked outcomes evaluated</small>
+        </div>
+        <button type="button" class="secondary-button" data-promote-policy="${escapeHtml(policy.version)}" data-row-version="${Number(policy.row_version || 0)}">Promote challenger</button>
       </article>`).join("")
-    : "<p>No draft challengers. Run an offline evaluation after enough linked outcomes are available.</p>";
+    : `<div class="learning-empty-state">
+        <span class="learning-empty-icon" aria-hidden="true">↗</span>
+        <div><strong>No challenger yet</strong><p>Collect linked outcomes, then run an offline evaluation to create a candidate policy.</p></div>
+      </div>`;
   learningStatus.innerHTML = `
-    <div class="stack-list">
-      <article class="compact-card"><strong>Active policy</strong><span>${escapeHtml(active.version || "Unavailable")}</span></article>
-      <article class="compact-card"><strong>Evidence</strong><span>${Number(counts.observations || 0)} observations · ${Number(counts.outcomes || 0)} outcomes</span></article>
-      <article class="compact-card"><strong>Automation safety</strong><span>${settings.automation_enabled ? "Enabled" : "Disabled"} · kill switch ${settings.kill_switch ? "on" : "off"}</span></article>
-      <article class="compact-card"><strong>Outcome drift</strong><span>${monitoring.alert ? "Alert — automation blocked" : "No alert"}</span></article>
+    <div class="learning-policy-strip">
+      <div>
+        <span class="learning-card-label">Active policy</span>
+        <strong>${escapeHtml(active.version || "Unavailable")}</strong>
+      </div>
+      <span class="status-pill ${active.version ? "accepted" : "warning"}">${active.version ? "Live" : "Unavailable"}</span>
     </div>
-    <div class="stack-list">${candidateMarkup}</div>`;
+    <div class="learning-metric-grid">
+      <article class="learning-metric-card">
+        <span class="learning-card-label">Evidence</span>
+        <strong>${Number(counts.outcomes || 0)}</strong>
+        <small>${Number(counts.observations || 0)} observations · ${Number(counts.outcomes || 0)} linked outcomes</small>
+      </article>
+      <article class="learning-metric-card">
+        <span class="learning-card-label">Automation</span>
+        <strong>${automationLocked ? "Locked" : "Enabled"}</strong>
+        <small>${settings.kill_switch ? "Kill switch is on" : "Safety gates are active"}</small>
+      </article>
+      <article class="learning-metric-card">
+        <span class="learning-card-label">Outcome drift</span>
+        <strong class="${driftAlert ? "learning-alert-text" : ""}">${driftAlert ? "Review" : "Stable"}</strong>
+        <small>${driftAlert ? "Automation is blocked" : "No alert detected"}</small>
+      </article>
+    </div>
+    <div class="learning-challenger-list">${candidateMarkup}</div>`;
 }
 
 async function loadLearningStatus() {
