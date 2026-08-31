@@ -2197,6 +2197,10 @@ class GuestWebService:
         decorated["research_mode"] = mode
         decorated["cache_status"] = cache_status
         decorated["freshness"] = GuestWebService._research_freshness(research_updated_at)
+        # Older successful research records predate release-timing guidance.
+        # Derive it for presentation without mutating the guest on a read.
+        if cache_status == "ready" and not isinstance(decorated.get("release_timing_recommendation"), dict):
+            decorated["release_timing_recommendation"] = build_release_timing_recommendation(decorated)
         return decorated
 
     @staticmethod

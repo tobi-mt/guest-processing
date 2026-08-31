@@ -902,6 +902,19 @@ function renderGuestCopilotSummary(guest) {
       ${releaseTiming.basis ? `<p class="guest-ai-copy">${escapeHtml(releaseTiming.basis)}</p>` : ""}
     </div>
   ` : "";
+  const datedEvents = (research.time_sensitive_events || []).slice(0, 5).map((event) => `
+    <li>
+      <strong>${escapeHtml(event.title || "Guest event")}</strong> · ${escapeHtml(event.date || "Date unavailable")}
+      ${event.context ? `<br><span class="guest-ai-copy">${escapeHtml(event.context)}</span>` : ""}
+      ${event.source_url ? ` <a class="inline-link" href="${escapeHtml(event.source_url)}" target="_blank" rel="noopener">Source</a>` : ""}
+    </li>
+  `).join("");
+  const datedEventsBlock = datedEvents ? `
+    <div class="guest-ai-block">
+      <strong>Dated launches and appearances</strong>
+      <ul>${datedEvents}</ul>
+    </div>
+  ` : "";
 
   return `
     <div class="guest-ai-card">
@@ -920,6 +933,7 @@ function renderGuestCopilotSummary(guest) {
       <div class="guest-ai-grid">
         ${signals ? `<div class="guest-ai-block"><strong>Useful planning angles</strong><ul>${signals}</ul></div>` : ""}
         ${releaseTimingBlock}
+        ${datedEventsBlock}
         ${sources ? `<div class="guest-ai-block"><strong>Public sources checked</strong><div class="guest-ai-grid">${sources}</div></div>` : ""}
       </div>
     </div>

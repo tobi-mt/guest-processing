@@ -170,3 +170,11 @@ def test_mobile_planning_keeps_calendar_and_workflow_labels_readable() -> None:
     assert ".calendar-grid {\n    min-width: 0;" in styles
     assert ".production-rail.production-rail" in styles
     assert "grid-template-columns: 22px 34px minmax(0, 1fr);" in styles
+
+
+def test_dashboard_renders_release_timing_and_dated_guest_events() -> None:
+    javascript = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
+
+    assert "Prospective release timing" in javascript
+    assert "Dated launches and appearances" in javascript
+    assert "release_timing_recommendation" in javascript

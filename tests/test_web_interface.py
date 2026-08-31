@@ -721,6 +721,32 @@ def test_guest_research_builds_ranked_future_release_windows():
     assert timing["confidence"] == "high"
 
 
+def test_legacy_saved_guest_research_gets_non_mutating_release_timing(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({
+        "full_name": "Legacy Research Guest",
+        "email": "legacy-research@example.com",
+    })
+    stored_guest = service.database.get_guest_by_id(guest["id"])
+    service.database.update_guest_by_id(guest["id"], {
+        **stored_guest,
+        "guest_research": json.dumps({
+            "summary": "A public profile focused on healing and mental health.",
+            "likely_topics": ["Healing", "Mental Health"],
+            "timely_signals": [],
+            "sources": [],
+            "updated_at": "2026-08-01T10:00:00Z",
+        }),
+        "guest_research_updated_at": "2026-08-01T10:00:00Z",
+    })
+
+    decorated = next(item for item in service.list_guests()["guests"] if item["id"] == guest["id"])
+    stored = service.database.get_guest_by_id(guest["id"])
+
+    assert decorated["guest_research"]["release_timing_recommendation"]["recommended_windows"]
+    assert "release_timing_recommendation" not in json.loads(stored["guest_research"])
+
+
 def test_web_service_can_retry_failed_research_with_search(monkeypatch, temp_db):
     """Failed research should be recoverable via the search-assisted retry path."""
     service = GuestWebService(temp_db.db_path)
