@@ -354,6 +354,25 @@
   color: var(--muted);
 }
 
+.interview-more-actions {
+  flex: 1 1 100%;
+  border-top: 1px dashed var(--border);
+}
+
+.interview-more-actions > summary {
+  min-height: 44px;
+  padding: 12px 2px 4px;
+  color: var(--accent);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.interview-more-actions-body {
+  display: grid;
+  gap: 0.9rem;
+  padding-top: 0.4rem;
+}
+
 .operations-preview {
   margin-top: 14px;
   padding: 16px;
@@ -716,6 +735,8 @@
 .release-calendar {
   margin-bottom: 1rem;
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
 }
 
 .release-calendar-panel {
@@ -1462,6 +1483,36 @@
     padding: 1rem;
     border-radius: 18px;
   }
+
+  .production-rail.production-rail {
+    grid-template-columns: 1fr;
+    overflow: visible;
+    padding-block: 0;
+  }
+
+  .production-rail-stage {
+    grid-template-columns: 22px 34px minmax(0, 1fr);
+    justify-items: start;
+    align-items: center;
+    min-height: 52px;
+    padding: 0.45rem 0.6rem;
+    text-align: left;
+  }
+
+  .production-rail-stage:not(:last-child)::after {
+    top: 62%;
+    left: 18px;
+    width: 3px;
+    height: 76%;
+  }
+
+  .production-rail-stage strong {
+    font-size: 1.05rem;
+  }
+
+  .production-rail-stage > span:last-child {
+    font-size: 0.82rem;
+  }
 }
 
 .section-heading-actions {
@@ -1638,6 +1689,43 @@
   .calendar-navigation {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .calendar-grid {
+    min-width: 0;
+  }
+
+  .calendar-weekday {
+    padding-inline: 0.1rem;
+    font-size: 0.62rem;
+  }
+
+  .calendar-day {
+    min-height: 64px;
+    padding: 0.25rem;
+  }
+
+  .calendar-day-number {
+    margin-bottom: 0.2rem;
+    font-size: 0.72rem;
+  }
+
+  .calendar-day-events {
+    gap: 0.1rem;
+  }
+
+  .calendar-event-dot {
+    width: 26px;
+    height: 26px;
+    padding: 7px;
+    background-clip: content-box;
+  }
+
+  .production-rail {
+    grid-template-columns: repeat(5, minmax(104px, 1fr));
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
   }
 
   .episode-detail-grid {

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.client import InvalidURL
 from typing import Any, Dict
 from urllib.error import HTTPError, URLError
@@ -67,6 +67,35 @@ TIMELY_SIGNAL_PATTERNS = (
     (r"\bcoach\b|\bmentor\b", "public profile points to coaching or mentoring work"),
     (r"\btherap", "public profile points to therapeutic or mental health work"),
 )
+TIME_SENSITIVE_EVENT_WORDS = re.compile(
+    r"\b(launch(?:es|ing)?|release(?:s|d|ing)?|publication|book tour|tour|conference|summit|keynote|appearance|premiere|opening)\b",
+    flags=re.IGNORECASE,
+)
+EVENT_DATE_PATTERNS = (
+    (re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b"), "%Y-%m-%d"),
+    (
+        re.compile(
+            r"\b((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+20\d{2})\b",
+            flags=re.IGNORECASE,
+        ),
+        "%B %d %Y",
+    ),
+)
+
+RELEASE_MONTH_THEMES: dict[int, dict[str, Any]] = {
+    1: {"label": "fresh starts and intentional growth", "keywords": ("purpose", "goal", "habit", "vision", "mindset", "career")},
+    2: {"label": "love, belonging, and relationships", "keywords": ("love", "relationship", "marriage", "friendship", "family", "connection")},
+    3: {"label": "courage, identity, and renewal", "keywords": ("women", "identity", "courage", "renewal", "growth", "leadership")},
+    4: {"label": "healing, hope, and new life", "keywords": ("healing", "faith", "hope", "stress", "autism", "environment")},
+    5: {"label": "mental health, caregiving, and motherhood", "keywords": ("mental", "wellness", "mother", "care", "family", "therapy")},
+    6: {"label": "men's health, fatherhood, and community", "keywords": ("men", "father", "health", "wellness", "community", "resilience")},
+    7: {"label": "freedom, calling, and leadership", "keywords": ("freedom", "purpose", "calling", "leadership", "service", "career")},
+    8: {"label": "learning, preparation, and discipline", "keywords": ("school", "education", "learning", "discipline", "focus", "productivity")},
+    9: {"label": "mental wellbeing, resilience, and renewed focus", "keywords": ("mental", "recovery", "resilience", "purpose", "focus", "identity")},
+    10: {"label": "healing stories and courageous honesty", "keywords": ("healing", "trauma", "story", "mental", "faith", "transformation")},
+    11: {"label": "gratitude, service, and legacy", "keywords": ("gratitude", "service", "community", "legacy", "impact", "family")},
+    12: {"label": "hope, faith, rest, and reflection", "keywords": ("hope", "faith", "rest", "reflection", "family", "joy")},
+}
 
 
 def _clean_text(value: Any) -> str:
@@ -263,6 +292,51 @@ def _timely_signals(text: str) -> list[str]:
     return signals[:4]
 
 
+def _time_sensitive_events(sources: list[dict[str, Any]], *, reference: datetime | None = None) -> list[dict[str, Any]]:
+    """Extract dated launch/appearance signals without inventing missing dates."""
+    reference = reference or datetime.now(timezone.utc)
+    horizon = reference + timedelta(days=550)
+    events: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in sources:
+        source_text = " ".join(
+            _clean_text(source.get(field)) for field in ("title", "description", "heading", "text")
+        )
+        if not TIME_SENSITIVE_EVENT_WORDS.search(source_text):
+            continue
+        for pattern, date_format in EVENT_DATE_PATTERNS:
+            for match in pattern.finditer(source_text):
+                raw_date = re.sub(r"(\d)(st|nd|rd|th)", r"\1", match.group(1), flags=re.IGNORECASE)
+                raw_date = raw_date.replace(",", "")
+                try:
+                    event_date = datetime.strptime(raw_date, date_format).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+                if event_date.date() < reference.date() or event_date > horizon:
+                    continue
+                context_start = max(0, match.start() - 90)
+                context_end = min(len(source_text), match.end() + 90)
+                context = re.sub(r"\s+", " ", source_text[context_start:context_end]).strip(" .")
+                word_match = TIME_SENSITIVE_EVENT_WORDS.search(context)
+                if not word_match:
+                    continue
+                title = f"Guest {word_match.group(1).lower()}"
+                key = (event_date.date().isoformat(), title)
+                if key in seen:
+                    continue
+                seen.add(key)
+                events.append(
+                    {
+                        "title": title,
+                        "date": event_date.date().isoformat(),
+                        "context": context[:240],
+                        "source_url": _clean_text(source.get("url")),
+                    }
+                )
+    events.sort(key=lambda item: item["date"])
+    return events[:5]
+
+
 def _evidence_snippets(source: dict[str, str]) -> list[str]:
     snippets = [source.get("description", ""), source.get("heading", ""), source.get("title", "")]
     clean = [snippet for snippet in snippets if snippet]
@@ -278,6 +352,93 @@ def _summary_from_research(topics: list[str], sources: list[dict[str, Any]]) -> 
         if description:
             return description
     return ""
+
+
+def build_release_timing_recommendation(
+    research: Dict[str, Any], *, reference: datetime | None = None
+) -> Dict[str, Any]:
+    """Build durable, evidence-linked prospective release windows for a guest."""
+    reference = reference or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    signal_text = " ".join(
+        _clean_text(item)
+        for item in [
+            *(research.get("likely_topics") or []),
+            *(research.get("timely_signals") or []),
+            research.get("summary"),
+        ]
+        if _clean_text(item)
+    ).casefold()
+
+    candidates: list[dict[str, Any]] = []
+    year, month = reference.year, reference.month
+    # Use full future months so a recommendation never points to a nearly
+    # completed current-month window.
+    for offset in range(1, 13):
+        candidate_month = ((month - 1 + offset) % 12) + 1
+        candidate_year = year + ((month - 1 + offset) // 12)
+        theme = RELEASE_MONTH_THEMES[candidate_month]
+        matched = [keyword for keyword in theme["keywords"] if keyword in signal_text]
+        if not matched:
+            continue
+        start = datetime(candidate_year, candidate_month, 1, tzinfo=reference.tzinfo)
+        next_month = datetime(candidate_year + (candidate_month == 12), (candidate_month % 12) + 1, 1, tzinfo=reference.tzinfo)
+        end = next_month - timedelta(days=1)
+        candidates.append(
+            {
+                "month": candidate_month,
+                "year": candidate_year,
+                "month_label": start.strftime("%B %Y"),
+                "window_start": start.date().isoformat(),
+                "window_end": end.date().isoformat(),
+                "score": len(set(matched)),
+                "matched_signals": list(dict.fromkeys(matched)),
+                "rationale": f"Aligns with {theme['label']}.",
+            }
+        )
+
+    for event in research.get("time_sensitive_events") or []:
+        if not isinstance(event, dict):
+            continue
+        try:
+            event_date = datetime.fromisoformat(_clean_text(event.get("date"))).replace(tzinfo=reference.tzinfo)
+        except ValueError:
+            continue
+        if event_date.date() <= reference.date() or event_date > reference + timedelta(days=550):
+            continue
+        event_title = _clean_text(event.get("title")) or "guest event"
+        candidates.append(
+            {
+                "month": event_date.month,
+                "year": event_date.year,
+                "month_label": event_date.strftime("%B %Y"),
+                "window_start": (event_date - timedelta(days=21)).date().isoformat(),
+                "window_end": (event_date + timedelta(days=7)).date().isoformat(),
+                "score": 10,
+                "matched_signals": [event_title],
+                "rationale": f"Creates a timely release runway around {event_title} on {event_date.date().isoformat()}.",
+                "event": dict(event),
+            }
+        )
+
+    candidates.sort(key=lambda item: (-item["score"], item["year"], item["month"]))
+    windows = candidates[:3]
+    if windows:
+        confidence = "high" if windows[0]["score"] >= 3 else "medium" if windows[0]["score"] >= 2 else "low"
+        summary = f"Best prospective window: {windows[0]['month_label']} — {windows[0]['rationale']}"
+    else:
+        confidence = "low"
+        summary = "No strong seasonal signal was found; treat this guest as evergreen and use the next editorially balanced opening."
+
+    return {
+        "status": "seasonal_match" if windows else "evergreen",
+        "summary": summary,
+        "confidence": confidence,
+        "recommended_windows": windows,
+        "basis": "Saved public-profile topics and timely signals; calendar capacity and episode readiness are evaluated later in Planning.",
+        "generated_at": reference.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
 
 
 def _is_generic_source(source: dict[str, Any]) -> bool:
@@ -344,6 +505,7 @@ def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
     )
     topics = _topic_matches(combined_text)
     signals = _timely_signals(combined_text)
+    events = _time_sensitive_events(fetched_sources)
     summary = _summary_from_research(topics, fetched_sources)
 
     if not topics and not signals and not summary:
@@ -354,6 +516,7 @@ def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
         "summary": summary,
         "likely_topics": topics,
         "timely_signals": signals,
+        "time_sensitive_events": events,
         "sources": [
             {
                 "url": source["url"],
@@ -365,7 +528,7 @@ def research_guest_from_public_web(guest: Dict[str, Any]) -> Dict[str, Any]:
             for source in fetched_sources
         ],
         "evidence": evidence_texts[:4],
-        "updated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
 
 

@@ -145,4 +145,28 @@ def test_dashboard_result_modal_has_dialog_semantics_and_focus_management() -> N
     assert 'aria-label="Close result dialog"' in html
     assert "aiModalClose?.focus()" in javascript
     assert 'event.key === "Escape"' in javascript
-    assert "aiModalReturnFocus.focus()" in javascript
+    assert "event.stopPropagation()" in javascript
+    assert "window.requestAnimationFrame" in javascript
+    assert "returnFocus.focus()" in javascript
+
+
+def test_work_queue_cards_progressively_disclose_secondary_actions() -> None:
+    dashboard = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
+    operations_javascript = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
+    styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
+    operations_styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
+
+    assert 'class="guest-card-details"' in dashboard
+    assert "Review profile and actions" in dashboard
+    assert 'class="interview-more-actions"' in operations_javascript
+    assert "Communication, calendar, and record actions" in operations_javascript
+    assert ".guest-card-details > summary" in styles
+    assert ".interview-more-actions > summary" in operations_styles
+
+
+def test_mobile_planning_keeps_calendar_and_workflow_labels_readable() -> None:
+    styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
+
+    assert ".calendar-grid {\n    min-width: 0;" in styles
+    assert ".production-rail.production-rail" in styles
+    assert "grid-template-columns: 22px 34px minmax(0, 1fr);" in styles

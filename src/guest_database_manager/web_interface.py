@@ -55,7 +55,11 @@ from guest_database_manager.guest_recommender import (
     enrich_guests_with_recommendations,
     evaluate_guest_recommendations,
 )
-from guest_database_manager.guest_research import research_guest_from_google_search, research_guest_from_public_web
+from guest_database_manager.guest_research import (
+    build_release_timing_recommendation,
+    research_guest_from_google_search,
+    research_guest_from_public_web,
+)
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncError
 from guest_database_manager.google_service_account_calendar import (
     GoogleCalendarServiceAccountError,
@@ -1429,15 +1433,18 @@ class GuestWebService:
 
     def _attach_recommendation_feedback(self, episodes: list[Dict[str, Any]]) -> None:
         """Annotate episode candidates with their latest reversible editorial decision."""
-        feedback_by_episode = self.database.get_latest_recommendation_feedback(
-            [int(episode["id"]) for episode in episodes if episode.get("id") is not None]
-        )
+        episode_ids = [int(episode["id"]) for episode in episodes if episode.get("id") is not None]
+        feedback_by_episode = self.database.get_latest_recommendation_feedback(episode_ids)
+        history_by_episode = self.database.get_recommendation_history(episode_ids)
         for episode in episodes:
             feedback = feedback_by_episode.get(int(episode["id"])) if episode.get("id") is not None else None
             episode["recommendation_feedback_state"] = _normalize_text((feedback or {}).get("action"))
             episode["recommendation_feedback_reason"] = _normalize_text((feedback or {}).get("reason"))
             episode["recommendation_feedback_at"] = (feedback or {}).get("created_at")
             episode["recommendation_feedback_actor"] = _normalize_text((feedback or {}).get("actor"))
+            episode["recommendation_history"] = (
+                history_by_episode.get(int(episode["id"]), []) if episode.get("id") is not None else []
+            )
 
     def list_planning(self, compact: bool = False, force_refresh: bool = False) -> Dict[str, Any]:
         """Return episode planning data separate from interview operations."""
@@ -2469,6 +2476,8 @@ class GuestWebService:
         current = self.database.get_guest_by_id(int(guest_id))
         if not current:
             return guest
+        research = dict(research)
+        research["release_timing_recommendation"] = build_release_timing_recommendation(research)
         updated_guest = dict(current)
         updated_guest["guest_research"] = json.dumps(research, ensure_ascii=False)
         updated_guest["guest_research_updated_at"] = research.get("updated_at")
@@ -3381,12 +3390,7 @@ class GuestWebService:
         except ValueError as exc:
             raise WebInterfaceError(str(exc))
         research["research_mode"] = "manual"
-
-        updated_guest = dict(current)
-        updated_guest["guest_research"] = json.dumps(research, ensure_ascii=False)
-        updated_guest["guest_research_updated_at"] = research.get("updated_at")
-
-        self.database.update_guest_by_id(guest_id, updated_guest)
+        self._persist_guest_research(current, research)
         self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
@@ -3412,12 +3416,7 @@ class GuestWebService:
             raise WebInterfaceError(str(exc))
         research["research_mode"] = "manual"
         research["cache_status"] = "ready"
-
-        updated_guest = dict(current)
-        updated_guest["guest_research"] = json.dumps(research, ensure_ascii=False)
-        updated_guest["guest_research_updated_at"] = research.get("updated_at")
-
-        self.database.update_guest_by_id(guest_id, updated_guest)
+        self._persist_guest_research(current, research)
         self._invalidate_payload_cache("guests", "guests_lite", "planning", "planning_ai_copilot")
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:

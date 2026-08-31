@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from guest_database_manager.db_connection import connect_database
 
-FEATURE_SCHEMA_VERSION = "release-features-v1"
+FEATURE_SCHEMA_VERSION = "release-features-v2"
 FEATURE_NAMES = (
     "bias",
     "base_score",
@@ -25,6 +25,10 @@ FEATURE_NAMES = (
     "has_website",
     "has_title",
     "watchout_count",
+    "production_buffer",
+    "audience_fatigue",
+    "event_alignment",
+    "capacity_delay",
 )
 OUTCOME_LABELS = {
     "accepted": 0.7,
@@ -61,6 +65,9 @@ def extract_features(recommendation: dict[str, Any]) -> dict[str, float]:
     readiness = recommendation.get("promotion_readiness") or {}
     watchouts = recommendation.get("watchouts") or []
     research = recommendation.get("guest_research") or {}
+    forecast = recommendation.get("production_readiness_forecast") or {}
+    fatigue = recommendation.get("audience_fatigue") or {}
+    capacity = recommendation.get("calendar_capacity") or {}
     return {
         "bias": 1.0,
         "base_score": max(-1.0, min(1.0, float(recommendation.get("base_priority_score") or recommendation.get("priority_score") or 0) / 100.0)),
@@ -69,6 +76,10 @@ def extract_features(recommendation: dict[str, Any]) -> dict[str, float]:
         "has_website": 1.0 if str(recommendation.get("website") or "").strip() else 0.0,
         "has_title": 1.0 if str(recommendation.get("working_title") or recommendation.get("episode_title") or "").strip() else 0.0,
         "watchout_count": min(1.0, len(watchouts) / 4.0),
+        "production_buffer": max(-1.0, min(1.0, float(forecast.get("buffer_days") or 0) / 28.0)),
+        "audience_fatigue": max(0.0, min(1.0, float(fatigue.get("score") or 0) / 100.0)),
+        "event_alignment": 1.0 if recommendation.get("time_sensitive_event_alignment") else 0.0,
+        "capacity_delay": max(0.0, min(1.0, float(capacity.get("weeks_until_slot") or 0) / 12.0)),
     }
 
 

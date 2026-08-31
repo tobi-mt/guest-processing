@@ -886,6 +886,22 @@ function renderGuestCopilotSummary(guest) {
     .join("");
   const mode = normalizeText(research.research_mode) || "manual";
   const freshness = research.freshness || {};
+  const releaseTiming = research.release_timing_recommendation || {};
+  const releaseWindows = (releaseTiming.recommended_windows || []).slice(0, 3).map((window) => `
+    <li>
+      <strong>${escapeHtml(window.month_label || "Suggested window")}</strong>
+      ${window.rationale ? ` — ${escapeHtml(window.rationale)}` : ""}
+      ${(window.matched_signals || []).length ? `<br><span class="guest-ai-copy">Signals: ${escapeHtml(window.matched_signals.join(", "))}</span>` : ""}
+    </li>
+  `).join("");
+  const releaseTimingBlock = releaseTiming.summary ? `
+    <div class="guest-ai-block">
+      <strong>Prospective release timing · ${escapeHtml(releaseTiming.confidence || "low")} confidence</strong>
+      <p class="guest-ai-copy">${escapeHtml(releaseTiming.summary)}</p>
+      ${releaseWindows ? `<ol>${releaseWindows}</ol>` : ""}
+      ${releaseTiming.basis ? `<p class="guest-ai-copy">${escapeHtml(releaseTiming.basis)}</p>` : ""}
+    </div>
+  ` : "";
 
   return `
     <div class="guest-ai-card">
@@ -903,6 +919,7 @@ function renderGuestCopilotSummary(guest) {
       ${topics ? `<div class="signal-list guest-ai-signals">${topics}</div>` : ""}
       <div class="guest-ai-grid">
         ${signals ? `<div class="guest-ai-block"><strong>Useful planning angles</strong><ul>${signals}</ul></div>` : ""}
+        ${releaseTimingBlock}
         ${sources ? `<div class="guest-ai-block"><strong>Public sources checked</strong><div class="guest-ai-grid">${sources}</div></div>` : ""}
       </div>
     </div>
@@ -1161,6 +1178,18 @@ function renderGuests(payload) {
     const planningSummaryNode = node.querySelector(".guest-planning-summary");
     const productionTimelineNode = node.querySelector(".guest-production-timeline");
     const promotionSummaryNode = node.querySelector(".guest-promotion-summary");
+    const guestCardDetails = node.querySelector(".guest-card-details");
+
+    if (
+      guestCardDetails &&
+      (
+        activeGuestEditor?.guestId === guest.id ||
+        activeEmailComposer?.guestId === guest.id ||
+        activeGuestActionFeedback?.guestId === guest.id
+      )
+    ) {
+      guestCardDetails.open = true;
+    }
 
     node.querySelector(".guest-name").textContent = guest.full_name || "Unnamed Guest";
     node.querySelector(".guest-meta").textContent = guest.email || "No email provided";
@@ -2091,13 +2120,16 @@ function showAIModal(title, content, returnFocus = null) {
 }
 
 function hideAIModal() {
+  const returnFocus = aiModalReturnFocus;
   aiModal.classList.add("hidden");
   document.body.style.overflow = "";
   currentAIContent = "";
-  if (aiModalReturnFocus?.isConnected) {
-    aiModalReturnFocus.focus();
-  }
   aiModalReturnFocus = null;
+  if (returnFocus?.isConnected) {
+    window.requestAnimationFrame(() => {
+      if (returnFocus.isConnected) returnFocus.focus();
+    });
+  }
 }
 
 function copyAIContent() {
@@ -2291,6 +2323,7 @@ if (aiModal) {
   aiModal.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       hideAIModal();
     }
   });

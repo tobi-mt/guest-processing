@@ -533,6 +533,39 @@ class GuestDatabase:
             ).fetchall()
             return {int(row["episode_id"]): dict(row) for row in rows}
 
+    def get_recommendation_history(self, episode_ids: List[int], limit_per_episode: int = 10) -> Dict[int, List[Dict[str, Any]]]:
+        """Return immutable operator decisions and measured outcomes for planning review."""
+        normalized_ids = sorted({int(value) for value in episode_ids if int(value) > 0})
+        if not normalized_ids:
+            return {}
+        placeholders = ",".join("?" for _ in normalized_ids)
+        history: Dict[int, List[Dict[str, Any]]] = {episode_id: [] for episode_id in normalized_ids}
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            feedback_rows = conn.execute(
+                f"""SELECT episode_id, action AS event_type, reason, actor, source,
+                           recommendation_version AS policy_version, recommendation_snapshot AS snapshot,
+                           created_at AS occurred_at
+                    FROM recommendation_feedback
+                    WHERE episode_id IN ({placeholders}) ORDER BY created_at DESC, id DESC""",
+                normalized_ids,
+            ).fetchall()
+            outcome_rows = conn.execute(
+                f"""SELECT episode_id, outcome_type AS event_type, metadata_json AS reason, actor, source,
+                           NULL AS policy_version, NULL AS snapshot, occurred_at
+                    FROM recommendation_outcomes
+                    WHERE episode_id IN ({placeholders}) ORDER BY occurred_at DESC, id DESC""",
+                normalized_ids,
+            ).fetchall()
+        for row in [*feedback_rows, *outcome_rows]:
+            episode_id = int(row["episode_id"])
+            if len(history[episode_id]) < max(1, limit_per_episode):
+                history[episode_id].append(dict(row))
+        for entries in history.values():
+            entries.sort(key=lambda item: str(item.get("occurred_at") or ""), reverse=True)
+            del entries[max(1, limit_per_episode):]
+        return history
+
     def find_existing_guest(self, guest_data: Dict[str, Any]) -> Optional[Dict]:
         """Find an existing guest using the best available identity fields."""
         full_name = _normalized_identity(guest_data.get("full_name"))

@@ -47,7 +47,7 @@ from guest_database_manager.web_interface import (
     build_guest_payload,
     validate_intake_payload,
 )
-from guest_database_manager.guest_research import _candidate_urls
+from guest_database_manager.guest_research import _candidate_urls, build_release_timing_recommendation
 from guest_database_manager import guest_research
 from guest_database_manager import web_interface
 from guest_database_manager.email_manager import EmailManager
@@ -126,6 +126,21 @@ def test_guest_research_candidate_urls_extract_urls_from_messy_website_text():
 
     assert "https://vft23.com/" in urls
     assert "https://www.example.org" in urls
+
+
+def test_guest_research_extracts_grounded_future_launch_event():
+    events = guest_research._time_sensitive_events(
+        [{
+            "url": "https://jordan.example.com/news",
+            "title": "Jordan Rivers",
+            "description": "Jordan's new book launches October 20, 2026 with a keynote appearance.",
+        }],
+        reference=datetime(2026, 8, 31, tzinfo=timezone.utc),
+    )
+
+    assert events[0]["date"] == "2026-10-20"
+    assert events[0]["source_url"] == "https://jordan.example.com/news"
+    assert "launch" in events[0]["title"]
 
 
 def test_guest_research_rejects_generic_instagram_login_page(monkeypatch):
@@ -682,7 +697,28 @@ def test_web_service_can_research_guest_and_store_public_profile_context(monkeyp
     assert researched_guest["guest_research"]["likely_topics"] == ["Healing", "Leadership"]
     assert researched_guest["guest_research_updated_at"] == "2026-04-03T10:00:00Z"
     assert researched_guest["guest_research"]["research_mode"] == "manual"
+    timing = researched_guest["guest_research"]["release_timing_recommendation"]
+    assert timing["recommended_windows"]
+    assert timing["recommended_windows"][0]["month"] in {4, 10}
+    assert timing["basis"].startswith("Saved public-profile topics")
     assert researched_guest["guest_research"]["freshness"]["status"] in {"fresh", "aging", "stale", "unknown"}
+
+
+def test_guest_research_builds_ranked_future_release_windows():
+    timing = build_release_timing_recommendation(
+        {
+            "summary": "A therapist focused on mental health and healing after trauma.",
+            "likely_topics": ["Mental Health", "Healing", "Trauma"],
+            "timely_signals": ["public work centers emotional wellbeing"],
+        },
+        reference=datetime(2026, 8, 31, 12, 0, 0),
+    )
+
+    assert timing["status"] == "seasonal_match"
+    assert timing["recommended_windows"][0]["month_label"] == "October 2026"
+    assert timing["recommended_windows"][0]["window_start"] == "2026-10-01"
+    assert timing["recommended_windows"][0]["matched_signals"] == ["healing", "trauma", "mental"]
+    assert timing["confidence"] == "high"
 
 
 def test_web_service_can_retry_failed_research_with_search(monkeypatch, temp_db):
@@ -3356,6 +3392,82 @@ def test_release_recommendations_use_guest_research_for_seasonal_fit():
     assert "men" in recommendations[0]["seasonal_fit"]["matched_keywords"]
 
 
+def test_release_recommendations_honor_saved_guest_research_window():
+    recommendations = build_release_recommendations(
+        [
+            {
+                "guest_name": "Saved Window Guest",
+                "episode_title": "An Evergreen Conversation",
+                "topic": "Personal story",
+                "production_status": "ready",
+                "promotion_status": "ready",
+                "guest_research": {
+                    "release_timing_recommendation": {
+                        "recommended_windows": [
+                            {
+                                "month": 9,
+                                "year": 2026,
+                                "month_label": "September 2026",
+                                "matched_signals": ["resilience", "identity"],
+                            }
+                        ]
+                    }
+                },
+            }
+        ],
+        reference=datetime(2026, 8, 31, 12, 0, 0),
+    )
+
+    assert recommendations[0]["recommended_release_date"].startswith("2026-09")
+    assert recommendations[0]["seasonal_fit"]["month"] == "September"
+    assert "saved guest-research release window" in recommendations[0]["seasonal_fit"]["reason"]
+
+
+def test_release_recommendations_explain_capacity_forecast_fatigue_and_guest_event():
+    episodes = [
+        {
+            "id": 1,
+            "guest_name": "Intelligence Guest",
+            "episode_title": "Healing After Trauma",
+            "topic": "Mental health healing after trauma",
+            "category": "Mental Health",
+            "production_status": "editing",
+            "promotion_status": "ready",
+            "guest_research": {"time_sensitive_events": [
+                {"title": "Guest book launch", "date": "2026-09-22", "source_url": "https://example.com/launch"}
+            ]},
+        },
+        {
+            "id": 2,
+            "guest_name": "Already Scheduled",
+            "episode_title": "Reserved",
+            "release_date": "2026-09-01 17:00:00",
+            "release_status": "scheduled",
+        },
+    ]
+    for index in range(3, 6):
+        episodes.append({
+            "id": index,
+            "guest_name": f"History Guest {index}",
+            "episode_title": f"Mental Health Healing {index}",
+            "topic": "Mental health healing after trauma",
+            "category": "Mental Health",
+            "release_status": "released",
+            "release_date": f"2026-0{index + 3}-01",
+        })
+
+    recommendation = build_release_recommendations(
+        episodes, reference=datetime(2026, 8, 31, 12, 0, 0)
+    )[0]
+
+    assert recommendation["recommended_release_date"].startswith("2026-09-08")
+    assert recommendation["calendar_capacity"]["reserved_release_count"] == 1
+    assert recommendation["production_readiness_forecast"]["estimated_lead_days"] == 10
+    assert recommendation["production_readiness_forecast"]["feasible"] is False
+    assert recommendation["audience_fatigue"]["level"] == "high"
+    assert recommendation["time_sensitive_event_alignment"]["date"] == "2026-09-22"
+
+
 def test_release_recommendations_exclude_human_rejected_candidates():
     recommendations = build_release_recommendations(
         [
@@ -3421,6 +3533,8 @@ def test_planning_recommendation_feedback_suppresses_and_restores_candidate(temp
     restored = service.list_planning()
     assert episode["id"] in {item["id"] for item in restored["recommendations"]}
     assert restored["rejected_recommendations"] == []
+    restored_episode = next(item for item in restored["recommendations"] if item["id"] == episode["id"])
+    assert [item["event_type"] for item in restored_episode["recommendation_history"][:2]] == ["restored", "rejected"]
 
 
 def test_planning_payload_includes_grounded_editorial_assist(temp_db):

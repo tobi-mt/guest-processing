@@ -979,6 +979,9 @@ function renderInterviews(interviews, totalCount) {
           <button type="button" class="${primaryAction === "mark-confirmed" ? "primary-button" : "ghost-button"}" data-interview-action="mark-confirmed">Mark Confirmed</button>
           <button type="button" class="ghost-button" data-interview-action="mark-pending">Mark Pending</button>
         </div>
+        <details class="interview-more-actions">
+          <summary>Communication, calendar, and record actions</summary>
+          <div class="interview-more-actions-body">
         <div class="action-group">
           <span class="action-group-label">Communication</span>
           <button type="button" class="ai-button" data-interview-action="ai-reminder" title="Generate AI-powered reminder email">\u2728 AI Reminder</button>
@@ -993,6 +996,8 @@ function renderInterviews(interviews, totalCount) {
           ${interview.calendar_event_id ? `<button type="button" class="ghost-button danger-button" data-calendar-action="remove" ${calendarReadOnlyMode ? "disabled title=\"Google Calendar removal is unavailable with the current token permissions.\"" : ""}>Remove From Google Calendar</button>` : ""}
           <button type="button" class="ghost-button danger-button" data-interview-action="delete">Delete</button>
         </div>
+          </div>
+        </details>
       </div>
       <div class="card-action-feedback">${activeInterviewActionFeedback.id === interview.id ? actionFeedbackMarkup(activeInterviewActionFeedback) : ""}</div>
       <div class="inline-editor hidden" data-interview-editor></div>

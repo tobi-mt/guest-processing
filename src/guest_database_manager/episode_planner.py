@@ -353,6 +353,19 @@ def _month_theme_score(episode: Dict[str, Any], slot_date: datetime) -> tuple[fl
     notes = _clean_text(episode.get("notes")).lower()
     recommendation_reason = _clean_text(episode.get("recommendation_reason")).lower()
     guest_research = _guest_research_payload(episode.get("guest_research"))
+    timing_advice = guest_research.get("release_timing_recommendation")
+    timing_advice = timing_advice if isinstance(timing_advice, dict) else {}
+    preferred_windows = timing_advice.get("recommended_windows")
+    preferred_windows = preferred_windows if isinstance(preferred_windows, list) else []
+    saved_window = next(
+        (
+            item for item in preferred_windows
+            if isinstance(item, dict)
+            and _clean_text(item.get("month")) == str(slot_date.month)
+            and _clean_text(item.get("year")) == str(slot_date.year)
+        ),
+        None,
+    )
     research_topics = " ".join(
         _clean_text(item).lower()
         for item in guest_research.get("likely_topics", [])
@@ -366,6 +379,15 @@ def _month_theme_score(episode: Dict[str, Any], slot_date: datetime) -> tuple[fl
     haystack = " ".join([title, topic, category, notes, recommendation_reason, research_topics, research_signals])
     keywords = SEASONAL_THEME_KEYWORDS.get(slot_date.month, ())
     matched = [keyword for keyword in keywords if keyword in haystack]
+    if saved_window:
+        saved_signals = [
+            _clean_text(item) for item in saved_window.get("matched_signals", []) if _clean_text(item)
+        ]
+        return (
+            min(18.0, 10.0 + float(len(saved_signals) * 2)),
+            f"matches the saved guest-research release window for {slot_date.strftime('%B %Y')}",
+            saved_signals,
+        )
     if not matched:
         return 0.0, "", []
     # One generic keyword is a weak signal. Require multiple independent matches
@@ -514,6 +536,77 @@ def build_promotion_readiness(episode: Dict[str, Any]) -> Dict[str, Any]:
         "label": label,
         "strengths": strengths[:4],
         "blockers": blockers[:4],
+    }
+
+
+PRODUCTION_LEAD_DAYS = {
+    "ready": 0,
+    "editing": 10,
+    "recorded": 18,
+    "idea": 35,
+}
+
+
+def build_production_readiness_forecast(
+    episode: Dict[str, Any], *, reference: datetime, target_release: datetime
+) -> Dict[str, Any]:
+    """Forecast whether stored production state can plausibly meet a release slot."""
+    status = _clean_text(episode.get("production_status")).lower() or "idea"
+    lead_days = PRODUCTION_LEAD_DAYS.get(status, 28)
+    if _clean_text(episode.get("transcript_text")):
+        lead_days = max(0, lead_days - 2)
+    if _clean_text(episode.get("show_notes_url")):
+        lead_days = max(0, lead_days - 2)
+    if _clean_text(episode.get("release_files_url")):
+        lead_days = max(0, lead_days - 2)
+    if _clean_text(episode.get("promotion_status")).lower() == "needs_assets":
+        lead_days += 5
+    ready_by = reference + timedelta(days=lead_days)
+    buffer_days = (target_release.date() - ready_by.date()).days
+    if buffer_days >= 7:
+        confidence, feasible = "high", True
+    elif buffer_days >= 0:
+        confidence, feasible = "medium", True
+    else:
+        confidence, feasible = "low", False
+    return {
+        "status": status,
+        "estimated_lead_days": lead_days,
+        "estimated_ready_by": ready_by.strftime("%Y-%m-%d"),
+        "target_release_date": target_release.strftime("%Y-%m-%d"),
+        "buffer_days": buffer_days,
+        "feasible": feasible,
+        "confidence": confidence,
+        "assumption": "Forecast uses current production stage and stored transcript, show-notes, release-file, and promotion-asset signals.",
+    }
+
+
+def build_audience_fatigue(
+    episode: Dict[str, Any], released_history: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Explain recent category and topic saturation as an audience-facing risk."""
+    recent = released_history[:10]
+    category = _clean_text(episode.get("category")).casefold()
+    keywords = _theme_keyword_set(episode)
+    category_hits = sum(
+        1 for item in recent if category and _clean_text(item.get("category")).casefold() == category
+    )
+    topic_hits = sum(1 for item in recent if len(keywords.intersection(_theme_keyword_set(item))) >= 2)
+    score = min(100, category_hits * 16 + topic_hits * 18)
+    level = "high" if score >= 60 else "medium" if score >= 30 else "low"
+    return {
+        "score": score,
+        "level": level,
+        "recent_window": len(recent),
+        "category_hits": category_hits,
+        "topic_cluster_hits": topic_hits,
+        "message": (
+            "Recent listeners have seen a dense run of similar themes."
+            if level == "high"
+            else "Some recent thematic repetition should be considered."
+            if level == "medium"
+            else "Recent release variety leaves room for this topic."
+        ),
     }
 
 
@@ -861,6 +954,7 @@ def build_release_recommendations(
     if not queue:
         return []
     reserved_slots = _reserved_release_slots(episodes, reference=reference)
+    initial_reserved_slots = set(reserved_slots)
 
     released_history = sorted(
         released_history,
@@ -940,7 +1034,52 @@ def build_release_recommendations(
             else:
                 watchouts.extend(readiness["blockers"][:2])
 
+            production_forecast = build_production_readiness_forecast(
+                episode, reference=reference, target_release=slot
+            )
+            if production_forecast["feasible"]:
+                score += 6 if production_forecast["confidence"] == "high" else 2
+                why_now.append(
+                    f"production forecast leaves a {production_forecast['buffer_days']}-day release buffer"
+                )
+            else:
+                score -= 22
+                watchouts.append(
+                    f"production forecast misses this slot by {abs(production_forecast['buffer_days'])} days"
+                )
+
+            audience_fatigue = build_audience_fatigue(episode, released_history)
+            if audience_fatigue["level"] == "high":
+                score -= 14
+                watchouts.append(audience_fatigue["message"])
+            elif audience_fatigue["level"] == "medium":
+                score -= 6
+                watchouts.append(audience_fatigue["message"])
+            else:
+                score += 3
+
             guest_research = _guest_research_payload(episode.get("guest_research"))
+            event_alignment = None
+            for event in guest_research.get("time_sensitive_events", []):
+                if not isinstance(event, dict):
+                    continue
+                event_date = _parse_episode_date(event.get("date"))
+                if not event_date:
+                    continue
+                distance_days = (event_date.date() - slot.date()).days
+                if -7 <= distance_days <= 35:
+                    event_alignment = {
+                        "title": _clean_text(event.get("title")) or "Guest event",
+                        "date": event_date.date().isoformat(),
+                        "distance_days": distance_days,
+                        "source_url": _clean_text(event.get("source_url")),
+                    }
+                    score += 14 if distance_days >= 0 else 6
+                    why_now.append(
+                        f"timed near {event_alignment['title']} on {event_alignment['date']}"
+                    )
+                    break
+
             research_topics = [str(item).strip() for item in guest_research.get("likely_topics", []) if str(item).strip()]
             research_signals = [str(item).strip() for item in guest_research.get("timely_signals", []) if str(item).strip()]
             if research_topics:
@@ -971,6 +1110,16 @@ def build_release_recommendations(
             candidate["why_now"] = list(dict.fromkeys(why_now))[:4]
             candidate["watchouts"] = list(dict.fromkeys(watchouts))[:4]
             candidate["promotion_readiness"] = readiness
+            candidate["production_readiness_forecast"] = production_forecast
+            candidate["audience_fatigue"] = audience_fatigue
+            candidate["time_sensitive_event_alignment"] = event_alignment
+            candidate["calendar_capacity"] = {
+                "cadence": "Tuesday 17:00",
+                "slot_available": slot.date().isoformat() not in initial_reserved_slots,
+                "reserved_release_count": len(initial_reserved_slots),
+                "weeks_until_slot": max(0, (slot.date() - reference.date()).days // 7),
+                "constraint": "One coordinated release per weekly slot; scheduled episodes reserve their dates.",
+            }
             candidate["title_suggestions"] = build_episode_title_suggestions(episode)
             candidate["copy_assist"] = build_episode_copy_assist(episode)
             candidate["archive_overlap"] = archive_overlap

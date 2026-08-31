@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Guest Database Manager</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260808.2" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260831.1" />
   </head>
   <body>
     <div class="page-shell">
@@ -300,9 +300,11 @@
         <div class="guest-production-timeline"></div>
         <div class="guest-planning-summary"></div>
         <div class="guest-promotion-summary"></div>
-        <p class="guest-summary"></p>
-        <div class="guest-details"></div>
-        <div class="guest-actions">
+        <details class="guest-card-details">
+          <summary>Review profile and actions</summary>
+          <div class="guest-card-details-body">
+            <p class="guest-card-section-label">Actions</p>
+            <div class="guest-actions">
           <button data-action="edit" class="ghost-button small-button">Edit</button>
           <button data-action="copy" class="ghost-button small-button">Copy Intake</button>
           <button data-action="activity" class="ghost-button small-button">Activity</button>
@@ -321,10 +323,15 @@
           <button data-action="skipped" class="secondary-button small-button">Skip</button>
           <button data-action="unprocessed" class="ghost-button small-button">Reset</button>
           <button data-action="delete" class="danger-button small-button">Delete</button>
-        </div>
-        <div class="card-action-feedback"></div>
-        <div class="inline-editor hidden"></div>
-        <div class="email-composer hidden"></div>
+            </div>
+            <div class="card-action-feedback"></div>
+            <div class="inline-editor hidden"></div>
+            <div class="email-composer hidden"></div>
+            <p class="guest-card-section-label">Application details</p>
+            <p class="guest-summary"></p>
+            <div class="guest-details"></div>
+          </div>
+        </details>
       </article>
     </template>
 
@@ -367,7 +374,7 @@
     </script>
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script
-      src="/static/app.js?v=20260823.1"
+      src="/static/app.js?v=20260831.4"
       defer
       onload="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_loaded?t='+Date.now();})();"
       onerror="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_error?t='+Date.now();})();"
