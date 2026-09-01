@@ -178,3 +178,6 @@ def test_dashboard_renders_release_timing_and_dated_guest_events() -> None:
     assert "Prospective release timing" in javascript
     assert "Dated launches and appearances" in javascript
     assert "release_timing_recommendation" in javascript
+    assert "Guest Copilot Research" in javascript
+    assert "Not researched yet" in javascript
+    assert "await loadGuests();" in javascript

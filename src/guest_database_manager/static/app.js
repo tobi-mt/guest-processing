@@ -832,7 +832,25 @@ function isLowSignalResearchSource(source) {
 function renderGuestCopilotSummary(guest) {
   const research = guest.guest_research;
   if (!research) {
-    return "";
+    const canResearch = Boolean(guest.website || guest.social_media_handles);
+    return `
+      <div class="guest-ai-card">
+        <div class="guest-ai-head">
+          <div>
+            <p class="composer-eyebrow">Guest Copilot Research</p>
+            <div class="guest-ai-title-row">
+              <strong>Not researched yet</strong>
+              <span class="guest-ai-badge warning">No saved evidence</span>
+            </div>
+            <p class="guest-ai-copy">${escapeHtml(
+              canResearch
+                ? "Expand Review profile and actions, then select Research Guest to generate public-profile evidence and prospective release timing."
+                : "Add a website or labelled social profile first, then select Research Guest."
+            )}</p>
+          </div>
+        </div>
+      </div>
+    `;
   }
   if (research.cache_status === "failed") {
     const failureReason = normalizeText(research.last_error) || "The available public profile source could not be read cleanly.";
@@ -1495,7 +1513,7 @@ function renderGuests(payload) {
                 : `Public profile research saved for ${guest.full_name || "guest"}.`,
               tone: "success",
             };
-            renderGuests(latestPayload);
+            await loadGuests();
             setMessage(
               failedResearch
                 ? `Saved search-assisted profile research for ${guest.full_name}. Planning can now use it as copilot context.`
