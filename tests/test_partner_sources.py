@@ -2,7 +2,7 @@ import socket
 
 import pytest
 
-from guest_database_manager.partner_sources import PartnerSourceError, PublicSourceClient, _safe_public_url
+from guest_database_manager.partner_sources import PartnerSourceError, PublicSourceClient, _safe_public_url, is_plausible_contact_email
 
 
 class FakeResponse:
@@ -56,3 +56,14 @@ def test_first_party_url_guard_blocks_private_network(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 80))])
     with pytest.raises(PartnerSourceError, match="Private or local"):
         _safe_public_url("http://example.test/contact", allowed_host="example.test")
+
+
+def test_asset_references_are_not_treated_as_contacts(monkeypatch):
+    class AssetSession(FakeSession):
+        def get(self, url, **kwargs):
+            return FakeResponse(text="""<html><body>Contact hello@hope.example<script src="https://cdn.example/ecom-swiper@11.0.5.js"></script><link href="theme@2.css"></body></html>""", content_type="text/html")
+
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))])
+    result = PublicSourceClient(session=AssetSession()).first_party("Hope Press", "https://hope.example")
+    assert {item.contact_email for item in result.contacts} == {"hello@hope.example"}
+    assert not is_plausible_contact_email("ecom-swiper@11.0.5.js")

@@ -20,10 +20,31 @@ import requests
 
 
 USER_AGENT = "MirrorTalkPartnerResearch/1.0 (source-grounded partnership research)"
+EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
+NON_EMAIL_TLDS = {
+    "css", "js", "json", "map", "png", "jpg", "jpeg", "gif", "svg", "webp",
+    "woff", "woff2", "ttf", "eot", "ico", "xml", "html", "htm",
+}
 
 
 class PartnerSourceError(RuntimeError):
     pass
+
+
+def is_plausible_contact_email(value: str) -> bool:
+    """Reject asset/version strings that merely resemble email addresses."""
+    email = str(value or "").strip().casefold()
+    if not EMAIL_PATTERN.fullmatch(email) or len(email) > 254:
+        return False
+    local, domain = email.rsplit("@", 1)
+    labels = domain.split(".")
+    if len(labels) < 2 or labels[-1] in NON_EMAIL_TLDS:
+        return False
+    if not local or local.startswith(".") or local.endswith(".") or ".." in email:
+        return False
+    if any(not label or label.startswith("-") or label.endswith("-") for label in labels):
+        return False
+    return True
 
 
 @dataclass
@@ -146,7 +167,9 @@ class PublicSourceClient:
                 digest = (url, fact)
                 if digest not in seen:
                     result.evidence.append(SourceEvidence("first_party", url, parser.title.strip() or organisation, fact, "first_party_profile", "high")); seen.add(digest)
-            emails = set(re.findall(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", response.text, re.I))
+            published_text = " ".join(parser.text)
+            mailto_values = " ".join(link.removeprefix("mailto:").split("?", 1)[0] for link in parser.links if link.casefold().startswith("mailto:"))
+            emails = {email for email in EMAIL_PATTERN.findall(f"{published_text} {mailto_values}") if is_plausible_contact_email(email)}
             for email in sorted(emails)[:8]:
                 result.contacts.append(ContactObservation("first_party", url, contact_email=email,
                     role_title="Published organisation contact", confidence="high" if email.casefold().endswith(f"@{host}") else "medium",

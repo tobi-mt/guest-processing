@@ -214,3 +214,14 @@ def test_multi_source_enrichment_isolated_and_source_grounded(tmp_path: Path):
     assert latest["first_party"]["status"] == "completed"
     assert latest["openalex"]["status"] == "completed"
     assert latest["openalex"]["error_code"] == "no_results"
+
+
+def test_existing_asset_like_contact_candidates_are_hidden(intelligence: PartnerIntelligence):
+    prospect = _prospect(intelligence)
+    with intelligence.database._connect() as conn:
+        conn.execute("""INSERT INTO partner_contact_candidates
+            (prospect_id, contact_email, source_url, provider, confidence, verification_status, evidence_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (prospect["id"], "ecom-swiper@11.0.5.js", "https://hope.example", "first_party", "medium", "published", "Asset reference"))
+        conn.commit()
+    assert intelligence.get_prospect(prospect["id"])["contact_candidates"] == []

@@ -19,7 +19,12 @@ from guest_database_manager.guest_research import research_guest_from_google_sea
 from guest_database_manager.apollo_client import ApolloClientError
 from guest_database_manager.apollo_import import parse_apollo_contacts_csv
 from guest_database_manager.partner_pitch_templates import get_pitch_template
-from guest_database_manager.partner_sources import PartnerSourceError, PublicSourceClient, default_public_providers
+from guest_database_manager.partner_sources import (
+    PartnerSourceError,
+    PublicSourceClient,
+    default_public_providers,
+    is_plausible_contact_email,
+)
 
 
 class PartnerIntelligenceError(ValueError):
@@ -146,9 +151,9 @@ class PartnerIntelligence:
             prospect["contact_research"] = [dict(item) for item in conn.execute(
                 "SELECT * FROM partner_contact_research WHERE prospect_id = ? ORDER BY collected_at DESC, id DESC", (prospect_id,)
             ).fetchall()]
-            prospect["contact_candidates"] = [dict(item) for item in conn.execute(
+            prospect["contact_candidates"] = [candidate for item in conn.execute(
                 "SELECT * FROM partner_contact_candidates WHERE prospect_id = ? ORDER BY CASE confidence WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC, id DESC", (prospect_id,)
-            ).fetchall()]
+            ).fetchall() if not (candidate := dict(item)).get("contact_email") or is_plausible_contact_email(candidate["contact_email"])]
             prospect["strategy"] = json.loads(prospect.pop("strategy_json") or "{}")
             prospect["source_coverage"] = [dict(item) for item in conn.execute(
                 """SELECT provider, status, result_count, error_code, completed_at
@@ -200,6 +205,8 @@ class PartnerIntelligence:
                     except PartnerIntelligenceError:
                         pass
                 for item in result.contacts:
+                    if item.contact_email and not is_plausible_contact_email(item.contact_email):
+                        continue
                     source_url = item.source_url
                     if not item.contact_email:
                         suffix = hashlib.sha256(f"{item.contact_name}|{item.role_title}".encode()).hexdigest()[:10]
@@ -269,7 +276,7 @@ class PartnerIntelligence:
                     html = response.read(250_000).decode("utf-8", errors="ignore")
             except Exception:
                 continue
-            emails = set(re.findall(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", html, re.I))
+            emails = {email for email in re.findall(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", html, re.I) if is_plausible_contact_email(email)}
             for email in emails:
                 if email.casefold().endswith(("@example.com", "@example.org")):
                     continue

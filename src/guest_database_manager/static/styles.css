@@ -645,6 +645,36 @@ p {
 .source-status.empty,
 .source-status.skipped { background: #f2efe7; color: #665b3f; }
 
+.partner-queue-heading,
+.partner-card-header,
+.partner-actions {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.partner-queue-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(180px, 1fr);
+  gap: 0.75rem;
+  flex: 1 1 460px;
+}
+
+.partner-card[hidden] { display: none; }
+.partner-stage { border-radius: 999px; background: #eef1f5; padding: 0.35rem 0.7rem; font-size: 0.82rem; font-weight: 700; }
+.partner-workflow { margin-top: 1rem; border-top: 1px solid var(--border-color, #d8dee8); padding-top: 0.75rem; }
+.partner-workflow > summary { cursor: pointer; font-weight: 700; min-height: 44px; display: flex; align-items: center; }
+.partner-workflow-body { padding-top: 0.5rem; }
+.partner-actions { justify-content: flex-start; margin: 0.75rem 0; }
+.muted-copy { color: var(--muted-text, #665f58); }
+
+@media (max-width: 640px) {
+  .partner-queue-tools { grid-template-columns: 1fr; }
+  .partner-actions > button { width: 100%; }
+}
+
 label {
   display: grid;
   gap: 6px;
