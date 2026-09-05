@@ -2,7 +2,7 @@
   const $ = (selector) => document.querySelector(selector);
   const csrf = () => (document.cookie.split(';').map((v) => v.trim()).find((v) => v.startsWith('dashboard_csrf=')) || '').split('=').slice(1).join('=');
   const escape = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
-  const stageFor = (item) => !item.contact_name ? 'contact' : !item.contact_research.length ? 'research' : item.readiness.needs_independent_source ? 'sources' : 'pitch';
+  const {stageFor} = window.PartnerWorkflow;
   const stageLabel = {contact:'Choose recipient', research:'Research recipient', sources:'Add evidence', pitch:'Pitch studio'};
   function filterProspects({revealStage = false} = {}) {
     const query = $('#partner-search').value.trim().toLowerCase();
