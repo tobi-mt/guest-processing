@@ -657,7 +657,7 @@ p {
 
 .partner-queue-tools {
   display: grid;
-  grid-template-columns: minmax(220px, 2fr) minmax(180px, 1fr);
+  grid-template-columns: minmax(220px, 2fr) minmax(180px, 1fr) auto;
   gap: 0.75rem;
   flex: 1 1 460px;
 }
@@ -668,11 +668,18 @@ p {
 .partner-workflow > summary { cursor: pointer; font-weight: 700; min-height: 44px; display: flex; align-items: center; }
 .partner-workflow-body { padding-top: 0.5rem; }
 .partner-actions { justify-content: flex-start; margin: 0.75rem 0; }
+.partner-recipient { padding: 0.65rem 0.8rem; border-left: 4px solid var(--accent-color, #7257d9); background: #f5f2fb; }
+.recipient-candidates { display: grid; gap: 0.65rem; margin: 0.75rem 0 1rem; }
+.recipient-candidate { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.75rem; border: 1px solid var(--border-color, #d8dee8); border-radius: 10px; }
+.recipient-candidate > div { display: grid; gap: 0.2rem; min-width: 0; }
+.recipient-candidate span { overflow-wrap: anywhere; }
 .muted-copy { color: var(--muted-text, #665f58); }
 
 @media (max-width: 640px) {
   .partner-queue-tools { grid-template-columns: 1fr; }
   .partner-actions > button { width: 100%; }
+  .recipient-candidate { align-items: stretch; flex-direction: column; }
+  .recipient-candidate > button { width: 100%; }
 }
 
 label {

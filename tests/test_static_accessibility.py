@@ -181,3 +181,15 @@ def test_dashboard_renders_release_timing_and_dated_guest_events() -> None:
     assert "Guest Copilot Research" in javascript
     assert "Not researched yet" in javascript
     assert "await loadGuests();" in javascript
+
+
+def test_partner_recipient_filter_reveals_actions_and_preserves_selected_recipient() -> None:
+    html = (STATIC_ROOT / "partners.html").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "partners.js").read_text(encoding="utf-8")
+
+    assert 'id="clear-partner-filters"' in html
+    assert "filterProspects({revealStage:true})" in javascript
+    assert "card.querySelector('.partner-workflow').open = true" in javascript
+    assert 'class="partner-recipient"' in javascript
+    assert "if (button.dataset.selectContact) showAllPartners()" in javascript
+    assert "revealProspect(prospectId)" in javascript
