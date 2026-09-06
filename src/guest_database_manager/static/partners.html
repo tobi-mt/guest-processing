@@ -1,8 +1,98 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mirror Talk Partner Intelligence</title><link rel="stylesheet" href="/static/styles.css?v=20260905.1"></head>
-<body><main class="page-shell"><header class="hero"><p class="eyebrow">Partner Intelligence</p><h1>Discover, understand, and prepare the right partnership.</h1><p class="hero-copy">Automate public research and tailored drafts, then keep a human approval checkpoint before a message enters the reliable email outbox.</p><a class="dashboard-link" href="/operations">Operations</a></header>
-<section class="panel"><h2>Add a prospective partner</h2><form id="prospect-form" class="guest-form"><label>Organisation<input name="organisation_name" required></label><label>Partner type<select name="partner_type"><option value="author_publisher">Author / publisher</option><option value="wellbeing">Well-being</option><option value="faith_community">Faith / community</option><option value="leadership">Leadership</option><option value="education_tool">Education tool</option><option value="charity">Charity</option><option value="other">Other</option></select></label><label>Website<input name="website" type="url"></label><label>Contact name<input name="contact_name"></label><label>Contact email<input name="contact_email" type="email"></label><label class="full-width">Research notes<textarea name="research_summary"></textarea></label><button class="primary-button">Create research record</button></form><p id="message" class="message" aria-live="polite"></p></section>
-<section class="panel"><h2>Import an Apollo contact export</h2><p id="apollo-provider-status">The file is previewed first. Primary business emails become unselected contact candidates; secondary emails, phone numbers, and unrelated fields are ignored.</p><form id="apollo-import-form" class="guest-form"><label class="full-width">Apollo CSV<input name="apollo_csv" type="file" accept=".csv,text/csv" required></label><button class="secondary-button">Preview and import</button></form><p id="apollo-import-summary" class="message" aria-live="polite"></p></section>
-<section class="panel"><h2>Current research suggestions</h2><p>Import a signal, then run automated research to combine Apollo decision-maker enrichment with attributable public sources. Nothing is contacted before approval and handoff.</p><div id="suggestions" aria-live="polite">Loading suggestions…</div></section>
-<section class="panel"><h2>Pitch performance</h2><p>Replies, meetings, and bookings are attributed to the exact selected template and angle.</p><div id="pitch-performance">No selected-pitch outcomes yet.</div></section>
-<section class="panel" id="partner-review-queue"><div class="partner-queue-heading"><div><h2>Review queue</h2><p id="prospect-count" class="muted-copy"></p></div><div class="partner-queue-tools"><label>Find a partner<input id="partner-search" type="search" placeholder="Search organisation, type, or contact"></label><label>Workflow stage<select id="partner-stage"><option value="all">All stages</option><option value="contact">Choose recipient</option><option value="research">Research recipient</option><option value="sources">Add evidence</option><option value="pitch">Pitch studio</option></select></label><button id="clear-partner-filters" class="secondary-button" type="button">Show all partners</button></div></div><p id="partner-filter-empty" class="empty-state" hidden>No partners match these filters.</p><div id="prospects" aria-live="polite">Loading…</div></section></main><script src="/static/partners-workflow.js?v=20260905.1"></script><script src="/static/partners.js?v=20260905.2"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mirror Talk Partner Intelligence</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260906.1">
+</head>
+<body>
+<main class="page-shell partner-page">
+  <header class="hero partner-hero">
+    <div>
+      <p class="eyebrow">Partner Intelligence</p>
+      <h1>Move each partnership to its next clear decision.</h1>
+      <p class="hero-copy">Research the organisation, verify the right recipient, prepare a grounded pitch, and approve it before anything enters the email outbox.</p>
+    </div>
+    <nav class="partner-page-nav" aria-label="Partner workspace">
+      <a class="primary-button" href="#partner-review-queue">Review priority work</a>
+      <a class="secondary-button" href="#partner-tools">Add or import partners</a>
+      <a class="dashboard-link" href="/operations">Back to Operations</a>
+    </nav>
+  </header>
+
+  <section class="panel partner-pipeline" aria-labelledby="pipeline-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">Live pipeline</p><h2 id="pipeline-title">What needs attention?</h2></div>
+      <p class="approval-note"><strong>Safe by design:</strong> no message is queued until you approve a final pitch.</p>
+    </div>
+    <div id="partner-stage-filters" class="partner-stage-filters" role="group" aria-label="Filter partners by next action">
+      <button class="partner-stage-filter is-active" type="button" data-stage-filter="all" aria-pressed="true"><span>All partners</span><strong data-stage-count="all">0</strong><small>Everything in the pipeline</small></button>
+      <button class="partner-stage-filter" type="button" data-stage-filter="contact" aria-pressed="false"><span>Choose recipient</span><strong data-stage-count="contact">0</strong><small>Needs the right person</small></button>
+      <button class="partner-stage-filter" type="button" data-stage-filter="research" aria-pressed="false"><span>Verify recipient</span><strong data-stage-count="research">0</strong><small>Needs public profile evidence</small></button>
+      <button class="partner-stage-filter" type="button" data-stage-filter="sources" aria-pressed="false"><span>Strengthen evidence</span><strong data-stage-count="sources">0</strong><small>Needs another independent source</small></button>
+      <button class="partner-stage-filter" type="button" data-stage-filter="pitch" aria-pressed="false"><span>Prepare pitch</span><strong data-stage-count="pitch">0</strong><small>Ready for Pitch Studio</small></button>
+    </div>
+  </section>
+
+  <section class="panel" id="partner-review-queue" aria-labelledby="review-queue-title">
+    <div class="partner-queue-heading">
+      <div><p class="eyebrow">Priority workspace</p><h2 id="review-queue-title">Review queue</h2><p id="prospect-count" class="muted-copy"></p></div>
+      <div class="partner-queue-tools">
+        <label>Find a partner<input id="partner-search" type="search" placeholder="Search organisation, type, or recipient"></label>
+        <button id="clear-partner-filters" class="secondary-button" type="button" hidden>Clear filters</button>
+      </div>
+    </div>
+    <p id="partner-filter-empty" class="empty-state" hidden>No partners match this view. Clear the filters to return to the full pipeline.</p>
+    <div id="prospects" class="partner-list" aria-live="polite">Loading partner work…</div>
+  </section>
+
+  <section class="panel" id="partner-tools" aria-labelledby="partner-tools-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">Sources</p><h2 id="partner-tools-title">Add and discover partners</h2></div>
+      <p>Use one route at a time. Every new record enters the review queue before outreach.</p>
+    </div>
+    <p id="message" class="message" aria-live="polite"></p>
+    <div class="partner-tool-grid">
+      <details class="partner-tool" open>
+        <summary><span><strong>Add one prospect</strong><small>Start from an organisation or known contact</small></span></summary>
+        <form id="prospect-form" class="guest-form partner-tool-body">
+          <label>Organisation<input name="organisation_name" required></label>
+          <label>Partner type<select name="partner_type"><option value="author_publisher">Author / publisher</option><option value="wellbeing">Well-being</option><option value="faith_community">Faith / community</option><option value="leadership">Leadership</option><option value="education_tool">Education tool</option><option value="charity">Charity</option><option value="other">Other</option></select></label>
+          <label>Website<input name="website" type="url" placeholder="https://…"></label>
+          <label>Known contact name<input name="contact_name"></label>
+          <label>Known contact email<input name="contact_email" type="email"></label>
+          <label class="full-width">Why this partner may fit<textarea name="research_summary"></textarea></label>
+          <button class="primary-button">Create research record</button>
+        </form>
+      </details>
+      <details class="partner-tool">
+        <summary><span><strong>Import Apollo CSV</strong><small>Preview verified business contacts before import</small></span></summary>
+        <div class="partner-tool-body">
+          <p id="apollo-provider-status">Checking Apollo availability…</p>
+          <form id="apollo-import-form" class="guest-form">
+            <label class="full-width">Apollo CSV<input name="apollo_csv" type="file" accept=".csv,text/csv" required></label>
+            <button class="secondary-button">Preview and import</button>
+          </form>
+          <p id="apollo-import-summary" class="message" aria-live="polite"></p>
+        </div>
+      </details>
+      <details class="partner-tool">
+        <summary><span><strong>Research suggestions</strong><small>Timely public signals worth reviewing</small></span></summary>
+        <div class="partner-tool-body">
+          <p>Import a signal to retain its public sources. Nothing is contacted automatically.</p>
+          <div id="suggestions" class="suggestion-grid" aria-live="polite">Loading suggestions…</div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="performance-title">
+    <div class="section-heading"><div><p class="eyebrow">Learning loop</p><h2 id="performance-title">Pitch performance</h2></div><p>Results are attributed to the exact selected template and angle.</p></div>
+    <div id="pitch-performance">Loading outcomes…</div>
+  </section>
+</main>
+<script src="/static/partners-workflow.js?v=20260906.1"></script>
+<script src="/static/partners.js?v=20260906.2"></script>
+</body>
+</html>

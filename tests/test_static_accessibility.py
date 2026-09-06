@@ -9,7 +9,7 @@ import pytest
 
 
 STATIC_ROOT = Path(__file__).parents[1] / "src" / "guest_database_manager" / "static"
-WORKSPACES = ("index.html", "operations.html", "planning.html", "booking.html")
+WORKSPACES = ("index.html", "operations.html", "planning.html", "booking.html", "partners.html")
 
 
 def _strip_markup(value: str) -> str:
@@ -188,8 +188,13 @@ def test_partner_recipient_filter_reveals_actions_and_preserves_selected_recipie
     javascript = (STATIC_ROOT / "partners.js").read_text(encoding="utf-8")
 
     assert 'id="clear-partner-filters"' in html
+    assert 'id="partner-stage-filters"' in html
+    assert 'id="partner-review-queue"' in html
+    assert html.index('id="partner-review-queue"') < html.index('id="partner-tools"')
     assert "filterProspects({revealStage:true})" in javascript
     assert "card.querySelector('.partner-workflow').open = true" in javascript
     assert 'class="partner-recipient"' in javascript
-    assert "if (button.dataset.selectContact) showAllPartners()" in javascript
+    assert "async function reloadAndReveal(prospectId" in javascript
+    assert "clearFilters:Boolean(changesStage)" in javascript
     assert "revealProspect(prospectId)" in javascript
+    assert "Continue: ${stageLabel[stage]}" in javascript

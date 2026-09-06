@@ -62,7 +62,7 @@ def test_partner_http_workflow_reaches_idempotent_outbox_only_after_approval(mon
         session, headers = authenticated_session(monkeypatch, base_url)
         page = session.get(f"{base_url}/partners", timeout=5)
         assert page.status_code == 200
-        assert 'id="partner-stage"' in page.text
+        assert 'id="partner-stage-filters"' in page.text
         assert 'id="clear-partner-filters"' in page.text
 
         created = post(session, base_url, "/api/partners", {
