@@ -51,7 +51,7 @@ from guest_database_manager.guest_research import _candidate_urls, build_release
 from guest_database_manager import guest_research
 from guest_database_manager import web_interface
 from guest_database_manager.email_manager import EmailManager
-from guest_database_manager.episode_planner import build_release_recommendations, next_release_slot
+from guest_database_manager.episode_planner import build_editorial_fit, build_release_recommendations, next_release_slot
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
 from guest_database_manager.google_service_account_calendar import GoogleServiceAccountCalendarClient
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
@@ -3418,6 +3418,68 @@ def test_release_recommendations_use_guest_research_for_seasonal_fit():
     assert "men" in recommendations[0]["seasonal_fit"]["matched_keywords"]
 
 
+def test_release_recommendations_apply_monday_flagship_and_editorial_pillars():
+    recommendations = build_release_recommendations(
+        [{
+            "id": 1,
+            "guest_name": "Aligned Guest",
+            "episode_title": "Healing Shame and Trauma",
+            "topic": "How to heal trauma and regulate the nervous system",
+            "category": "Mental Health",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }],
+        reference=datetime(2026, 9, 8, 12, 0, 0),
+    )
+
+    recommendation = recommendations[0]
+    assert recommendation["recommended_release_date"] == "2026-09-14 16:00:00"
+    assert recommendation["calendar_capacity"]["cadence"] == "Monday 16:00 flagship"
+    assert recommendation["editorial_fit"]["pillar"] == "Heal"
+    assert recommendation["editorial_fit"]["alignment"] == "strong"
+
+
+def test_editorial_fit_uses_word_boundaries_and_preserves_multi_pillar_evidence():
+    unclassified = build_editorial_fit({"topic": "Smother technical errors with weather data"})
+    multi_pillar = build_editorial_fit({"topic": "Healing attachment and relationship anxiety"})
+
+    assert unclassified["pillar"] == "Unclassified"
+    assert unclassified["score_adjustment"] == -18
+    assert multi_pillar["pillar"] == "Heal"
+    assert multi_pillar["pillars"] == ["Heal", "Love"]
+
+
+def test_editorial_fit_tolerates_malformed_research_topics():
+    result = build_editorial_fit({"topic": "identity and confidence", "guest_research": {"likely_topics": None}})
+
+    assert result["pillar"] == "Become"
+
+
+def test_aligned_ready_episode_outranks_generic_technical_content():
+    recommendations = build_release_recommendations(
+        [
+            {"id": 1, "guest_name": "Technical Guest", "episode_title": "Technical Systems", "topic": "weather systems and software tooling", "category": "Technology", "production_status": "ready", "promotion_status": "ready"},
+            {"id": 2, "guest_name": "Healing Guest", "episode_title": "Healing Shame", "topic": "healing shame after trauma", "category": "Mental Health", "production_status": "ready", "promotion_status": "ready"},
+        ],
+        reference=datetime(2026, 9, 8, 12, 0, 0),
+    )
+
+    assert recommendations[0]["id"] == 2
+    assert recommendations[1]["editorial_fit"]["pillar"] == "Unclassified"
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected"),
+    [
+        (datetime(2026, 9, 7, 0, 0), datetime(2026, 9, 14, 16, 0)),
+        (datetime(2026, 9, 7, 16, 0), datetime(2026, 9, 14, 16, 0)),
+        (datetime(2026, 9, 8, 0, 0), datetime(2026, 9, 14, 16, 0)),
+    ],
+)
+def test_next_release_slot_always_leaves_flagship_preparation_time(reference, expected):
+    assert next_release_slot(reference) == expected
+
+
 def test_release_recommendations_honor_saved_guest_research_window():
     recommendations = build_release_recommendations(
         [
@@ -3486,7 +3548,7 @@ def test_release_recommendations_explain_capacity_forecast_fatigue_and_guest_eve
         episodes, reference=datetime(2026, 8, 31, 12, 0, 0)
     )[0]
 
-    assert recommendation["recommended_release_date"].startswith("2026-09-08")
+    assert recommendation["recommended_release_date"].startswith("2026-09-07")
     assert recommendation["calendar_capacity"]["reserved_release_count"] == 1
     assert recommendation["production_readiness_forecast"]["estimated_lead_days"] == 10
     assert recommendation["production_readiness_forecast"]["feasible"] is False
@@ -3603,8 +3665,8 @@ def test_planning_payload_includes_outreach_system_and_episode_summary(temp_db):
             "release_date": "2026-04-07T17:00",
             "release_status": "scheduled",
             "outreach_plan": {
-                "monday_preparation": True,
-                "tuesday_launch": True,
+                "monday_flagship": True,
+                "tuesday_hero": True,
             },
         }
     )
@@ -3612,11 +3674,28 @@ def test_planning_payload_includes_outreach_system_and_episode_summary(temp_db):
     planning = service.list_planning()
     episode = planning["episodes"][0]
 
-    assert planning["weekly_system"]["steps"][0]["key"] == "monday_preparation"
+    assert planning["weekly_system"]["steps"][0]["key"] == "monday_flagship"
     assert planning["weekly_system"]["principles"]
-    assert episode["outreach_plan"]["monday_preparation"] is True
+    assert planning["weekly_system"]["steps"][0]["title"] == "Flagship launch"
+    assert planning["weekly_system"]["editorial_pillars"][0] == {"name": "Heal", "target_share_pct": 30}
+    assert "paid" in planning["weekly_system"]["measurement_note"].lower()
+    assert episode["outreach_plan"]["monday_flagship"] is True
     assert episode["outreach_summary"]["completed_count"] == 2
     assert "Next outreach step" in episode["outreach_summary"]["next_step"]
+
+
+def test_legacy_outreach_completion_does_not_complete_new_strategy_tasks(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode({
+        "guest_name": "Legacy Checklist Guest",
+        "episode_title": "Legacy Checklist",
+        "outreach_plan": {"monday_preparation": True, "tuesday_launch": True},
+    })
+
+    episode = service.list_planning()["episodes"][0]
+
+    assert episode["outreach_summary"]["completed_count"] == 0
+    assert episode["outreach_plan"]["monday_flagship"] is False
 
 
 def test_create_episode_prefills_priority_and_legacy_episode_number(temp_db):
@@ -5288,6 +5367,7 @@ def test_public_reschedule_updates_existing_interview(monkeypatch, temp_db):
 def test_public_reschedule_link_exposes_and_accepts_specific_proposal(monkeypatch, temp_db):
     """The secure guest link should show an offered time and allow direct confirmation."""
     service = GuestWebService(temp_db.db_path)
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: None)
     guest = service.create_guest({"full_name": "Richard Riccardi", "email": "richard@example.com"})
     original_start = (datetime.now(timezone.utc) + timedelta(days=3)).replace(second=0, microsecond=0).isoformat()
     proposed_start = (datetime.now(timezone.utc) + timedelta(days=5)).replace(minute=17, second=0, microsecond=0)
@@ -5656,7 +5736,7 @@ def test_operations_include_weekly_outreach_spotlight(temp_db):
             "category": "Personal Development",
             "release_date": "2026-04-07T17:00",
             "release_status": "scheduled",
-            "outreach_plan": {"monday_preparation": True},
+            "outreach_plan": {"monday_flagship": True},
         }
     )
 
@@ -5720,7 +5800,7 @@ def test_planning_stats_separate_release_overview_from_interview_ops(temp_db):
 
 
 def test_episode_recommendations_prefer_variety_and_ready_queue(temp_db):
-    """Release recommendations should surface strong ready candidates for the next Tuesday slot."""
+    """Release recommendations should surface strong ready candidates for the next flagship slot."""
     service = GuestWebService(temp_db.db_path)
 
     service.create_episode(
@@ -5777,7 +5857,7 @@ def test_episode_recommendations_prefer_variety_and_ready_queue(temp_db):
     planning = service.list_planning()
 
     assert planning["recommendations"][0]["guest_name"] == "Finance Guest"
-    assert planning["recommendations"][0]["recommended_release_date"].endswith("17:00:00")
+    assert planning["recommendations"][0]["recommended_release_date"].endswith("16:00:00")
 
 
 def test_episode_recommendations_factor_seasonality_promo_readiness_and_guest_diversity(temp_db, monkeypatch):
@@ -6566,18 +6646,18 @@ def test_reschedule_alternatives_are_validated_persisted_and_do_not_change_booki
     service = GuestWebService(temp_db.db_path)
     interview = service.create_interview({
         "guest_name": "Options Guest", "guest_email": "options@example.com",
-        "scheduled_for": "2026-09-01 13:00:00", "timezone": "Europe/Berlin",
+        "scheduled_for": "2099-09-01 13:00:00", "timezone": "Europe/Berlin",
         "confirmation_status": "confirmed",
     })
 
     with pytest.raises(WebInterfaceError, match="at least two"):
         service.preview_interview_reschedule_link(
-            interview["id"], "alternatives", ["2026-09-08T15:00"], "Europe/Berlin"
+            interview["id"], "alternatives", ["2099-09-08T15:00"], "Europe/Berlin"
         )
 
     sent = service.send_interview_reschedule_link(
         interview["id"], proposal_mode="alternatives",
-        proposed_times=["2026-09-08T15:00", "2026-09-10T11:30"],
+        proposed_times=["2099-09-08T15:00", "2099-09-10T11:30"],
         proposal_timezone="Europe/Berlin", actor="test-operator",
     )
 
@@ -6586,7 +6666,7 @@ def test_reschedule_alternatives_are_validated_persisted_and_do_not_change_booki
     proposals = temp_db.list_interview_reschedule_proposals(interview["id"])
     assert proposals[0]["mode"] == "alternatives"
     assert proposals[0]["timezone"] == "Europe/Berlin"
-    assert proposals[0]["options"] == ["2026-09-08T13:00:00Z", "2026-09-10T09:30:00Z"]
+    assert proposals[0]["options"] == ["2099-09-08T13:00:00Z", "2099-09-10T09:30:00Z"]
     assert proposals[0]["created_by"] == "test-operator"
 
 

@@ -198,3 +198,13 @@ def test_partner_recipient_filter_reveals_actions_and_preserves_selected_recipie
     assert "clearFilters:Boolean(changesStage)" in javascript
     assert "revealProspect(prospectId)" in javascript
     assert "Continue: ${stageLabel[stage]}" in javascript
+
+
+def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
+    html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+
+    assert 'id="growth-intelligence-dashboard" aria-live="polite"' in html
+    assert 'id="growth-observation-message" class="message" aria-live="polite"' in html
+    assert "String(item.actual_share_pct ?? 0)" in javascript
+    assert "String(quality.unclassified_released_episodes ?? 0)" in javascript

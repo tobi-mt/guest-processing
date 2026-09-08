@@ -2072,6 +2072,8 @@ function renderGuestAiSummary(guest) {
     .slice(0, 3)
     .map((name) => `<li>Website domain is also shared with ${escapeHtml(name)}.</li>`)
     .join("");
+  const strategic = support.strategic_scorecard || {};
+  const strategicDimensions = Object.entries(strategic.dimensions || {}).map(([key, value]) => `<li>${escapeHtml(key.replaceAll("_", " "))}: ${escapeHtml(value.score)}/100 · ${escapeHtml(value.weight_pct)}%</li>`).join("");
 
   return `
     <div class="guest-ai-card">
@@ -2093,6 +2095,7 @@ function renderGuestAiSummary(guest) {
         ${cautions ? `<div class="guest-ai-block caution"><strong>Watchouts</strong><ul>${cautions}</ul></div>` : ""}
         ${emailConflicts || hostConflicts ? `<div class="guest-ai-block caution"><strong>Identity checks</strong><ul>${emailConflicts}${hostConflicts}</ul></div>` : ""}
       </div>
+      ${strategicDimensions ? `<details class="guest-ai-block"><summary><strong>Strategic producer score · ${escapeHtml(strategic.score)}/100</strong></summary><p>${escapeHtml(strategic.booking_band || "below threshold")} · minimum booking score ${escapeHtml(strategic.minimum_booking_score)}</p><ul>${strategicDimensions}</ul>${(strategic.evidence_gaps || []).length ? `<p>${escapeHtml(strategic.evidence_gaps.join(" "))}</p>` : ""}</details>` : ""}
     </div>
   `;
 }

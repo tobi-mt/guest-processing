@@ -88,6 +88,35 @@ def test_cookie_authenticated_write_requires_matching_csrf(monkeypatch, temp_db)
         )
         assert rejected.status_code == 403
 
+
+def test_growth_intelligence_api_requires_auth_csrf_and_is_idempotent(monkeypatch, temp_db):
+    configure_auth(monkeypatch)
+    episode_id, _ = temp_db.upsert_episode({"guest_name": "Growth API Guest", "episode_title": "Healing Trauma"})
+    observation = {
+        "episode_id": episode_id,
+        "provider": "youtube",
+        "metric_name": "organic_reach",
+        "metric_value": 900,
+        "traffic_scope": "organic",
+        "period_start": "2026-09-01",
+        "period_end": "2026-09-07",
+        "source_reference": "youtube-export.csv",
+    }
+    with running_server(temp_db.db_path) as base_url:
+        assert requests.get(f"{base_url}/api/growth-intelligence", timeout=5).status_code == 401
+        session = requests.Session()
+        assert login(session, base_url).status_code == 200
+        assert session.post(f"{base_url}/api/growth-intelligence/observations", json={"observations": [observation]}, timeout=5).status_code == 403
+        csrf = {"X-CSRF-Token": session.cookies["dashboard_csrf"]}
+        imported = session.post(f"{base_url}/api/growth-intelligence/observations", json={"observations": [observation]}, headers=csrf, timeout=5)
+        duplicate = session.post(f"{base_url}/api/growth-intelligence/observations", json={"observations": [observation]}, headers=csrf, timeout=5)
+        dashboard = session.get(f"{base_url}/api/growth-intelligence", timeout=5)
+
+        assert imported.status_code == 201
+        assert imported.json()["inserted"] == 1
+        assert duplicate.json()["duplicates"] == 1
+        assert dashboard.json()["reach"]["organic"] == 900
+
         accepted = session.post(
             f"{base_url}/api/guests",
             json={"full_name": "Protected Guest", "email": "protected@example.com"},

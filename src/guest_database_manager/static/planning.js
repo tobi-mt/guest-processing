@@ -16,6 +16,12 @@ const askSyncBreakdown = document.getElementById("ask-sync-breakdown");
 const askSyncAmbiguous = document.getElementById("ask-sync-ambiguous");
 const planningExportMessage = document.getElementById("planning-export-message");
 const planningWeeklySystem = document.getElementById("planning-weekly-system");
+const growthObservationForm = document.getElementById("growth-observation-form");
+const growthObservationMessage = document.getElementById("growth-observation-message");
+const growthIntelligenceDashboard = document.getElementById("growth-intelligence-dashboard");
+const growthIntelligenceRefresh = document.getElementById("growth-intelligence-refresh");
+const growthExperimentForm = document.getElementById("growth-experiment-form");
+const growthExperimentMessage = document.getElementById("growth-experiment-message");
 const learningStatus = document.getElementById("learning-status");
 const learningMessage = document.getElementById("learning-message");
 const learningRefresh = document.getElementById("learning-refresh");
@@ -187,15 +193,15 @@ const PRODUCTION_RAIL_STAGES = [
   ["scheduled", "Scheduled"],
 ];
 const OUTREACH_STEPS = [
-  ["monday_preparation", "Monday · Preparation and positioning", "Titles, thumbnails, clips, blog, and email"],
-  ["tuesday_launch", "Tuesday 17:00 · Podcast and YouTube launch", "Publish the full episode and anchor the cycle"],
-  ["tuesday_distribution", "Tuesday evening · Clip, email, and social push", "Use the first-night momentum window"],
-  ["wednesday_momentum", "Wednesday · Momentum and engagement", "Second clip, community replies, and carousel"],
-  ["thursday_blog", "Thursday 11:00 · Website blog post", "Publish the SEO-focused long-form version"],
-  ["thursday_amplification", "Thursday afternoon · Blog promotion", "Third clip plus blog amplification"],
-  ["friday_newsletter", "Friday 15:00 · Substack newsletter", "Personal and reflective newsletter touchpoint"],
-  ["friday_reflection", "Friday afternoon · Reflection posts", "Relationship-building social posts and replies"],
-  ["weekend_review", "Weekend · Analytics and planning", "Review performance and prepare the next cycle"],
+  ["monday_flagship", "Monday 16:00 · Flagship launch", "Publish one coordinated full episode with the guest"],
+  ["tuesday_hero", "Tuesday · Hero moment", "Publish one emotionally arresting 30–90 second clip"],
+  ["tuesday_followthrough", "Tuesday · Launch follow-through", "Reply to the audience and support guest amplification"],
+  ["wednesday_depth", "Wednesday · Depth", "Publish a useful standalone article or reflection"],
+  ["thursday_discovery", "Thursday · Secondary discovery", "Publish a strong clip and a Spotify promotional clip"],
+  ["thursday_optional_flagship", "Thursday · Optional flagship", "A second full episode is earned, not automatic"],
+  ["friday_review", "Friday · Community and analytics", "Review organic performance and guest distribution"],
+  ["friday_rest", "Friday · No publishing obligation", "Protect quality density"],
+  ["weekend_archive", "Weekend · Archive and tease", "Resurface one archive episode and tease Monday"],
 ];
 
 const EXPORT_FIELD_CONFIG = {
@@ -711,6 +717,11 @@ function deriveRecommendationSignals(episode) {
   if (text.includes("ready to publish") || text.includes("promotion assets look ready")) {
     signals.push({ label: "Release Ready", tone: "good" });
   }
+  if (episode.editorial_fit?.pillar && episode.editorial_fit.pillar !== "Unclassified") {
+    signals.push({ label: `${episode.editorial_fit.pillar} pillar`, tone: "good" });
+  } else if (episode.editorial_fit?.pillar === "Unclassified") {
+    signals.push({ label: "Editorial review", tone: "warning" });
+  }
   return signals;
 }
 
@@ -1128,6 +1139,7 @@ function renderWeeklySystemPanel(system) {
     .join("");
   const principles = (system.principles || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   const metrics = (system.metrics || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const pillars = (system.editorial_pillars || []).map((item) => `<li><strong>${escapeHtml(item.name)}</strong> · ${escapeHtml(item.target_share_pct)}%</li>`).join("");
   planningWeeklySystem.innerHTML = `
     <div class="insight-stack">
       <strong class="insight-label">What this tab is for</strong>
@@ -1146,10 +1158,53 @@ function renderWeeklySystemPanel(system) {
       <ul>${principles}</ul>
     </div>
     <div class="insight-stack">
+      <strong class="insight-label">Editorial mix</strong>
+      <ul>${pillars}</ul>
+    </div>
+    <div class="insight-stack">
       <strong class="insight-label">Key metrics</strong>
       <ul>${metrics}</ul>
+      <p>${escapeHtml(system.measurement_note || "")}</p>
     </div>
   `;
+}
+
+function renderGrowthIntelligence(payload) {
+  if (!growthIntelligenceDashboard) return;
+  const quality = payload?.quality || {};
+  const reach = payload?.reach || {};
+  const discovery = payload?.discovery || {};
+  const distribution = payload?.distribution || {};
+  const owned = payload?.owned_audience || {};
+  const mixRows = (payload?.editorial_mix || []).map((item) => `<tr><th scope="row">${escapeHtml(item.pillar)}</th><td>${escapeHtml(String(item.actual_share_pct ?? 0))}%</td><td>${escapeHtml(String(item.target_share_pct ?? 0))}%</td><td>${Number(item.variance_pct_points) > 0 ? "+" : ""}${escapeHtml(String(item.variance_pct_points ?? 0))} pp</td></tr>`).join("");
+  const scoreRows = (payload?.episode_scores || []).slice(0, 8).map((item) => {
+    const mfs = item.mfs || {};
+    const result = mfs.status === "ready" ? `MFS ${escapeHtml(mfs.score)}` : `Incomplete · missing ${escapeHtml((mfs.missing_metrics || []).join(", "))}`;
+    return `<article class="growth-score-row"><strong>${escapeHtml(item.episode_title)}</strong><span>${result}</span></article>`;
+  }).join("");
+  const freshness = payload?.freshness || "no_data";
+  const experimentRows = (payload?.experiments || []).map((item) => `<article class="growth-score-row"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.status)} · ${escapeHtml(item.control_label)} → ${escapeHtml(item.treatment_label)} · ${escapeHtml(item.primary_metric)}</span></article>`).join("");
+  growthIntelligenceDashboard.innerHTML = `
+    <div class="growth-status-row"><span class="status-chip ${freshness === "current" ? "ready" : "pending"}">${escapeHtml(freshness.replaceAll("_", " "))}</span><span>Latest period: ${escapeHtml(payload?.latest_period_end || "No evidence imported")}</span></div>
+    <div class="learning-metric-grid">
+      <article class="learning-metric-card"><small>Organic reach</small><strong>${escapeHtml(reach.organic || 0)}</strong></article>
+      <article class="learning-metric-card"><small>Paid reach</small><strong>${escapeHtml(reach.paid || 0)}</strong></article>
+      <article class="learning-metric-card"><small>Paid share</small><strong>${reach.paid_share_pct == null ? "—" : `${escapeHtml(reach.paid_share_pct)}%`}</strong></article>
+      <article class="learning-metric-card"><small>MFS ready</small><strong>${escapeHtml(quality.mfs_ready || 0)} / ${escapeHtml(quality.episodes_with_evidence || 0)}</strong></article>
+    </div>
+    <div class="growth-dashboard-grid">
+      <div class="operations-preview"><strong class="insight-label">Editorial mix · latest 20 releases</strong><div class="table-scroll"><table><thead><tr><th>Pillar</th><th>Actual</th><th>Target</th><th>Variance</th></tr></thead><tbody>${mixRows}</tbody></table></div><p>Window contains ${escapeHtml(String(quality.editorial_window_count ?? 0))} releases; ${escapeHtml(String(quality.unclassified_released_episodes ?? 0))} remain unclassified.</p></div>
+      <div class="operations-preview"><strong class="insight-label">Mirror Fan Score</strong>${scoreRows || "<p>No episode-level evidence yet. MFS remains unavailable until all four dimensions are supplied.</p>"}</div>
+      <div class="operations-preview"><strong class="insight-label">Discovery and distribution</strong><p>7-day downloads: ${escapeHtml(String(discovery.downloads_7d ?? 0))}</p><p>Spotify Home / Search: ${escapeHtml(String(discovery.spotify_home_impressions ?? 0))} / ${escapeHtml(String(discovery.spotify_search_impressions ?? 0))}</p><p>Guest shares / newsletter inclusions: ${escapeHtml(String(distribution.guest_shares ?? 0))} / ${escapeHtml(String(distribution.guest_newsletter_inclusions ?? 0))}</p></div>
+      <div class="operations-preview"><strong class="insight-label">Owned audience</strong><p>Email subscribers gained: ${escapeHtml(String(owned.email_subscribers_gained ?? 0))}</p><p>Site → podcast conversion: ${owned.site_to_podcast_conversion_pct == null ? "—" : `${escapeHtml(String(owned.site_to_podcast_conversion_pct))}%`}</p></div>
+      <div class="operations-preview"><strong class="insight-label">Controlled experiments</strong>${experimentRows || "<p>No experiments registered.</p>"}</div>
+    </div>`;
+}
+
+async function loadGrowthIntelligence() {
+  const payload = await fetchJSON("/api/growth-intelligence");
+  renderGrowthIntelligence(payload);
+  return payload;
 }
 
 function renderAskSyncBreakdown(result) {
@@ -2660,6 +2715,7 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
           <span>Interviewed: ${formatDateTime(episode.interview_date)}</span>
           <span>Production: ${escapeHtml(episode.production_status || "idea")}</span>
           <span>Promo: ${escapeHtml(episode.promotion_status || "unknown")}</span>
+          <span>Pillar: ${escapeHtml(episode.editorial_fit?.pillar || "Not classified")}</span>
         </div>
         <div class="operations-preview">
         ${insights.strengths.length ? `<div class="insight-stack"><strong class="insight-label">Why now</strong><ul>${insights.strengths.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
@@ -3592,6 +3648,41 @@ episodeEditorModal?.addEventListener("click", (event) => {
 learningRefresh?.addEventListener("click", () => {
   loadLearningStatus().catch((error) => setMessage(learningMessage, error.message, "error"));
 });
+growthIntelligenceRefresh?.addEventListener("click", () => {
+  loadGrowthIntelligence().catch((error) => setMessage(growthObservationMessage, error.message, "error"));
+});
+growthObservationForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = growthObservationForm.querySelector("button[type='submit']");
+  try {
+    const observations = JSON.parse(growthObservationForm.elements.observations.value);
+    button.disabled = true;
+    const result = await fetchJSON("/api/growth-intelligence/observations", {method: "POST", body: JSON.stringify({observations})});
+    setMessage(growthObservationMessage, `Imported ${result.inserted}; skipped ${result.duplicates} duplicate observations.`, "success");
+    await loadGrowthIntelligence();
+  } catch (error) {
+    setMessage(growthObservationMessage, error instanceof SyntaxError ? "Observation JSON is invalid." : error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+growthExperimentForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = growthExperimentForm.querySelector("button[type='submit']");
+  const data = new FormData(growthExperimentForm);
+  const payload = Object.fromEntries(data.entries());
+  try {
+    button.disabled = true;
+    const result = await fetchJSON("/api/growth-intelligence/experiments", {method: "POST", body: JSON.stringify(payload)});
+    setMessage(growthExperimentMessage, `Registered ${result.name} as a draft experiment.`, "success");
+    growthExperimentForm.reset();
+    await loadGrowthIntelligence();
+  } catch (error) {
+    setMessage(growthExperimentMessage, error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+});
 learningEvaluate?.addEventListener("click", () => runLearningAction(
   "/api/recommendation-learning/evaluate", {}, "Running offline holdout evaluation…",
 ));
@@ -3674,6 +3765,7 @@ if (modalCancelButton) {
 
 if (!enforceHostedMode()) {
   loadLearningStatus().catch((error) => setMessage(learningMessage, error.message, "error"));
+  loadGrowthIntelligence().catch((error) => setMessage(growthObservationMessage, error.message, "error"));
   loadPlanning().catch((error) => {
     console.error("Planning load error:", error);
     setMessage(episodeMessage, error.message || "Failed to load planning data", "error");

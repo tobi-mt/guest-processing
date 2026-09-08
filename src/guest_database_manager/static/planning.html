@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
     <link rel="stylesheet" href="/static/styles.css?v=20260831.1" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260831.4" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260908.3" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -276,6 +276,32 @@
           </details>
 
           <details class="operations-tool">
+            <summary><div><p class="eyebrow">Source-backed evidence</p><h2>Import Growth Observations</h2><p class="tool-copy">Append canonical metrics with an episode, period, traffic scope, and source reference.</p></div></summary>
+            <div class="operations-tool-body">
+              <form id="growth-observation-form" class="guest-form">
+                <label class="full-width">Observation JSON
+                  <textarea name="observations" rows="10" required placeholder='[{"episode_id": 42, "provider": "youtube", "metric_name": "organic_reach", "metric_value": 1200, "traffic_scope": "organic", "period_start": "2026-09-01", "period_end": "2026-09-07", "source_reference": "youtube-export-2026-09-08.csv"}]'></textarea>
+                  <small class="field-hint">Imports are append-only and idempotent. One request accepts up to 500 observations.</small>
+                </label>
+                <div class="form-actions full-width"><button type="submit" class="secondary-button">Validate and Import</button></div>
+              </form>
+              <p id="growth-observation-message" class="message" aria-live="polite"></p>
+              <hr />
+              <form id="growth-experiment-form" class="guest-form">
+                <label>Name<input name="name" required /></label>
+                <label>Primary Metric<select name="primary_metric" required><option value="organic_reach">Organic reach</option><option value="downloads_7d">7-day downloads</option><option value="conversion_rate_pct">Conversion rate</option><option value="return_rate_pct">Return rate</option></select></label>
+                <label class="full-width">Hypothesis<textarea name="hypothesis" rows="3" required></textarea></label>
+                <label>Control<input name="control_label" required placeholder="Tuesday 17:00" /></label>
+                <label>Treatment<input name="treatment_label" required placeholder="Monday 16:00" /></label>
+                <label>Starts On<input name="starts_on" type="date" /></label>
+                <label>Ends On<input name="ends_on" type="date" /></label>
+                <div class="form-actions full-width"><button type="submit" class="secondary-button">Register Draft Experiment</button></div>
+              </form>
+              <p id="growth-experiment-message" class="message" aria-live="polite"></p>
+            </div>
+          </details>
+
+          <details class="operations-tool">
             <summary>
               <div>
                 <p class="eyebrow">Legacy Episode Files</p>
@@ -374,6 +400,10 @@
 
         <section class="panel list-panel">
           <div class="workspace-panel active" data-planning-panel="scheduling_intelligence">
+          <section class="operations-tool growth-intelligence-panel" aria-labelledby="growth-intelligence-title">
+            <div class="section-heading"><div><p class="eyebrow">North-star dashboard</p><h2 id="growth-intelligence-title">Growth Intelligence</h2></div><button id="growth-intelligence-refresh" type="button" class="ghost-button">Refresh evidence</button></div>
+            <div id="growth-intelligence-dashboard" aria-live="polite"><p>Loading growth evidence…</p></div>
+          </section>
           <div class="section-heading">
             <div>
               <p class="eyebrow">Scheduling Intelligence</p>
@@ -587,6 +617,6 @@
 
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
-    <script src="/static/planning.js?v=20260831.3" defer></script>
+    <script src="/static/planning.js?v=20260908.4" defer></script>
   </body>
 </html>

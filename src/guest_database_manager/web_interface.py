@@ -55,6 +55,7 @@ from guest_database_manager.guest_recommender import (
     enrich_guests_with_recommendations,
     evaluate_guest_recommendations,
 )
+from guest_database_manager.growth_intelligence import GrowthIntelligence, GrowthIntelligenceError
 from guest_database_manager.guest_research import (
     build_release_timing_recommendation,
     research_guest_from_google_search,
@@ -243,82 +244,89 @@ HOST_NAME_HINTS = (
 )
 OUTREACH_STEP_DEFINITIONS = [
     {
-        "key": "monday_preparation",
+        "key": "monday_flagship",
         "day": "Monday",
-        "time_label": "Anytime",
-        "title": "Preparation and positioning",
-        "description": "Finalize titles, thumbnails, clips, blog, and email.",
+        "time_label": "16:00",
+        "title": "Flagship launch",
+        "description": "Publish one coordinated full episode and launch with the guest.",
     },
     {
-        "key": "tuesday_launch",
+        "key": "tuesday_hero",
         "day": "Tuesday",
-        "time_label": "17:00",
-        "title": "Podcast and YouTube launch",
-        "description": "Launch the full episode where the weekly cycle begins.",
+        "time_label": "Flexible",
+        "title": "Hero moment",
+        "description": "Publish one emotionally arresting 30–90 second clip.",
     },
     {
-        "key": "tuesday_distribution",
+        "key": "tuesday_followthrough",
         "day": "Tuesday",
-        "time_label": "18:30-21:00",
-        "title": "First clip, email, and social push",
-        "description": "Use the first-night momentum window while attention is highest.",
+        "time_label": "Flexible",
+        "title": "Launch follow-through",
+        "description": "Reply to comments and support guest amplification without another feed episode.",
     },
     {
-        "key": "wednesday_momentum",
+        "key": "wednesday_depth",
         "day": "Wednesday",
-        "time_label": "12:00-15:00",
-        "title": "Momentum and engagement",
-        "description": "Publish the second clip, engage comments, and post a carousel.",
+        "time_label": "Flexible",
+        "title": "Depth article or reflection",
+        "description": "Publish a useful standalone piece rather than a transcript dump.",
     },
     {
-        "key": "thursday_blog",
+        "key": "thursday_discovery",
         "day": "Thursday",
-        "time_label": "11:00",
-        "title": "Website blog post",
-        "description": "Publish the SEO-focused long-form version on the website.",
+        "time_label": "Flexible",
+        "title": "Secondary discovery",
+        "description": "Publish one strong clip and attach a Spotify promotional clip.",
     },
     {
-        "key": "thursday_amplification",
+        "key": "thursday_optional_flagship",
         "day": "Thursday",
-        "time_label": "14:00-17:00",
-        "title": "Clip #3 and blog promotion",
-        "description": "Use blog content to widen discovery and reinforce the episode.",
+        "time_label": "Earned only",
+        "title": "Optional second flagship",
+        "description": "Release a second full conversation only when it merits flagship treatment.",
     },
     {
-        "key": "friday_newsletter",
+        "key": "friday_review",
         "day": "Friday",
         "time_label": "15:00",
-        "title": "Substack newsletter",
-        "description": "Build the reflective and personal relationship layer for the episode.",
+        "title": "Community and analytics",
+        "description": "Review organic performance, reply to the audience, and coordinate guest sharing.",
     },
     {
-        "key": "friday_reflection",
+        "key": "friday_rest",
         "day": "Friday",
         "time_label": "15:00-18:00",
-        "title": "Reflection posts and engagement",
-        "description": "Keep the conversation warm across social platforms before the weekend.",
+        "title": "No publishing obligation",
+        "description": "Protect quality density; publish only when it strengthens the audience relationship.",
     },
     {
-        "key": "weekend_review",
+        "key": "weekend_archive",
         "day": "Weekend",
         "time_label": "Flexible",
-        "title": "Analytics review and planning",
-        "description": "Review performance, note what worked, and plan the next launch cycle.",
+        "title": "Archive rediscovery and Sunday tease",
+        "description": "Resurface one relevant archive conversation, invite reflection, and tease Monday.",
     },
 ]
 OUTREACH_CORE_PRINCIPLES = [
-    "One episode equals one coordinated launch cycle.",
-    "Focus on the first 48 hours for maximum momentum.",
-    "Repurpose every episode into multiple assets.",
-    "Build audience relationship, not just content output.",
-    "Monetize consistently, not occasionally.",
+    "One guaranteed Monday flagship; a Thursday full episode must be earned.",
+    "Publish only when it strengthens the audience relationship.",
+    "Keep paid acquisition separate from organic podcast growth.",
+    "Build around Heal, Become, Love, Purpose, and Lead.",
+    "Give every flagship a guest-distribution plan and one clear CTA.",
 ]
 OUTREACH_METRICS = [
-    "Downloads per episode (first 7 days)",
-    "YouTube views (first 48 hours)",
-    "Short-form performance",
-    "Email subscriber growth",
-    "Monthly revenue",
+    "7-day downloads per flagship episode",
+    "Organic and paid YouTube views reported separately",
+    "YouTube CTR, first-30-second retention, average view duration, and returning viewers",
+    "Follows or subscribers gained per episode",
+    "Spotify Home and Search impressions",
+    "Guest shares and newsletter inclusion",
+    "Email growth and site-to-podcast conversion",
+]
+EDITORIAL_PILLAR_TARGETS = [
+    {"name": "Heal", "target_share_pct": 30}, {"name": "Become", "target_share_pct": 25},
+    {"name": "Love", "target_share_pct": 20}, {"name": "Purpose", "target_share_pct": 15},
+    {"name": "Lead", "target_share_pct": 10},
 ]
 
 EXPORTABLE_FIELDS: Dict[str, list[str]] = {
@@ -712,6 +720,27 @@ class GuestWebService:
             self.database, ai_factory=self._get_ai_assistant, apollo_factory=self._get_apollo_client
         )
         self.recommendation_learning = RecommendationLearning(self.db_path)
+        self.growth_intelligence = GrowthIntelligence(self.db_path)
+
+    def get_growth_intelligence(self) -> Dict[str, Any]:
+        return self.growth_intelligence.dashboard()
+
+    def record_growth_observations(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        observations = payload.get("observations")
+        if not isinstance(observations, list):
+            raise GrowthIntelligenceError("observations must be a list.")
+        return self.growth_intelligence.record_observations(
+            observations,
+            actor=actor,
+            correlation_id=_normalize_text(payload.get("correlation_id")),
+        )
+
+    def create_growth_experiment(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        return self.growth_intelligence.create_experiment(
+            payload,
+            actor=actor,
+            correlation_id=_normalize_text(payload.get("correlation_id")),
+        )
 
     def get_recommendation_learning_status(self) -> Dict[str, Any]:
         return self.recommendation_learning.status()
@@ -1916,6 +1945,8 @@ class GuestWebService:
             "steps": OUTREACH_STEP_DEFINITIONS,
             "principles": OUTREACH_CORE_PRINCIPLES,
             "metrics": OUTREACH_METRICS,
+            "editorial_pillars": EDITORIAL_PILLAR_TARGETS,
+            "measurement_note": "Paid reach is acquisition spend, not evidence of organic podcast demand.",
         }
 
     @staticmethod
@@ -7024,6 +7055,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, self.service.list_planning(compact=compact, force_refresh=force_refresh))
             return
 
+        if request_path == "/api/growth-intelligence":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.get_growth_intelligence())
+            return
+
         if request_path == "/api/planning/ai-copilot":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -7395,6 +7433,20 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
             self._invalidate_learning_cache()
             self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path in {"/api/growth-intelligence/observations", "/api/growth-intelligence/experiments"}:
+            payload = self._read_json_payload()
+            actor = str((self._session_claims() or {}).get("sub") or "operator")
+            try:
+                if self.path.endswith("/observations"):
+                    result = self.service.record_growth_observations(payload, actor=actor)
+                else:
+                    result = self.service.create_growth_experiment(payload, actor=actor)
+            except GrowthIntelligenceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.CREATED, result)
             return
 
         if self.path == "/api/availability":

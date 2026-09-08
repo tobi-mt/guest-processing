@@ -209,6 +209,50 @@ def _build_signals(score: float, strengths: list[str], cautions: list[str], matc
     return signals[:4]
 
 
+def build_strategic_guest_scorecard(guest: Dict[str, Any]) -> Dict[str, Any]:
+    """Score the six producer-review dimensions without inventing audience evidence."""
+    background = " ".join(_clean_text(guest.get(key)) for key in ("background", "life_experiences", "motivation"))
+    listener_value = " ".join(_clean_text(guest.get(key)) for key in ("passionate_topics", "message_takeaway"))
+    depth = " ".join(_clean_text(guest.get(key)) for key in ("core_values", "additional_info", "favorite_quote"))
+    public_credibility = " ".join(_clean_text(guest.get(key)) for key in ("profession", "podcast_experience"))
+    matched = _keyword_matches(" ".join((background, listener_value, depth)), MIRROR_TALK_KEYWORDS)
+    dimensions = {
+        "transformation_story": min(100, _word_count(background) * 2.5),
+        "audience_relevance": min(100, 20 + len(set(matched)) * 12) if listener_value else 0,
+        "expertise_credibility": min(100, _word_count(public_credibility) * 3 + (20 if guest.get("website") else 0)),
+        "emotional_depth": min(100, _word_count(depth) * 2.5 + _word_count(guest.get("message_takeaway"))),
+        # Presence proves a distribution route, not audience size or willingness.
+        "distribution_potential": (35 if guest.get("social_media_handles") else 0) + (25 if guest.get("website") else 0) + (20 if _normalize_text(guest.get("following_us")) == "yes" else 0),
+        "originality": min(100, len(_theme_tokens(guest)) * 4),
+    }
+    dimensions["distribution_potential"] = min(80, dimensions["distribution_potential"])
+    weights = {
+        "transformation_story": 25,
+        "audience_relevance": 20,
+        "expertise_credibility": 15,
+        "emotional_depth": 15,
+        "distribution_potential": 15,
+        "originality": 10,
+    }
+    total = round(sum(dimensions[key] * weights[key] / 100 for key in weights), 1)
+    gaps = []
+    if dimensions["transformation_story"] < 50:
+        gaps.append("Transformation story needs more first-person evidence.")
+    if dimensions["distribution_potential"] < 50:
+        gaps.append("Distribution capacity or willingness is not yet evidenced.")
+    if dimensions["emotional_depth"] < 50:
+        gaps.append("Emotional depth needs human review.")
+    return {
+        "score": total,
+        "dimensions": {key: {"score": round(value, 1), "weight_pct": weights[key]} for key, value in dimensions.items()},
+        "booking_band": "exceptional" if total >= 85 else "eligible" if total >= 75 else "below_threshold",
+        "minimum_booking_score": 75,
+        "evidence_gaps": gaps,
+        "advisory_only": True,
+        "model_version": "mirror-talk-strategic-guest-v1",
+    }
+
+
 def score_guest(
     guest: Dict[str, Any],
     accepted_history: Iterable[Dict[str, Any]] | None = None,
@@ -398,6 +442,7 @@ def score_guest(
             "historical accepted guest patterns",
         ],
         "research_freshness": guest.get("guest_research_updated_at") or "not enriched",
+        "strategic_scorecard": build_strategic_guest_scorecard(guest),
     }
 
 

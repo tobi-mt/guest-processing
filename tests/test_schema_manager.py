@@ -18,7 +18,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
@@ -37,6 +37,8 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
         "recommendation_deployments",
         "recommendation_learning_settings",
         "interview_reschedule_proposals",
+        "growth_metric_observations",
+        "growth_experiments",
     } <= tables
     assert {"normalized_name", "normalized_email", "row_version", "identity_status", "owner", "marketing_opt_in"} <= guest_columns
     assert {
@@ -152,6 +154,62 @@ def test_recommendation_learning_migration_rolls_back_all_ddl(monkeypatch, tmp_p
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert not set(learning_tables) & tables
     assert 17 not in _versions(db_path)
+
+
+def test_growth_intelligence_migration_rolls_back_all_ddl(monkeypatch, tmp_path):
+    db_path = tmp_path / "migration-twenty-three.db"
+    SchemaManager.create_tables(str(db_path))
+    growth_tables = ("growth_metric_observations", "growth_experiments")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM schema_migrations WHERE version = 23")
+        for table in growth_tables:
+            conn.execute(f"DROP TABLE {table}")
+
+    original = SchemaManager._migration_023_growth_intelligence
+
+    def fail_after_all_ddl(conn):
+        original(conn)
+        raise RuntimeError("migration 23 failed")
+
+    monkeypatch.setattr(SchemaManager, "_migration_023_growth_intelligence", fail_after_all_ddl)
+    with pytest.raises(RuntimeError, match="migration 23 failed"):
+        SchemaManager.create_tables(str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert not set(growth_tables) & tables
+    assert 23 not in _versions(db_path)
+
+
+def test_growth_evidence_integrity_migration_rolls_back_rebuild(monkeypatch, tmp_path):
+    db_path = tmp_path / "migration-twenty-four.db"
+    SchemaManager.create_tables(str(db_path))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM schema_migrations WHERE version = 24")
+        before_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'growth_metric_observations'"
+        ).fetchone()[0]
+
+    original = SchemaManager._migration_024_growth_evidence_integrity
+
+    def fail_after_rebuild(conn):
+        original(conn)
+        raise RuntimeError("migration 24 failed")
+
+    monkeypatch.setattr(SchemaManager, "_migration_024_growth_evidence_integrity", fail_after_rebuild)
+    with pytest.raises(RuntimeError, match="migration 24 failed"):
+        SchemaManager.create_tables(str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        after_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'growth_metric_observations'"
+        ).fetchone()[0]
+        temporary_table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'growth_metric_observations_v24'"
+        ).fetchone()
+    assert after_sql == before_sql
+    assert temporary_table is None
+    assert 24 not in _versions(db_path)
 
 
 def test_validation_triggers_reject_invalid_external_statuses(tmp_path):

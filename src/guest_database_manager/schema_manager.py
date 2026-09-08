@@ -1,5 +1,7 @@
 """Database schema management utilities."""
 
+import hashlib
+import json
 import sqlite3
 import logging
 from typing import Callable, List, Tuple
@@ -858,6 +860,138 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_023_growth_intelligence(conn: sqlite3.Connection) -> None:
+        """Create append-only, source-backed growth evidence and experiments."""
+        statements = (
+            """CREATE TABLE IF NOT EXISTS growth_metric_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER,
+                provider TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                metric_value REAL NOT NULL CHECK(metric_value >= 0),
+                unit TEXT NOT NULL,
+                traffic_scope TEXT NOT NULL DEFAULT 'all'
+                    CHECK(traffic_scope IN ('organic', 'paid', 'all', 'unknown')),
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                source_reference TEXT NOT NULL,
+                source_hash TEXT NOT NULL,
+                observation_key TEXT NOT NULL UNIQUE,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                actor TEXT NOT NULL,
+                correlation_id TEXT NOT NULL DEFAULT '',
+                imported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE RESTRICT,
+                CHECK(period_end >= period_start)
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_growth_metrics_episode_period
+                ON growth_metric_observations(episode_id, period_end DESC)""",
+            """CREATE INDEX IF NOT EXISTS idx_growth_metrics_provider_metric
+                ON growth_metric_observations(provider, metric_name, period_end DESC)""",
+            """CREATE TRIGGER IF NOT EXISTS trg_growth_observations_immutable_update
+            BEFORE UPDATE ON growth_metric_observations
+            BEGIN
+                SELECT RAISE(ABORT, 'growth observations are immutable');
+            END""",
+            """CREATE TRIGGER IF NOT EXISTS trg_growth_observations_immutable_delete
+            BEFORE DELETE ON growth_metric_observations
+            BEGIN
+                SELECT RAISE(ABORT, 'growth observations are immutable');
+            END""",
+            """CREATE TABLE IF NOT EXISTS growth_experiments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                hypothesis TEXT NOT NULL,
+                primary_metric TEXT NOT NULL,
+                control_label TEXT NOT NULL,
+                treatment_label TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft'
+                    CHECK(status IN ('draft', 'running', 'completed', 'cancelled')),
+                starts_on TEXT,
+                ends_on TEXT,
+                decision TEXT NOT NULL DEFAULT '',
+                actor TEXT NOT NULL,
+                correlation_id TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK(ends_on IS NULL OR starts_on IS NULL OR ends_on >= starts_on)
+            )""",
+        )
+        for statement in statements:
+            conn.execute(statement)
+
+    @staticmethod
+    def _migration_024_growth_evidence_integrity(conn: sqlite3.Connection) -> None:
+        """Upgrade early growth tables without losing already imported evidence."""
+        conn.execute(
+            """CREATE TABLE growth_metric_observations_v24 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER,
+                provider TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                metric_value REAL NOT NULL CHECK(metric_value >= 0),
+                unit TEXT NOT NULL,
+                traffic_scope TEXT NOT NULL DEFAULT 'all'
+                    CHECK(traffic_scope IN ('organic', 'paid', 'all', 'unknown')),
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                source_reference TEXT NOT NULL,
+                source_hash TEXT NOT NULL,
+                observation_key TEXT NOT NULL UNIQUE,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                actor TEXT NOT NULL,
+                correlation_id TEXT NOT NULL DEFAULT '',
+                imported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE RESTRICT,
+                CHECK(period_end >= period_start)
+            )"""
+        )
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM growth_metric_observations ORDER BY id"
+        ).fetchall()
+        logical_keys: dict[str, int] = {}
+        for row in rows:
+            fingerprint = json.dumps(
+                [
+                    row["episode_id"],
+                    row["provider"],
+                    row["metric_name"],
+                    row["traffic_scope"],
+                    row["period_start"],
+                    row["period_end"],
+                ],
+                separators=(",", ":"),
+            )
+            observation_key = hashlib.sha256(fingerprint.encode()).hexdigest()
+            if observation_key in logical_keys:
+                raise sqlite3.IntegrityError(
+                    "duplicate logical growth observations require review before migration "
+                    f"(rows {logical_keys[observation_key]} and {row['id']})"
+                )
+            logical_keys[observation_key] = int(row["id"])
+            conn.execute(
+                """INSERT INTO growth_metric_observations_v24
+                    (id, episode_id, provider, metric_name, metric_value, unit, traffic_scope,
+                     period_start, period_end, source_reference, source_hash, observation_key,
+                     idempotency_key, actor, correlation_id, imported_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row["id"], row["episode_id"], row["provider"], row["metric_name"],
+                    row["metric_value"], row["unit"], row["traffic_scope"],
+                    row["period_start"], row["period_end"], row["source_reference"],
+                    row["source_hash"], observation_key, row["idempotency_key"],
+                    row["actor"], row["correlation_id"], row["imported_at"],
+                ),
+            )
+        conn.execute("DROP TABLE growth_metric_observations")
+        conn.execute("ALTER TABLE growth_metric_observations_v24 RENAME TO growth_metric_observations")
+        conn.execute("CREATE INDEX idx_growth_metrics_episode_period ON growth_metric_observations(episode_id, period_end DESC)")
+        conn.execute("CREATE INDEX idx_growth_metrics_provider_metric ON growth_metric_observations(provider, metric_name, period_end DESC)")
+        conn.execute("""CREATE TRIGGER trg_growth_observations_immutable_update BEFORE UPDATE ON growth_metric_observations BEGIN SELECT RAISE(ABORT, 'growth observations are immutable'); END""")
+        conn.execute("""CREATE TRIGGER trg_growth_observations_immutable_delete BEFORE DELETE ON growth_metric_observations BEGIN SELECT RAISE(ABORT, 'growth observations are immutable'); END""")
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -885,6 +1019,8 @@ class SchemaManager:
             (20, "partner_pitch_studio", SchemaManager._migration_020_partner_pitch_studio),
             (21, "partner_source_intelligence", SchemaManager._migration_021_partner_source_intelligence),
             (22, "reschedule_proposals", SchemaManager._migration_022_reschedule_proposals),
+            (23, "growth_intelligence", SchemaManager._migration_023_growth_intelligence),
+            (24, "growth_evidence_integrity", SchemaManager._migration_024_growth_evidence_integrity),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

@@ -1671,6 +1671,85 @@
   gap: 0.6rem;
 }
 
+@media (max-width: 760px) {
+  .recommendation-decision {
+    grid-template-columns: 1fr;
+  }
+
+  .recommendation-primary-actions,
+  .recommendation-primary-actions > *,
+  .recommendation-secondary-actions,
+  .recommendation-secondary-actions > * {
+    width: 100%;
+  }
+}
+
+.growth-intelligence-panel {
+  margin-bottom: 1.25rem;
+  padding: clamp(1rem, 2vw, 1.5rem);
+}
+
+.growth-status-row,
+.growth-score-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.growth-status-row {
+  margin-bottom: 1rem;
+  color: var(--muted);
+}
+
+.growth-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.growth-dashboard-grid table {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+}
+
+.growth-dashboard-grid th,
+.growth-dashboard-grid td {
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+}
+
+.growth-dashboard-grid tbody tr + tr {
+  border-top: 1px solid rgba(73, 55, 40, 0.1);
+}
+
+.growth-score-row {
+  padding: 0.65rem 0;
+  border-bottom: 1px solid rgba(73, 55, 40, 0.12);
+}
+
+.growth-score-row span {
+  color: var(--muted);
+  text-align: right;
+}
+
+@media (max-width: 760px) {
+  .growth-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .growth-score-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .growth-score-row span {
+    text-align: left;
+  }
+}
+
 @media (max-width: 640px) {
   .planning-hero .metric-grid,
   .interview-hero .metric-grid,
@@ -1734,17 +1813,6 @@
 
   .rejected-recommendation-row {
     grid-template-columns: 1fr;
-  }
-
-  .recommendation-decision {
-    grid-template-columns: 1fr;
-  }
-
-  .recommendation-primary-actions,
-  .recommendation-primary-actions > *,
-  .recommendation-secondary-actions,
-  .recommendation-secondary-actions > * {
-    width: 100%;
   }
 
   .section-heading-actions {

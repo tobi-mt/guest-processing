@@ -228,13 +228,48 @@ def parse_episode_import_csv(content: bytes, filename: str, *, reference: dateti
 
 
 def next_release_slot(reference: datetime) -> datetime:
-    """Return the next Tuesday 17:00 slot at or after the reference date."""
-    candidate = reference.replace(hour=17, minute=0, second=0, microsecond=0)
-    days_until_tuesday = (1 - candidate.weekday()) % 7
-    candidate = candidate + timedelta(days=days_until_tuesday)
-    if candidate < reference:
+    """Return the next Monday 16:00 flagship slot with preparation time."""
+    candidate = reference.replace(hour=16, minute=0, second=0, microsecond=0)
+    days_until_monday = (0 - candidate.weekday()) % 7
+    candidate = candidate + timedelta(days=days_until_monday)
+    if candidate.date() == reference.date() or candidate < reference:
         candidate += timedelta(days=7)
     return candidate
+
+
+EDITORIAL_PILLARS = {
+    "Heal": {"target_share_pct": 30, "keywords": ("trauma", "heal", "nervous system", "shame", "grief", "attachment", "addiction", "anxiety", "forgive")},
+    "Become": {"target_share_pct": 25, "keywords": ("belief", "identity", "confidence", "procrastination", "discipline", "self-sabotage", "authentic", "potential", "mindset", "reinvention")},
+    "Love": {"target_share_pct": 20, "keywords": ("relationship", "attachment", "intimacy", "communication", "loneliness", "boundary", "betrayal", "family", "father", "mother", "friendship", "masculinity")},
+    "Purpose": {"target_share_pct": 15, "keywords": ("purpose", "meaning", "fulfil", "fulfill", "calling", "faith", "spiritual", "legacy", "surrender", "consciousness", "success")},
+    "Lead": {"target_share_pct": 10, "keywords": ("leader", "leadership", "ceo", "founder", "entrepreneur", "burnout", "integrity", "power", "organisation", "organization")},
+}
+
+
+def build_editorial_fit(episode: Dict[str, Any]) -> Dict[str, Any]:
+    """Classify an episode against the evidence-backed Mirror Talk pillars."""
+    research = _guest_research_payload(episode.get("guest_research"))
+    likely_topics = research.get("likely_topics")
+    if not isinstance(likely_topics, list):
+        likely_topics = []
+    text = " ".join([
+        _clean_text(episode.get("episode_title")), _clean_text(episode.get("topic")),
+        _clean_text(episode.get("category")), _clean_text(research.get("summary")),
+        " ".join(str(item) for item in likely_topics),
+    ]).casefold()
+    ranked = []
+    for pillar, definition in EDITORIAL_PILLARS.items():
+        matches = [
+            keyword for keyword in definition["keywords"]
+            if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text)
+        ]
+        ranked.append((len(matches), pillar, matches))
+    match_count, pillar, matches = max(ranked, key=lambda item: (item[0], -list(EDITORIAL_PILLARS).index(item[1])))
+    if not match_count:
+        return {"pillar": "Unclassified", "pillars": [], "target_share_pct": 0, "matched_keywords": [], "alignment": "review", "score_adjustment": -18, "reason": "No clear Heal, Become, Love, Purpose, or Lead promise is visible yet."}
+    adjustment = min(10, 4 + (match_count - 1) * 2)
+    matched_pillars = [item[1] for item in ranked if item[0] > 0]
+    return {"pillar": pillar, "pillars": matched_pillars, "target_share_pct": EDITORIAL_PILLARS[pillar]["target_share_pct"], "matched_keywords": matches[:5], "alignment": "strong" if match_count >= 2 else "promising", "score_adjustment": adjustment, "reason": f"Fits the {pillar} pillar through {', '.join(matches[:3])}."}
 
 
 def _reserved_release_slots(episodes: Iterable[Dict[str, Any]], *, reference: datetime) -> set[str]:
@@ -1004,6 +1039,14 @@ def build_release_recommendations(
             why_now = list(reasons)
             watchouts: List[str] = []
 
+            editorial_fit = build_editorial_fit(episode)
+            score += editorial_fit["score_adjustment"]
+            if editorial_fit["pillar"] == "Unclassified":
+                watchouts.append(editorial_fit["reason"])
+            else:
+                reasons.append(editorial_fit["reason"])
+                why_now.append(editorial_fit["reason"])
+
             season_score, season_reason, season_keywords = _month_theme_score(episode, slot)
             score += season_score
             if season_reason:
@@ -1114,13 +1157,14 @@ def build_release_recommendations(
             candidate["audience_fatigue"] = audience_fatigue
             candidate["time_sensitive_event_alignment"] = event_alignment
             candidate["calendar_capacity"] = {
-                "cadence": "Tuesday 17:00",
+                "cadence": "Monday 16:00 flagship",
                 "slot_available": slot.date().isoformat() not in initial_reserved_slots,
                 "reserved_release_count": len(initial_reserved_slots),
                 "weeks_until_slot": max(0, (slot.date() - reference.date()).days // 7),
                 "constraint": "One coordinated release per weekly slot; scheduled episodes reserve their dates.",
             }
             candidate["title_suggestions"] = build_episode_title_suggestions(episode)
+            candidate["editorial_fit"] = editorial_fit
             candidate["copy_assist"] = build_episode_copy_assist(episode)
             candidate["archive_overlap"] = archive_overlap
             candidate["topic_cluster_warning"] = topic_cluster
