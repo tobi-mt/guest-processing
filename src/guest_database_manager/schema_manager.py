@@ -992,6 +992,102 @@ class SchemaManager:
         conn.execute("""CREATE TRIGGER trg_growth_observations_immutable_delete BEFORE DELETE ON growth_metric_observations BEGIN SELECT RAISE(ABORT, 'growth observations are immutable'); END""")
 
     @staticmethod
+    def _migration_025_repair_legacy_orphan_references(conn: sqlite3.Connection) -> None:
+        """Repair legacy foreign keys without deleting operational evidence."""
+        orphan_interview_ids = [
+            int(row[0])
+            for row in conn.execute(
+                """SELECT i.id FROM interviews i
+                   LEFT JOIN guests g ON g.id = i.guest_id
+                   WHERE i.guest_id IS NOT NULL AND g.id IS NULL
+                   ORDER BY i.id"""
+            )
+        ]
+        empty_episode_link_ids = [
+            int(row[0])
+            for row in conn.execute(
+                """SELECT id FROM episodes
+                   WHERE typeof(interview_id) = 'text' AND TRIM(interview_id) = ''
+                   ORDER BY id"""
+            )
+        ]
+        orphan_reminder_ids = [
+            int(row[0])
+            for row in conn.execute(
+                """SELECT r.id FROM reminder_log r
+                   LEFT JOIN interviews i ON i.id = r.interview_id
+                   WHERE r.interview_id IS NOT NULL AND i.id IS NULL
+                   ORDER BY r.id"""
+            )
+        ]
+
+        conn.execute(
+            """UPDATE interviews SET guest_id = NULL, row_version = row_version + 1,
+                                      updated_at = CURRENT_TIMESTAMP
+               WHERE guest_id IS NOT NULL
+                 AND NOT EXISTS (SELECT 1 FROM guests WHERE guests.id = interviews.guest_id)"""
+        )
+        conn.execute(
+            """UPDATE episodes SET interview_id = NULL, row_version = row_version + 1,
+                                    updated_at = CURRENT_TIMESTAMP
+               WHERE typeof(interview_id) = 'text' AND TRIM(interview_id) = ''"""
+        )
+
+        conn.execute(
+            """CREATE TABLE reminder_log_v25 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                interview_id INTEGER,
+                orphaned_interview_id INTEGER,
+                reminder_type TEXT NOT NULL,
+                sent_to TEXT NOT NULL,
+                provider TEXT,
+                status TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                notes TEXT,
+                FOREIGN KEY (interview_id) REFERENCES interviews(id) ON DELETE SET NULL
+            )"""
+        )
+        conn.execute(
+            """INSERT INTO reminder_log_v25
+               (id, interview_id, orphaned_interview_id, reminder_type, sent_to,
+                provider, status, sent_at, notes)
+               SELECT r.id,
+                      CASE WHEN i.id IS NOT NULL THEN r.interview_id ELSE NULL END,
+                      CASE WHEN i.id IS NULL THEN r.interview_id ELSE NULL END,
+                      r.reminder_type, r.sent_to, r.provider, r.status, r.sent_at, r.notes
+               FROM reminder_log r
+               LEFT JOIN interviews i ON i.id = r.interview_id"""
+        )
+        conn.execute("DROP TABLE reminder_log")
+        conn.execute("ALTER TABLE reminder_log_v25 RENAME TO reminder_log")
+
+        before = {
+            "orphan_interview_ids": orphan_interview_ids,
+            "empty_episode_interview_link_ids": empty_episode_link_ids,
+            "orphan_reminder_ids": orphan_reminder_ids,
+        }
+        conn.execute(
+            """INSERT INTO audit_events
+               (entity_type, entity_id, event_type, actor, source, reason,
+                correlation_id, before_json, after_json)
+               VALUES ('database_integrity', 'migration-25', 'legacy_orphan_references_repaired',
+                       'system', 'schema_migration',
+                       'Preserved records while normalizing invalid legacy foreign-key values.',
+                       'migration-25', ?, ?)""",
+            (
+                json.dumps(before, sort_keys=True),
+                json.dumps(
+                    {
+                        "interview_guest_links_cleared": len(orphan_interview_ids),
+                        "episode_interview_links_cleared": len(empty_episode_link_ids),
+                        "reminder_links_preserved_as_provenance": len(orphan_reminder_ids),
+                    },
+                    sort_keys=True,
+                ),
+            ),
+        )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1021,6 +1117,7 @@ class SchemaManager:
             (22, "reschedule_proposals", SchemaManager._migration_022_reschedule_proposals),
             (23, "growth_intelligence", SchemaManager._migration_023_growth_intelligence),
             (24, "growth_evidence_integrity", SchemaManager._migration_024_growth_evidence_integrity),
+            (25, "repair_legacy_orphan_references", SchemaManager._migration_025_repair_legacy_orphan_references),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

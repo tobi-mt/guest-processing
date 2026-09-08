@@ -18,7 +18,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
@@ -210,6 +210,44 @@ def test_growth_evidence_integrity_migration_rolls_back_rebuild(monkeypatch, tmp
     assert after_sql == before_sql
     assert temporary_table is None
     assert 24 not in _versions(db_path)
+
+
+def test_legacy_orphan_repair_preserves_records_and_clears_foreign_key_violations(monkeypatch, tmp_path):
+    db_path = tmp_path / "migration-twenty-five.db"
+    original = SchemaManager._migration_025_repair_legacy_orphan_references
+    monkeypatch.setattr(SchemaManager, "_migration_025_repair_legacy_orphan_references", lambda conn: None)
+    SchemaManager.create_tables(str(db_path))
+    monkeypatch.setattr(SchemaManager, "_migration_025_repair_legacy_orphan_references", original)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DELETE FROM schema_migrations WHERE version = 25")
+        conn.execute(
+            "INSERT INTO interviews (id, guest_id, guest_name, scheduled_for) VALUES (18, 999, 'Legacy Guest', '2026-05-21')"
+        )
+        conn.execute(
+            "INSERT INTO episodes (id, interview_id, guest_name) VALUES (531, '', 'Legacy Episode Guest')"
+        )
+        conn.execute(
+            """INSERT INTO reminder_log
+               (id, interview_id, reminder_type, sent_to, status)
+               VALUES (2, 777, 'weekly_confirmation', 'legacy@example.test', 'sent')"""
+        )
+
+    SchemaManager.create_tables(str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute("SELECT guest_id FROM interviews WHERE id = 18").fetchone()[0] is None
+        assert conn.execute("SELECT interview_id FROM episodes WHERE id = 531").fetchone()[0] is None
+        assert conn.execute(
+            "SELECT interview_id, orphaned_interview_id, status FROM reminder_log WHERE id = 2"
+        ).fetchone() == (None, 777, "sent")
+        event = conn.execute(
+            "SELECT event_type, source FROM audit_events WHERE entity_id = 'migration-25'"
+        ).fetchone()
+    assert event == ("legacy_orphan_references_repaired", "schema_migration")
+    assert 25 in _versions(db_path)
 
 
 def test_validation_triggers_reject_invalid_external_statuses(tmp_path):
