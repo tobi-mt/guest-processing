@@ -526,7 +526,7 @@ function normalizeText(value) {
 }
 
 function escapeHtml(value) {
-  return String(value || "")
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -1187,10 +1187,10 @@ function renderGrowthIntelligence(payload) {
   growthIntelligenceDashboard.innerHTML = `
     <div class="growth-status-row"><span class="status-chip ${freshness === "current" ? "ready" : "pending"}">${escapeHtml(freshness.replaceAll("_", " "))}</span><span>Latest period: ${escapeHtml(payload?.latest_period_end || "No evidence imported")}</span></div>
     <div class="learning-metric-grid">
-      <article class="learning-metric-card"><small>Organic reach</small><strong>${escapeHtml(reach.organic || 0)}</strong></article>
-      <article class="learning-metric-card"><small>Paid reach</small><strong>${escapeHtml(reach.paid || 0)}</strong></article>
+      <article class="learning-metric-card"><small>Organic reach</small><strong>${escapeHtml(reach.organic ?? 0)}</strong></article>
+      <article class="learning-metric-card"><small>Paid reach</small><strong>${escapeHtml(reach.paid ?? 0)}</strong></article>
       <article class="learning-metric-card"><small>Paid share</small><strong>${reach.paid_share_pct == null ? "—" : `${escapeHtml(reach.paid_share_pct)}%`}</strong></article>
-      <article class="learning-metric-card"><small>MFS ready</small><strong>${escapeHtml(quality.mfs_ready || 0)} / ${escapeHtml(quality.episodes_with_evidence || 0)}</strong></article>
+      <article class="learning-metric-card"><small>MFS ready</small><strong>${escapeHtml(quality.mfs_ready ?? 0)} / ${escapeHtml(quality.episodes_with_evidence ?? 0)}</strong></article>
     </div>
     <div class="growth-dashboard-grid">
       <div class="operations-preview"><strong class="insight-label">Editorial mix · latest 20 releases</strong><div class="table-scroll"><table><thead><tr><th>Pillar</th><th>Actual</th><th>Target</th><th>Variance</th></tr></thead><tbody>${mixRows}</tbody></table></div><p>Window contains ${escapeHtml(String(quality.editorial_window_count ?? 0))} releases; ${escapeHtml(String(quality.unclassified_released_episodes ?? 0))} remain unclassified.</p></div>
