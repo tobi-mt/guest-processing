@@ -73,6 +73,7 @@ from guest_database_manager.metrics import build_operational_metrics
 from guest_database_manager.partner_intelligence import PartnerIntelligence, PartnerIntelligenceError
 from guest_database_manager.partner_discovery import curated_signals
 from guest_database_manager.partner_pitch_templates import list_pitch_templates
+from guest_database_manager.production_governance import POLICY_VERSION, classify_focus
 from guest_database_manager.recommendation_learning import (
     FEATURE_SCHEMA_VERSION,
     LearningError,
@@ -244,71 +245,90 @@ HOST_NAME_HINTS = (
 )
 OUTREACH_STEP_DEFINITIONS = [
     {
-        "key": "monday_flagship",
+        "key": "monday_priority_brief",
         "day": "Monday",
+        "time_label": "08:00",
+        "title": "Team priority brief",
+        "description": "Confirm the flagship, owners, dependencies, and risks.",
+    },
+    {
+        "key": "monday_production_lock",
+        "day": "Monday",
+        "time_label": "12:00",
+        "title": "Production lock",
+        "description": "Approve final masters, metadata, artwork, links, and schedules.",
+    },
+    {
+        "key": "tuesday_flagship_audio",
+        "day": "Tuesday",
+        "time_label": "05:00",
+        "title": "Flagship audio/RSS",
+        "description": "Release one approved full episode.",
+    },
+    {
+        "key": "tuesday_article_spotify_clip",
+        "day": "Tuesday",
+        "time_label": "05:15",
+        "title": "Canonical article and Spotify Clip",
+        "description": "Publish the WordPress companion and one approved Spotify Clip.",
+    },
+    {
+        "key": "tuesday_youtube_long_form",
+        "day": "Tuesday",
         "time_label": "16:00",
-        "title": "Flagship launch",
-        "description": "Publish one coordinated full episode and launch with the guest.",
+        "title": "YouTube long-form",
+        "description": "Publish the full YouTube episode; begin guest distribution at 16:05–16:20.",
     },
     {
-        "key": "tuesday_hero",
+        "key": "tuesday_guest_distribution",
         "day": "Tuesday",
-        "time_label": "Flexible",
-        "title": "Hero moment",
-        "description": "Publish one emotionally arresting 30–90 second clip.",
+        "time_label": "16:05–16:20",
+        "title": "Guest and channel distribution",
+        "description": "Run the primary approved distribution wave.",
     },
     {
-        "key": "tuesday_followthrough",
+        "key": "tuesday_community_response",
         "day": "Tuesday",
-        "time_label": "Flexible",
-        "title": "Launch follow-through",
-        "description": "Reply to comments and support guest amplification without another feed episode.",
+        "time_label": "18:00–20:00",
+        "title": "Community response",
+        "description": "Respond to early comments and listener interactions.",
     },
     {
-        "key": "wednesday_depth",
+        "key": "wednesday_substack",
         "day": "Wednesday",
-        "time_label": "Flexible",
-        "title": "Depth article or reflection",
-        "description": "Publish a useful standalone piece rather than a transcript dump.",
-    },
-    {
-        "key": "thursday_discovery",
-        "day": "Thursday",
-        "time_label": "Flexible",
-        "title": "Secondary discovery",
-        "description": "Publish one strong clip and attach a Spotify promotional clip.",
-    },
-    {
-        "key": "thursday_optional_flagship",
-        "day": "Thursday",
-        "time_label": "Earned only",
-        "title": "Optional second flagship",
-        "description": "Release a second full conversation only when it merits flagship treatment.",
-    },
-    {
-        "key": "friday_review",
-        "day": "Friday",
         "time_label": "15:00",
+        "title": "Substack companion",
+        "description": "Publish the editorial companion that adds perspective and links to the episode.",
+    },
+    {
+        "key": "thursday_discovery_asset",
+        "day": "Thursday",
+        "time_label": "16:00",
+        "title": "Discovery asset",
+        "description": "Publish the strongest Short or Reel; never add it to the main RSS feed.",
+    },
+    {
+        "key": "friday_quality_review",
+        "day": "Friday",
+        "time_label": "12:00",
         "title": "Community and analytics",
         "description": "Review organic performance, reply to the audience, and coordinate guest sharing.",
     },
     {
-        "key": "friday_rest",
-        "day": "Friday",
-        "time_label": "15:00-18:00",
-        "title": "No publishing obligation",
-        "description": "Protect quality density; publish only when it strengthens the audience relationship.",
-    },
-    {
-        "key": "weekend_archive",
-        "day": "Weekend",
-        "time_label": "Flexible",
-        "title": "Archive rediscovery and Sunday tease",
-        "description": "Resurface one relevant archive conversation, invite reflection, and tease Monday.",
+        "key": "saturday_archive_resurface",
+        "day": "Saturday",
+        "time_label": "10:00",
+        "title": "Archive resurface",
+        "description": "Resurface one relevant archive episode with a current reason to listen.",
     },
 ]
+LEGACY_OUTREACH_KEYS = frozenset({
+    "monday_flagship", "tuesday_hero", "tuesday_followthrough", "wednesday_depth",
+    "thursday_discovery", "thursday_optional_flagship", "friday_review", "friday_rest",
+    "weekend_archive",
+})
 OUTREACH_CORE_PRINCIPLES = [
-    "One guaranteed Monday flagship; a Thursday full episode must be earned.",
+    "One Tuesday 05:00 flagship audio release; discovery assets never substitute for a full episode.",
     "Publish only when it strengthens the audience relationship.",
     "Keep paid acquisition separate from organic podcast growth.",
     "Build around Heal, Become, Love, Purpose, and Lead.",
@@ -324,9 +344,9 @@ OUTREACH_METRICS = [
     "Email growth and site-to-podcast conversion",
 ]
 EDITORIAL_PILLAR_TARGETS = [
-    {"name": "Heal", "target_share_pct": 30}, {"name": "Become", "target_share_pct": 25},
-    {"name": "Love", "target_share_pct": 20}, {"name": "Purpose", "target_share_pct": 15},
-    {"name": "Lead", "target_share_pct": 10},
+    {"name": "Heal + Become", "guardrail": "5–7 of 12 flagships"},
+    {"name": "Love + Purpose", "guardrail": "3–5 of 12 flagships"},
+    {"name": "Lead", "guardrail": "1–2 of 12 flagships; human story required"},
 ]
 
 EXPORTABLE_FIELDS: Dict[str, list[str]] = {
@@ -668,7 +688,7 @@ def _empty_outreach_plan() -> Dict[str, bool]:
     return {step["key"]: False for step in OUTREACH_STEP_DEFINITIONS}
 
 
-def _normalize_outreach_plan(value: Any) -> Dict[str, bool]:
+def _normalize_outreach_plan(value: Any) -> Dict[str, Any]:
     """Parse stored outreach JSON into a stable checklist payload."""
     normalized = _empty_outreach_plan()
     if isinstance(value, dict):
@@ -687,6 +707,10 @@ def _normalize_outreach_plan(value: Any) -> Dict[str, bool]:
 
     for step in OUTREACH_STEP_DEFINITIONS:
         normalized[step["key"]] = bool(source.get(step["key"]))
+    legacy_source = source.get("_legacy") if isinstance(source.get("_legacy"), dict) else source
+    legacy = {key: bool(legacy_source.get(key)) for key in LEGACY_OUTREACH_KEYS if key in legacy_source}
+    if legacy:
+        normalized["_legacy"] = legacy
     return normalized
 
 
@@ -4365,6 +4389,29 @@ class GuestWebService:
         editorial_disposition = _normalize_text(payload.get("editorial_disposition")) or "active"
         if editorial_disposition not in {"active", "hold", "archive", "retire"}:
             raise WebInterfaceError("Editorial disposition must be active, hold, archive, or retire.")
+        content_class = _normalize_text(payload.get("content_class")).lower().replace(" ", "_") or "unclassified"
+        format_type = _normalize_text(payload.get("format_type")).lower().replace(" ", "_")
+        if content_class == "host_reflection":
+            content_class = "flagship"
+            format_type = "host_reflection"
+        allowed_content_classes = {
+            "unclassified", "flagship", "spotify_clip", "youtube_short_or_reel",
+            "wordpress_article", "substack_companion", "archive_resurface",
+        }
+        if content_class not in allowed_content_classes:
+            raise WebInterfaceError("Content class is not recognized by production governance.")
+        allowed_format_types = {"", "guest_conversation", "host_reflection"}
+        if format_type not in allowed_format_types:
+            raise WebInterfaceError("Episode format must be guest conversation or host reflection.")
+        if content_class == "flagship" and not format_type:
+            raise WebInterfaceError("Flagship episodes require a guest-conversation or host-reflection format.")
+        primary_pillar = _normalize_text(payload.get("primary_pillar")).upper()
+        secondary_pillar = _normalize_text(payload.get("secondary_pillar")).upper()
+        allowed_pillars = {"", "HEAL", "BECOME", "LOVE", "PURPOSE", "LEAD"}
+        if primary_pillar not in allowed_pillars or secondary_pillar not in allowed_pillars:
+            raise WebInterfaceError("Editorial pillar must be Heal, Become, Love, Purpose, or Lead.")
+        if primary_pillar and primary_pillar == secondary_pillar:
+            raise WebInterfaceError("Secondary pillar must differ from the primary pillar.")
         parsed_priority_score = _parse_priority_score(payload.get("priority_score"))
         if parsed_priority_score <= 0:
             parsed_priority_score = self._suggest_episode_priority_score(
@@ -4444,6 +4491,12 @@ class GuestWebService:
             "ai_monthly_angle_state": _normalize_text(payload.get("ai_monthly_angle_state")),
             "ai_monthly_angle_theme": _normalize_text(payload.get("ai_monthly_angle_theme")),
             "notes": _normalize_text(payload.get("notes")),
+            "content_class": content_class,
+            "format_type": format_type,
+            "primary_pillar": primary_pillar,
+            "secondary_pillar": secondary_pillar,
+            "governance_version": _normalize_text(payload.get("governance_version")),
+            "governance_exception_reason": _normalize_text(payload.get("governance_exception_reason")),
             "owner": _normalize_text(payload.get("owner")),
             "editorial_disposition": editorial_disposition,
         }
@@ -4651,6 +4704,12 @@ class GuestWebService:
             "ai_monthly_angle_state": _normalize_text((linked_episode or {}).get("ai_monthly_angle_state")),
             "ai_monthly_angle_theme": _normalize_text((linked_episode or {}).get("ai_monthly_angle_theme")),
             "notes": _normalize_text((linked_episode or {}).get("notes")) or _normalize_text(interview.get("notes")),
+            "content_class": _normalize_text((linked_episode or {}).get("content_class")) or "unclassified",
+            "format_type": _normalize_text((linked_episode or {}).get("format_type")) or "guest_conversation",
+            "primary_pillar": _normalize_text((linked_episode or {}).get("primary_pillar")),
+            "secondary_pillar": _normalize_text((linked_episode or {}).get("secondary_pillar")),
+            "governance_version": _normalize_text((linked_episode or {}).get("governance_version")) or POLICY_VERSION,
+            "governance_exception_reason": _normalize_text((linked_episode or {}).get("governance_exception_reason")),
         }
 
         episode = self.create_episode(episode_payload)
@@ -4702,6 +4761,7 @@ class GuestWebService:
             "Please confirm the interview date and production details before release planning."
         )
         existing_notes = _normalize_text((linked_episode or {}).get("notes"))
+        focus = classify_focus(guest)
 
         episode_payload = {
             "id": linked_episode.get("id") if linked_episode else None,
@@ -4732,6 +4792,12 @@ class GuestWebService:
             "ai_monthly_angle_state": _normalize_text((linked_episode or {}).get("ai_monthly_angle_state")),
             "ai_monthly_angle_theme": _normalize_text((linked_episode or {}).get("ai_monthly_angle_theme")),
             "notes": existing_notes or handoff_note,
+            "content_class": _normalize_text((linked_episode or {}).get("content_class")) or "unclassified",
+            "format_type": _normalize_text((linked_episode or {}).get("format_type")) or "guest_conversation",
+            "primary_pillar": _normalize_text((linked_episode or {}).get("primary_pillar")),
+            "secondary_pillar": _normalize_text((linked_episode or {}).get("secondary_pillar")),
+            "governance_version": _normalize_text((linked_episode or {}).get("governance_version")) or focus["policy_version"],
+            "governance_exception_reason": _normalize_text((linked_episode or {}).get("governance_exception_reason")),
         }
 
         episode = self.create_episode(episode_payload)

@@ -426,6 +426,59 @@ def test_action_queue_omits_guest_intake_after_any_downstream_workflow(temp_db):
     assert "Planning Queue Episode" in episode_titles
 
 
+def test_episode_governance_metadata_is_validated_and_persisted(temp_db):
+    service = GuestWebService(temp_db.db_path)
+
+    episode = service.create_episode(
+        {
+            "guest_name": "Governed Guest",
+            "episode_title": "A truthful conversation",
+            "content_class": "flagship",
+            "format_type": "guest_conversation",
+            "primary_pillar": "heal",
+            "secondary_pillar": "purpose",
+            "governance_version": "1.0",
+            "governance_exception_reason": "",
+        }
+    )
+
+    assert episode["content_class"] == "flagship"
+    assert episode["format_type"] == "guest_conversation"
+    assert episode["primary_pillar"] == "HEAL"
+    assert episode["secondary_pillar"] == "PURPOSE"
+    assert episode["governance_version"] == "1.0"
+
+    with pytest.raises(WebInterfaceError, match="Secondary pillar must differ"):
+        service.create_episode(
+            {
+                "guest_name": "Invalid Pillars",
+                "episode_title": "Invalid classification",
+                "content_class": "flagship",
+                "format_type": "guest_conversation",
+                "primary_pillar": "LOVE",
+                "secondary_pillar": "LOVE",
+            }
+        )
+
+    with pytest.raises(WebInterfaceError, match="Content class"):
+        service.create_episode(
+            {
+                "guest_name": "Invalid Class",
+                "episode_title": "Invalid classification",
+                "content_class": "advertisement",
+            }
+        )
+
+    with pytest.raises(WebInterfaceError, match="Flagship episodes require"):
+        service.create_episode(
+            {
+                "guest_name": "Missing Format",
+                "episode_title": "Incomplete flagship classification",
+                "content_class": "flagship",
+            }
+        )
+
+
 def test_episode_conflict_exposes_latest_safe_version_without_losing_draft(temp_db):
     service = GuestWebService(temp_db.db_path)
     created = service.create_episode(
@@ -3418,7 +3471,7 @@ def test_release_recommendations_use_guest_research_for_seasonal_fit():
     assert "men" in recommendations[0]["seasonal_fit"]["matched_keywords"]
 
 
-def test_release_recommendations_apply_monday_flagship_and_editorial_pillars():
+def test_release_recommendations_apply_tuesday_flagship_and_editorial_pillars():
     recommendations = build_release_recommendations(
         [{
             "id": 1,
@@ -3433,8 +3486,8 @@ def test_release_recommendations_apply_monday_flagship_and_editorial_pillars():
     )
 
     recommendation = recommendations[0]
-    assert recommendation["recommended_release_date"] == "2026-09-14 16:00:00"
-    assert recommendation["calendar_capacity"]["cadence"] == "Monday 16:00 flagship"
+    assert recommendation["recommended_release_date"] == "2026-09-15 05:00:00"
+    assert recommendation["calendar_capacity"]["cadence"] == "Tuesday 05:00 flagship audio"
     assert recommendation["editorial_fit"]["pillar"] == "Heal"
     assert recommendation["editorial_fit"]["alignment"] == "strong"
 
@@ -3468,12 +3521,33 @@ def test_aligned_ready_episode_outranks_generic_technical_content():
     assert recommendations[1]["editorial_fit"]["pillar"] == "Unclassified"
 
 
+def test_scheduling_honors_human_pillar_and_excludes_non_flagship_assets():
+    recommendations = build_release_recommendations(
+        [
+            {
+                "id": 1, "guest_name": "Human Classified", "episode_title": "Leading through grief",
+                "topic": "leadership", "primary_pillar": "HEAL", "content_class": "flagship",
+                "format_type": "guest_conversation", "production_status": "ready", "promotion_status": "ready",
+            },
+            {
+                "id": 2, "guest_name": "Clip", "episode_title": "Healing clip", "topic": "healing trauma",
+                "content_class": "spotify_clip", "production_status": "ready", "promotion_status": "ready",
+            },
+        ],
+        reference=datetime(2026, 9, 7, 0, 0),
+    )
+
+    assert [item["id"] for item in recommendations] == [1]
+    assert recommendations[0]["editorial_fit"]["pillar"] == "Heal"
+    assert recommendations[0]["editorial_fit"]["classification_source"] == "human"
+
+
 @pytest.mark.parametrize(
     ("reference", "expected"),
     [
-        (datetime(2026, 9, 7, 0, 0), datetime(2026, 9, 14, 16, 0)),
-        (datetime(2026, 9, 7, 16, 0), datetime(2026, 9, 14, 16, 0)),
-        (datetime(2026, 9, 8, 0, 0), datetime(2026, 9, 14, 16, 0)),
+        (datetime(2026, 9, 7, 0, 0), datetime(2026, 9, 8, 5, 0)),
+        (datetime(2026, 9, 7, 16, 0), datetime(2026, 9, 15, 5, 0)),
+        (datetime(2026, 9, 8, 0, 0), datetime(2026, 9, 15, 5, 0)),
     ],
 )
 def test_next_release_slot_always_leaves_flagship_preparation_time(reference, expected):
@@ -3548,7 +3622,7 @@ def test_release_recommendations_explain_capacity_forecast_fatigue_and_guest_eve
         episodes, reference=datetime(2026, 8, 31, 12, 0, 0)
     )[0]
 
-    assert recommendation["recommended_release_date"].startswith("2026-09-07")
+    assert recommendation["recommended_release_date"].startswith("2026-09-08")
     assert recommendation["calendar_capacity"]["reserved_release_count"] == 1
     assert recommendation["production_readiness_forecast"]["estimated_lead_days"] == 10
     assert recommendation["production_readiness_forecast"]["feasible"] is False
@@ -3665,8 +3739,8 @@ def test_planning_payload_includes_outreach_system_and_episode_summary(temp_db):
             "release_date": "2026-04-07T17:00",
             "release_status": "scheduled",
             "outreach_plan": {
-                "monday_flagship": True,
-                "tuesday_hero": True,
+                "monday_priority_brief": True,
+                "monday_production_lock": True,
             },
         }
     )
@@ -3674,12 +3748,14 @@ def test_planning_payload_includes_outreach_system_and_episode_summary(temp_db):
     planning = service.list_planning()
     episode = planning["episodes"][0]
 
-    assert planning["weekly_system"]["steps"][0]["key"] == "monday_flagship"
+    assert planning["weekly_system"]["steps"][0]["key"] == "monday_priority_brief"
     assert planning["weekly_system"]["principles"]
-    assert planning["weekly_system"]["steps"][0]["title"] == "Flagship launch"
-    assert planning["weekly_system"]["editorial_pillars"][0] == {"name": "Heal", "target_share_pct": 30}
+    assert planning["weekly_system"]["steps"][0]["title"] == "Team priority brief"
+    assert planning["weekly_system"]["editorial_pillars"][0] == {
+        "name": "Heal + Become", "guardrail": "5–7 of 12 flagships"
+    }
     assert "paid" in planning["weekly_system"]["measurement_note"].lower()
-    assert episode["outreach_plan"]["monday_flagship"] is True
+    assert episode["outreach_plan"]["monday_priority_brief"] is True
     assert episode["outreach_summary"]["completed_count"] == 2
     assert "Next outreach step" in episode["outreach_summary"]["next_step"]
 
@@ -3689,13 +3765,14 @@ def test_legacy_outreach_completion_does_not_complete_new_strategy_tasks(temp_db
     service.create_episode({
         "guest_name": "Legacy Checklist Guest",
         "episode_title": "Legacy Checklist",
-        "outreach_plan": {"monday_preparation": True, "tuesday_launch": True},
+        "outreach_plan": {"monday_flagship": True, "tuesday_hero": True},
     })
 
     episode = service.list_planning()["episodes"][0]
 
     assert episode["outreach_summary"]["completed_count"] == 0
-    assert episode["outreach_plan"]["monday_flagship"] is False
+    assert episode["outreach_plan"]["monday_priority_brief"] is False
+    assert episode["outreach_plan"]["_legacy"] == {"monday_flagship": True, "tuesday_hero": True}
 
 
 def test_create_episode_prefills_priority_and_legacy_episode_number(temp_db):
@@ -5736,7 +5813,7 @@ def test_operations_include_weekly_outreach_spotlight(temp_db):
             "category": "Personal Development",
             "release_date": "2026-04-07T17:00",
             "release_status": "scheduled",
-            "outreach_plan": {"monday_flagship": True},
+            "outreach_plan": {"tuesday_flagship_audio": True},
         }
     )
 
@@ -5857,7 +5934,7 @@ def test_episode_recommendations_prefer_variety_and_ready_queue(temp_db):
     planning = service.list_planning()
 
     assert planning["recommendations"][0]["guest_name"] == "Finance Guest"
-    assert planning["recommendations"][0]["recommended_release_date"].endswith("16:00:00")
+    assert planning["recommendations"][0]["recommended_release_date"].endswith("05:00:00")
 
 
 def test_episode_recommendations_factor_seasonality_promo_readiness_and_guest_diversity(temp_db, monkeypatch):

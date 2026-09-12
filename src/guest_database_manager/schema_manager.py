@@ -134,6 +134,12 @@ class SchemaManager:
             ai_monthly_angle_state TEXT,
             ai_monthly_angle_theme TEXT,
             notes TEXT,
+            content_class TEXT NOT NULL DEFAULT 'unclassified',
+            format_type TEXT,
+            primary_pillar TEXT,
+            secondary_pillar TEXT,
+            governance_version TEXT,
+            governance_exception_reason TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (guest_id) REFERENCES guests(id) ON DELETE SET NULL,
@@ -1027,6 +1033,7 @@ class SchemaManager:
                WHERE guest_id IS NOT NULL
                  AND NOT EXISTS (SELECT 1 FROM guests WHERE guests.id = interviews.guest_id)"""
         )
+
         conn.execute(
             """UPDATE episodes SET interview_id = NULL, row_version = row_version + 1,
                                     updated_at = CURRENT_TIMESTAMP
@@ -1088,6 +1095,107 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_026_episode_governance_metadata(conn: sqlite3.Connection) -> None:
+        """Add governance fields without guessing classifications for legacy records."""
+        columns = (
+            ("content_class", "TEXT NOT NULL DEFAULT 'unclassified'"),
+            ("primary_pillar", "TEXT"),
+            ("secondary_pillar", "TEXT"),
+            ("governance_version", "TEXT"),
+            ("governance_exception_reason", "TEXT"),
+        )
+        for name, declaration in columns:
+            SchemaManager._add_column_if_missing(conn, "episodes", name, declaration)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodes_governance_class "
+            "ON episodes(content_class, primary_pillar)"
+        )
+
+    @staticmethod
+    def _migration_027_structured_governance_controls(conn: sqlite3.Connection) -> None:
+        """Create auditable readiness and exception records without enabling automation."""
+        SchemaManager._add_column_if_missing(conn, "episodes", "format_type", "TEXT")
+        conn.execute(
+            """CREATE TABLE governance_policy_versions (
+                version TEXT PRIMARY KEY,
+                status TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'retired')),
+                effective_at TIMESTAMP,
+                approved_at TIMESTAMP,
+                source_digest TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE episode_readiness_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER NOT NULL,
+                policy_version TEXT NOT NULL,
+                rule_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'passed', 'failed', 'not_applicable')),
+                evidence TEXT,
+                checked_by TEXT,
+                checked_at TIMESTAMP,
+                row_version INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (episode_id, policy_version, rule_id),
+                FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE,
+                FOREIGN KEY (policy_version) REFERENCES governance_policy_versions(version)
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE governance_exceptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER,
+                policy_version TEXT NOT NULL,
+                rule_id TEXT NOT NULL,
+                requested_by TEXT NOT NULL,
+                approved_by TEXT,
+                reason TEXT NOT NULL,
+                risk_assessment TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'requested'
+                    CHECK (status IN ('requested', 'approved', 'rejected', 'expired', 'revoked')),
+                effective_from TIMESTAMP,
+                expires_at TIMESTAMP,
+                decided_at TIMESTAMP,
+                row_version INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE,
+                FOREIGN KEY (policy_version) REFERENCES governance_policy_versions(version)
+            )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_readiness_episode_status ON episode_readiness_checks(episode_id, status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_governance_exceptions_episode_status ON governance_exceptions(episode_id, status)")
+        for operation in ("INSERT", "UPDATE"):
+            conn.execute(
+                f"""CREATE TRIGGER validate_policy_approval_{operation.lower()}
+                    BEFORE {operation} ON governance_policy_versions
+                    WHEN NEW.status = 'approved' AND NEW.approved_at IS NULL
+                    BEGIN SELECT RAISE(ABORT, 'approved policy requires approval timestamp'); END"""
+            )
+            conn.execute(
+                f"""CREATE TRIGGER validate_readiness_evidence_{operation.lower()}
+                    BEFORE {operation} ON episode_readiness_checks
+                    WHEN NEW.status <> 'pending'
+                     AND (TRIM(COALESCE(NEW.evidence, '')) = ''
+                       OR TRIM(COALESCE(NEW.checked_by, '')) = ''
+                       OR NEW.checked_at IS NULL)
+                    BEGIN SELECT RAISE(ABORT, 'completed readiness check requires evidence, actor, and timestamp'); END"""
+            )
+            conn.execute(
+                f"""CREATE TRIGGER validate_governance_exception_{operation.lower()}
+                    BEFORE {operation} ON governance_exceptions
+                    WHEN (NEW.status IN ('approved', 'rejected', 'revoked')
+                          AND (TRIM(COALESCE(NEW.approved_by, '')) = '' OR NEW.decided_at IS NULL))
+                       OR (NEW.status = 'approved'
+                          AND (NEW.effective_from IS NULL OR NEW.expires_at IS NULL
+                               OR datetime(NEW.expires_at) <= datetime(NEW.effective_from)))
+                    BEGIN SELECT RAISE(ABORT, 'decided exception requires approver, decision time, and valid approval window'); END"""
+            )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1118,6 +1226,8 @@ class SchemaManager:
             (23, "growth_intelligence", SchemaManager._migration_023_growth_intelligence),
             (24, "growth_evidence_integrity", SchemaManager._migration_024_growth_evidence_integrity),
             (25, "repair_legacy_orphan_references", SchemaManager._migration_025_repair_legacy_orphan_references),
+            (26, "episode_governance_metadata", SchemaManager._migration_026_episode_governance_metadata),
+            (27, "structured_governance_controls", SchemaManager._migration_027_structured_governance_controls),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

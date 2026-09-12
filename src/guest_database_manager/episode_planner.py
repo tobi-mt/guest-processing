@@ -10,6 +10,14 @@ from datetime import datetime, timedelta
 from io import StringIO
 from typing import Any, Dict, Iterable, List
 
+from guest_database_manager.production_governance import (
+    FLAGSHIP_HOUR,
+    FLAGSHIP_MINUTE,
+    FLAGSHIP_WEEKDAY,
+    classify_focus,
+    flagship_eligibility,
+)
+
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
@@ -228,22 +236,31 @@ def parse_episode_import_csv(content: bytes, filename: str, *, reference: dateti
 
 
 def next_release_slot(reference: datetime) -> datetime:
-    """Return the next Monday 16:00 flagship slot with preparation time."""
-    candidate = reference.replace(hour=16, minute=0, second=0, microsecond=0)
-    days_until_monday = (0 - candidate.weekday()) % 7
-    candidate = candidate + timedelta(days=days_until_monday)
-    if candidate.date() == reference.date() or candidate < reference:
+    """Return the next governed Tuesday 05:00 flagship audio slot."""
+    candidate = reference.replace(hour=FLAGSHIP_HOUR, minute=FLAGSHIP_MINUTE, second=0, microsecond=0)
+    days_until_release = (FLAGSHIP_WEEKDAY - candidate.weekday()) % 7
+    candidate = candidate + timedelta(days=days_until_release)
+    # Monday 12:00 is the production lock, 17 hours before Tuesday audio.
+    if candidate - reference < timedelta(hours=17):
         candidate += timedelta(days=7)
     return candidate
 
 
 EDITORIAL_PILLARS = {
-    "Heal": {"target_share_pct": 30, "keywords": ("trauma", "heal", "nervous system", "shame", "grief", "attachment", "addiction", "anxiety", "forgive")},
-    "Become": {"target_share_pct": 25, "keywords": ("belief", "identity", "confidence", "procrastination", "discipline", "self-sabotage", "authentic", "potential", "mindset", "reinvention")},
-    "Love": {"target_share_pct": 20, "keywords": ("relationship", "attachment", "intimacy", "communication", "loneliness", "boundary", "betrayal", "family", "father", "mother", "friendship", "masculinity")},
-    "Purpose": {"target_share_pct": 15, "keywords": ("purpose", "meaning", "fulfil", "fulfill", "calling", "faith", "spiritual", "legacy", "surrender", "consciousness", "success")},
-    "Lead": {"target_share_pct": 10, "keywords": ("leader", "leadership", "ceo", "founder", "entrepreneur", "burnout", "integrity", "power", "organisation", "organization")},
+    "Heal": {"keywords": ("trauma", "heal", "nervous system", "shame", "grief", "attachment", "addiction", "anxiety", "forgive")},
+    "Become": {"keywords": ("belief", "identity", "confidence", "procrastination", "discipline", "self-sabotage", "authentic", "potential", "mindset", "reinvention")},
+    "Love": {"keywords": ("relationship", "attachment", "intimacy", "communication", "loneliness", "boundary", "betrayal", "family", "father", "mother", "friendship", "masculinity")},
+    "Purpose": {"keywords": ("purpose", "meaning", "fulfil", "fulfill", "calling", "faith", "spiritual", "legacy", "surrender", "consciousness", "success")},
+    "Lead": {"keywords": ("leader", "leadership", "ceo", "founder", "entrepreneur", "burnout", "integrity", "power", "organisation", "organization")},
 }
+
+
+def _pillar_guardrail(pillar: str) -> str:
+    if pillar in {"Heal", "Become"}:
+        return "Heal + Become: 5–7 of 12 flagships"
+    if pillar in {"Love", "Purpose"}:
+        return "Love + Purpose: 3–5 of 12 flagships"
+    return "Lead: 1–2 of 12 flagships; human story required"
 
 
 def build_editorial_fit(episode: Dict[str, Any]) -> Dict[str, Any]:
@@ -252,24 +269,20 @@ def build_editorial_fit(episode: Dict[str, Any]) -> Dict[str, Any]:
     likely_topics = research.get("likely_topics")
     if not isinstance(likely_topics, list):
         likely_topics = []
-    text = " ".join([
-        _clean_text(episode.get("episode_title")), _clean_text(episode.get("topic")),
-        _clean_text(episode.get("category")), _clean_text(research.get("summary")),
-        " ".join(str(item) for item in likely_topics),
-    ]).casefold()
-    ranked = []
-    for pillar, definition in EDITORIAL_PILLARS.items():
-        matches = [
-            keyword for keyword in definition["keywords"]
-            if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text)
-        ]
-        ranked.append((len(matches), pillar, matches))
-    match_count, pillar, matches = max(ranked, key=lambda item: (item[0], -list(EDITORIAL_PILLARS).index(item[1])))
-    if not match_count:
-        return {"pillar": "Unclassified", "pillars": [], "target_share_pct": 0, "matched_keywords": [], "alignment": "review", "score_adjustment": -18, "reason": "No clear Heal, Become, Love, Purpose, or Lead promise is visible yet."}
-    adjustment = min(10, 4 + (match_count - 1) * 2)
-    matched_pillars = [item[1] for item in ranked if item[0] > 0]
-    return {"pillar": pillar, "pillars": matched_pillars, "target_share_pct": EDITORIAL_PILLARS[pillar]["target_share_pct"], "matched_keywords": matches[:5], "alignment": "strong" if match_count >= 2 else "promising", "score_adjustment": adjustment, "reason": f"Fits the {pillar} pillar through {', '.join(matches[:3])}."}
+    classification_source = dict(episode)
+    classification_source["background"] = _clean_text(research.get("summary"))
+    classification_source["passionate_topics"] = " ".join(str(item) for item in likely_topics)
+    classification = classify_focus(classification_source)
+    pillar = classification["primary_pillar"].title()
+    if not pillar:
+        return {"pillar": "Unclassified", "pillars": [], "twelve_release_guardrail": "classification required", "matched_keywords": [], "alignment": "review", "score_adjustment": -18, "reason": "No clear Heal, Become, Love, Purpose, or Lead promise is visible yet."}
+    matches = classification["matched_keywords"]
+    secondary = classification["secondary_pillar"].title()
+    matched_pillars = [item for item in (pillar, secondary) if item]
+    explicit = classification["source"] == "human"
+    adjustment = 10 if explicit else min(10, 4 + max(0, len(matches) - 1) * 2)
+    reason = f"Human-classified as {pillar}." if explicit else f"Fits the {pillar} pillar through {', '.join(matches[:3])}."
+    return {"pillar": pillar, "pillars": matched_pillars, "twelve_release_guardrail": _pillar_guardrail(pillar), "matched_keywords": matches, "alignment": "confirmed" if explicit else classification["confidence"], "classification_source": classification["source"], "score_adjustment": adjustment, "reason": reason}
 
 
 def _reserved_release_slots(episodes: Iterable[Dict[str, Any]], *, reference: datetime) -> set[str]:
@@ -986,6 +999,7 @@ def build_release_recommendations(
         episode for episode in queue
         if not _is_duplicate_of_released_or_scheduled(episode, non_queue_identity_keys)
     ]
+    queue = [episode for episode in queue if flagship_eligibility(episode)["eligible"]]
     if not queue:
         return []
     reserved_slots = _reserved_release_slots(episodes, reference=reference)
@@ -1046,6 +1060,9 @@ def build_release_recommendations(
             else:
                 reasons.append(editorial_fit["reason"])
                 why_now.append(editorial_fit["reason"])
+            eligibility = flagship_eligibility(episode)
+            if eligibility.get("needs_review"):
+                watchouts.append(eligibility["reason"])
 
             season_score, season_reason, season_keywords = _month_theme_score(episode, slot)
             score += season_score
@@ -1157,7 +1174,7 @@ def build_release_recommendations(
             candidate["audience_fatigue"] = audience_fatigue
             candidate["time_sensitive_event_alignment"] = event_alignment
             candidate["calendar_capacity"] = {
-                "cadence": "Monday 16:00 flagship",
+                "cadence": "Tuesday 05:00 flagship audio",
                 "slot_available": slot.date().isoformat() not in initial_reserved_slots,
                 "reserved_release_count": len(initial_reserved_slots),
                 "weeks_until_slot": max(0, (slot.date() - reference.date()).days // 7),

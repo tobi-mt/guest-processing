@@ -193,16 +193,19 @@ const PRODUCTION_RAIL_STAGES = [
   ["scheduled", "Scheduled"],
 ];
 const OUTREACH_STEPS = [
-  ["monday_flagship", "Monday 16:00 · Flagship launch", "Publish one coordinated full episode with the guest"],
-  ["tuesday_hero", "Tuesday · Hero moment", "Publish one emotionally arresting 30–90 second clip"],
-  ["tuesday_followthrough", "Tuesday · Launch follow-through", "Reply to the audience and support guest amplification"],
-  ["wednesday_depth", "Wednesday · Depth", "Publish a useful standalone article or reflection"],
-  ["thursday_discovery", "Thursday · Secondary discovery", "Publish a strong clip and a Spotify promotional clip"],
-  ["thursday_optional_flagship", "Thursday · Optional flagship", "A second full episode is earned, not automatic"],
-  ["friday_review", "Friday · Community and analytics", "Review organic performance and guest distribution"],
-  ["friday_rest", "Friday · No publishing obligation", "Protect quality density"],
-  ["weekend_archive", "Weekend · Archive and tease", "Resurface one archive episode and tease Monday"],
+  ["monday_priority_brief", "Monday 08:00 · Team priority brief", "Confirm the flagship, owners, dependencies, and risks"],
+  ["monday_production_lock", "Monday 12:00 · Production lock", "Approve final masters, metadata, artwork, links, and schedules"],
+  ["tuesday_flagship_audio", "Tuesday 05:00 · Flagship audio/RSS", "Release one approved full episode"],
+  ["tuesday_article_spotify_clip", "Tuesday 05:15 · Article and Spotify Clip", "Publish the WordPress companion and approved Spotify Clip"],
+  ["tuesday_youtube_long_form", "Tuesday 16:00 · YouTube long-form", "Publish the full YouTube episode"],
+  ["tuesday_guest_distribution", "Tuesday 16:05–16:20 · Distribution", "Run the primary guest and channel distribution wave"],
+  ["tuesday_community_response", "Tuesday 18:00–20:00 · Community", "Respond to early listener interactions"],
+  ["wednesday_substack", "Wednesday 15:00 · Substack", "Publish the editorial companion"],
+  ["thursday_discovery_asset", "Thursday 16:00 · Discovery asset", "Publish the strongest Short or Reel outside RSS"],
+  ["friday_quality_review", "Friday 12:00 · Quality review", "Review quality and preliminary performance"],
+  ["saturday_archive_resurface", "Saturday 10:00 · Archive resurface", "Resurface one relevant archive episode"],
 ];
+const LEGACY_OUTREACH_KEYS = ["monday_flagship", "tuesday_hero", "tuesday_followthrough", "wednesday_depth", "thursday_discovery", "thursday_optional_flagship", "friday_review", "friday_rest", "weekend_archive"];
 
 const EXPORT_FIELD_CONFIG = {
   guests: [
@@ -929,9 +932,13 @@ function normalizeOutreachPlan(value) {
   if (!parsed || typeof parsed !== "object") {
     return emptyPlan;
   }
-  return Object.fromEntries(
+  const normalized = Object.fromEntries(
     OUTREACH_STEPS.map(([key]) => [key, Boolean(parsed[key])]),
   );
+  const legacySource = parsed._legacy && typeof parsed._legacy === "object" ? parsed._legacy : parsed;
+  const legacy = Object.fromEntries(LEGACY_OUTREACH_KEYS.filter((key) => key in legacySource).map((key) => [key, Boolean(legacySource[key])]));
+  if (Object.keys(legacy).length) normalized._legacy = legacy;
+  return normalized;
 }
 
 function collectOutreachPlanFromForm() {
@@ -939,7 +946,8 @@ function collectOutreachPlanFromForm() {
   if (!checklist) {
     return normalizeOutreachPlan(episodeForm?.elements?.outreach_plan?.value);
   }
-  const plan = {};
+  const existing = normalizeOutreachPlan(episodeForm?.elements?.outreach_plan?.value);
+  const plan = existing._legacy ? { _legacy: existing._legacy } : {};
   checklist.querySelectorAll("input[data-outreach-key]").forEach((input) => {
     plan[input.dataset.outreachKey] = Boolean(input.checked);
   });
@@ -1139,7 +1147,7 @@ function renderWeeklySystemPanel(system) {
     .join("");
   const principles = (system.principles || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   const metrics = (system.metrics || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-  const pillars = (system.editorial_pillars || []).map((item) => `<li><strong>${escapeHtml(item.name)}</strong> · ${escapeHtml(item.target_share_pct)}%</li>`).join("");
+  const pillars = (system.editorial_pillars || []).map((item) => `<li><strong>${escapeHtml(item.name)}</strong> · ${escapeHtml(item.guardrail)}</li>`).join("");
   planningWeeklySystem.innerHTML = `
     <div class="insight-stack">
       <strong class="insight-label">What this tab is for</strong>
@@ -1176,7 +1184,7 @@ function renderGrowthIntelligence(payload) {
   const discovery = payload?.discovery || {};
   const distribution = payload?.distribution || {};
   const owned = payload?.owned_audience || {};
-  const mixRows = (payload?.editorial_mix || []).map((item) => `<tr><th scope="row">${escapeHtml(item.pillar)}</th><td>${escapeHtml(String(item.actual_share_pct ?? 0))}%</td><td>${escapeHtml(String(item.target_share_pct ?? 0))}%</td><td>${Number(item.variance_pct_points) > 0 ? "+" : ""}${escapeHtml(String(item.variance_pct_points ?? 0))} pp</td></tr>`).join("");
+  const mixRows = (payload?.editorial_mix || []).map((item) => `<tr><th scope="row">${escapeHtml(item.pillar)}</th><td>${escapeHtml(String(item.count ?? 0))}</td><td>${escapeHtml(String(item.actual_share_pct ?? 0))}%</td><td>${escapeHtml(item.twelve_release_guardrail || "—")}</td></tr>`).join("");
   const scoreRows = (payload?.episode_scores || []).slice(0, 8).map((item) => {
     const mfs = item.mfs || {};
     const result = mfs.status === "ready" ? `MFS ${escapeHtml(mfs.score)}` : `Incomplete · missing ${escapeHtml((mfs.missing_metrics || []).join(", "))}`;
@@ -1193,7 +1201,7 @@ function renderGrowthIntelligence(payload) {
       <article class="learning-metric-card"><small>MFS ready</small><strong>${escapeHtml(quality.mfs_ready ?? 0)} / ${escapeHtml(quality.episodes_with_evidence ?? 0)}</strong></article>
     </div>
     <div class="growth-dashboard-grid">
-      <div class="operations-preview"><strong class="insight-label">Editorial mix · latest 20 releases</strong><div class="table-scroll"><table><thead><tr><th>Pillar</th><th>Actual</th><th>Target</th><th>Variance</th></tr></thead><tbody>${mixRows}</tbody></table></div><p>Window contains ${escapeHtml(String(quality.editorial_window_count ?? 0))} releases; ${escapeHtml(String(quality.unclassified_released_episodes ?? 0))} remain unclassified.</p></div>
+      <div class="operations-preview"><strong class="insight-label">Editorial mix · latest 12 releases</strong><div class="table-scroll"><table><thead><tr><th>Pillar</th><th>Count</th><th>Share</th><th>12-release guardrail</th></tr></thead><tbody>${mixRows}</tbody></table></div><p>Window contains ${escapeHtml(String(quality.editorial_window_count ?? 0))} releases; ${escapeHtml(String(quality.unclassified_released_episodes ?? 0))} remain unclassified.</p></div>
       <div class="operations-preview"><strong class="insight-label">Mirror Fan Score</strong>${scoreRows || "<p>No episode-level evidence yet. MFS remains unavailable until all four dimensions are supplied.</p>"}</div>
       <div class="operations-preview"><strong class="insight-label">Discovery and distribution</strong><p>7-day downloads: ${escapeHtml(String(discovery.downloads_7d ?? 0))}</p><p>Spotify Home / Search: ${escapeHtml(String(discovery.spotify_home_impressions ?? 0))} / ${escapeHtml(String(discovery.spotify_search_impressions ?? 0))}</p><p>Guest shares / newsletter inclusions: ${escapeHtml(String(distribution.guest_shares ?? 0))} / ${escapeHtml(String(distribution.guest_newsletter_inclusions ?? 0))}</p></div>
       <div class="operations-preview"><strong class="insight-label">Owned audience</strong><p>Email subscribers gained: ${escapeHtml(String(owned.email_subscribers_gained ?? 0))}</p><p>Site → podcast conversion: ${owned.site_to_podcast_conversion_pct == null ? "—" : `${escapeHtml(String(owned.site_to_podcast_conversion_pct))}%`}</p></div>
@@ -1591,6 +1599,10 @@ function conflictFieldLabels(conflictCurrent) {
     published_title: "published title",
     topic: "topic",
     category: "category",
+    content_class: "content class",
+    format_type: "episode format",
+    primary_pillar: "primary pillar",
+    secondary_pillar: "secondary pillar",
     interview_date: "interview date",
     recording_date: "recording date",
     owner: "owner",
@@ -1682,6 +1694,10 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeForm.elements.published_title.value = episode.published_title || "";
   episodeForm.elements.topic.value = episode.topic || "";
   episodeForm.elements.category.value = episode.category || "";
+  episodeForm.elements.content_class.value = episode.content_class || "unclassified";
+  episodeForm.elements.format_type.value = episode.format_type || "";
+  episodeForm.elements.primary_pillar.value = episode.primary_pillar || "";
+  episodeForm.elements.secondary_pillar.value = episode.secondary_pillar || "";
   episodeForm.elements.interview_date.value = formatDateForDateInput(episode.interview_date);
   episodeForm.elements.recording_date.value = formatDateForDateInput(episode.recording_date);
   episodeForm.elements.owner.value = episode.owner || "";
@@ -1690,6 +1706,8 @@ function loadEpisodeIntoForm(episode, { releaseDate = "", releaseStatus = "" } =
   episodeForm.elements.production_status.value = effectiveProductionStatus;
   episodeForm.elements.promotion_status.value = effectivePromotionStatus;
   episodeForm.elements.editorial_disposition.value = episode.editorial_disposition || "active";
+  episodeForm.elements.governance_version.value = episode.governance_version || "";
+  episodeForm.elements.governance_exception_reason.value = episode.governance_exception_reason || "";
   const suggestedPriorityScore = suggestPriorityScoreForEpisode({
     release_status: effectiveReleaseStatus,
     production_status: effectiveProductionStatus,

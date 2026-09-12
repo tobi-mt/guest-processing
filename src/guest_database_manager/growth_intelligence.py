@@ -155,7 +155,7 @@ class GrowthIntelligence:
         for episode_id, metrics in by_episode.items():
             episode = episode_map.get(episode_id, {})
             episode_scores.append({"episode_id": episode_id, "episode_title": episode.get("published_title") or episode.get("episode_title") or "Untitled episode", "mfs": self._episode_mfs(metrics)})
-        released = [episode for episode in episodes if _text(episode.get("release_status")).lower() == "released"][:20]
+        released = [episode for episode in episodes if _text(episode.get("release_status")).lower() == "released"][:12]
         pillar_counts = {name: 0 for name in EDITORIAL_PILLARS}
         unclassified = 0
         for episode in released:
@@ -165,7 +165,22 @@ class GrowthIntelligence:
             else:
                 unclassified += 1
         denominator = len(released) or 1
-        editorial_mix = [{"pillar": name, "count": count, "actual_share_pct": round(count * 100 / denominator, 1), "target_share_pct": definition["target_share_pct"], "variance_pct_points": round(count * 100 / denominator - definition["target_share_pct"], 1)} for name, definition in EDITORIAL_PILLARS.items() for count in [pillar_counts[name]]]
+        guardrails = {
+            "Heal": "Heal + Become: 5–7 of 12",
+            "Become": "Heal + Become: 5–7 of 12",
+            "Love": "Love + Purpose: 3–5 of 12",
+            "Purpose": "Love + Purpose: 3–5 of 12",
+            "Lead": "1–2 of 12; human story required",
+        }
+        editorial_mix = [
+            {
+                "pillar": name,
+                "count": pillar_counts[name],
+                "actual_share_pct": round(pillar_counts[name] * 100 / denominator, 1),
+                "twelve_release_guardrail": guardrails[name],
+            }
+            for name in EDITORIAL_PILLARS
+        ]
         latest_period = max((row["period_end"] for row in rows), default=None)
         current_rows = [row for row in rows if row["period_end"] == latest_period]
         current_total = lambda metric: sum(row["metric_value"] for row in current_rows if row["metric_name"] == metric)

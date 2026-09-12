@@ -135,6 +135,43 @@
               </label>
               <datalist id="episode-category-options"></datalist>
               <label>
+                Content Class
+                <select name="content_class">
+                  <option value="unclassified">Unclassified</option>
+                  <option value="flagship">Flagship</option>
+                  <option value="spotify_clip">Spotify Clip</option>
+                  <option value="youtube_short_or_reel">YouTube Short / Reel</option>
+                  <option value="wordpress_article">WordPress Article</option>
+                  <option value="substack_companion">Substack Companion</option>
+                  <option value="archive_resurface">Archive Resurface</option>
+                </select>
+              </label>
+              <label>
+                Primary Pillar
+                <select name="primary_pillar">
+                  <option value="">Not classified</option>
+                  <option value="HEAL">Heal</option><option value="BECOME">Become</option>
+                  <option value="LOVE">Love</option><option value="PURPOSE">Purpose</option><option value="LEAD">Lead</option>
+                </select>
+              </label>
+              <label>
+                Episode Format
+                <select name="format_type">
+                  <option value="">Not set</option>
+                  <option value="guest_conversation">Guest Conversation</option>
+                  <option value="host_reflection">Host Reflection</option>
+                </select>
+                <small class="field-hint">Required for flagships; format is separate from release class.</small>
+              </label>
+              <label>
+                Secondary Pillar
+                <select name="secondary_pillar">
+                  <option value="">None</option>
+                  <option value="HEAL">Heal</option><option value="BECOME">Become</option>
+                  <option value="LOVE">Love</option><option value="PURPOSE">Purpose</option><option value="LEAD">Lead</option>
+                </select>
+              </label>
+              <label>
                 Interview Date
                 <input name="interview_date" type="date" />
               </label>
@@ -195,6 +232,14 @@
                       <option value="archive">Archive</option>
                       <option value="retire">Retire</option>
                     </select>
+                  </label>
+                  <label>
+                    Governance Version
+                    <input name="governance_version" type="text" placeholder="1.0" />
+                  </label>
+                  <label class="full-width">
+                    Governance Exception Reason
+                    <textarea name="governance_exception_reason" rows="2" placeholder="Required only for an approved exception"></textarea>
                   </label>
                   <label>
                     Legacy Episode Number
@@ -292,7 +337,7 @@
                 <label>Primary Metric<select name="primary_metric" required><option value="organic_reach">Organic reach</option><option value="downloads_7d">7-day downloads</option><option value="conversion_rate_pct">Conversion rate</option><option value="return_rate_pct">Return rate</option></select></label>
                 <label class="full-width">Hypothesis<textarea name="hypothesis" rows="3" required></textarea></label>
                 <label>Control<input name="control_label" required placeholder="Tuesday 17:00" /></label>
-                <label>Treatment<input name="treatment_label" required placeholder="Monday 16:00" /></label>
+                <label>Treatment<input name="treatment_label" required placeholder="Tuesday 05:00" /></label>
                 <label>Starts On<input name="starts_on" type="date" /></label>
                 <label>Ends On<input name="ends_on" type="date" /></label>
                 <div class="form-actions full-width"><button type="submit" class="secondary-button">Register Draft Experiment</button></div>
@@ -617,6 +662,6 @@
 
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
-    <script src="/static/planning.js?v=20260909.1" defer></script>
+    <script src="/static/planning.js?v=20260912.5" defer></script>
   </body>
 </html>

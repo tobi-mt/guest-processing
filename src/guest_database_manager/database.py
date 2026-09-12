@@ -1344,6 +1344,12 @@ class GuestDatabase:
                 episode_data.get("ai_monthly_angle_state"),
                 episode_data.get("ai_monthly_angle_theme"),
                 episode_data.get("notes"),
+                episode_data.get("content_class", "unclassified"),
+                episode_data.get("format_type"),
+                episode_data.get("primary_pillar"),
+                episode_data.get("secondary_pillar"),
+                episode_data.get("governance_version"),
+                episode_data.get("governance_exception_reason"),
                 episode_data.get("owner"),
                 episode_data.get("editorial_disposition", "active"),
                 original_planned_release_date,
@@ -1358,7 +1364,7 @@ class GuestDatabase:
                         release_status = ?, production_status = ?, promotion_status = ?, priority_score = ?, recommendation_reason = ?,
                         legacy_episode_number = ?, riverside_status = ?, source_file_name = ?, source_type = ?,
                         show_notes_url = ?, release_files_url = ?, transcript_text = ?, transcript_source_id = ?, transcript_synced_at = ?, transcript_match_method = ?, transcript_match_score = ?, outreach_plan = ?,
-                        ai_monthly_angle_state = ?, ai_monthly_angle_theme = ?, notes = ?, owner = ?, editorial_disposition = ?, original_planned_release_date = ?,
+                        ai_monthly_angle_state = ?, ai_monthly_angle_theme = ?, notes = ?, content_class = ?, format_type = ?, primary_pillar = ?, secondary_pillar = ?, governance_version = ?, governance_exception_reason = ?, owner = ?, editorial_disposition = ?, original_planned_release_date = ?,
                         row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ? AND row_version = ?
                     """,
@@ -1396,18 +1402,17 @@ class GuestDatabase:
                 conn.commit()
                 return existing_row["id"], "updated"
 
-            cursor = conn.execute(
-                """
-                INSERT INTO episodes (
+            insert_columns = """
                     guest_id, interview_id, guest_name, guest_email, website, episode_title, working_title, published_title, topic, category,
                     interview_date, recording_date, release_date, release_status, production_status,
                     promotion_status, priority_score, recommendation_reason, legacy_episode_number, riverside_status,
                     source_file_name, source_type, show_notes_url, release_files_url, transcript_text,
                     transcript_source_id, transcript_synced_at, transcript_match_method, transcript_match_score, outreach_plan,
-                    ai_monthly_angle_state, ai_monthly_angle_theme, notes, updated_at, owner, editorial_disposition,
+                    ai_monthly_angle_state, ai_monthly_angle_theme, notes, content_class, format_type, primary_pillar, secondary_pillar, governance_version, governance_exception_reason, owner, editorial_disposition,
                     original_planned_release_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
-                """,
+            """
+            cursor = conn.execute(
+                f"INSERT INTO episodes ({insert_columns}) VALUES ({', '.join('?' for _ in fields)})",
                 fields,
             )
             episode_id = int(cursor.lastrowid)

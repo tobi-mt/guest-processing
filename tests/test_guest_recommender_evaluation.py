@@ -1,4 +1,4 @@
-from guest_database_manager.guest_recommender import build_strategic_guest_scorecard, evaluate_guest_recommendations
+from guest_database_manager.guest_recommender import build_strategic_guest_scorecard, evaluate_guest_recommendations, score_guest
 
 
 def test_recommendation_evaluation_reports_bands_disagreement_and_version():
@@ -33,4 +33,18 @@ def test_strategic_guest_scorecard_uses_six_weighted_dimensions_without_inventin
     assert set(result["dimensions"]) == {"transformation_story", "audience_relevance", "expertise_credibility", "emotional_depth", "distribution_potential", "originality"}
     assert sum(item["weight_pct"] for item in result["dimensions"].values()) == 100
     assert result["dimensions"]["distribution_potential"]["score"] == 60
+    assert result["distribution_planning_score"] == 60
+    assert result["distribution_affects_editorial_eligibility"] is False
     assert result["advisory_only"] is True
+
+
+def test_intake_decision_support_includes_advisory_focus_classification():
+    result = score_guest({
+        "background": "I rebuilt my life after grief and recovery.",
+        "passionate_topics": "healing trauma and self-compassion",
+        "message_takeaway": "Recovery is possible.",
+    })
+
+    assert result["focus_classification"]["primary_pillar"] == "HEAL"
+    assert result["focus_classification"]["source"] == "inferred"
+    assert result["focus_classification"]["policy_version"] == "1.0.1"

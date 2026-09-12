@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit
 from typing import Any, Dict, Iterable
+from urllib.parse import urlsplit
+
+from guest_database_manager.production_governance import classify_focus
 
 
 MIRROR_TALK_KEYWORDS = (
@@ -234,7 +236,10 @@ def build_strategic_guest_scorecard(guest: Dict[str, Any]) -> Dict[str, Any]:
         "distribution_potential": 15,
         "originality": 10,
     }
-    total = round(sum(dimensions[key] * weights[key] / 100 for key in weights), 1)
+    editorial_keys = tuple(key for key in weights if key != "distribution_potential")
+    editorial_weight = sum(weights[key] for key in editorial_keys)
+    editorial_score = round(sum(dimensions[key] * weights[key] for key in editorial_keys) / editorial_weight, 1)
+    distribution_score = round(dimensions["distribution_potential"], 1)
     gaps = []
     if dimensions["transformation_story"] < 50:
         gaps.append("Transformation story needs more first-person evidence.")
@@ -243,10 +248,13 @@ def build_strategic_guest_scorecard(guest: Dict[str, Any]) -> Dict[str, Any]:
     if dimensions["emotional_depth"] < 50:
         gaps.append("Emotional depth needs human review.")
     return {
-        "score": total,
+        "score": editorial_score,
+        "editorial_score": editorial_score,
+        "distribution_planning_score": distribution_score,
         "dimensions": {key: {"score": round(value, 1), "weight_pct": weights[key]} for key, value in dimensions.items()},
-        "booking_band": "exceptional" if total >= 85 else "eligible" if total >= 75 else "below_threshold",
-        "minimum_booking_score": 75,
+        "booking_band": "exceptional" if editorial_score >= 85 else "eligible" if editorial_score >= 70 else "below_threshold",
+        "minimum_booking_score": 70,
+        "distribution_affects_editorial_eligibility": False,
         "evidence_gaps": gaps,
         "advisory_only": True,
         "model_version": "mirror-talk-strategic-guest-v1",
@@ -443,6 +451,7 @@ def score_guest(
         ],
         "research_freshness": guest.get("guest_research_updated_at") or "not enriched",
         "strategic_scorecard": build_strategic_guest_scorecard(guest),
+        "focus_classification": classify_focus(guest),
     }
 
 

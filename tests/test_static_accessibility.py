@@ -206,7 +206,7 @@ def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
 
     assert 'id="growth-intelligence-dashboard" aria-live="polite"' in html
     assert 'id="growth-observation-message" class="message" aria-live="polite"' in html
-    assert 'planning.js?v=20260909.1' in html
+    assert 'planning.js?v=20260912.5' in html
     assert 'return String(value ?? "")' in javascript
     assert "escapeHtml(reach.organic ?? 0)" in javascript
     assert "escapeHtml(reach.paid ?? 0)" in javascript

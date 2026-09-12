@@ -18,11 +18,12 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
         episode_columns = {row[1] for row in conn.execute("PRAGMA table_info(episodes)")}
+        interview_columns = {row[1] for row in conn.execute("PRAGMA table_info(interviews)")}
     assert {
         "guest_applications",
         "audit_events",
@@ -39,6 +40,9 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
         "interview_reschedule_proposals",
         "growth_metric_observations",
         "growth_experiments",
+        "governance_policy_versions",
+        "episode_readiness_checks",
+        "governance_exceptions",
     } <= tables
     assert {"normalized_name", "normalized_email", "row_version", "identity_status", "owner", "marketing_opt_in"} <= guest_columns
     assert {
@@ -48,7 +52,14 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
         "transcript_synced_at",
         "transcript_match_method",
         "transcript_match_score",
+        "content_class",
+        "format_type",
+        "primary_pillar",
+        "secondary_pillar",
+        "governance_version",
+        "governance_exception_reason",
     } <= episode_columns
+    assert "content_class" not in interview_columns
 
 
 def test_migrations_backfill_representative_legacy_guest(tmp_path):

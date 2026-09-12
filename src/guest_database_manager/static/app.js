@@ -2073,6 +2073,10 @@ function renderGuestAiSummary(guest) {
     .map((name) => `<li>Website domain is also shared with ${escapeHtml(name)}.</li>`)
     .join("");
   const strategic = support.strategic_scorecard || {};
+  const focus = support.focus_classification || {};
+  const focusLabel = focus.primary_pillar
+    ? `${focus.primary_pillar}${focus.secondary_pillar ? ` · ${focus.secondary_pillar}` : ""}`
+    : "Unclassified";
   const strategicDimensions = Object.entries(strategic.dimensions || {}).map(([key, value]) => `<li>${escapeHtml(key.replaceAll("_", " "))}: ${escapeHtml(value.score)}/100 · ${escapeHtml(value.weight_pct)}%</li>`).join("");
 
   return `
@@ -2089,13 +2093,14 @@ function renderGuestAiSummary(guest) {
         <p class="guest-ai-confidence">Confidence: ${escapeHtml(support.confidence || "medium")}</p>
       </div>
       ${signals ? `<div class="signal-list guest-ai-signals">${signals}</div>` : ""}
+      <div class="guest-ai-match-row"><strong>Editorial focus</strong><span class="context-link">${escapeHtml(focusLabel)}</span><span>${escapeHtml(focus.source === "human" ? "Human confirmed" : "Advisory inference")}</span></div>
       ${acceptedMatches ? `<div class="guest-ai-match-row"><strong>Similar accepted guests</strong><div class="context-links">${acceptedMatches}</div></div>` : ""}
       <div class="guest-ai-grid">
         ${strengths ? `<div class="guest-ai-block"><strong>Why it could work</strong><ul>${strengths}</ul></div>` : ""}
         ${cautions ? `<div class="guest-ai-block caution"><strong>Watchouts</strong><ul>${cautions}</ul></div>` : ""}
         ${emailConflicts || hostConflicts ? `<div class="guest-ai-block caution"><strong>Identity checks</strong><ul>${emailConflicts}${hostConflicts}</ul></div>` : ""}
       </div>
-      ${strategicDimensions ? `<details class="guest-ai-block"><summary><strong>Strategic producer score · ${escapeHtml(strategic.score)}/100</strong></summary><p>${escapeHtml(strategic.booking_band || "below threshold")} · minimum booking score ${escapeHtml(strategic.minimum_booking_score)}</p><ul>${strategicDimensions}</ul>${(strategic.evidence_gaps || []).length ? `<p>${escapeHtml(strategic.evidence_gaps.join(" "))}</p>` : ""}</details>` : ""}
+      ${strategicDimensions ? `<details class="guest-ai-block"><summary><strong>Editorial suitability · ${escapeHtml(strategic.editorial_score ?? strategic.score)}/100</strong></summary><p>${escapeHtml(strategic.booking_band || "below threshold")} · minimum editorial score ${escapeHtml(strategic.minimum_booking_score)} · distribution planning ${escapeHtml(strategic.distribution_planning_score ?? "not evidenced")}/100</p><ul>${strategicDimensions}</ul>${(strategic.evidence_gaps || []).length ? `<p>${escapeHtml(strategic.evidence_gaps.join(" "))}</p>` : ""}</details>` : ""}
     </div>
   `;
 }
