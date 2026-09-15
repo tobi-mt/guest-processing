@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260831.1" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260908.3" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260915.1" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260915.1" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -113,16 +113,20 @@
               </label>
               <label>
                 Guest Email
-                <input name="guest_email" type="text" inputmode="email" autocapitalize="off" spellcheck="false" />
-              </label>
-              <label>
-                Website
-                <input name="website" type="text" inputmode="url" autocapitalize="off" spellcheck="false" />
+                <input name="guest_email" type="text" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" />
               </label>
               <label class="full-width">
                 Working Title
-                <input name="episode_title" type="text" required />
-                <small class="field-hint">Your editable editorial title. Transcript sync never overwrites it.</small>
+                <input name="episode_title" type="text" required placeholder="Filled from the guest name" />
+                <small class="field-hint">Suggested automatically and always editable. Transcript sync never overwrites it.</small>
+              </label>
+              <p class="smart-form-note full-width">That is enough to save an episode. Open a section only when you have those details.</p>
+              <details class="planning-advanced full-width smart-form-details" data-episode-section="context">
+                <summary>Context and classification <span>Optional</span></summary>
+                <div class="planning-advanced-grid">
+              <label>
+                Website
+                <input name="website" type="text" inputmode="url" autocapitalize="off" spellcheck="false" />
               </label>
               <label>
                 Topic
@@ -171,6 +175,11 @@
                   <option value="LOVE">Love</option><option value="PURPOSE">Purpose</option><option value="LEAD">Lead</option>
                 </select>
               </label>
+                </div>
+              </details>
+              <details class="planning-advanced full-width smart-form-details" data-episode-section="release">
+                <summary>Dates, owner, and release plan <span>Optional</span></summary>
+                <div class="planning-advanced-grid">
               <label>
                 Interview Date
                 <input name="interview_date" type="date" />
@@ -197,8 +206,10 @@
                   <option value="released">Released</option>
                 </select>
               </label>
+                </div>
+              </details>
               <details class="full-width planning-advanced">
-                <summary>Advanced planning controls</summary>
+                <summary>Governance and advanced controls</summary>
                 <div class="planning-advanced-grid">
                   <label>
                     Production Status
@@ -257,6 +268,9 @@
                   </label>
                 </div>
               </details>
+              <details class="planning-advanced full-width smart-form-details" data-episode-section="materials">
+                <summary>Links, transcript, and notes <span>Optional</span></summary>
+                <div class="planning-advanced-grid">
               <label class="full-width">
                 Show Note / Blogpost URL
                 <input name="show_notes_url" type="text" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://mirrortalkpodcast.com/..." />
@@ -278,6 +292,8 @@
                 Notes
                 <textarea name="notes" rows="3"></textarea>
               </label>
+                </div>
+              </details>
               <div class="form-actions full-width">
                 <button id="episode-submit-button" type="submit" class="primary-button">Save Episode</button>
                 <button id="episode-reset-button" type="button" class="secondary-button" hidden>Cancel Editing</button>
@@ -662,6 +678,6 @@
 
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
-    <script src="/static/planning.js?v=20260912.5" defer></script>
+    <script src="/static/planning.js?v=20260915.1" defer></script>
   </body>
 </html>

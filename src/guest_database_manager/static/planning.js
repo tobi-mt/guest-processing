@@ -1576,6 +1576,9 @@ function resetEpisodeForm() {
   activeEpisodeBaseline = null;
   clearEpisodeConflict();
   if (episodeEditorTitle) episodeEditorTitle.textContent = "Add episode";
+  episodeForm.querySelectorAll("[data-episode-section]").forEach((section) => {
+    section.open = false;
+  });
 }
 
 function clearEpisodeConflict() {
@@ -3615,6 +3618,31 @@ initializeEpisodeEditor();
 resetEpisodeForm();
 applyUrlState();
 episodeForm.elements.outreach_plan.value = JSON.stringify(normalizeOutreachPlan(null));
+
+const episodeGuestNameInput = episodeForm.elements.guest_name;
+const episodeTitleInput = episodeForm.elements.episode_title;
+
+episodeTitleInput.addEventListener("input", () => {
+  delete episodeTitleInput.dataset.autofilled;
+});
+
+episodeGuestNameInput.addEventListener("input", () => {
+  if (episodeForm.elements.id.value) return;
+  if (!episodeTitleInput.value.trim() || episodeTitleInput.dataset.autofilled === "true") {
+    const guestName = episodeGuestNameInput.value.trim();
+    episodeTitleInput.value = guestName ? `A soulful conversation with ${guestName}` : "";
+    episodeTitleInput.dataset.autofilled = guestName ? "true" : "";
+  }
+});
+
+episodeForm.querySelectorAll('input[name="website"], input[name="show_notes_url"], input[name="release_files_url"]').forEach((input) => {
+  input.addEventListener("blur", () => {
+    const value = input.value.trim();
+    if (value && !/^[a-z][a-z\d+.-]*:\/\//i.test(value)) {
+      input.value = `https://${value}`;
+    }
+  });
+});
 
 calendarPreviousButton?.addEventListener("click", () => {
   calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() - 1, 1);

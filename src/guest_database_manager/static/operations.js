@@ -613,6 +613,7 @@ function resetInterviewForm() {
   interviewForm.elements.reminder_status.value = "not_scheduled";
   interviewSubmitButton.textContent = "Save Interview";
   interviewResetButton.hidden = true;
+  interviewTitleWasEdited = false;
 }
 
 function loadInterviewIntoForm(interview) {
@@ -632,6 +633,7 @@ function loadInterviewIntoForm(interview) {
   interviewForm.elements.notes.value = interview.notes || "";
   interviewSubmitButton.textContent = "Update Interview";
   interviewResetButton.hidden = false;
+  interviewTitleWasEdited = Boolean(interview.title);
   interviewForm.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -1762,6 +1764,21 @@ async function loadOperations() {
     setMessage(interviewMessage, "", "");
   }
 }
+
+const interviewGuestNameInput = interviewForm.elements.guest_name;
+const interviewTitleInput = interviewForm.elements.title;
+let interviewTitleWasEdited = false;
+
+interviewTitleInput.addEventListener("input", () => {
+  interviewTitleWasEdited = Boolean(interviewTitleInput.value.trim());
+});
+
+interviewGuestNameInput.addEventListener("input", () => {
+  if (!interviewTitleWasEdited && !interviewForm.elements.id.value) {
+    const guestName = interviewGuestNameInput.value.trim();
+    interviewTitleInput.value = guestName ? `A soulful conversation with ${guestName}` : "";
+  }
+});
 
 interviewForm.addEventListener("submit", async (event) => {
   event.preventDefault();

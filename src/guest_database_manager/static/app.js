@@ -326,6 +326,9 @@ function setBulkResearchMessage(text, tone = "") {
 }
 
 function guestStatusLabel(guest) {
+  if (normalizeText(guest.application_summary?.status) === "needs_information") {
+    return "Waiting on guest";
+  }
   if (guest.dashboard_status_label) {
     return guest.dashboard_status_label;
   }
@@ -383,8 +386,12 @@ function guestMatchesSearch(guest, query) {
 
 function guestMatchesPreset(guest, preset) {
   const support = guest.decision_support || {};
+  const applicationStatus = normalizeText(guest.application_summary?.status).toLowerCase();
   if (preset === "all") return true;
-  if (preset === "needs_review") return !Boolean(guest.dashboard_processed ?? guest.is_processed);
+  if (preset === "needs_review") {
+    return !Boolean(guest.dashboard_processed ?? guest.is_processed) && applicationStatus !== "needs_information";
+  }
+  if (preset === "waiting_on_guest") return applicationStatus === "needs_information";
   if (preset === "ai_strong_fit") return support.suggested_decision === "approve";
   if (preset === "ai_review") return support.suggested_decision === "review";
   if (preset === "ai_risky") return support.suggested_decision === "decline";
@@ -726,6 +733,7 @@ function renderGuestPlanningSummary(guest) {
 
 function renderGuestProductionTimeline(guest) {
   const context = guest.workflow_context || {};
+  const waitingOnGuest = normalizeText(guest.application_summary?.status) === "needs_information";
   const accepted = String(guest.email_status || "").toLowerCase() === "accepted";
   const booked = Number(context.future_interview_count || 0) > 0;
   const recorded = Number(context.past_interview_count || 0) > 0;
@@ -733,7 +741,7 @@ function renderGuestProductionTimeline(guest) {
   const scheduled = Number(context.scheduled_episode_count || 0) > 0;
   const released = Number(context.released_episode_count || 0) > 0;
   const stages = [["Review", Boolean(guest.is_processed)], ["Accepted", accepted], ["Booked", booked], ["Recorded", recorded], ["In production", planning], ["Scheduled", scheduled], ["Published", released]];
-  const next = stages.find(([, complete]) => !complete)?.[0] || "Complete";
+  const next = waitingOnGuest ? "Waiting on guest" : (stages.find(([, complete]) => !complete)?.[0] || "Complete");
   return `<section class="guest-production-flow" aria-label="Production timeline"><div><strong>Production timeline</strong><span>Next: ${escapeHtml(next)}</span></div><ol>${stages.map(([label, complete]) => `<li class="${complete ? "complete" : ""}"><span></span>${escapeHtml(label)}</li>`).join("")}</ol></section>`;
 }
 
@@ -1234,7 +1242,7 @@ function renderGuests(payload) {
     promotionSummaryNode.innerHTML = renderPromotionProfile(guest);
 
     statusPill.textContent = guestStatusLabel(guest);
-    statusPill.classList.add(normalizeText(guest.dashboard_status || guestStatusLabel(guest)).replaceAll(" ", "_"));
+    statusPill.classList.add(normalizeText(guestStatusLabel(guest)).replaceAll(" ", "_"));
 
     const researchButton = node.querySelector("[data-action='research']");
     const resendBookingLinkButton = node.querySelector("[data-action='resend_booking_link']");
@@ -1747,6 +1755,15 @@ async function loadGuests() {
 }
 
 if (form) {
+const normalizeOptionalUrl = (input) => {
+  const value = input.value.trim();
+  if (value && !/^[a-z][a-z\d+.-]*:\/\//i.test(value)) {
+    input.value = `https://${value}`;
+  }
+};
+form.querySelectorAll('input[name="website"]').forEach((input) => {
+  input.addEventListener("blur", () => normalizeOptionalUrl(input));
+});
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(form);

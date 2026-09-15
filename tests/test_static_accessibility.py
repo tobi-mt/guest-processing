@@ -135,6 +135,42 @@ def test_operations_hero_uses_reusable_ai_status_styles() -> None:
     assert "style=" not in ai_card.group(1)
 
 
+def test_routine_creation_forms_hide_optional_fields_and_offer_safe_defaults() -> None:
+    dashboard = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
+    operations = (STATIC_ROOT / "operations.html").read_text(encoding="utf-8")
+    dashboard_js = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
+    operations_js = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
+    planning = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+    planning_js = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+
+    assert "Only a name is required" in dashboard
+    assert "Contact and profile details" in dashboard
+    assert "Story and editorial context" in dashboard
+    assert "Assignment, links, and status" in operations
+    assert 'autocomplete="email"' in dashboard
+    assert "normalizeOptionalUrl" in dashboard_js
+    assert "A soulful conversation with ${guestName}" in operations_js
+    assert "!interviewForm.elements.id.value" in operations_js
+    assert "That is enough to save an episode" in planning
+    assert "Context and classification" in planning
+    assert "Dates, owner, and release plan" in planning
+    assert "Links, transcript, and notes" in planning
+    assert 'data-episode-section="context"' in planning
+    assert "episodeTitleInput.dataset.autofilled" in planning_js
+    assert "episodeForm.elements.id.value" in planning_js
+
+
+def test_guest_waiting_state_has_a_separate_dashboard_bucket() -> None:
+    dashboard = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
+    dashboard_js = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
+
+    assert 'data-guest-preset="waiting_on_guest">Waiting on Guest' in dashboard
+    assert 'applicationStatus !== "needs_information"' in dashboard_js
+    assert 'preset === "waiting_on_guest"' in dashboard_js
+    assert 'return "Waiting on guest"' in dashboard_js
+    assert 'waitingOnGuest ? "Waiting on guest"' in dashboard_js
+
+
 def test_dashboard_result_modal_has_dialog_semantics_and_focus_management() -> None:
     html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
@@ -206,7 +242,7 @@ def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
 
     assert 'id="growth-intelligence-dashboard" aria-live="polite"' in html
     assert 'id="growth-observation-message" class="message" aria-live="polite"' in html
-    assert 'planning.js?v=20260912.5' in html
+    assert 'planning.js?v=20260915.1' in html
     assert 'return String(value ?? "")' in javascript
     assert "escapeHtml(reach.organic ?? 0)" in javascript
     assert "escapeHtml(reach.paid ?? 0)" in javascript

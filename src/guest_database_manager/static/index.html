@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Guest Database Manager</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260831.1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260915.1" />
   </head>
   <body>
     <div class="page-shell">
@@ -161,8 +161,12 @@
             </label>
             <label>
               Email
-              <input name="email" type="email" />
+              <input name="email" type="email" autocomplete="email" />
             </label>
+            <p class="smart-form-note full-width">Only a name is required. Add contact or profile details when you have them.</p>
+            <details class="planning-advanced full-width smart-form-details">
+              <summary>Contact and profile details <span>Optional</span></summary>
+              <div class="planning-advanced-grid">
             <label>
               Website
               <input name="website" type="text" inputmode="url" autocapitalize="off" spellcheck="false" />
@@ -191,6 +195,11 @@
               </select>
               <small>Record consent before adding this guest to a newsletter platform.</small>
             </label>
+              </div>
+            </details>
+            <details class="planning-advanced full-width smart-form-details">
+              <summary>Story and editorial context <span>Optional</span></summary>
+              <div class="planning-advanced-grid">
             <label class="full-width">
               Background
               <textarea name="background" rows="3"></textarea>
@@ -219,6 +228,8 @@
               Additional Info
               <textarea name="additional_info" rows="3"></textarea>
             </label>
+              </div>
+            </details>
             <div class="form-actions full-width">
               <button type="submit" class="primary-button">Save Guest</button>
               <button type="reset" class="secondary-button">Clear Form</button>
@@ -269,6 +280,7 @@
           <div class="view-presets" id="guest-presets">
             <button type="button" class="preset-chip" data-guest-preset="all">All Guests</button>
             <button type="button" class="preset-chip active" data-guest-preset="needs_review">Needs Review</button>
+            <button type="button" class="preset-chip" data-guest-preset="waiting_on_guest">Waiting on Guest</button>
             <button type="button" class="preset-chip" data-guest-preset="ai_strong_fit">AI Strong Fits</button>
             <button type="button" class="preset-chip" data-guest-preset="ai_review">AI Review Queue</button>
             <button type="button" class="preset-chip" data-guest-preset="ai_risky">AI High Risk</button>
@@ -374,7 +386,7 @@
     </script>
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script
-      src="/static/app.js?v=20260912.1"
+      src="/static/app.js?v=20260915.3"
       defer
       onload="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_loaded?t='+Date.now();})();"
       onerror="(function(){var i=new Image();i.src='/api/client-beacon/dashboard_inline_appjs_tag_error?t='+Date.now();})();"

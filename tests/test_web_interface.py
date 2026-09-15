@@ -549,6 +549,26 @@ def test_incomplete_information_workflow_updates_latest_application(temp_db):
     assert event["reason"] == "Please add a website"
 
 
+def test_needs_information_application_waits_on_guest_outside_action_queue(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Waiting Applicant", "email": "waiting@example.com"})
+
+    service.update_guest_application_status(
+        guest["id"],
+        "needs_information",
+        reason="Please complete the personal information form",
+        actor="producer@example.com",
+    )
+
+    queue = service._build_action_queue()
+    payload = service.list_guests(skip_expensive_enrichment=True)
+    waiting_guest = next(item for item in payload["guests"] if item["id"] == guest["id"])
+
+    assert all(item["key"] != f"guest:{guest['id']}" for item in queue["items"])
+    assert waiting_guest["application_summary"]["status"] == "needs_information"
+    assert waiting_guest["application_summary"]["sla_breached"] is False
+
+
 def test_episode_rejects_guest_identity_mismatch(temp_db):
     service = GuestWebService(temp_db.db_path)
     guest = service.create_guest({"full_name": "Canonical Guest", "email": "canonical@example.com"})
@@ -1354,6 +1374,29 @@ def test_planning_keeps_ambiguous_name_matches_out_of_recommendations(temp_db):
 
     planning = service.list_planning()
     assert planning["recommendations"] == []
+
+
+def test_planning_does_not_rewrite_distinct_title_case_guest_names(temp_db):
+    """Capital letters must not disappear before guest identity matching."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "E2E Visual Guest",
+            "email": "visual@example.com",
+        }
+    )
+    created = service.create_episode(
+        {
+            "guest_name": "E2E Episode Guest",
+            "guest_email": "episode@example.com",
+            "episode_title": "A conversation with E2E Episode Guest",
+        }
+    )
+
+    planning = service.list_planning(force_refresh=True)
+    episode = next(item for item in planning["episodes"] if item["id"] == created["id"])
+
+    assert episode["guest_name"] == "E2E Episode Guest"
 
 
 def test_bulk_research_guests_skips_cached_and_missing_profiles(monkeypatch, temp_db):

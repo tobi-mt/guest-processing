@@ -415,6 +415,27 @@ p {
   color: var(--text);
 }
 
+.smart-form-note {
+  margin: -4px 0 2px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.smart-form-details summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.smart-form-details summary span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .planning-advanced-grid {
   padding: 0 16px 16px;
   display: grid;

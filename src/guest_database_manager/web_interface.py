@@ -1152,7 +1152,6 @@ class GuestWebService:
                 or application_status not in {
                     "submitted",
                     "triage",
-                    "needs_information",
                 }
             ):
                 continue
@@ -1160,7 +1159,7 @@ class GuestWebService:
             age_days = max(0, (reference - submitted_at).days) if submitted_at else 0
             score = 95 if age_days >= 7 else 68
             title = _normalize_text(guest.get("full_name") or guest.get("name")) or "Guest application"
-            next_action = "Request missing information" if application_status == "needs_information" else "Review guest application"
+            next_action = "Review guest application"
             reason = (
                 f"Waiting {age_days} days; the 7-day review SLA is breached."
                 if age_days >= 7
@@ -1388,7 +1387,11 @@ class GuestWebService:
                     "status": latest_application["status"],
                     "submitted_at": latest_application["submitted_at"],
                     "age_days": age_days,
-                    "sla_breached": bool(age_days is not None and age_days >= 7 and latest_application["status"] in {"submitted", "triage", "needs_information"}),
+                    "sla_breached": bool(
+                        age_days is not None
+                        and age_days >= 7
+                        and latest_application["status"] in {"submitted", "triage"}
+                    ),
                     "submission_count": len(applications),
                 }
             else:
@@ -2287,7 +2290,7 @@ class GuestWebService:
         text = _normalize_text(value)
         if not text:
             return []
-        tokens = re.findall(r"[a-z0-9]+", text)
+        tokens = re.findall(r"[a-z0-9]+", text.casefold())
         honorifics = {"mr", "mrs", "ms", "dr", "prof", "rev", "sir", "jr", "sr", "ii", "iii", "iv"}
         filtered = [token for token in tokens if token not in honorifics]
         return filtered
@@ -2311,9 +2314,11 @@ class GuestWebService:
         last_episode = episode_tokens[-1]
         last_guest = guest_tokens[-1]
 
-        if first_episode == first_guest and last_episode == last_guest:
-            return 95
-        if last_episode == last_guest and len(overlap) >= min(2, len(episode_set), len(guest_set)):
+        if (
+            first_episode != first_guest
+            and last_episode == last_guest
+            and len(overlap) >= min(2, len(episode_set), len(guest_set))
+        ):
             return 90
         if episode_set <= guest_set and len(episode_set) >= 2:
             return 85

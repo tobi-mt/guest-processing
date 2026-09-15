@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Podcast Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260831.1" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260908.3" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260915.1" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260915.1" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -85,22 +85,12 @@
               <p class="eyebrow">Interview Tracker</p>
               <h2>Add Or Update Interview</h2>
               <p class="hero-copy section-copy">
-                Keep the upcoming conversation accurate here, send individual reminders when needed, then push changes back to Google Calendar only when you are happy with them.
+                Add the guest and schedule first. Everything else can be completed only when it is relevant.
               </p>
             </div>
 
-            <div class="workflow-note">
-              <strong>Best flow for a smooth week</strong>
-              <p>Keep the interview accurate here, confirm the guest when they reply, then move the recording into planning only after the conversation truly happened.</p>
-              <ol class="workflow-steps">
-                <li>Sync or update the interview details.</li>
-                <li>Preview or send the reminder when needed.</li>
-                <li>After recording, use <em>Move To Planning</em> to continue the episode workflow.</li>
-              </ol>
-            </div>
-
             <details class="operations-tool">
-              <summary>Add or edit an interview</summary>
+              <summary>New interview</summary>
             <form id="interview-form" class="guest-form">
               <input name="id" type="hidden" />
               <input name="row_version" type="hidden" />
@@ -114,7 +104,8 @@
               </label>
               <label class="full-width">
                 Title
-                <input name="title" type="text" placeholder="Soulful Conversation with..." />
+                <input name="title" type="text" placeholder="Filled from the guest name" />
+                <small class="field-hint">Suggested automatically; edit it whenever the conversation has a clearer theme.</small>
               </label>
               <label>
                 Scheduled For
@@ -124,6 +115,9 @@
                 Timezone
                 <input name="timezone" type="text" value="Europe/Berlin" />
               </label>
+              <details class="planning-advanced full-width smart-form-details">
+                <summary>Assignment, links, and status <span>Optional</span></summary>
+                <div class="planning-advanced-grid">
               <label>
                 Owner
                 <input name="owner" type="text" list="operations-team-members" placeholder="Assign a configured team member" />
@@ -167,6 +161,8 @@
                 Notes
                 <textarea name="notes" rows="3"></textarea>
               </label>
+                </div>
+              </details>
               <div class="form-actions full-width">
                 <button id="interview-submit-button" type="submit" class="primary-button">Save Interview</button>
                 <button id="interview-reset-button" type="button" class="secondary-button" hidden>Cancel Editing</button>
@@ -325,6 +321,6 @@
     </div>
 
     <script src="/static/performance-utils.js?v=20260803.1"></script>
-    <script src="/static/operations.js?v=20260831.1" defer></script>
+    <script src="/static/operations.js?v=20260915.1" defer></script>
   </body>
 </html>

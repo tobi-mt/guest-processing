@@ -159,7 +159,7 @@
   overflow: hidden;
 }
 
-.operations-tool summary {
+.operations-tool > summary {
   list-style: none;
   cursor: pointer;
   padding: 20px 22px;
@@ -169,11 +169,11 @@
   gap: 16px;
 }
 
-.operations-tool summary::-webkit-details-marker {
+.operations-tool > summary::-webkit-details-marker {
   display: none;
 }
 
-.operations-tool summary::after {
+.operations-tool > summary::after {
   content: "+";
   flex: 0 0 auto;
   width: 34px;
@@ -188,7 +188,7 @@
   font-weight: 500;
 }
 
-.operations-tool[open] summary::after {
+.operations-tool[open] > summary::after {
   content: "−";
 }
 
