@@ -1121,6 +1121,56 @@ button:disabled {
   color: var(--muted);
 }
 
+.pillar-assessment {
+  margin-top: 12px;
+}
+
+.pillar-score-list,
+.pillar-evidence-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+}
+
+.pillar-score-row {
+  display: grid;
+  grid-template-columns: 74px minmax(100px, 1fr) 42px;
+  gap: 10px;
+  align-items: center;
+}
+
+.pillar-score-row progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.pillar-score-row strong {
+  margin: 0;
+  text-align: right;
+}
+
+.pillar-evidence-list li {
+  padding: 10px 12px;
+  border-left: 3px solid rgba(20, 90, 74, 0.25);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.pillar-evidence-list small,
+.pillar-evidence-list a {
+  display: block;
+  margin-top: 5px;
+}
+
+.pillar-evidence-list strong {
+  display: inline;
+  margin: 0;
+}
+
+.pillar-assessment h5 {
+  margin: 14px 0 8px;
+}
+
 .results-meta {
   margin: 0 0 14px;
   color: var(--muted);

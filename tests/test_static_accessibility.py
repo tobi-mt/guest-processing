@@ -171,6 +171,25 @@ def test_guest_waiting_state_has_a_separate_dashboard_bucket() -> None:
     assert 'waitingOnGuest ? "Waiting on guest"' in dashboard_js
 
 
+def test_guest_research_eligibility_accepts_both_social_field_names() -> None:
+    dashboard_js = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
+
+    assert "function guestHasPublicProfileHint(guest)" in dashboard_js
+    assert "normalizeText(guest.social_media_handles)" in dashboard_js
+    assert "normalizeText(guest.social_handles)" in dashboard_js
+    assert "researchButton && !guestHasPublicProfileHint(guest)" in dashboard_js
+
+
+def test_guest_ai_review_explains_pillar_confidence_and_evidence() -> None:
+    dashboard_js = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
+
+    assert 'class="pillar-score-row"' in dashboard_js
+    assert '<progress max="100"' in dashboard_js
+    assert "Why these pillars?" in dashboard_js
+    assert "Supporting evidence" in dashboard_js
+    assert "Promising conversation angles" in dashboard_js
+
+
 def test_dashboard_result_modal_has_dialog_semantics_and_focus_management() -> None:
     html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")

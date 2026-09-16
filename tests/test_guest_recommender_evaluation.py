@@ -47,4 +47,37 @@ def test_intake_decision_support_includes_advisory_focus_classification():
 
     assert result["focus_classification"]["primary_pillar"] == "HEAL"
     assert result["focus_classification"]["source"] == "inferred"
-    assert result["focus_classification"]["policy_version"] == "1.0.1"
+    assert result["focus_classification"]["policy_version"] == "1.1.0"
+    assert result["focus_classification"]["confidence_pct"] == 100
+    assert result["focus_classification"]["evidence"][0]["source"] == "Background"
+    assert result["focus_classification"]["conversation_angles"]
+    assert sum(item["confidence_pct"] for item in result["focus_classification"]["pillar_scores"]) == 100
+
+
+def test_focus_classification_combines_application_and_public_research_evidence():
+    result = score_guest({
+        "background": "I rebuilt my identity after a difficult career transition.",
+        "passionate_topics": "courage, growth, confidence, and reinvention",
+        "message_takeaway": "People can become who they were meant to be.",
+        "guest_research": {
+            "summary": "A leadership coach focused on transformation and disciplined change.",
+            "likely_topics": ["identity", "growth"],
+            "sources": [{"url": "https://example.com/about", "title": "A story of reinvention"}],
+        },
+    })["focus_classification"]
+
+    assert result["primary_pillar"] == "BECOME"
+    assert result["confidence"] == "strong"
+    assert result["confidence_pct"] >= 70
+    assert any(item["source"] == "Public-profile research" for item in result["evidence"])
+    assert result["pillar_scores"][0]["pillar"] == "BECOME"
+    assert sum(item["confidence_pct"] for item in result["pillar_scores"]) == 100
+
+
+def test_focus_classification_does_not_force_a_pillar_without_evidence():
+    result = score_guest({"background": "I would like to be on the podcast."})["focus_classification"]
+
+    assert result["primary_pillar"] == ""
+    assert result["confidence_pct"] == 0
+    assert result["insufficient_evidence"] is True
+    assert result["conversation_angles"] == []

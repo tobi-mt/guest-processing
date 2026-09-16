@@ -128,6 +128,35 @@ def test_guest_research_candidate_urls_extract_urls_from_messy_website_text():
     assert "https://www.example.org" in urls
 
 
+def test_guest_research_candidate_urls_accept_full_social_profile_urls():
+    urls = _candidate_urls(
+        {
+            "website": "",
+            "social_media_handles": (
+                "https://instagram.com/example https://linkedin.com/in/example\n"
+                "https://youtube.com/@example"
+            ),
+        }
+    )
+
+    assert urls == [
+        "https://instagram.com/example",
+        "https://linkedin.com/in/example",
+        "https://youtube.com/@example",
+    ]
+
+
+def test_guest_research_candidate_urls_accept_social_handles_alias():
+    urls = _candidate_urls(
+        {
+            "website": "",
+            "social_handles": "Instagram: @alias_example",
+        }
+    )
+
+    assert urls == ["https://www.instagram.com/alias_example"]
+
+
 def test_guest_research_extracts_grounded_future_launch_event():
     events = guest_research._time_sensitive_events(
         [{

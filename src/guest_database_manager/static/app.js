@@ -342,6 +342,14 @@ function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function guestHasPublicProfileHint(guest) {
+  return Boolean(
+    normalizeText(guest.website) ||
+    normalizeText(guest.social_media_handles) ||
+    normalizeText(guest.social_handles)
+  );
+}
+
 function guestMatchesFilter(guest, filterValue) {
   if (filterValue === "all") {
     return true;
@@ -840,7 +848,7 @@ function isLowSignalResearchSource(source) {
 function renderGuestCopilotSummary(guest) {
   const research = guest.guest_research;
   if (!research) {
-    const canResearch = Boolean(guest.website || guest.social_media_handles);
+    const canResearch = guestHasPublicProfileHint(guest);
     return `
       <div class="guest-ai-card">
         <div class="guest-ai-head">
@@ -1253,7 +1261,7 @@ function renderGuests(payload) {
       researchButton.textContent = "Retry With Search";
       researchButton.title = "Use Google search results as a rescue path for this failed research record.";
     }
-    if (researchButton && !guest.website && !guest.social_media_handles) {
+    if (researchButton && !guestHasPublicProfileHint(guest)) {
       researchButton.disabled = true;
       researchButton.title = "Add a website or labeled social profile first so copilot research has a public source to read.";
     }
@@ -1842,7 +1850,7 @@ exportButton.addEventListener("click", () => {
 
 if (bulkResearchButton) {
   bulkResearchButton.addEventListener("click", async () => {
-    const affected = (latestPayload?.guests || []).filter((guest) => !guest.guest_research && (guest.website || guest.social_media_handles)).length;
+    const affected = (latestPayload?.guests || []).filter((guest) => !guest.guest_research && guestHasPublicProfileHint(guest)).length;
     if (!confirmCriticalAction(`Preview bulk research\n\nAffected records: up to ${affected}\nSide effects: reads public web profiles and stores enrichment; no guest email is sent.\n\nContinue?`)) {
       return;
     }
@@ -2093,7 +2101,22 @@ function renderGuestAiSummary(guest) {
   const focus = support.focus_classification || {};
   const focusLabel = focus.primary_pillar
     ? `${focus.primary_pillar}${focus.secondary_pillar ? ` · ${focus.secondary_pillar}` : ""}`
-    : "Unclassified";
+    : "Needs more evidence";
+  const pillarScores = (focus.pillar_scores || []).slice(0, 5).map((item) => `
+    <li class="pillar-score-row">
+      <span>${escapeHtml(item.pillar)}</span>
+      <progress max="100" value="${Math.max(0, Math.min(100, Number(item.confidence_pct || 0)))}"></progress>
+      <strong>${escapeHtml(item.confidence_pct || 0)}%</strong>
+    </li>
+  `).join("");
+  const pillarEvidence = (focus.evidence || []).slice(0, 4).map((item) => `
+    <li>
+      <strong>${escapeHtml(item.source)}</strong>: ${escapeHtml(item.excerpt)}
+      ${(item.matched_keywords || []).length ? `<small>Signals: ${escapeHtml(item.matched_keywords.join(", "))}</small>` : ""}
+      ${item.url ? `<a class="inline-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">Verify source</a>` : ""}
+    </li>
+  `).join("");
+  const conversationAngles = (focus.conversation_angles || []).map((angle) => `<li>${escapeHtml(angle)}</li>`).join("");
   const strategicDimensions = Object.entries(strategic.dimensions || {}).map(([key, value]) => `<li>${escapeHtml(key.replaceAll("_", " "))}: ${escapeHtml(value.score)}/100 · ${escapeHtml(value.weight_pct)}%</li>`).join("");
 
   return `
@@ -2110,7 +2133,8 @@ function renderGuestAiSummary(guest) {
         <p class="guest-ai-confidence">Confidence: ${escapeHtml(support.confidence || "medium")}</p>
       </div>
       ${signals ? `<div class="signal-list guest-ai-signals">${signals}</div>` : ""}
-      <div class="guest-ai-match-row"><strong>Editorial focus</strong><span class="context-link">${escapeHtml(focusLabel)}</span><span>${escapeHtml(focus.source === "human" ? "Human confirmed" : "Advisory inference")}</span></div>
+      <div class="guest-ai-match-row"><strong>Editorial focus</strong><span class="context-link">${escapeHtml(focusLabel)}</span><span>${escapeHtml(focus.source === "human" ? "Human confirmed" : `${focus.confidence_pct || 0}% pillar confidence · ${focus.insufficient_evidence ? "insufficient evidence" : "advisory inference"}`)}</span></div>
+      ${pillarScores ? `<details class="guest-ai-block pillar-assessment"><summary><strong>Why these pillars?</strong></summary><ul class="pillar-score-list">${pillarScores}</ul>${pillarEvidence ? `<h5>Supporting evidence</h5><ul class="pillar-evidence-list">${pillarEvidence}</ul>` : `<p>Complete the personal application or run public-profile research to improve this assessment.</p>`}${conversationAngles ? `<h5>Promising conversation angles</h5><ul>${conversationAngles}</ul>` : ""}</details>` : ""}
       ${acceptedMatches ? `<div class="guest-ai-match-row"><strong>Similar accepted guests</strong><div class="context-links">${acceptedMatches}</div></div>` : ""}
       <div class="guest-ai-grid">
         ${strengths ? `<div class="guest-ai-block"><strong>Why it could work</strong><ul>${strengths}</ul></div>` : ""}

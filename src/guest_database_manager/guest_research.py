@@ -136,7 +136,16 @@ def _candidate_urls(guest: Dict[str, Any]) -> list[str]:
         if website:
             urls.append(website)
 
-    social_text = _clean_text(guest.get("social_media_handles"))
+    social_text = _clean_text(guest.get("social_media_handles") or guest.get("social_handles"))
+    extracted_social_urls = _split_url_like_values(social_text)
+    if extracted_social_urls and any(
+        re.match(r"^(?:https?://|www\.)", value, flags=re.IGNORECASE)
+        for value in extracted_social_urls
+    ):
+        for value in extracted_social_urls:
+            if re.match(r"^(?:https?://|www\.)", value, flags=re.IGNORECASE):
+                urls.append(_website_with_scheme(value))
+        social_text = ""
     for line in social_text.splitlines():
         entry = line.strip()
         if not entry:
