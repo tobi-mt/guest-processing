@@ -1349,6 +1349,39 @@ def test_planning_matches_guest_on_safe_name_variant(temp_db):
     assert episode["guest_research"]["likely_topics"] == ["Healing"]
 
 
+def test_planning_does_not_relabel_guest_when_short_name_matches_other_guests_prefix(temp_db):
+    """A two-token name must not inherit a longer, different surname identity."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest(
+        {
+            "full_name": "John Graham Harper",
+            "email": "harper@example.com",
+            "website": "https://lumaflex.example.com",
+            "profession": "Founder",
+        }
+    )
+    created = service.create_episode(
+        {
+            "guest_name": "John Graham",
+            "guest_email": "john@releasepanic.example.com",
+            "website": "https://releasepanic.example.com",
+            "episode_title": "Releasing Panic Attacks and Anxiety for Good with John Graham",
+            "release_date": "2025-11-19",
+            "release_status": "released",
+            "production_status": "released",
+            "promotion_status": "released",
+        }
+    )
+
+    planning = service.list_planning(force_refresh=True)
+    episode = next(item for item in planning["episodes"] if item["id"] == created["id"])
+
+    assert service._name_match_score("John Graham", "John Graham Harper") == 0
+    assert episode["guest_name"] == "John Graham"
+    assert episode["guest_profile_context"] is None
+    assert episode["guest_research"] is None
+
+
 def test_episode_monthly_angle_review_state_is_persisted(temp_db):
     """Pinned or rejected monthly-angle decisions should persist on the episode record."""
     service = GuestWebService(temp_db.db_path)
@@ -4061,6 +4094,35 @@ def test_list_planning_normalizes_released_episode_production_state(temp_db):
 
     assert episode["release_status"] == "released"
     assert episode["production_status"] == "released"
+
+
+def test_metadata_save_does_not_submit_display_normalization_as_lifecycle_rollback(temp_db):
+    """Saving an edit must not turn a derived display state into released -> ready."""
+    service = GuestWebService(temp_db.db_path)
+    episode_id, _ = temp_db.upsert_episode(
+        {
+            "guest_name": "Legacy Scheduled Guest",
+            "episode_title": "Legacy Scheduled Episode",
+            "release_date": "2026-12-01T17:00",
+            "release_status": "scheduled",
+            "production_status": "released",
+        }
+    )
+    displayed = service.get_episode(episode_id)
+    assert displayed["production_status"] == "ready"
+
+    saved = service.update_episode(
+        episode_id,
+        {
+            "row_version": displayed["row_version"],
+            "episode_title": "Edited Legacy Scheduled Episode",
+            "production_status": displayed["production_status"],
+        },
+    )
+
+    assert saved["episode_title"] == "Edited Legacy Scheduled Episode"
+    assert saved["production_status"] == "released"
+    assert temp_db.get_episode_by_id(episode_id)["production_status"] == "released"
 
 
 def test_copy_assist_does_not_treat_guest_name_as_topic(temp_db):

@@ -2320,9 +2320,23 @@ class GuestWebService:
             and len(overlap) >= min(2, len(episode_set), len(guest_set))
         ):
             return 90
-        if episode_set <= guest_set and len(episode_set) >= 2:
+        # A missing middle name/initial is a safe variant only when the first and
+        # last name still agree.  Treating any two-token subset as compatible
+        # caused "John Graham" to match "John Graham Harper" and made Planning
+        # relabel one person's episode with another person's guest profile.
+        if (
+            episode_set <= guest_set
+            and len(episode_set) >= 2
+            and first_episode == first_guest
+            and last_episode == last_guest
+        ):
             return 85
-        if guest_set <= episode_set and len(guest_set) >= 2:
+        if (
+            guest_set <= episode_set
+            and len(guest_set) >= 2
+            and first_episode == first_guest
+            and last_episode == last_guest
+        ):
             return 85
         if last_episode == last_guest and len(overlap) >= 1 and len(episode_set) >= 2 and len(guest_set) >= 2:
             return 70
@@ -5071,8 +5085,24 @@ class GuestWebService:
         if not current:
             raise WebInterfaceError("Episode not found.")
 
+        # Planning presents a normalized view of legacy/inconsistent lifecycle
+        # combinations (for example, scheduled + production released is shown as
+        # production ready).  A full-form save sends that displayed value back even
+        # when the operator only edited metadata.  Do not mistake an unchanged,
+        # derived display value for an explicit backward lifecycle transition.
+        normalized_current = self._normalize_episode_record(current)
+        reconciled_payload = dict(payload)
+        for status_field in ("release_status", "production_status", "promotion_status"):
+            if status_field not in reconciled_payload:
+                continue
+            submitted = _normalize_text(reconciled_payload.get(status_field)).lower()
+            displayed = _normalize_text(normalized_current.get(status_field)).lower()
+            persisted = _normalize_text(current.get(status_field)).lower()
+            if submitted == displayed and displayed != persisted:
+                reconciled_payload[status_field] = current.get(status_field)
+
         episode_data = dict(current)
-        episode_data.update(payload)
+        episode_data.update(reconciled_payload)
         saved = self.create_episode(episode_data)
         return saved
 

@@ -227,6 +227,26 @@ def test_mobile_planning_keeps_calendar_and_workflow_labels_readable() -> None:
     assert "grid-template-columns: 22px 34px minmax(0, 1fr);" in styles
 
 
+def test_availability_calendar_preserves_week_context_and_accessible_dates() -> None:
+    html = (STATIC_ROOT / "availability.html").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "availability.js").read_text(encoding="utf-8")
+    styles = (STATIC_ROOT / "availability.css").read_text(encoding="utf-8")
+
+    assert 'class="availability-calendar-scroll" tabindex="0" role="region"' in html
+    assert 'role="grid" aria-labelledby="calendar-title"' in html
+    assert '["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]' in javascript
+    assert "function isoWeekNumber(date)" in javascript
+    assert 'role="rowheader" aria-label="ISO week ${weekNumber}"' in javascript
+    assert 'aria-current="date"' in javascript
+    assert 'weekday: "long", year: "numeric", month: "long", day: "numeric"' in javascript
+    assert "grid-template-columns: 48px repeat(7" in styles
+    assert ".calendar-day.today" in styles
+    assert "overflow-x: auto" in styles
+    assert "grid-template-columns: repeat(2, 1fr)" not in styles
+    assert "availability.css?v=20260922.1" in html
+    assert "availability.js?v=20260922.1" in html
+
+
 def test_dashboard_renders_release_timing_and_dated_guest_events() -> None:
     javascript = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
 
