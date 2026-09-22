@@ -227,6 +227,23 @@ def test_mobile_planning_keeps_calendar_and_workflow_labels_readable() -> None:
     assert "grid-template-columns: 22px 34px minmax(0, 1fr);" in styles
 
 
+def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -> None:
+    html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+    styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
+
+    assert 'operations.css?v=20260922.2' in html
+    assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
+    assert (
+        '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
+        "  grid-template-columns: minmax(0, 1fr);"
+    ) in styles
+    assert (
+        '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] textarea,'
+        in styles
+    )
+    assert "overflow-wrap: anywhere;" in styles
+
+
 def test_availability_calendar_preserves_week_context_and_accessible_dates() -> None:
     html = (STATIC_ROOT / "availability.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "availability.js").read_text(encoding="utf-8")
@@ -281,7 +298,7 @@ def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
 
     assert 'id="growth-intelligence-dashboard" aria-live="polite"' in html
     assert 'id="growth-observation-message" class="message" aria-live="polite"' in html
-    assert 'planning.js?v=20260915.1' in html
+    assert 'planning.js?v=20260922.2' in html
     assert 'return String(value ?? "")' in javascript
     assert "escapeHtml(reach.organic ?? 0)" in javascript
     assert "escapeHtml(reach.paid ?? 0)" in javascript
@@ -289,3 +306,15 @@ def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
     assert "escapeHtml(quality.episodes_with_evidence ?? 0)" in javascript
     assert "String(item.actual_share_pct ?? 0)" in javascript
     assert "String(quality.unclassified_released_episodes ?? 0)" in javascript
+
+
+def test_editorial_mix_fits_its_card_at_narrow_container_widths() -> None:
+    javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+    styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
+
+    assert 'class="operations-preview editorial-mix-card"' in javascript
+    assert 'data-label="12-release guardrail"' in javascript
+    assert ".editorial-mix-card table {\n  table-layout: fixed;" in styles
+    assert "@container editorial-mix (max-width: 480px)" in styles
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
+    assert "content: attr(data-label);" in styles

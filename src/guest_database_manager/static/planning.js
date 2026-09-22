@@ -1184,7 +1184,7 @@ function renderGrowthIntelligence(payload) {
   const discovery = payload?.discovery || {};
   const distribution = payload?.distribution || {};
   const owned = payload?.owned_audience || {};
-  const mixRows = (payload?.editorial_mix || []).map((item) => `<tr><th scope="row">${escapeHtml(item.pillar)}</th><td>${escapeHtml(String(item.count ?? 0))}</td><td>${escapeHtml(String(item.actual_share_pct ?? 0))}%</td><td>${escapeHtml(item.twelve_release_guardrail || "—")}</td></tr>`).join("");
+  const mixRows = (payload?.editorial_mix || []).map((item) => `<tr><th scope="row">${escapeHtml(item.pillar)}</th><td data-label="Count">${escapeHtml(String(item.count ?? 0))}</td><td data-label="Share">${escapeHtml(String(item.actual_share_pct ?? 0))}%</td><td data-label="12-release guardrail">${escapeHtml(item.twelve_release_guardrail || "—")}</td></tr>`).join("");
   const scoreRows = (payload?.episode_scores || []).slice(0, 8).map((item) => {
     const mfs = item.mfs || {};
     const result = mfs.status === "ready" ? `MFS ${escapeHtml(mfs.score)}` : `Incomplete · missing ${escapeHtml((mfs.missing_metrics || []).join(", "))}`;
@@ -1201,7 +1201,7 @@ function renderGrowthIntelligence(payload) {
       <article class="learning-metric-card"><small>MFS ready</small><strong>${escapeHtml(quality.mfs_ready ?? 0)} / ${escapeHtml(quality.episodes_with_evidence ?? 0)}</strong></article>
     </div>
     <div class="growth-dashboard-grid">
-      <div class="operations-preview"><strong class="insight-label">Editorial mix · latest 12 releases</strong><div class="table-scroll"><table><thead><tr><th>Pillar</th><th>Count</th><th>Share</th><th>12-release guardrail</th></tr></thead><tbody>${mixRows}</tbody></table></div><p>Window contains ${escapeHtml(String(quality.editorial_window_count ?? 0))} releases; ${escapeHtml(String(quality.unclassified_released_episodes ?? 0))} remain unclassified.</p></div>
+      <div class="operations-preview editorial-mix-card"><strong class="insight-label">Editorial mix · latest 12 releases</strong><div class="table-scroll"><table><thead><tr><th>Pillar</th><th>Count</th><th>Share</th><th>12-release guardrail</th></tr></thead><tbody>${mixRows}</tbody></table></div><p>Window contains ${escapeHtml(String(quality.editorial_window_count ?? 0))} releases; ${escapeHtml(String(quality.unclassified_released_episodes ?? 0))} remain unclassified.</p></div>
       <div class="operations-preview"><strong class="insight-label">Mirror Fan Score</strong>${scoreRows || "<p>No episode-level evidence yet. MFS remains unavailable until all four dimensions are supplied.</p>"}</div>
       <div class="operations-preview"><strong class="insight-label">Discovery and distribution</strong><p>7-day downloads: ${escapeHtml(String(discovery.downloads_7d ?? 0))}</p><p>Spotify Home / Search: ${escapeHtml(String(discovery.spotify_home_impressions ?? 0))} / ${escapeHtml(String(discovery.spotify_search_impressions ?? 0))}</p><p>Guest shares / newsletter inclusions: ${escapeHtml(String(distribution.guest_shares ?? 0))} / ${escapeHtml(String(distribution.guest_newsletter_inclusions ?? 0))}</p></div>
       <div class="operations-preview"><strong class="insight-label">Owned audience</strong><p>Email subscribers gained: ${escapeHtml(String(owned.email_subscribers_gained ?? 0))}</p><p>Site → podcast conversion: ${owned.site_to_podcast_conversion_pct == null ? "—" : `${escapeHtml(String(owned.site_to_podcast_conversion_pct))}%`}</p></div>

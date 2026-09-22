@@ -60,6 +60,7 @@
 .operations-form-panel {
   display: grid;
   gap: 22px;
+  max-width: 100%;
   padding: 0;
   background: transparent;
   border: 0;
@@ -69,6 +70,7 @@
   top: 20px;
   align-self: start;
   max-height: calc(100vh - 40px);
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -1204,6 +1206,36 @@
   grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
 }
 
+/* The Scheduling Intelligence rail is intentionally narrow. Keep its tools at
+   one-column form grain so long option labels and examples never widen the rail
+   or force users to pan sideways inside the sticky sidebar. */
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"],
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] > *,
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .operations-tool-body,
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form,
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] label {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form > *,
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] input,
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] select,
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] textarea,
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] button {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .field-hint,
+.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .tool-copy {
+  overflow-wrap: anywhere;
+}
+
 .scheduling-reference-tool {
   margin-top: 0;
 }
@@ -1711,9 +1743,36 @@
 
 .growth-dashboard-grid table {
   width: 100%;
-  min-width: 420px;
+  min-width: 0;
   border-collapse: collapse;
 }
+
+.editorial-mix-card {
+  container-name: editorial-mix;
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.editorial-mix-card .table-scroll {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.editorial-mix-card table {
+  table-layout: fixed;
+}
+
+.editorial-mix-card th,
+.editorial-mix-card td {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.editorial-mix-card th:nth-child(1) { width: 20%; }
+.editorial-mix-card th:nth-child(2) { width: 14%; }
+.editorial-mix-card th:nth-child(3) { width: 16%; }
+.editorial-mix-card th:nth-child(4) { width: 50%; }
 
 .growth-dashboard-grid th,
 .growth-dashboard-grid td {
@@ -1723,6 +1782,47 @@
 
 .growth-dashboard-grid tbody tr + tr {
   border-top: 1px solid rgba(73, 55, 40, 0.1);
+}
+
+@container editorial-mix (max-width: 480px) {
+  .editorial-mix-card thead {
+    display: none;
+  }
+
+  .editorial-mix-card tbody,
+  .editorial-mix-card tr {
+    display: grid;
+    min-width: 0;
+  }
+
+  .editorial-mix-card tr {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem 0.8rem;
+    padding: 0.75rem 0;
+  }
+
+  .editorial-mix-card th,
+  .editorial-mix-card td {
+    display: block;
+    width: auto;
+    padding: 0;
+  }
+
+  .editorial-mix-card th,
+  .editorial-mix-card td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .editorial-mix-card td::before {
+    display: block;
+    margin-bottom: 0.15rem;
+    color: var(--muted);
+    content: attr(data-label);
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
 }
 
 .growth-score-row {
