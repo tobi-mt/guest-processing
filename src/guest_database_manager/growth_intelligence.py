@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import csv
 import json
 import math
+import re
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -31,6 +34,19 @@ CANONICAL_METRICS = {
     "site_to_podcast_conversion_pct": "percent",
 }
 MFS_COMPONENTS = ("organic_reach", "consumption_depth_pct", "conversion_rate_pct", "return_rate_pct")
+
+CSV_FIELD_ALIASES = {
+    "episode_id": ("episode_id", "episode id", "episode database id"),
+    "episode_title": ("episode_title", "episode title", "title", "content title"),
+    "guest_name": ("guest_name", "guest name", "guest", "speaker"),
+    "provider": ("provider", "platform", "source platform", "channel"),
+    "metric_name": ("metric_name", "metric name", "metric", "measure"),
+    "metric_value": ("metric_value", "metric value", "value", "result"),
+    "traffic_scope": ("traffic_scope", "traffic scope", "scope", "traffic type"),
+    "period_start": ("period_start", "period start", "start date", "start", "from"),
+    "period_end": ("period_end", "period end", "end date", "end", "to", "date"),
+    "source_reference": ("source_reference", "source reference", "source file", "reference"),
+}
 
 
 class GrowthIntelligenceError(ValueError):
@@ -67,6 +83,261 @@ class GrowthIntelligence:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
 
+    @staticmethod
+    def _header_key(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", _text(value).casefold()).strip()
+
+    @staticmethod
+    def _identity_key(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", _text(value).casefold()).strip()
+
+    @classmethod
+    def _resolve_csv_mapping(cls, headers: list[str], supplied: Any) -> dict[str, str]:
+        normalized_headers = {cls._header_key(header): header for header in headers if _text(header)}
+        mapping: dict[str, str] = {}
+        if isinstance(supplied, dict):
+            for field, header in supplied.items():
+                if field in CSV_FIELD_ALIASES and header in headers:
+                    mapping[field] = header
+        for field, aliases in CSV_FIELD_ALIASES.items():
+            if field in mapping:
+                continue
+            for alias in aliases:
+                matched = normalized_headers.get(cls._header_key(alias))
+                if matched:
+                    mapping[field] = matched
+                    break
+        return mapping
+
+    @staticmethod
+    def _episode_indexes(conn: Any) -> tuple[set[int], dict[tuple[str, str], list[int]], dict[str, list[int]]]:
+        conn.row_factory = __import__("sqlite3").Row
+        rows = conn.execute(
+            "SELECT id, guest_name, episode_title, published_title FROM episodes"
+        ).fetchall()
+        valid_ids = {int(row["id"]) for row in rows}
+        by_title_guest: dict[tuple[str, str], list[int]] = {}
+        by_title: dict[str, list[int]] = {}
+        for row in rows:
+            guest_key = GrowthIntelligence._identity_key(row["guest_name"])
+            titles = {
+                GrowthIntelligence._identity_key(row["episode_title"]),
+                GrowthIntelligence._identity_key(row["published_title"]),
+            } - {""}
+            for title_key in titles:
+                by_title.setdefault(title_key, []).append(int(row["id"]))
+                if guest_key:
+                    by_title_guest.setdefault((title_key, guest_key), []).append(int(row["id"]))
+        return valid_ids, by_title_guest, by_title
+
+    @staticmethod
+    def _normalize_observation(
+        row: dict[str, Any],
+        *,
+        valid_episode_ids: set[int],
+    ) -> tuple[dict[str, Any], tuple[Any, ...], str]:
+        metric = _text(row.get("metric_name"))
+        if metric not in CANONICAL_METRICS:
+            raise GrowthIntelligenceError(f"Unsupported metric_name: {metric or 'missing'}.")
+        episode_id = row.get("episode_id")
+        try:
+            episode_id = int(episode_id) if episode_id not in (None, "") else None
+        except (TypeError, ValueError) as exc:
+            raise GrowthIntelligenceError("episode_id must be a numeric database id.") from exc
+        if episode_id is not None and episode_id not in valid_episode_ids:
+            raise GrowthIntelligenceError("episode_id does not identify an existing episode.")
+        provider = _text(row.get("provider")).lower()
+        source_reference = _text(row.get("source_reference"))
+        if not provider or not source_reference:
+            raise GrowthIntelligenceError("provider and source_reference are required.")
+        scope = _text(row.get("traffic_scope") or "all").lower()
+        if scope not in {"organic", "paid", "all", "unknown"}:
+            raise GrowthIntelligenceError("traffic_scope must be organic, paid, all, or unknown.")
+        if metric == "organic_reach" and scope != "organic":
+            raise GrowthIntelligenceError("organic_reach must use organic traffic_scope.")
+        if metric == "paid_reach" and scope != "paid":
+            raise GrowthIntelligenceError("paid_reach must use paid traffic_scope.")
+        start = _iso_date(row.get("period_start"), "period_start")
+        end = _iso_date(row.get("period_end"), "period_end")
+        if end < start:
+            raise GrowthIntelligenceError("period_end cannot be before period_start.")
+        value = _metric_value(metric, row.get("metric_value"))
+        fingerprint = json.dumps([episode_id, provider, metric, scope, start, end], separators=(",", ":"))
+        observation_key = hashlib.sha256(fingerprint.encode()).hexdigest()
+        key = _text(row.get("idempotency_key")) or observation_key
+        source_hash = hashlib.sha256(source_reference.encode()).hexdigest()
+        normalized = {
+            "episode_id": episode_id,
+            "provider": provider,
+            "metric_name": metric,
+            "metric_value": value,
+            "traffic_scope": scope,
+            "period_start": start,
+            "period_end": end,
+            "source_reference": source_reference,
+        }
+        prepared = (
+            episode_id, provider, metric, value, CANONICAL_METRICS[metric], scope, start, end,
+            source_reference, source_hash, observation_key, key,
+        )
+        return normalized, prepared, observation_key
+
+    def preview_csv(
+        self,
+        csv_text: str,
+        *,
+        provider: str = "",
+        source_reference: str = "",
+        mapping: Any = None,
+    ) -> dict[str, Any]:
+        """Parse and validate an analytics CSV without mutating the database."""
+        if not isinstance(csv_text, str) or not csv_text.strip():
+            raise GrowthIntelligenceError("Choose a non-empty CSV file to preview.")
+        if len(csv_text.encode("utf-8")) > 2_000_000:
+            raise GrowthIntelligenceError("Analytics CSV files are limited to 2 MB.")
+        try:
+            reader = csv.DictReader(StringIO(csv_text.lstrip("\ufeff")))
+            headers = [str(item or "").strip() for item in (reader.fieldnames or [])]
+            raw_rows = list(reader)
+        except csv.Error as exc:
+            raise GrowthIntelligenceError("The analytics file is not valid CSV.") from exc
+        if not headers:
+            raise GrowthIntelligenceError("The analytics CSV needs a header row.")
+        if not raw_rows or len(raw_rows) > 500:
+            raise GrowthIntelligenceError("Provide between 1 and 500 analytics rows.")
+        resolved_mapping = self._resolve_csv_mapping(headers, mapping)
+        wide_metric_headers = {
+            metric: header
+            for metric in CANONICAL_METRICS
+            for header in headers
+            if self._header_key(header) in {self._header_key(metric), self._header_key(metric.replace("_", " "))}
+        }
+        long_format = "metric_name" in resolved_mapping and "metric_value" in resolved_mapping
+        missing = [field for field in ("period_start", "period_end") if field not in resolved_mapping]
+        if not long_format and not wide_metric_headers:
+            missing.extend(("metric_name", "metric_value"))
+        if missing:
+            raise GrowthIntelligenceError(
+                "Map the required CSV columns before previewing: " + ", ".join(missing) + "."
+            )
+
+        default_provider = _text(provider).lower()
+        default_reference = _text(source_reference)
+        preview_rows: list[dict[str, Any]] = []
+        ready: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        with connect_database(self.db_path) as conn:
+            valid_ids, by_title_guest, by_title = self._episode_indexes(conn)
+            existing = {
+                str(row[0]) for row in conn.execute("SELECT observation_key FROM growth_metric_observations").fetchall()
+            }
+            seen: set[str] = set()
+
+            def process_candidate(candidate: dict[str, Any], row_number: int) -> None:
+                candidate["provider"] = _text(candidate.get("provider")) or default_provider
+                candidate["source_reference"] = _text(candidate.get("source_reference")) or default_reference
+                metric = _text(candidate.get("metric_name"))
+                if not _text(candidate.get("traffic_scope")):
+                    candidate["traffic_scope"] = "organic" if metric == "organic_reach" else "paid" if metric == "paid_reach" else "all"
+
+                row_warnings: list[str] = []
+                if candidate.get("episode_id") in (None, ""):
+                    title_key = self._identity_key(candidate.get("episode_title"))
+                    guest_key = self._identity_key(candidate.get("guest_name"))
+                    matches = by_title_guest.get((title_key, guest_key), []) if title_key and guest_key else []
+                    if not matches and title_key:
+                        matches = by_title.get(title_key, [])
+                    unique_matches = sorted(set(matches))
+                    if len(unique_matches) == 1:
+                        candidate["episode_id"] = unique_matches[0]
+                    elif len(unique_matches) > 1:
+                        row_warnings.append("Episode title is ambiguous; this metric will remain unlinked.")
+                    elif title_key or guest_key:
+                        row_warnings.append("No unique episode match; this metric will remain unlinked.")
+
+                try:
+                    normalized, _prepared, observation_key = self._normalize_observation(
+                        candidate, valid_episode_ids=valid_ids
+                    )
+                    duplicate = observation_key in existing or observation_key in seen
+                    seen.add(observation_key)
+                    status = "duplicate" if duplicate else "ready"
+                    if duplicate:
+                        row_warnings.append("This observation already exists or is repeated in the file.")
+                    preview_rows.append({
+                        "row": row_number,
+                        "status": status,
+                        "observation": normalized,
+                        "warnings": row_warnings,
+                        "errors": [],
+                    })
+                    if not duplicate:
+                        ready.append(normalized)
+                    warnings.extend(row_warnings)
+                except GrowthIntelligenceError as exc:
+                    preview_rows.append({
+                        "row": row_number,
+                        "status": "invalid",
+                        "observation": candidate,
+                        "warnings": row_warnings,
+                        "errors": [str(exc)],
+                    })
+
+            for row_number, raw in enumerate(raw_rows, 2):
+                base_candidate = {
+                    field: raw.get(header, "")
+                    for field, header in resolved_mapping.items()
+                    if field not in {"metric_name", "metric_value"}
+                }
+                if long_format:
+                    process_candidate({
+                        **base_candidate,
+                        "metric_name": raw.get(resolved_mapping["metric_name"], ""),
+                        "metric_value": raw.get(resolved_mapping["metric_value"], ""),
+                    }, row_number)
+                else:
+                    for metric, header in wide_metric_headers.items():
+                        if _text(raw.get(header)):
+                            process_candidate({
+                                **base_candidate,
+                                "metric_name": metric,
+                                "metric_value": raw.get(header, ""),
+                            }, row_number)
+
+        if len(preview_rows) > 500:
+            raise GrowthIntelligenceError(
+                "This CSV expands to more than 500 observations. Split it into smaller files before importing."
+            )
+
+        invalid_count = sum(item["status"] == "invalid" for item in preview_rows)
+        duplicate_count = sum(item["status"] == "duplicate" for item in preview_rows)
+        linked_count = sum(item.get("observation", {}).get("episode_id") is not None for item in preview_rows if item["status"] != "invalid")
+        metrics = sorted({item["metric_name"] for item in ready})
+        missing_mfs = [metric for metric in MFS_COMPONENTS if metric not in metrics]
+        return {
+            "headers": headers,
+            "mapping": resolved_mapping,
+            "format": "long" if long_format else "wide",
+            "summary": {
+                "submitted": len(preview_rows),
+                "ready": len(ready),
+                "invalid": invalid_count,
+                "duplicates": duplicate_count,
+                "linked_to_episode": linked_count,
+                "unlinked": max(len(preview_rows) - invalid_count - linked_count, 0),
+            },
+            "quality": {
+                "metrics_present": metrics,
+                "missing_mfs_metrics": missing_mfs,
+                "providers": sorted({item["provider"] for item in ready}),
+                "period_start": min((item["period_start"] for item in ready), default=None),
+                "period_end": max((item["period_end"] for item in ready), default=None),
+                "warnings": sorted(set(warnings)),
+            },
+            "rows": preview_rows,
+            "observations": ready,
+        }
+
     def record_observations(self, rows: Iterable[dict[str, Any]], *, actor: str, correlation_id: str = "") -> dict[str, Any]:
         rows = list(rows)
         if not rows or len(rows) > 500:
@@ -75,34 +346,10 @@ class GrowthIntelligence:
         with connect_database(self.db_path) as conn:
             valid_episode_ids = {int(row[0]) for row in conn.execute("SELECT id FROM episodes").fetchall()}
             for row in rows:
-                metric = _text(row.get("metric_name"))
-                if metric not in CANONICAL_METRICS:
-                    raise GrowthIntelligenceError(f"Unsupported metric_name: {metric or 'missing'}.")
-                episode_id = row.get("episode_id")
-                episode_id = int(episode_id) if episode_id not in (None, "") else None
-                if episode_id is not None and episode_id not in valid_episode_ids:
-                    raise GrowthIntelligenceError("episode_id does not identify an existing episode.")
-                provider = _text(row.get("provider")).lower()
-                source_reference = _text(row.get("source_reference"))
-                if not provider or not source_reference:
-                    raise GrowthIntelligenceError("provider and source_reference are required.")
-                scope = _text(row.get("traffic_scope") or "all").lower()
-                if scope not in {"organic", "paid", "all", "unknown"}:
-                    raise GrowthIntelligenceError("traffic_scope must be organic, paid, all, or unknown.")
-                if metric == "organic_reach" and scope != "organic":
-                    raise GrowthIntelligenceError("organic_reach must use organic traffic_scope.")
-                if metric == "paid_reach" and scope != "paid":
-                    raise GrowthIntelligenceError("paid_reach must use paid traffic_scope.")
-                start = _iso_date(row.get("period_start"), "period_start")
-                end = _iso_date(row.get("period_end"), "period_end")
-                if end < start:
-                    raise GrowthIntelligenceError("period_end cannot be before period_start.")
-                value = _metric_value(metric, row.get("metric_value"))
-                fingerprint = json.dumps([episode_id, provider, metric, scope, start, end], separators=(",", ":"))
-                observation_key = hashlib.sha256(fingerprint.encode()).hexdigest()
-                key = _text(row.get("idempotency_key")) or observation_key
-                source_hash = hashlib.sha256(source_reference.encode()).hexdigest()
-                prepared.append((episode_id, provider, metric, value, CANONICAL_METRICS[metric], scope, start, end, source_reference, source_hash, observation_key, key, actor, correlation_id))
+                _normalized, values, _observation_key = self._normalize_observation(
+                    row, valid_episode_ids=valid_episode_ids
+                )
+                prepared.append((*values, actor, correlation_id))
             before = conn.total_changes
             conn.executemany(
                 """INSERT OR IGNORE INTO growth_metric_observations
@@ -146,6 +393,17 @@ class GrowthIntelligence:
             rows = [dict(row) for row in conn.execute("SELECT * FROM growth_metric_observations ORDER BY period_end DESC, id DESC").fetchall()]
             episodes = [dict(row) for row in conn.execute("SELECT * FROM episodes ORDER BY release_date DESC, id DESC").fetchall()]
             experiments = [dict(row) for row in conn.execute("SELECT * FROM growth_experiments ORDER BY updated_at DESC, id DESC").fetchall()]
+            import_history = [dict(row) for row in conn.execute(
+                """SELECT COALESCE(NULLIF(correlation_id, ''), source_hash) AS batch_key,
+                          MAX(source_reference) AS source_reference, MAX(provider) AS provider,
+                          MAX(actor) AS actor, MAX(imported_at) AS imported_at,
+                          COUNT(*) AS observation_count,
+                          COUNT(DISTINCT episode_id) AS episode_count,
+                          MIN(period_start) AS period_start, MAX(period_end) AS period_end
+                   FROM growth_metric_observations
+                   GROUP BY COALESCE(NULLIF(correlation_id, ''), source_hash)
+                   ORDER BY MAX(imported_at) DESC LIMIT 12"""
+            ).fetchall()]
         by_episode: dict[int, list[dict[str, Any]]] = {}
         for row in rows:
             if row["episode_id"] is not None:
@@ -198,6 +456,7 @@ class GrowthIntelligence:
             "episode_scores": sorted(episode_scores, key=lambda item: (item["mfs"]["score"] is None, -(item["mfs"]["score"] or 0))),
             "editorial_mix": editorial_mix,
             "experiments": experiments,
+            "import_history": import_history,
             "metric_definitions": CANONICAL_METRICS,
         }
 

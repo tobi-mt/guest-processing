@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260915.3" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260922.2" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260923.2" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260923.1" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -305,6 +305,78 @@
           </div>
 
           <div class="workspace-panel" data-planning-panel="scheduling_intelligence">
+          <section class="operations-tool scheduling-decision-center" aria-labelledby="decision-center-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Decision center</p>
+                <h2 id="decision-center-title">What needs attention now?</h2>
+                <p class="tool-copy">Review trusted exceptions, compare the strongest candidates, and import evidence without hunting through administration tools.</p>
+              </div>
+              <button id="exception-center-refresh" type="button" class="ghost-button">Refresh</button>
+            </div>
+            <div id="exception-center" class="exception-center" aria-live="polite">
+              <p>Loading exceptions…</p>
+            </div>
+            <div id="outcome-review-queue" class="outcome-review-queue" aria-live="polite"></div>
+            <nav class="decision-shortcuts" aria-label="Scheduling intelligence shortcuts">
+              <a class="secondary-button" href="#analytics-import">Import analytics</a>
+              <a class="secondary-button" href="#recommendation-comparison">Compare recommendations</a>
+            </nav>
+          </section>
+
+          <section id="analytics-import" class="operations-tool analytics-import-panel" aria-labelledby="analytics-import-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Verified evidence</p>
+                <h2 id="analytics-import-title">Guided analytics import</h2>
+                <p class="tool-copy">Preview mapping, episode links, invalid values, and duplicates before anything is written.</p>
+              </div>
+            </div>
+            <form id="analytics-import-form" class="guest-form">
+              <label class="full-width">Analytics CSV
+                <input id="analytics-file" name="file" type="file" accept=".csv,text/csv" required />
+              </label>
+              <label>Provider
+                <select name="provider" required>
+                  <option value="">Choose provider</option>
+                  <option value="youtube">YouTube</option>
+                  <option value="spotify">Spotify</option>
+                  <option value="apple_podcasts">Apple Podcasts</option>
+                  <option value="podcast_host">Podcast host</option>
+                  <option value="website">Website</option>
+                  <option value="email">Email platform</option>
+                  <option value="manual">Other verified source</option>
+                </select>
+              </label>
+              <label>Source reference
+                <input name="source_reference" required placeholder="Filled from the selected filename" />
+              </label>
+              <details id="analytics-mapping-panel" class="full-width analytics-mapping-panel" open>
+                <summary>Review column mapping</summary>
+                <p class="field-hint">Period dates are required. Use metric-name/value columns, or keep canonical metrics such as organic_reach as separate columns. Episode ID is safest; otherwise a unique episode title and guest name can be linked.</p>
+                <div id="analytics-mapping-fields" class="analytics-mapping-grid"></div>
+              </details>
+              <div class="form-actions full-width">
+                <button id="analytics-preview-button" type="submit" class="primary-button">Preview Data Quality</button>
+                <button id="analytics-import-button" type="button" class="secondary-button" disabled>Import Valid Rows</button>
+              </div>
+            </form>
+            <p id="analytics-import-message" class="message" aria-live="polite"></p>
+            <div id="analytics-preview" class="analytics-preview hidden" aria-live="polite"></div>
+            <div id="analytics-import-history" class="analytics-import-history" aria-live="polite">
+              <p>Loading recent imports…</p>
+            </div>
+          </section>
+
+          <details class="operations-tool scheduling-admin-hub">
+            <summary>
+              <div>
+                <p class="eyebrow">Administration &amp; safeguards</p>
+                <h2>Data, policies, imports, and exports</h2>
+                <p class="tool-copy">Open these less-frequent controls when maintaining the intelligence system.</p>
+              </div>
+            </summary>
+            <div class="operations-tool-body scheduling-admin-stack">
           <section class="operations-tool learning-console" aria-labelledby="learning-system-title">
             <div class="learning-console-header">
               <div class="learning-console-heading">
@@ -337,17 +409,8 @@
           </details>
 
           <details class="operations-tool">
-            <summary><div><p class="eyebrow">Source-backed evidence</p><h2>Import Growth Observations</h2><p class="tool-copy">Append canonical metrics with an episode, period, traffic scope, and source reference.</p></div></summary>
+            <summary><div><p class="eyebrow">Learning experiments</p><h2>Register a measured experiment</h2><p class="tool-copy">Define a governed comparison after verified evidence is available.</p></div></summary>
             <div class="operations-tool-body">
-              <form id="growth-observation-form" class="guest-form">
-                <label class="full-width">Observation JSON
-                  <textarea name="observations" rows="10" required placeholder='[{"episode_id": 42, "provider": "youtube", "metric_name": "organic_reach", "metric_value": 1200, "traffic_scope": "organic", "period_start": "2026-09-01", "period_end": "2026-09-07", "source_reference": "youtube-export-2026-09-08.csv"}]'></textarea>
-                  <small class="field-hint">Imports are append-only and idempotent. One request accepts up to 500 observations.</small>
-                </label>
-                <div class="form-actions full-width"><button type="submit" class="secondary-button">Validate and Import</button></div>
-              </form>
-              <p id="growth-observation-message" class="message" aria-live="polite"></p>
-              <hr />
               <form id="growth-experiment-form" class="guest-form">
                 <label>Name<input name="name" required /></label>
                 <label>Primary Metric<select name="primary_metric" required><option value="organic_reach">Organic reach</option><option value="downloads_7d">7-day downloads</option><option value="conversion_rate_pct">Conversion rate</option><option value="return_rate_pct">Return rate</option></select></label>
@@ -456,6 +519,8 @@
               <p id="planning-export-message" class="message" aria-live="polite"></p>
             </div>
           </details>
+            </div>
+          </details>
           </div>
         </section>
 
@@ -472,6 +537,16 @@
             </div>
           </div>
           <div id="planning-ai-copilot-status" class="operations-preview ai-copilot-status"></div>
+
+          <section id="recommendation-comparison" class="recommendation-comparison" aria-labelledby="recommendation-comparison-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Decision comparison</p>
+                <h3 id="recommendation-comparison-title">Top candidates side by side</h3>
+              </div>
+            </div>
+            <div id="recommendation-comparison-grid"><p>Loading recommendation comparison…</p></div>
+          </section>
 
           <div class="view-presets" id="recommendation-presets">
             <button type="button" class="preset-chip active" data-recommendation-preset="all">All Recommendations</button>
@@ -677,7 +752,9 @@
     </div>
 
     <script src="/static/performance-utils.js?v=20260803.1"></script>
+    <script src="/static/workspace-shell.js?v=20260923.3" defer></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
-    <script src="/static/planning.js?v=20260922.2" defer></script>
+    <script src="/static/planning-intelligence.js?v=20260923.1" defer></script>
+    <script src="/static/planning.js?v=20260923.1" defer></script>
   </body>
 </html>

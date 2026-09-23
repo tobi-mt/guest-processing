@@ -16,8 +16,7 @@ const askSyncBreakdown = document.getElementById("ask-sync-breakdown");
 const askSyncAmbiguous = document.getElementById("ask-sync-ambiguous");
 const planningExportMessage = document.getElementById("planning-export-message");
 const planningWeeklySystem = document.getElementById("planning-weekly-system");
-const growthObservationForm = document.getElementById("growth-observation-form");
-const growthObservationMessage = document.getElementById("growth-observation-message");
+const growthObservationMessage = document.getElementById("analytics-import-message");
 const growthIntelligenceDashboard = document.getElementById("growth-intelligence-dashboard");
 const growthIntelligenceRefresh = document.getElementById("growth-intelligence-refresh");
 const growthExperimentForm = document.getElementById("growth-experiment-form");
@@ -123,6 +122,8 @@ function renderLearningStatus(payload) {
   const active = payload.active_policy || {};
   const settings = payload.settings || {};
   const counts = payload.counts || {};
+  const outcomes = payload.outcomes || {};
+  const outcomeTypes = outcomes.by_type || {};
   const monitoring = payload.monitoring || {};
   const candidates = (payload.policies || []).filter((policy) => policy.status === "draft");
   const automationLocked = !settings.automation_enabled || Boolean(settings.kill_switch);
@@ -153,7 +154,7 @@ function renderLearningStatus(payload) {
       <article class="learning-metric-card">
         <span class="learning-card-label">Evidence</span>
         <strong>${Number(counts.outcomes || 0)}</strong>
-        <small>${Number(counts.observations || 0)} observations · ${Number(counts.outcomes || 0)} linked outcomes</small>
+        <small>${Number(counts.observations || 0)} observations · ${Number(outcomes.linked || 0)} linked · ${Number(outcomeTypes.performance || 0)} performance</small>
       </article>
       <article class="learning-metric-card">
         <span class="learning-card-label">Automation</span>
@@ -2828,6 +2829,22 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
               promotion_status: episode.promotion_status,
             })
           ),
+          recommendation_decision: {
+            idempotency_key: recommendationRequestKey(),
+            recommendation: {
+              id: episode.id,
+              priority_score: episode.priority_score,
+              recommended_release_date: episode.recommended_release_date,
+              recommendation_reason: episode.recommendation_reason,
+              promotion_readiness: episode.promotion_readiness,
+              guest_research: episode.guest_research,
+              watchouts: episode.watchouts,
+              production_readiness_forecast: episode.production_readiness_forecast,
+              audience_fatigue: episode.audience_fatigue,
+              calendar_capacity: episode.calendar_capacity,
+              time_sensitive_event_alignment: episode.time_sensitive_event_alignment,
+            },
+          },
         };
         const savedEpisode = await fetchJSON(`/api/episodes/${episode.id}`, {
           method: "POST",
@@ -3041,7 +3058,9 @@ function renderPlanning() {
   renderWeeklySystemPanel(latestPlanningPayload.weekly_system);
   renderAiCopilotStatus(latestPlanningPayload.ai_copilot_status);
   renderReleaseWorkspace(episodes);
-  renderRecommendations(filterRecommendations(recommendations), recommendations.length, episodeNumberMap);
+  const filteredRecommendations = filterRecommendations(recommendations);
+  window.PlanningIntelligence?.renderRecommendationComparison(filteredRecommendations);
+  renderRecommendations(filteredRecommendations, recommendations.length, episodeNumberMap);
   renderRejectedRecommendations(latestPlanningPayload.rejected_recommendations || []);
   renderEpisodes(filterEpisodes(episodes), episodes.length, episodeNumberMap);
 }
@@ -3697,20 +3716,9 @@ learningRefresh?.addEventListener("click", () => {
 growthIntelligenceRefresh?.addEventListener("click", () => {
   loadGrowthIntelligence().catch((error) => setMessage(growthObservationMessage, error.message, "error"));
 });
-growthObservationForm?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = growthObservationForm.querySelector("button[type='submit']");
-  try {
-    const observations = JSON.parse(growthObservationForm.elements.observations.value);
-    button.disabled = true;
-    const result = await fetchJSON("/api/growth-intelligence/observations", {method: "POST", body: JSON.stringify({observations})});
-    setMessage(growthObservationMessage, `Imported ${result.inserted}; skipped ${result.duplicates} duplicate observations.`, "success");
-    await loadGrowthIntelligence();
-  } catch (error) {
-    setMessage(growthObservationMessage, error instanceof SyntaxError ? "Observation JSON is invalid." : error.message, "error");
-  } finally {
-    button.disabled = false;
-  }
+window.addEventListener("growth-intelligence-changed", () => {
+  loadGrowthIntelligence().catch((error) => setMessage(growthObservationMessage, error.message, "error"));
+  loadLearningStatus().catch((error) => setMessage(learningMessage, error.message, "error"));
 });
 growthExperimentForm?.addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -28,6 +28,7 @@ from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.db_connection import connect_database
 from guest_database_manager.email_manager import EmailManager
+from guest_database_manager.exception_center import build_exception_center
 from guest_database_manager.episode_planner import (
     build_episode_copy_assist,
     build_promotion_readiness,
@@ -81,6 +83,7 @@ from guest_database_manager.recommendation_learning import (
     apply_active_policy,
     extract_features,
 )
+from guest_database_manager.workspace_intelligence import build_personal_briefing, search_workspace
 
 # Import new AI assistant features
 try:
@@ -753,10 +756,71 @@ class GuestWebService:
         observations = payload.get("observations")
         if not isinstance(observations, list):
             raise GrowthIntelligenceError("observations must be a list.")
-        return self.growth_intelligence.record_observations(
+        result = self.growth_intelligence.record_observations(
             observations,
             actor=actor,
             correlation_id=_normalize_text(payload.get("correlation_id")),
+        )
+        learned = 0
+        if result.get("inserted"):
+            for item in self.growth_intelligence.dashboard().get("episode_scores", []):
+                episode_id = int(item.get("episode_id") or 0)
+                mfs = item.get("mfs") or {}
+                episode = self.database.get_episode_by_id(episode_id) if episode_id else None
+                if not episode or _normalize_text(episode.get("release_status")).lower() != "released":
+                    continue
+                if mfs.get("status") != "ready" or mfs.get("score") is None:
+                    continue
+                try:
+                    self.recommendation_learning.record_outcome(
+                        episode_id,
+                        outcome_type="performance",
+                        value=max(0.0, min(1.0, float(mfs["score"]) / 100.0)),
+                        metadata={
+                            "mirror_fan_score": mfs.get("score"),
+                            "components": mfs.get("components") or {},
+                            "period_start": mfs.get("period_start"),
+                            "period_end": mfs.get("period_end"),
+                        },
+                        actor=actor,
+                        source="growth_intelligence_import",
+                        occurred_at=_normalize_text(mfs.get("period_end")),
+                        idempotency_key=f"growth-mfs:{episode_id}:{mfs.get('period_start')}:{mfs.get('period_end')}",
+                    )
+                    learned += 1
+                except (LearningError, ValueError):
+                    logger.warning("Could not link growth outcome for episode_id=%s", episode_id)
+        return {**result, "learning_outcomes": learned}
+
+    def preview_growth_observations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.growth_intelligence.preview_csv(
+            payload.get("csv_text"),
+            provider=_normalize_text(payload.get("provider")),
+            source_reference=_normalize_text(payload.get("source_reference")),
+            mapping=payload.get("mapping"),
+        )
+
+    def get_exception_center(self) -> Dict[str, Any]:
+        action_queue = self._build_action_queue()
+        growth = self.get_growth_intelligence()
+        operations_alerts = self._build_operations_alerts(self.database.list_interviews())
+        return build_exception_center(
+            self.db_path, action_queue=action_queue, growth=growth,
+            operations_alerts=operations_alerts,
+        )
+
+    def search_workspace(self, query: str) -> Dict[str, Any]:
+        action_queue = self._build_action_queue()
+        exceptions = self.get_exception_center()
+        return search_workspace(
+            self.db_path, query, action_queue=action_queue, exceptions=exceptions,
+        )
+
+    def get_personal_briefing(self, *, username: str, window: str) -> Dict[str, Any]:
+        action_queue = self._build_action_queue()
+        exceptions = self.get_exception_center()
+        return build_personal_briefing(
+            username=username, action_queue=action_queue, exceptions=exceptions, window=window,
         )
 
     def create_growth_experiment(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
@@ -4596,6 +4660,34 @@ class GuestWebService:
                 except sqlite3.Error:
                     pass
         self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
+        decision = payload.get("recommendation_decision")
+        if normalized_release_status == "scheduled" and isinstance(decision, dict):
+            recommendation = decision.get("recommendation") if isinstance(decision.get("recommendation"), dict) else {}
+            request_key = _normalize_text(decision.get("idempotency_key")) or str(uuid4())
+            snapshot = {**recommendation, **episode, "id": episode_id}
+            try:
+                observed = self.recommendation_learning.observe(
+                    [snapshot], actor="operator", correlation_id=request_key
+                )
+                self.recommendation_learning.record_outcome(
+                    episode_id,
+                    outcome_type="accepted",
+                    value=None,
+                    metadata={"recommended_release_date": recommendation.get("recommended_release_date")},
+                    actor="operator",
+                    source="scheduling_intelligence",
+                    occurred_at="",
+                    idempotency_key=f"recommendation-accepted:{request_key}",
+                )
+                episode = dict(episode)
+                episode["learning_capture"] = {
+                    "status": "recorded",
+                    "policy_version": observed.get("policy_version"),
+                }
+            except (LearningError, ValueError) as exc:
+                logger.warning("Recommendation acceptance was not linked for episode_id=%s: %s", episode_id, exc)
+                episode = dict(episode)
+                episode["learning_capture"] = {"status": "not_recorded"}
         return episode
 
     def _renumber_future_scheduled_episodes(self) -> None:
@@ -7163,6 +7255,33 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, self.service.get_growth_intelligence())
             return
 
+        if request_path == "/api/exceptions":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.get_exception_center())
+            return
+
+        if request_path == "/api/search":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            query = self._query_params(self.path)
+            self._send_json(HTTPStatus.OK, self.service.search_workspace(query.get("q", "")))
+            return
+
+        if request_path == "/api/personal-briefing":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            query = self._query_params(self.path)
+            claims = self._session_claims() or {}
+            self._send_json(HTTPStatus.OK, self.service.get_personal_briefing(
+                username=str(claims.get("sub") or "operator"),
+                window=query.get("window", "daily"),
+            ))
+            return
+
         if request_path == "/api/planning/ai-copilot":
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -7536,18 +7655,20 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, result)
             return
 
-        if self.path in {"/api/growth-intelligence/observations", "/api/growth-intelligence/experiments"}:
+        if self.path in {"/api/growth-intelligence/preview", "/api/growth-intelligence/observations", "/api/growth-intelligence/experiments"}:
             payload = self._read_json_payload()
             actor = str((self._session_claims() or {}).get("sub") or "operator")
             try:
-                if self.path.endswith("/observations"):
+                if self.path.endswith("/preview"):
+                    result = self.service.preview_growth_observations(payload)
+                elif self.path.endswith("/observations"):
                     result = self.service.record_growth_observations(payload, actor=actor)
                 else:
                     result = self.service.create_growth_experiment(payload, actor=actor)
             except GrowthIntelligenceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
-            self._send_json(HTTPStatus.CREATED, result)
+            self._send_json(HTTPStatus.OK if self.path.endswith("/preview") else HTTPStatus.CREATED, result)
             return
 
         if self.path == "/api/availability":

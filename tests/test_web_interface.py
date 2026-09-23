@@ -386,6 +386,87 @@ def test_unified_action_queue_prioritizes_cross_workspace_next_actions(monkeypat
     assert all("password" not in member for member in members)
 
 
+def test_using_recommended_slot_records_audited_positive_learning_evidence(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode({
+        "guest_name": "Learning Guest",
+        "episode_title": "Learning Episode",
+        "production_status": "ready",
+        "promotion_status": "ready",
+    })
+
+    scheduled = service.update_episode(episode["id"], {
+        **episode,
+        "release_status": "scheduled",
+        "release_date": "2026-11-03T05:00",
+        "enforce_readiness": True,
+        "recommendation_decision": {
+            "idempotency_key": "accepted-recommendation-1",
+            "recommendation": {
+                "priority_score": 88,
+                "recommended_release_date": "2026-11-03T05:00",
+                "promotion_readiness": {"score": 100},
+                "watchouts": [],
+            },
+        },
+    })
+
+    assert scheduled["learning_capture"]["status"] == "recorded"
+    with sqlite3.connect(temp_db.db_path) as conn:
+        observation = conn.execute(
+            "SELECT episode_id, correlation_id FROM recommendation_observations WHERE episode_id = ?",
+            (episode["id"],),
+        ).fetchone()
+        outcome = conn.execute(
+            "SELECT outcome_type, value, idempotency_key FROM recommendation_outcomes WHERE episode_id = ?",
+            (episode["id"],),
+        ).fetchone()
+    assert observation == (episode["id"], "accepted-recommendation-1")
+    assert outcome == ("accepted", 0.7, "recommendation-accepted:accepted-recommendation-1")
+
+
+def test_growth_import_links_released_performance_to_prior_recommendation(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode({
+        "guest_name": "Outcome Guest",
+        "episode_title": "Outcome Episode",
+        "release_status": "released",
+        "production_status": "released",
+        "promotion_status": "released",
+        "release_date": "2026-09-01",
+    })
+    service.recommendation_learning.observe(
+        [{**episode, "priority_score": 82, "promotion_readiness": {"score": 100}}],
+        actor="producer",
+        correlation_id="outcome-recommendation-1",
+    )
+    common = {
+        "episode_id": episode["id"],
+        "provider": "youtube",
+        "traffic_scope": "all",
+        "period_start": "2026-09-01",
+        "period_end": "2026-09-07",
+        "source_reference": "week-one.csv",
+    }
+    observations = [
+        {**common, "metric_name": "organic_reach", "metric_value": 1800, "traffic_scope": "organic"},
+        {**common, "metric_name": "consumption_depth_pct", "metric_value": 55},
+        {**common, "metric_name": "conversion_rate_pct", "metric_value": 18},
+        {**common, "metric_name": "return_rate_pct", "metric_value": 32},
+    ]
+
+    result = service.record_growth_observations({"observations": observations}, actor="producer")
+
+    assert result["learning_outcomes"] == 1
+    with sqlite3.connect(temp_db.db_path) as conn:
+        outcome = conn.execute(
+            "SELECT outcome_type, source, observation_id FROM recommendation_outcomes WHERE episode_id = ?",
+            (episode["id"],),
+        ).fetchone()
+    assert outcome[0:2] == ("performance", "growth_intelligence_import")
+    assert outcome[2] is not None
+
+
 def test_action_queue_omits_guest_intake_after_any_downstream_workflow(temp_db):
     service = GuestWebService(temp_db.db_path)
     released_guest = service.create_guest(

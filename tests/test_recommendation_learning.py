@@ -51,7 +51,14 @@ def test_observation_and_outcome_are_idempotent_and_audited(temp_db):
     assert first["recorded"] == 1
     assert duplicate["recorded"] == 0
     assert outcome["id"] == repeated["id"]
-    assert learning.status()["counts"]["outcomes"] == 1
+    status = learning.status()
+    assert status["counts"]["outcomes"] == 1
+    assert status["outcomes"] == {
+        "by_type": {"released": 1},
+        "linked": 1,
+        "unlinked": 0,
+        "latest_at": "2026-01-01T12:00:00Z",
+    }
     assert any(event["event_type"] == "recommendation_outcome_recorded" for event in temp_db.list_audit_events("recommendation_policy", "system"))
 
 

@@ -104,18 +104,40 @@ def test_growth_intelligence_api_requires_auth_csrf_and_is_idempotent(monkeypatc
     }
     with running_server(temp_db.db_path) as base_url:
         assert requests.get(f"{base_url}/api/growth-intelligence", timeout=5).status_code == 401
+        assert requests.get(f"{base_url}/api/exceptions", timeout=5).status_code == 401
         session = requests.Session()
         assert login(session, base_url).status_code == 200
+        assert session.post(
+            f"{base_url}/api/growth-intelligence/preview",
+            json={"csv_text": "metric,value,start,end\norganic_reach,900,2026-09-01,2026-09-07"},
+            timeout=5,
+        ).status_code == 403
         assert session.post(f"{base_url}/api/growth-intelligence/observations", json={"observations": [observation]}, timeout=5).status_code == 403
         csrf = {"X-CSRF-Token": session.cookies["dashboard_csrf"]}
+        preview = session.post(
+            f"{base_url}/api/growth-intelligence/preview",
+            json={
+                "csv_text": "episode_id,metric,value,start,end\n"
+                f"{episode_id},organic_reach,900,2026-09-01,2026-09-07",
+                "provider": "youtube",
+                "source_reference": "youtube-export.csv",
+            },
+            headers=csrf,
+            timeout=5,
+        )
         imported = session.post(f"{base_url}/api/growth-intelligence/observations", json={"observations": [observation]}, headers=csrf, timeout=5)
         duplicate = session.post(f"{base_url}/api/growth-intelligence/observations", json={"observations": [observation]}, headers=csrf, timeout=5)
         dashboard = session.get(f"{base_url}/api/growth-intelligence", timeout=5)
 
+        assert preview.status_code == 200
+        assert preview.json()["summary"]["ready"] == 1
         assert imported.status_code == 201
         assert imported.json()["inserted"] == 1
         assert duplicate.json()["duplicates"] == 1
         assert dashboard.json()["reach"]["organic"] == 900
+        exceptions = session.get(f"{base_url}/api/exceptions", timeout=5)
+        assert exceptions.status_code == 200
+        assert "items" in exceptions.json()
 
         accepted = session.post(
             f"{base_url}/api/guests",

@@ -38,6 +38,9 @@ OUTCOME_LABELS = {
     "delayed": 0.25,
     "cancelled": 0.0,
     "performance": None,
+    "positive": 1.0,
+    "neutral": 0.5,
+    "negative": 0.0,
 }
 
 
@@ -142,8 +145,35 @@ class RecommendationLearning:
                 "SELECT version, parent_version, status, training_summary_json, created_by, approved_by, created_at, approved_at, row_version FROM recommendation_policies ORDER BY id DESC"
             ).fetchall()
             evaluations = conn.execute("SELECT * FROM recommendation_evaluations ORDER BY id DESC LIMIT 10").fetchall()
+            outcome_breakdown = {
+                str(row[0]): int(row[1])
+                for row in conn.execute(
+                    "SELECT outcome_type, COUNT(*) FROM recommendation_outcomes GROUP BY outcome_type"
+                ).fetchall()
+            }
+            unlinked_outcomes = int(conn.execute(
+                "SELECT COUNT(*) FROM recommendation_outcomes WHERE observation_id IS NULL"
+            ).fetchone()[0])
+            latest_outcome_at = conn.execute(
+                "SELECT MAX(occurred_at) FROM recommendation_outcomes"
+            ).fetchone()[0]
             outcome_values = [float(row[0]) for row in conn.execute(
                 "SELECT value FROM recommendation_outcomes ORDER BY occurred_at DESC, id DESC LIMIT 60"
+            ).fetchall()]
+            pending_reviews = [dict(row) for row in conn.execute(
+                """SELECT e.id AS episode_id,
+                          COALESCE(NULLIF(e.published_title, ''), NULLIF(e.episode_title, ''), 'Untitled episode') AS episode_title,
+                          e.guest_name, e.release_date, o.id AS observation_id, o.policy_version
+                   FROM episodes e
+                   JOIN recommendation_observations o ON o.id = (
+                       SELECT MAX(latest.id) FROM recommendation_observations latest
+                       WHERE latest.episode_id = e.id
+                   )
+                   LEFT JOIN recommendation_outcomes r ON r.observation_id = o.id
+                   WHERE LOWER(TRIM(COALESCE(e.release_status, ''))) = 'released'
+                   GROUP BY e.id, o.id
+                   HAVING COUNT(r.id) = 0
+                   ORDER BY date(e.release_date) DESC, e.id DESC LIMIT 12"""
             ).fetchall()]
         recent = outcome_values[:30]
         previous = outcome_values[30:60]
@@ -154,6 +184,13 @@ class RecommendationLearning:
             "active_policy": dict(active) if active else None,
             "settings": dict(settings) if settings else {},
             "counts": {"observations": counts[0], "outcomes": counts[1], "evaluations": counts[2]},
+            "outcomes": {
+                "by_type": outcome_breakdown,
+                "linked": int(counts[1]) - unlinked_outcomes,
+                "unlinked": unlinked_outcomes,
+                "latest_at": latest_outcome_at,
+            },
+            "pending_outcome_reviews": pending_reviews,
             "policies": [{**dict(row), "training_summary": _loads(row["training_summary_json"], {})} for row in policies],
             "evaluations": [{**dict(row), "guardrails": _loads(row["guardrails_json"], {}), "report": _loads(row["report_json"], {})} for row in evaluations],
             "monitoring": {

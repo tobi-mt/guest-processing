@@ -131,3 +131,108 @@ def test_dashboard_reports_editorial_mix_freshness_and_experiments(temp_db):
     assert dashboard["editorial_mix"][0]["actual_share_pct"] == 100.0
     assert experiment["status"] == "draft"
     assert dashboard["experiments"][0]["name"] == "Monday flagship"
+
+
+def test_csv_preview_maps_columns_links_unique_episode_and_does_not_write(temp_db):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": "Amina Hart",
+        "episode_title": "Healing With Courage",
+    })
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    csv_text = "\n".join([
+        "Episode Title,Guest,Metric,Value,Start Date,End Date",
+        "Healing With Courage,Amina Hart,organic_reach,1200,2026-09-01,2026-09-07",
+        "Healing With Courage,Amina Hart,conversion_rate_pct,17.5,2026-09-01,2026-09-07",
+    ])
+
+    preview = intelligence.preview_csv(
+        csv_text,
+        provider="youtube",
+        source_reference="youtube-week-36.csv",
+    )
+
+    assert preview["summary"] == {
+        "submitted": 2,
+        "ready": 2,
+        "invalid": 0,
+        "duplicates": 0,
+        "linked_to_episode": 2,
+        "unlinked": 0,
+    }
+    assert preview["observations"][0]["episode_id"] == episode_id
+    assert preview["observations"][0]["traffic_scope"] == "organic"
+    assert preview["quality"]["missing_mfs_metrics"] == ["consumption_depth_pct", "return_rate_pct"]
+    with sqlite3.connect(temp_db.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM growth_metric_observations").fetchone()[0] == 0
+
+
+def test_csv_preview_flags_invalid_ambiguous_and_duplicate_rows(temp_db):
+    for guest in ("First Guest", "Second Guest"):
+        temp_db.upsert_episode({"guest_name": guest, "episode_title": "Shared Title"})
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    existing = _observation(None, "organic_reach", 100)
+    intelligence.record_observations([existing], actor="producer")
+    csv_text = "\n".join([
+        "title,metric_name,metric_value,period_start,period_end,traffic_scope",
+        "Shared Title,organic_reach,100,2026-09-01,2026-09-07,organic",
+        "Shared Title,conversion_rate_pct,101,2026-09-01,2026-09-07,all",
+    ])
+
+    preview = intelligence.preview_csv(
+        csv_text,
+        provider="youtube",
+        source_reference="retry.csv",
+    )
+
+    assert preview["summary"]["duplicates"] == 1
+    assert preview["summary"]["invalid"] == 1
+    assert preview["summary"]["ready"] == 0
+    assert "ambiguous" in preview["rows"][0]["warnings"][0].lower()
+    assert "cannot exceed 100" in preview["rows"][1]["errors"][0]
+
+
+def test_csv_preview_requires_mappable_required_columns(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+
+    with pytest.raises(GrowthIntelligenceError, match="Map the required CSV columns"):
+        intelligence.preview_csv(
+            "Something,Else\na,b",
+            provider="youtube",
+            source_reference="unknown.csv",
+        )
+
+
+def test_csv_preview_unfolds_wide_canonical_metric_columns(temp_db):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": "Wide Guest",
+        "episode_title": "Wide Analytics",
+    })
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    preview = intelligence.preview_csv(
+        "episode_id,start,end,organic_reach,consumption_depth_pct\n"
+        f"{episode_id},2026-09-01,2026-09-07,1200,48",
+        provider="youtube",
+        source_reference="wide-export.csv",
+    )
+
+    assert preview["format"] == "wide"
+    assert preview["summary"]["ready"] == 2
+    assert {item["metric_name"] for item in preview["observations"]} == {
+        "organic_reach",
+        "consumption_depth_pct",
+    }
+
+
+def test_dashboard_groups_import_history_by_correlation_id(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    intelligence.record_observations(
+        [_observation(None, "organic_reach", 100), _observation(None, "conversion_rate_pct", 10)],
+        actor="producer",
+        correlation_id="batch-42",
+    )
+
+    history = intelligence.dashboard()["import_history"]
+
+    assert history[0]["batch_key"] == "batch-42"
+    assert history[0]["observation_count"] == 2
+    assert history[0]["actor"] == "producer"
