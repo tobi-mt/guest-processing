@@ -48,9 +48,13 @@ dev = [
   "mypy>=1.0.0",
   "build>=0.10.0",
 ]
+collector = [
+  "playwright>=1.55.0",
+]
 
 [project.scripts]
 guest-manager = "guest_database_manager.cli:main"
+mirror-talk-analytics-collector = "guest_database_manager.local_analytics_collector:main"
 
 [tool.hatch.version]
 path = "src/guest_database_manager/__about__.py"

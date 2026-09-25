@@ -265,7 +265,7 @@ def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20260925.2' in html
+    assert 'operations.css?v=20260925.3' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -363,9 +363,14 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
 def test_guided_import_replaces_raw_json_and_exposes_history_and_reviews() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning-intelligence.js").read_text(encoding="utf-8")
+    styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
     assert "Observation JSON" not in html
     assert 'id="analytics-import-history"' in html
     assert 'id="outcome-review-queue"' in html
+    assert "Spotify currently hosts the podcast and its RSS feed" in html
+    assert "Other hosting provider" in html
+    assert "Do not import the same Spotify period twice" in html
+    assert "repeat(auto-fit, minmax(min(100%, 18rem), 1fr))" in styles
     assert "renderImportHistory" in javascript
     assert "renderOutcomeReviews" in javascript
     assert "Audience balance" in javascript
@@ -377,7 +382,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
     assert "planning.js?v=20260925.2" in html
-    assert "operations.css?v=20260925.2" in html
+    assert "operations.css?v=20260925.3" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript

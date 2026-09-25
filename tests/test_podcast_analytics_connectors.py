@@ -6,6 +6,7 @@ import pytest
 
 from guest_database_manager.podcast_analytics_connectors import (
     AnalyticsConnectorError,
+    COLLECTOR_TOKEN_ENV,
     GA4_PROPERTY_ENV,
     GOOGLE_CLIENT_ID_ENV,
     GOOGLE_CLIENT_SECRET_ENV,
@@ -27,6 +28,52 @@ def test_google_connection_requires_production_configuration(temp_db):
     assert connectors.status()["google"]["oauth_configured"] is False
     with pytest.raises(AnalyticsConnectorError, match="not configured"):
         connectors.begin_google(actor="admin", origin="https://example.test")
+
+
+def test_local_collector_keeps_browser_session_local_and_ingests_validated_export(temp_db, monkeypatch):
+    token = "collector-token-with-at-least-thirty-two-characters"
+    monkeypatch.setenv(COLLECTOR_TOKEN_ENV, token)
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+
+    enabled = connectors.set_local_collector("spotify", enabled=True, actor="admin")
+    assert enabled == {"provider": "spotify", "enabled": True, "status": "waiting"}
+    csv_text = (
+        "Date,Plays & downloads,Plays (on Spotify),Downloads (everywhere else),Audience,"
+        "Audience (on Spotify),Audience (everywhere else)\n"
+        "9/24/2026,12,9,3,4,2,2"
+    )
+    result = connectors.ingest_local_export(
+        provider="spotify", token=token, csv_text=csv_text,
+        source_reference="spotify-overview.csv",
+    )
+
+    assert result["inserted"] == 3
+    collector = connectors.status()["local_collectors"]
+    assert collector["configured"] is True
+    assert collector["session_storage"] == "local_only"
+    assert collector["connections"]["spotify"]["status"] == "connected"
+    assert token not in str(collector)
+
+
+def test_local_collector_fails_closed_for_bad_token_and_review_rows(temp_db, monkeypatch):
+    token = "collector-token-with-at-least-thirty-two-characters"
+    monkeypatch.setenv(COLLECTOR_TOKEN_ENV, token)
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    connectors.set_local_collector("apple_podcasts", enabled=True, actor="admin")
+    with pytest.raises(AnalyticsConnectorError, match="credential is invalid"):
+        connectors.ingest_local_export(
+            provider="apple_podcasts", token="wrong", csv_text="x", source_reference="x.csv"
+        )
+    episode_csv = (
+        "Show ID,Episode ID,Episode Title,Date,Total Time Listened,Plays,Unique Listeners,"
+        "Unique Engaged Listeners\n1518394292,1001,Unknown Episode,20260901,120,7,4,2"
+    )
+    with pytest.raises(AnalyticsConnectorError, match="require review"):
+        connectors.ingest_local_export(
+            provider="apple_podcasts", token=token, csv_text=episode_csv,
+            source_reference="apple-episodes.csv",
+        )
+    assert connectors.status()["local_collectors"]["connections"]["apple_podcasts"]["status"] == "error"
 
 
 def test_google_oauth_state_is_hashed_short_lived_and_one_time(temp_db, monkeypatch):

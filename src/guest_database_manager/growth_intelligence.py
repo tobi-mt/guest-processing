@@ -7,6 +7,7 @@ import csv
 import json
 import math
 import re
+from calendar import monthrange
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -38,6 +39,9 @@ CANONICAL_METRICS = {
     "unique_listeners": "count",
     "listeners": "count",
     "followers": "count",
+    "followers_gained": "count",
+    "followers_lost": "count",
+    "engaged_listeners": "count",
     "subscribers": "count",
     "watch_time_hours": "count",
     "device_mobile": "count",
@@ -86,7 +90,7 @@ def _iso_date(value: Any, field: str) -> str:
     try:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).date().isoformat()
     except ValueError:
-        for date_format in ("%m/%d/%Y", "%Y/%m/%d", "%b %d, %Y", "%B %d, %Y"):
+        for date_format in ("%m/%d/%Y", "%Y/%m/%d", "%Y%m%d", "%b %d, %Y", "%B %d, %Y"):
             try:
                 return datetime.strptime(text, date_format).date().isoformat()
             except ValueError:
@@ -121,6 +125,104 @@ class GrowthIntelligence:
     @staticmethod
     def _identity_key(value: Any) -> str:
         return re.sub(r"[^a-z0-9]+", " ", _text(value).casefold()).strip()
+
+    @classmethod
+    def _metric_slug(cls, value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", _text(value).casefold()).strip("_")[:64]
+
+    @classmethod
+    def _provider_export_candidates(
+        cls, headers: list[str], raw_rows: list[dict[str, Any]], provider: str
+    ) -> list[tuple[int, dict[str, Any]]] | None:
+        """Recognize provider-owned exports without asking users to reinterpret their columns."""
+        header_set = set(headers)
+        provider_key = _text(provider).casefold()
+        candidates: list[tuple[int, dict[str, Any]]] = []
+        if provider_key == "spotify" and {
+            "Date", "Plays & downloads", "Plays (on Spotify)",
+            "Downloads (everywhere else)", "Audience",
+        }.issubset(header_set):
+            metric_columns = {
+                "plays": "Plays (on Spotify)",
+                "downloads": "Downloads (everywhere else)",
+                "unique_listeners": "Audience",
+            }
+            for row_number, raw in enumerate(raw_rows, 2):
+                for metric, column in metric_columns.items():
+                    if _text(raw.get(column)):
+                        candidates.append((row_number, {
+                            "metric_name": metric,
+                            "metric_value": raw.get(column),
+                            "period_start": raw.get("Date"),
+                            "period_end": raw.get("Date"),
+                        }))
+            return candidates
+
+        apple_base = {"Show ID", "Date"}
+        if provider_key == "apple_podcasts" and apple_base.issubset(header_set):
+            def month_bounds(raw_date: Any) -> tuple[str, str]:
+                parsed = datetime.strptime(_text(raw_date), "%Y%m%d").date()
+                return parsed.replace(day=1).isoformat(), parsed.replace(
+                    day=monthrange(parsed.year, parsed.month)[1]
+                ).isoformat()
+
+            if {"Episode ID", "Episode Title", "Total Time Listened", "Plays",
+                    "Unique Listeners", "Unique Engaged Listeners"}.issubset(header_set):
+                metric_columns = {
+                    "plays": "Plays",
+                    "unique_listeners": "Unique Listeners",
+                    "engaged_listeners": "Unique Engaged Listeners",
+                }
+                for row_number, raw in enumerate(raw_rows, 2):
+                    start, end = month_bounds(raw.get("Date"))
+                    for metric, column in metric_columns.items():
+                        if _text(raw.get(column)):
+                            candidates.append((row_number, {
+                                "episode_title": raw.get("Episode Title"),
+                                "_require_episode_link": True,
+                                "metric_name": metric,
+                                "metric_value": raw.get(column),
+                                "period_start": start,
+                                "period_end": end,
+                            }))
+                return candidates
+            for dimension, code_column, name_column in (
+                ("country", "Country/Region Code", "Country/Region"),
+                ("city", "City Code", "City"),
+            ):
+                if {code_column, name_column, "Unique Listeners"}.issubset(header_set):
+                    for row_number, raw in enumerate(raw_rows, 2):
+                        start, end = month_bounds(raw.get("Date"))
+                        slug = cls._metric_slug(f"{raw.get(name_column)} {raw.get(code_column)}")
+                        if slug and _text(raw.get("Unique Listeners")):
+                            candidates.append((row_number, {
+                                "metric_name": f"{dimension}_{slug}",
+                                "metric_value": raw.get("Unique Listeners"),
+                                "period_start": start,
+                                "period_end": end,
+                            }))
+                    return candidates
+        if provider_key == "apple_podcasts" and {
+            "Date", "Net Followers", "Gross Followers", "Gross Unfollowers"
+        }.issubset(header_set):
+            metric_columns = {
+                "followers_gained": "Gross Followers",
+                "followers_lost": "Gross Unfollowers",
+            }
+            for row_number, raw in enumerate(raw_rows, 2):
+                parsed = datetime.strptime(_text(raw.get("Date")), "%Y%m%d").date()
+                start = parsed.replace(day=1).isoformat()
+                end = parsed.replace(day=monthrange(parsed.year, parsed.month)[1]).isoformat()
+                for metric, column in metric_columns.items():
+                    if _text(raw.get(column)):
+                        candidates.append((row_number, {
+                            "metric_name": metric,
+                            "metric_value": raw.get(column),
+                            "period_start": start,
+                            "period_end": end,
+                        }))
+            return candidates
+        return None
 
     @classmethod
     def _resolve_csv_mapping(cls, headers: list[str], supplied: Any) -> dict[str, str]:
@@ -168,7 +270,7 @@ class GrowthIntelligence:
         valid_episode_ids: set[int],
     ) -> tuple[dict[str, Any], tuple[Any, ...], str]:
         metric = _text(row.get("metric_name"))
-        dimensional = bool(re.fullmatch(r"(?:device|country)_[a-z0-9_]{2,64}", metric))
+        dimensional = bool(re.fullmatch(r"(?:device|country|city)_[a-z0-9_]{2,64}", metric))
         if metric not in CANONICAL_METRICS and not dimensional:
             raise GrowthIntelligenceError(f"Unsupported metric_name: {metric or 'missing'}.")
         episode_id = row.get("episode_id")
@@ -235,8 +337,9 @@ class GrowthIntelligence:
             raise GrowthIntelligenceError("The analytics file is not valid CSV.") from exc
         if not headers:
             raise GrowthIntelligenceError("The analytics CSV needs a header row.")
-        if not raw_rows or len(raw_rows) > 500:
-            raise GrowthIntelligenceError("Provide between 1 and 500 analytics rows.")
+        if not raw_rows or len(raw_rows) > 10_000:
+            raise GrowthIntelligenceError("Provide between 1 and 10,000 analytics rows.")
+        adapted_candidates = self._provider_export_candidates(headers, raw_rows, provider)
         resolved_mapping = self._resolve_csv_mapping(headers, mapping)
         aliases_by_metric = {
             metric: {self._header_key(metric), self._header_key(metric.replace("_", " "))}
@@ -251,9 +354,9 @@ class GrowthIntelligence:
         }
         long_format = "metric_name" in resolved_mapping and "metric_value" in resolved_mapping
         missing = [field for field in ("period_start", "period_end") if field not in resolved_mapping]
-        if not long_format and not wide_metric_headers:
+        if adapted_candidates is None and not long_format and not wide_metric_headers:
             missing.extend(("metric_name", "metric_value"))
-        if missing:
+        if adapted_candidates is None and missing:
             raise GrowthIntelligenceError(
                 "Map the required CSV columns before previewing: " + ", ".join(missing) + "."
             )
@@ -271,6 +374,7 @@ class GrowthIntelligence:
             seen: set[str] = set()
 
             def process_candidate(candidate: dict[str, Any], row_number: int) -> None:
+                require_episode_link = bool(candidate.pop("_require_episode_link", False))
                 candidate["provider"] = _text(candidate.get("provider")) or default_provider
                 candidate["source_reference"] = _text(candidate.get("source_reference")) or default_reference
                 metric = _text(candidate.get("metric_name"))
@@ -291,6 +395,16 @@ class GrowthIntelligence:
                         row_warnings.append("Episode title is ambiguous; this metric will remain unlinked.")
                     elif title_key or guest_key:
                         row_warnings.append("No unique episode match; this metric will remain unlinked.")
+
+                if require_episode_link and candidate.get("episode_id") in (None, ""):
+                    preview_rows.append({
+                        "row": row_number,
+                        "status": "invalid",
+                        "observation": candidate,
+                        "warnings": row_warnings,
+                        "errors": ["Apple episode analytics require a unique internal episode-title match."],
+                    })
+                    return
 
                 try:
                     normalized, _prepared, observation_key = self._normalize_observation(
@@ -320,30 +434,34 @@ class GrowthIntelligence:
                         "errors": [str(exc)],
                     })
 
-            for row_number, raw in enumerate(raw_rows, 2):
-                base_candidate = {
-                    field: raw.get(header, "")
-                    for field, header in resolved_mapping.items()
-                    if field not in {"metric_name", "metric_value"}
-                }
-                if long_format:
-                    process_candidate({
-                        **base_candidate,
-                        "metric_name": raw.get(resolved_mapping["metric_name"], ""),
-                        "metric_value": raw.get(resolved_mapping["metric_value"], ""),
-                    }, row_number)
-                else:
-                    for metric, header in wide_metric_headers.items():
-                        if _text(raw.get(header)):
-                            process_candidate({
-                                **base_candidate,
-                                "metric_name": metric,
-                                "metric_value": raw.get(header, ""),
-                            }, row_number)
+            if adapted_candidates is not None:
+                for row_number, candidate in adapted_candidates:
+                    process_candidate(candidate, row_number)
+            else:
+                for row_number, raw in enumerate(raw_rows, 2):
+                    base_candidate = {
+                        field: raw.get(header, "")
+                        for field, header in resolved_mapping.items()
+                        if field not in {"metric_name", "metric_value"}
+                    }
+                    if long_format:
+                        process_candidate({
+                            **base_candidate,
+                            "metric_name": raw.get(resolved_mapping["metric_name"], ""),
+                            "metric_value": raw.get(resolved_mapping["metric_value"], ""),
+                        }, row_number)
+                    else:
+                        for metric, header in wide_metric_headers.items():
+                            if _text(raw.get(header)):
+                                process_candidate({
+                                    **base_candidate,
+                                    "metric_name": metric,
+                                    "metric_value": raw.get(header, ""),
+                                }, row_number)
 
-        if len(preview_rows) > 500:
+        if len(preview_rows) > 25_000:
             raise GrowthIntelligenceError(
-                "This CSV expands to more than 500 observations. Split it into smaller files before importing."
+                "This CSV expands to more than 25,000 observations. Split it into smaller files before importing."
             )
 
         invalid_count = sum(item["status"] == "invalid" for item in preview_rows)
@@ -354,7 +472,7 @@ class GrowthIntelligence:
         return {
             "headers": headers,
             "mapping": resolved_mapping,
-            "format": "long" if long_format else "wide",
+            "format": "provider" if adapted_candidates is not None else "long" if long_format else "wide",
             "summary": {
                 "submitted": len(preview_rows),
                 "ready": len(ready),
@@ -377,8 +495,8 @@ class GrowthIntelligence:
 
     def record_observations(self, rows: Iterable[dict[str, Any]], *, actor: str, correlation_id: str = "") -> dict[str, Any]:
         rows = list(rows)
-        if not rows or len(rows) > 500:
-            raise GrowthIntelligenceError("Provide between 1 and 500 observations.")
+        if not rows or len(rows) > 25_000:
+            raise GrowthIntelligenceError("Provide between 1 and 25,000 observations.")
         prepared = []
         with connect_database(self.db_path) as conn:
             valid_episode_ids = {int(row[0]) for row in conn.execute("SELECT id FROM episodes").fetchall()}

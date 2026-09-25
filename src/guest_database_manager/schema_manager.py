@@ -1375,6 +1375,25 @@ class SchemaManager:
         conn.execute("CREATE INDEX idx_analytics_connections_subject ON analytics_oauth_connections(provider, account_subject)")
 
     @staticmethod
+    def _migration_033_local_analytics_collectors(conn: sqlite3.Connection) -> None:
+        """Track local browser collectors without persisting provider sessions in the cloud."""
+        conn.execute(
+            """CREATE TABLE analytics_browser_collectors (
+                provider TEXT PRIMARY KEY CHECK(provider IN ('spotify', 'apple_podcasts')),
+                enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
+                status TEXT NOT NULL DEFAULT 'disconnected'
+                    CHECK(status IN ('disconnected', 'waiting', 'connected', 'error', 'reauth_required')),
+                last_seen_at TIMESTAMP,
+                last_sync_at TIMESTAMP,
+                last_success_at TIMESTAMP,
+                last_error_code TEXT NOT NULL DEFAULT '',
+                last_error_at TIMESTAMP,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK(consecutive_failures >= 0),
+                updated_at TIMESTAMP NOT NULL
+            )"""
+        )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1412,6 +1431,7 @@ class SchemaManager:
             (30, "podcast_source_monitoring", SchemaManager._migration_030_podcast_source_monitoring),
             (31, "analytics_oauth_connectors", SchemaManager._migration_031_analytics_oauth_connectors),
             (32, "multi_google_channels", SchemaManager._migration_032_multi_google_channels),
+            (33, "local_analytics_collectors", SchemaManager._migration_033_local_analytics_collectors),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

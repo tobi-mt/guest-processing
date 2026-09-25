@@ -241,6 +241,91 @@ def test_csv_preview_recognizes_provider_export_aliases_and_single_date_column(t
     assert {item["period_end"] for item in preview["observations"]} == {"2026-09-22"}
 
 
+def test_spotify_all_time_export_is_detected_without_double_counting_combined_columns(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    preview = intelligence.preview_csv(
+        "Date,Plays & downloads,Plays (on Spotify),Downloads (everywhere else),Audience,"
+        "Audience (on Spotify),Audience (everywhere else)\n"
+        "6/12/2020,12,9,3,4,2,2",
+        provider="spotify",
+        source_reference="spotify-all-time.csv",
+    )
+
+    assert preview["format"] == "provider"
+    assert preview["summary"]["ready"] == 3
+    assert {(row["metric_name"], row["metric_value"]) for row in preview["observations"]} == {
+        ("plays", 9.0), ("downloads", 3.0), ("unique_listeners", 4.0),
+    }
+
+
+def test_provider_export_accepts_more_than_legacy_500_row_limit(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    rows = [
+        f"2025-01-{(index % 28) + 1:02d},{index + 10},{index + 7},3,4,2,2"
+        for index in range(501)
+    ]
+    preview = intelligence.preview_csv(
+        "Date,Plays & downloads,Plays (on Spotify),Downloads (everywhere else),Audience,"
+        "Audience (on Spotify),Audience (everywhere else)\n" + "\n".join(rows),
+        provider="spotify",
+        source_reference="spotify-large.csv",
+    )
+
+    assert preview["summary"]["submitted"] == 1503
+
+
+def test_apple_country_export_preserves_month_and_location_grain(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    preview = intelligence.preview_csv(
+        "Show ID,Country/Region Code,Country/Region,Date,Total Time Listened,Plays,"
+        "Unique Listeners,Unique Engaged Listeners\n"
+        "1518394292,276,Germany,20260901,120,7,4,2",
+        provider="apple_podcasts",
+        source_reference="apple-country.csv",
+    )
+
+    assert preview["format"] == "provider"
+    assert preview["summary"]["ready"] == 1
+    assert preview["observations"][0]["metric_name"] == "country_germany_276"
+    assert preview["observations"][0]["period_start"] == "2026-09-01"
+    assert preview["observations"][0]["period_end"] == "2026-09-30"
+
+
+def test_apple_episode_export_requires_unique_internal_title_match(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    csv_text = (
+        "Show ID,Episode ID,Episode Title,Date,Total Time Listened,Plays,Unique Listeners,"
+        "Unique Engaged Listeners\n"
+        "1518394292,1001,Known Episode,20260901,120,7,4,2"
+    )
+    unmatched = intelligence.preview_csv(
+        csv_text, provider="apple_podcasts", source_reference="apple-episodes.csv"
+    )
+    assert unmatched["summary"]["invalid"] == 3
+    assert unmatched["summary"]["ready"] == 0
+
+    episode_id, _ = temp_db.upsert_episode({"guest_name": "Guest", "episode_title": "Known Episode"})
+    matched = intelligence.preview_csv(
+        csv_text, provider="apple_podcasts", source_reference="apple-episodes.csv"
+    )
+    assert matched["summary"]["ready"] == 3
+    assert {row["episode_id"] for row in matched["observations"]} == {episode_id}
+
+
+def test_apple_follower_export_imports_non_negative_flows_not_ambiguous_net_stock(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    preview = intelligence.preview_csv(
+        "Date,Net Followers,Gross Followers,Gross Unfollowers\n20260901,8,10,2",
+        provider="apple_podcasts",
+        source_reference="apple-followers.csv",
+    )
+
+    assert preview["summary"]["ready"] == 2
+    assert {row["metric_name"] for row in preview["observations"]} == {
+        "followers_gained", "followers_lost",
+    }
+
+
 def test_dashboard_groups_import_history_by_correlation_id(temp_db):
     intelligence = GrowthIntelligence(temp_db.db_path)
     intelligence.record_observations(

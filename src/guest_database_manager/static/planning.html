@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
     <link rel="stylesheet" href="/static/styles.css?v=20260923.2" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260925.2" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260925.3" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -335,8 +335,8 @@
             </div>
             <div class="provider-export-grid" aria-label="Provider export assistants">
               <article class="provider-export-card">
-                <div><span class="status-chip pending">Supervised export</span><h3>Spotify for Creators</h3></div>
-                <p>Exports plays, audience, downloads, discovery, devices, geography, and episode performance. Because Spotify hosts the current RSS feed, applicable downloads also cover the podcast-host evidence gap.</p>
+                <div><span class="status-chip pending">Current podcast host</span><h3>Spotify for Creators</h3></div>
+                <p>Spotify currently hosts the podcast and its RSS feed. Import its verified export for plays, audience, hosting downloads, discovery, devices, geography, and episode performance.</p>
                 <ol><li>Open Analytics and select the required date range.</li><li>Use Spotify’s Export or Download CSV control.</li><li>Return here and choose the downloaded file.</li></ol>
                 <div class="provider-export-actions"><a class="secondary-button" href="https://creators.spotify.com/analytics" target="_blank" rel="noopener noreferrer">Open Spotify analytics</a><button class="ghost-button" type="button" data-import-provider="spotify">Prepare Spotify import</button></div>
               </article>
@@ -347,10 +347,10 @@
                 <div class="provider-export-actions"><a class="secondary-button" href="https://podcastsconnect.apple.com/analytics" target="_blank" rel="noopener noreferrer">Open Apple analytics</a><button class="ghost-button" type="button" data-import-provider="apple_podcasts">Prepare Apple import</button></div>
               </article>
               <article class="provider-export-card">
-                <div><span class="status-chip pending">Any verified host</span><h3>Podcast hosting report</h3></div>
-                <p>Use this for an IAB-aligned hosting export when the data is distinct from Spotify’s report. The preview prevents duplicate provider-period metrics from being written.</p>
-                <ol><li>Export downloads, audience, apps, devices, or geography.</li><li>Select Podcast host below.</li><li>Review the detected columns and evidence period.</li></ol>
-                <div class="provider-export-actions"><button class="ghost-button" type="button" data-import-provider="podcast_host">Prepare host import</button></div>
+                <div><span class="status-chip pending">Future-ready</span><h3>Other hosting provider</h3></div>
+                <p>Keep this path for a future host migration or a verified host report that is genuinely separate from Spotify. Do not import the same Spotify period twice.</p>
+                <ol><li>Export downloads, audience, apps, devices, or geography from the new host.</li><li>Select Podcast host below.</li><li>Review the detected columns, reporting period, and duplicate warnings.</li></ol>
+                <div class="provider-export-actions"><button class="ghost-button" type="button" data-import-provider="podcast_host">Prepare other host import</button></div>
               </article>
             </div>
             <form id="analytics-import-form" class="guest-form">
@@ -374,7 +374,7 @@
               </label>
               <details id="analytics-mapping-panel" class="full-width analytics-mapping-panel" open>
                 <summary>Review column mapping</summary>
-                <p class="field-hint">Period dates are required. Use metric-name/value columns, or keep canonical metrics such as organic_reach as separate columns. Episode ID is safest; otherwise a unique episode title and guest name can be linked.</p>
+                <p class="field-hint">Known Spotify and Apple exports are mapped automatically. Other files require period dates and metric-name/value columns or canonical metrics such as organic_reach. Internal episode ID is safest; Apple episode IDs remain external and are linked only through a unique episode-title match.</p>
                 <div id="analytics-mapping-fields" class="analytics-mapping-grid"></div>
               </details>
               <div class="form-actions full-width">

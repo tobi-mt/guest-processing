@@ -25,6 +25,8 @@ GOOGLE_CLIENT_SECRET_ENV = "MIRROR_TALK_GOOGLE_ANALYTICS_CLIENT_SECRET"
 TOKEN_KEY_ENV = "MIRROR_TALK_ANALYTICS_TOKEN_ENCRYPTION_KEY"
 GA4_PROPERTY_ENV = "MIRROR_TALK_GA4_PROPERTY_ID"
 PUBLIC_URL_ENV = "MIRROR_TALK_PUBLIC_URL"
+COLLECTOR_TOKEN_ENV = "MIRROR_TALK_ANALYTICS_COLLECTOR_TOKEN"
+LOCAL_COLLECTOR_PROVIDERS = {"spotify", "apple_podcasts"}
 
 GOOGLE_SCOPES = (
     "openid",
@@ -62,6 +64,7 @@ class PodcastAnalyticsConnectors:
             "token_key": os.environ.get(TOKEN_KEY_ENV, "").strip(),
             "ga4_property_id": os.environ.get(GA4_PROPERTY_ENV, "").strip().removeprefix("properties/"),
             "public_url": os.environ.get(PUBLIC_URL_ENV, "").strip().rstrip("/"),
+            "collector_token": os.environ.get(COLLECTOR_TOKEN_ENV, "").strip(),
         }
 
     @classmethod
@@ -91,11 +94,26 @@ class PodcastAnalyticsConnectors:
                    FROM analytics_oauth_connections WHERE provider = 'google'
                    ORDER BY connected_at, id"""
             ).fetchall()
+            collector_rows = conn.execute(
+                """SELECT provider, enabled, status, last_seen_at, last_sync_at, last_success_at,
+                          last_error_code, last_error_at, consecutive_failures, updated_at
+                   FROM analytics_browser_collectors ORDER BY provider"""
+            ).fetchall()
         connections = [dict(row) for row in rows]
         for connection in connections:
             connection["scopes"] = json.loads(connection.pop("scopes_json") or "[]")
             connection["sync_ga4"] = bool(connection["sync_ga4"])
         oauth_ready = bool(config["client_id"] and config["client_secret"] and len(config["token_key"]) >= 32)
+        collectors = {str(row["provider"]): dict(row) for row in collector_rows}
+        for provider in LOCAL_COLLECTOR_PROVIDERS:
+            collectors.setdefault(provider, {
+                "provider": provider, "enabled": 0, "status": "disconnected",
+                "last_seen_at": None, "last_sync_at": None, "last_success_at": None,
+                "last_error_code": "", "last_error_at": None,
+                "consecutive_failures": 0, "updated_at": None,
+            })
+        for item in collectors.values():
+            item["enabled"] = bool(item["enabled"])
         return {
             "google": {
                 "oauth_configured": oauth_ready,
@@ -111,11 +129,136 @@ class PodcastAnalyticsConnectors:
                     GA4_PROPERTY_ENV,
                 ],
             },
+            "local_collectors": {
+                "configured": len(config["collector_token"]) >= 32,
+                "connections": collectors,
+                "session_storage": "local_only",
+                "required_environment": [COLLECTOR_TOKEN_ENV],
+            },
             "unsupported": [
                 {"provider": "spotify_creators", "reason": "No supported private creator-analytics API."},
                 {"provider": "apple_connect", "reason": "Apple does not provide third-party podcast analytics access."},
             ],
         }
+
+    @staticmethod
+    def _local_provider(provider: str) -> str:
+        normalized = str(provider or "").strip().casefold()
+        if normalized not in LOCAL_COLLECTOR_PROVIDERS:
+            raise AnalyticsConnectorError("The local collector supports only Spotify and Apple Podcasts.")
+        return normalized
+
+    def set_local_collector(self, provider: str, *, enabled: bool, actor: str) -> dict[str, Any]:
+        provider = self._local_provider(provider)
+        if enabled and len(self._config()["collector_token"]) < 32:
+            raise AnalyticsConnectorError("The local analytics collector token is not configured in production.")
+        now = _iso(_now())
+        status = "waiting" if enabled else "disconnected"
+        with connect_database(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO analytics_browser_collectors (provider, enabled, status, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(provider) DO UPDATE SET enabled=excluded.enabled, status=excluded.status,
+                     last_error_code='', last_error_at=NULL, consecutive_failures=0, updated_at=excluded.updated_at""",
+                (provider, int(enabled), status, now),
+            )
+            self._audit(
+                conn, "analytics_local_collector_changed", actor,
+                "Local-only browser analytics collector changed",
+                {"provider": provider, "enabled": bool(enabled), "session_storage": "local_only"},
+            )
+            conn.commit()
+        return {"provider": provider, "enabled": bool(enabled), "status": status}
+
+    def ingest_local_export(
+        self, *, provider: str, token: str, csv_text: str, source_reference: str
+    ) -> dict[str, Any]:
+        provider = self._local_provider(provider)
+        expected = self._config()["collector_token"]
+        if len(expected) < 32 or not secrets.compare_digest(str(token or ""), expected):
+            raise AnalyticsConnectorError("The local analytics collector credential is invalid.")
+        now = _now()
+        with connect_database(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT enabled FROM analytics_browser_collectors WHERE provider=?", (provider,)
+            ).fetchone()
+        if not row or not bool(row[0]):
+            raise AnalyticsConnectorError("This local analytics collector is disabled in Podcast Reach.")
+        try:
+            preview = self.growth.preview_csv(
+                csv_text, provider=provider, source_reference=source_reference, mapping=None
+            )
+            if int(preview["summary"].get("invalid") or 0):
+                raise AnalyticsConnectorError(
+                    "The provider export contains rows that require review; nothing was imported automatically."
+                )
+            observations = preview.get("observations") or []
+            if not observations:
+                raise AnalyticsConnectorError("The provider export contains no new valid observations.")
+            result = self.growth.record_observations(
+                observations,
+                actor="local-analytics-collector",
+                correlation_id=f"local-{provider}-{hashlib.sha256(csv_text.encode()).hexdigest()[:20]}",
+            )
+        except Exception as exc:
+            with connect_database(self.db_path) as conn:
+                conn.execute(
+                    """UPDATE analytics_browser_collectors SET status='error', last_seen_at=?, last_sync_at=?,
+                       last_error_code='validation_failed', last_error_at=?,
+                       consecutive_failures=consecutive_failures+1, updated_at=? WHERE provider=?""",
+                    (_iso(now), _iso(now), _iso(now), _iso(now), provider),
+                )
+                conn.commit()
+            if isinstance(exc, AnalyticsConnectorError):
+                raise
+            raise AnalyticsConnectorError("The provider export could not be validated safely.") from exc
+        with connect_database(self.db_path) as conn:
+            conn.execute(
+                """UPDATE analytics_browser_collectors SET status='connected', last_seen_at=?, last_sync_at=?,
+                   last_success_at=?, last_error_code='', last_error_at=NULL,
+                   consecutive_failures=0, updated_at=? WHERE provider=?""",
+                (_iso(now), _iso(now), _iso(now), _iso(now), provider),
+            )
+            self._audit(
+                conn, "analytics_local_sync_completed", "local-analytics-collector",
+                "Validated local browser analytics export synchronized",
+                {"provider": provider, "source_reference": source_reference,
+                 "submitted": int(result.get("submitted") or 0),
+                 "inserted": int(result.get("inserted") or 0),
+                 "duplicates": int(result.get("duplicates") or 0)},
+            )
+            conn.commit()
+        return {"provider": provider, "status": "completed", **result}
+
+    def report_local_collector_status(
+        self, *, provider: str, token: str, status: str, error_code: str = ""
+    ) -> dict[str, Any]:
+        provider = self._local_provider(provider)
+        expected = self._config()["collector_token"]
+        if len(expected) < 32 or not secrets.compare_digest(str(token or ""), expected):
+            raise AnalyticsConnectorError("The local analytics collector credential is invalid.")
+        normalized_status = str(status or "").strip().casefold()
+        if normalized_status not in {"waiting", "connected", "error", "reauth_required"}:
+            raise AnalyticsConnectorError("The local collector reported an unsupported status.")
+        safe_error = re.sub(r"[^a-z0-9_]+", "_", str(error_code or "").casefold()).strip("_")[:80]
+        now = _iso(_now())
+        with connect_database(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT enabled FROM analytics_browser_collectors WHERE provider=?", (provider,)
+            ).fetchone()
+            if not row or not bool(row[0]):
+                raise AnalyticsConnectorError("This local analytics collector is disabled in Podcast Reach.")
+            failed = normalized_status in {"error", "reauth_required"}
+            conn.execute(
+                """UPDATE analytics_browser_collectors SET status=?, last_seen_at=?,
+                   last_error_code=?, last_error_at=?,
+                   consecutive_failures=CASE WHEN ? THEN consecutive_failures+1 ELSE 0 END,
+                   updated_at=? WHERE provider=?""",
+                (normalized_status, now, safe_error if failed else "", now if failed else None,
+                 int(failed), now, provider),
+            )
+            conn.commit()
+        return {"provider": provider, "status": normalized_status, "error_code": safe_error if failed else ""}
 
     def begin_google(self, *, actor: str, origin: str) -> dict[str, str]:
         config = self._config()

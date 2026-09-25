@@ -823,6 +823,33 @@ class GuestWebService:
             actor=actor, connection_id=connection_id
         )
 
+    def configure_local_analytics_collector(
+        self, provider: str, *, enabled: bool, actor: str
+    ) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.set_local_collector(
+            provider, enabled=enabled, actor=actor
+        )
+
+    def ingest_local_analytics_export(
+        self, payload: Dict[str, Any], *, token: str
+    ) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.ingest_local_export(
+            provider=_normalize_text(payload.get("provider")),
+            token=token,
+            csv_text=str(payload.get("csv_text") or ""),
+            source_reference=_normalize_text(payload.get("source_reference")),
+        )
+
+    def report_local_analytics_collector_status(
+        self, payload: Dict[str, Any], *, token: str
+    ) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.report_local_collector_status(
+            provider=_normalize_text(payload.get("provider")),
+            token=token,
+            status=_normalize_text(payload.get("status")),
+            error_code=_normalize_text(payload.get("error_code")),
+        )
+
     def record_growth_observations(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         observations = payload.get("observations")
         if not isinstance(observations, list):
@@ -7803,6 +7830,25 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(response)
             return
 
+        if self.path in {
+            "/api/analytics-connectors/local/ingest",
+            "/api/analytics-connectors/local/status",
+        }:
+            authorization = self.headers.get("Authorization", "")
+            token = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
+            try:
+                payload = self._read_json_payload(max_bytes=2_500_000)
+                result = (
+                    self.service.ingest_local_analytics_export(payload, token=token)
+                    if self.path.endswith("/ingest")
+                    else self.service.report_local_analytics_collector_status(payload, token=token)
+                )
+            except (AnalyticsConnectorError, GrowthIntelligenceError, WebInterfaceError, ValueError) as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.CREATED if self.path.endswith("/ingest") else HTTPStatus.OK, result)
+            return
+
         if self.path not in {"/api/intake", "/api/booking/confirm"}:
             if not self._enforce_dashboard_security(
                 required_role=self._required_role_for_request("POST", urlsplit(self.path).path),
@@ -7842,10 +7888,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, result)
             return
 
-        if self.path in {"/api/analytics-connectors/google/connect", "/api/analytics-connectors/google/sync"}:
+        if self.path in {
+            "/api/analytics-connectors/google/connect",
+            "/api/analytics-connectors/google/sync",
+            "/api/analytics-connectors/local/configure",
+        }:
             actor = str((self._session_claims() or {}).get("sub") or "admin")
             try:
-                if self.path.endswith("/connect"):
+                if self.path.endswith("/local/configure"):
+                    payload = self._read_json_payload()
+                    result = self.service.configure_local_analytics_collector(
+                        _normalize_text(payload.get("provider")),
+                        enabled=bool(payload.get("enabled")),
+                        actor=actor,
+                    )
+                elif self.path.endswith("/connect"):
                     result = self.service.begin_google_analytics_connection(
                         actor=actor, origin=self._current_service_origin()
                     )
@@ -9128,7 +9185,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def _required_role_for_request(method: str, path: str) -> str:
         if method == "GET":
             return "viewer"
-        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge", "/api/recommendation-learning/settings", "/api/recommendation-learning/promote", "/api/recommendation-learning/rollback", "/api/recommendation-learning/cycle", "/api/analytics-connectors/google/connect", "/api/analytics-connectors/google/sync"}:
+        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge", "/api/recommendation-learning/settings", "/api/recommendation-learning/promote", "/api/recommendation-learning/rollback", "/api/recommendation-learning/cycle", "/api/analytics-connectors/google/connect", "/api/analytics-connectors/google/sync", "/api/analytics-connectors/local/configure"}:
             return "admin"
         return "operator"
 

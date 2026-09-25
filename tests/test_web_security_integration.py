@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import requests
 
+from guest_database_manager.podcast_analytics_connectors import COLLECTOR_TOKEN_ENV
 from guest_database_manager.web_interface import (
     DASHBOARD_PASSWORD_ENV_VAR,
     DASHBOARD_ROLE_ENV_VAR,
@@ -146,6 +147,41 @@ def test_growth_intelligence_api_requires_auth_csrf_and_is_idempotent(monkeypatc
             timeout=5,
         )
         assert accepted.status_code == 201
+
+
+def test_local_collector_endpoint_uses_scoped_bearer_not_dashboard_cookie(monkeypatch, temp_db):
+    configure_auth(monkeypatch)
+    token = "local-collector-token-with-at-least-thirty-two-characters"
+    monkeypatch.setenv(COLLECTOR_TOKEN_ENV, token)
+    with running_server(temp_db.db_path) as base_url:
+        session = requests.Session()
+        assert login(session, base_url).status_code == 200
+        csrf = {"X-CSRF-Token": session.cookies["dashboard_csrf"]}
+        configured = session.post(
+            f"{base_url}/api/analytics-connectors/local/configure",
+            json={"provider": "spotify", "enabled": True}, headers=csrf, timeout=5,
+        )
+        assert configured.status_code == 200
+        payload = {
+            "provider": "spotify",
+            "source_reference": "spotify-overview.csv",
+            "csv_text": (
+                "Date,Plays & downloads,Plays (on Spotify),Downloads (everywhere else),Audience,"
+                "Audience (on Spotify),Audience (everywhere else)\n9/24/2026,12,9,3,4,2,2"
+            ),
+        }
+        rejected = requests.post(
+            f"{base_url}/api/analytics-connectors/local/ingest",
+            json=payload, headers={"Authorization": "Bearer wrong"}, timeout=5,
+        )
+        accepted = requests.post(
+            f"{base_url}/api/analytics-connectors/local/ingest",
+            json=payload, headers={"Authorization": f"Bearer {token}"}, timeout=5,
+        )
+
+        assert rejected.status_code == 400
+        assert accepted.status_code == 201
+        assert accepted.json()["inserted"] == 3
 
 
 def test_operator_can_reject_scheduling_recommendation_with_audited_reason(monkeypatch, temp_db):
