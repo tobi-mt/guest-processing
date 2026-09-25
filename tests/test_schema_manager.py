@@ -18,7 +18,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
@@ -37,6 +37,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
         "recommendation_evaluations",
         "recommendation_deployments",
         "recommendation_learning_settings",
+        "recommendation_learning_runs",
         "interview_reschedule_proposals",
         "growth_metric_observations",
         "growth_experiments",
@@ -60,6 +61,25 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
         "governance_exception_reason",
     } <= episode_columns
     assert "content_class" not in interview_columns
+
+
+def test_shadow_learning_migration_rolls_back_ddl_on_failure(monkeypatch, tmp_path):
+    db_path = tmp_path / "shadow-rollback.db"
+    original = SchemaManager._migration_028_shadow_learning_operations
+
+    def fail_after_ddl(conn):
+        original(conn)
+        raise RuntimeError("stop after shadow learning DDL")
+
+    monkeypatch.setattr(SchemaManager, "_migration_028_shadow_learning_operations", fail_after_ddl)
+    with pytest.raises(RuntimeError, match="shadow learning DDL"):
+        SchemaManager.create_tables(str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        versions = [row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")]
+    assert "recommendation_learning_runs" not in tables
+    assert 28 not in versions
 
 
 def test_migrations_backfill_representative_legacy_guest(tmp_path):

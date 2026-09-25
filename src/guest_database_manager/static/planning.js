@@ -25,6 +25,8 @@ const learningStatus = document.getElementById("learning-status");
 const learningMessage = document.getElementById("learning-message");
 const learningRefresh = document.getElementById("learning-refresh");
 const learningEvaluate = document.getElementById("learning-evaluate");
+const learningShadowCycle = document.getElementById("learning-shadow-cycle");
+const learningRssReconcile = document.getElementById("learning-rss-reconcile");
 const learningRollback = document.getElementById("learning-rollback");
 const workspaceActionQueue = document.getElementById("workspace-action-queue");
 const aiCopilotStatus = document.getElementById("planning-ai-copilot-status");
@@ -125,9 +127,20 @@ function renderLearningStatus(payload) {
   const outcomes = payload.outcomes || {};
   const outcomeTypes = outcomes.by_type || {};
   const monitoring = payload.monitoring || {};
+  const shadow = payload.shadow_automation || {};
+  const progress = payload.evidence_progress || {};
+  const kpis = payload.kpis || {};
+  const rss = payload.rss_reconciliation || {};
+  const rssCounts = rss.counts || {};
+  const rssRun = rss.latest_run || {};
   const candidates = (payload.policies || []).filter((policy) => policy.status === "draft");
   const automationLocked = !settings.automation_enabled || Boolean(settings.kill_switch);
   const driftAlert = Boolean(monitoring.alert);
+  const linked = Number(progress.linked || 0);
+  const minimum = Number(progress.minimum || 30);
+  const target = Number(progress.credible_target || 100);
+  const progressPercent = Math.min(100, Math.round((linked / Math.max(1, target)) * 100));
+  const formatRate = (value) => value == null ? "Waiting" : `${Math.round(Number(value) * 100)}%`;
   const candidateMarkup = candidates.length
     ? candidates.map((policy) => `
       <article class="learning-challenger-card">
@@ -148,7 +161,11 @@ function renderLearningStatus(payload) {
         <span class="learning-card-label">Active policy</span>
         <strong>${escapeHtml(active.version || "Unavailable")}</strong>
       </div>
-      <span class="status-pill ${active.version ? "accepted" : "warning"}">${active.version ? "Live" : "Unavailable"}</span>
+      <span class="status-pill ${active.version ? "accepted" : "warning"}">${active.version ? "Shadow safe" : "Unavailable"}</span>
+    </div>
+    <div class="learning-progress" aria-label="Linked outcome progress: ${linked} of ${target}">
+      <div><strong>${linked} linked outcomes</strong><span>${minimum} minimum · ${target} credible target</span></div>
+      <div class="learning-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="${target}" aria-valuenow="${Math.min(linked, target)}"><span style="width:${progressPercent}%"></span></div>
     </div>
     <div class="learning-metric-grid">
       <article class="learning-metric-card">
@@ -157,10 +174,20 @@ function renderLearningStatus(payload) {
         <small>${Number(counts.observations || 0)} observations · ${Number(outcomes.linked || 0)} linked · ${Number(outcomeTypes.performance || 0)} performance</small>
       </article>
       <article class="learning-metric-card">
-        <span class="learning-card-label">Automation</span>
-        <strong>${automationLocked ? "Locked" : "Enabled"}</strong>
-        <small>${settings.kill_switch ? "Kill switch is on" : "Safety gates are active"}</small>
+        <span class="learning-card-label">Shadow automation</span>
+        <strong>${shadow.enabled && shadow.worker_running ? "Running" : "Stopped"}</strong>
+        <small>Collection ${shadow.enabled ? "enabled" : "disabled"} · promotion ${automationLocked ? "locked" : "enabled"}</small>
       </article>
+      <article class="learning-metric-card">
+        <span class="learning-card-label">Podcast RSS</span>
+        <strong>${Number(rssCounts.auto_linked || 0)} verified</strong>
+        <small>${Number(rss.items || 0)} feed items · ${Number(rssCounts.review_required || 0) + Number(rssCounts.conflict || 0)} need review · ${Number(rssCounts.unmatched || 0)} unmatched · ${Number(rss.failures_24h || 0)} failures/24h · ${rssRun.latency_ms == null ? "waiting" : `${Number(rssRun.latency_ms)} ms`}</small>
+      </article>
+      <article class="learning-metric-card"><span class="learning-card-label">Acceptance</span><strong>${formatRate(kpis.ranking_acceptance_rate)}</strong><small>Human recommendation decisions</small></article>
+      <article class="learning-metric-card"><span class="learning-card-label">Release completion</span><strong>${formatRate(kpis.release_completion_rate)}</strong><small>Accepted recommendations released</small></article>
+      <article class="learning-metric-card"><span class="learning-card-label">Performance</span><strong>${kpis.post_release_performance == null ? "Waiting" : Number(kpis.post_release_performance).toFixed(2)}</strong><small>Mean verified post-release outcome</small></article>
+      <article class="learning-metric-card"><span class="learning-card-label">Calibration</span><strong>${kpis.log_loss == null ? "Waiting" : Number(kpis.log_loss).toFixed(3)}</strong><small>Log loss · lower is better</small></article>
+      <article class="learning-metric-card"><span class="learning-card-label">Runtime health</span><strong>${kpis.latest_cycle_latency_ms == null ? "Waiting" : `${Number(kpis.latest_cycle_latency_ms)} ms`}</strong><small>${formatRate(kpis.fallback_rate)} fallback rate</small></article>
       <article class="learning-metric-card">
         <span class="learning-card-label">Outcome drift</span>
         <strong class="${driftAlert ? "learning-alert-text" : ""}">${driftAlert ? "Review" : "Stable"}</strong>
@@ -3739,6 +3766,12 @@ growthExperimentForm?.addEventListener("submit", async (event) => {
 });
 learningEvaluate?.addEventListener("click", () => runLearningAction(
   "/api/recommendation-learning/evaluate", {}, "Running offline holdout evaluation…",
+));
+learningShadowCycle?.addEventListener("click", () => runLearningAction(
+  "/api/recommendation-learning/shadow-cycle", {}, "Capturing an idempotent shadow snapshot…",
+));
+learningRssReconcile?.addEventListener("click", () => runLearningAction(
+  "/api/recommendation-learning/rss-reconcile", {}, "Reconciling verified podcast releases…",
 ));
 learningRollback?.addEventListener("click", () => {
   const reason = window.prompt("Why are you rolling back the active recommendation policy?");

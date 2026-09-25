@@ -83,6 +83,7 @@ from guest_database_manager.recommendation_learning import (
     apply_active_policy,
     extract_features,
 )
+from guest_database_manager.rss_release_reconciliation import RSSReconciliationError, RSSReleaseReconciler
 from guest_database_manager.workspace_intelligence import build_personal_briefing, search_workspace
 
 # Import new AI assistant features
@@ -763,6 +764,8 @@ class GuestWebService:
     _payload_cache: Dict[str, tuple[float, Dict[str, Any]]] = field(default_factory=dict, init=False, repr=False)
     _outbox_stop: Optional[Event] = field(default=None, init=False, repr=False)
     _outbox_thread: Optional[Thread] = field(default=None, init=False, repr=False)
+    _learning_stop: Optional[Event] = field(default=None, init=False, repr=False)
+    _learning_thread: Optional[Thread] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
@@ -770,6 +773,7 @@ class GuestWebService:
             self.database, ai_factory=self._get_ai_assistant, apollo_factory=self._get_apollo_client
         )
         self.recommendation_learning = RecommendationLearning(self.db_path)
+        self.rss_release_reconciler = RSSReleaseReconciler(self.db_path)
         self.growth_intelligence = GrowthIntelligence(self.db_path)
 
     def get_growth_intelligence(self) -> Dict[str, Any]:
@@ -854,7 +858,19 @@ class GuestWebService:
         )
 
     def get_recommendation_learning_status(self) -> Dict[str, Any]:
-        return self.recommendation_learning.status()
+        status = self.recommendation_learning.status()
+        status["rss_reconciliation"] = self.rss_release_reconciler.status()
+        status["shadow_automation"] = {
+            "enabled": os.environ.get("MIRROR_TALK_SHADOW_LEARNING_ENABLED", "true").strip().lower() == "true",
+            "worker_running": bool(self._learning_thread and self._learning_thread.is_alive()),
+            "promotion_automation_enabled": bool(status.get("settings", {}).get("automation_enabled")),
+            "kill_switch": bool(status.get("settings", {}).get("kill_switch", 1)),
+        }
+        return status
+
+    def reconcile_rss_releases(self, *, actor: str) -> Dict[str, Any]:
+        """Import only provenance and outcomes; never mutate release lifecycle or ranking."""
+        return self.rss_release_reconciler.reconcile(actor=actor)
 
     def evaluate_recommendation_policy(self, *, actor: str) -> Dict[str, Any]:
         return self.recommendation_learning.evaluate(actor=actor)
@@ -874,6 +890,13 @@ class GuestWebService:
 
     def run_recommendation_learning_cycle(self, *, actor: str) -> Dict[str, Any]:
         return self.recommendation_learning.run_cycle(actor=actor)
+
+    def run_shadow_learning_cycle(self, *, actor: str, cycle_key: str = "") -> Dict[str, Any]:
+        """Capture the current trusted ranking in shadow mode; never change ordering."""
+        planning = self.list_planning(compact=False)
+        return self.recommendation_learning.run_shadow_cycle(
+            planning.get("recommendations", []), actor=actor, cycle_key=cycle_key,
+        )
 
     def record_recommendation_outcome(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         return self.recommendation_learning.record_outcome(
@@ -1017,6 +1040,39 @@ class GuestWebService:
             self._outbox_stop.set()
         if self._outbox_thread and self._outbox_thread.is_alive():
             self._outbox_thread.join(timeout=max(0.0, float(timeout_seconds)))
+
+    def start_learning_worker(self, *, interval_seconds: float | None = None) -> None:
+        """Run resilient, idempotent shadow capture and evaluation automation."""
+        if os.environ.get("MIRROR_TALK_SHADOW_LEARNING_ENABLED", "true").strip().lower() != "true":
+            return
+        if self._learning_thread and self._learning_thread.is_alive():
+            return
+        raw_interval = os.environ.get("MIRROR_TALK_SHADOW_LEARNING_INTERVAL_SECONDS", "3600")
+        interval = interval_seconds if interval_seconds is not None else float(raw_interval)
+        self._learning_stop = Event()
+
+        def run() -> None:
+            assert self._learning_stop is not None
+            while not self._learning_stop.is_set():
+                try:
+                    self.reconcile_rss_releases(actor="rss-release-automation")
+                except Exception:
+                    logger.exception("RSS release reconciliation cycle failed")
+                try:
+                    self.run_shadow_learning_cycle(actor="shadow-learning-automation")
+                    self.run_recommendation_learning_cycle(actor="learning-automation")
+                except Exception:
+                    logger.exception("Shadow learning observation cycle failed")
+                self._learning_stop.wait(max(60.0, float(interval)))
+
+        self._learning_thread = Thread(target=run, name="recommendation-shadow-learning", daemon=True)
+        self._learning_thread.start()
+
+    def stop_learning_worker(self, *, timeout_seconds: float = 5.0) -> None:
+        if self._learning_stop:
+            self._learning_stop.set()
+        if self._learning_thread and self._learning_thread.is_alive():
+            self._learning_thread.join(timeout=max(0.0, float(timeout_seconds)))
 
     @staticmethod
     def _payload_cache_ttl(cache_key: str) -> float:
@@ -7670,10 +7726,16 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     result = self.service.rollback_recommendation_policy(payload, actor=actor)
                 elif self.path == "/api/recommendation-learning/cycle":
                     result = self.service.run_recommendation_learning_cycle(actor=actor)
+                elif self.path == "/api/recommendation-learning/shadow-cycle":
+                    result = self.service.run_shadow_learning_cycle(
+                        actor=actor, cycle_key=_normalize_text(payload.get("cycle_key"))
+                    )
+                elif self.path == "/api/recommendation-learning/rss-reconcile":
+                    result = self.service.reconcile_rss_releases(actor=actor)
                 else:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
                     return
-            except (LearningError, ValueError) as exc:
+            except (LearningError, RSSReconciliationError, ValueError) as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
             self._invalidate_learning_cache()
@@ -9156,6 +9218,7 @@ def run_web_interface(
     """Run the direct web interface server."""
     server = create_web_server(host=host, port=port, db_path=db_path)
     GuestWebRequestHandler.service.start_outbox_worker()
+    GuestWebRequestHandler.service.start_learning_worker()
     url = f"http://{host}:{port}"
     print(f"🌐 Starting direct web interface at {url}")
     print(f"🗄️ Using database: {Path(db_path)}")
@@ -9169,4 +9232,5 @@ def run_web_interface(
         print("\n🛑 Shutting down web interface...")
     finally:
         GuestWebRequestHandler.service.stop_outbox_worker()
+        GuestWebRequestHandler.service.stop_learning_worker()
         server.server_close()

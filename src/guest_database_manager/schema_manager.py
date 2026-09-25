@@ -1175,6 +1175,7 @@ class SchemaManager:
                     WHEN NEW.status = 'approved' AND NEW.approved_at IS NULL
                     BEGIN SELECT RAISE(ABORT, 'approved policy requires approval timestamp'); END"""
             )
+
             conn.execute(
                 f"""CREATE TRIGGER validate_readiness_evidence_{operation.lower()}
                     BEFORE {operation} ON episode_readiness_checks
@@ -1194,6 +1195,86 @@ class SchemaManager:
                                OR datetime(NEW.expires_at) <= datetime(NEW.effective_from)))
                     BEGIN SELECT RAISE(ABORT, 'decided exception requires approver, decision time, and valid approval window'); END"""
             )
+
+    @staticmethod
+    def _migration_028_shadow_learning_operations(conn: sqlite3.Connection) -> None:
+        """Track idempotent shadow-learning cycles without enabling policy promotion."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS recommendation_learning_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_key TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'insufficient_data', 'failed')),
+                observations_recorded INTEGER NOT NULL DEFAULT 0,
+                outcomes_linked INTEGER NOT NULL DEFAULT 0,
+                evaluation_id INTEGER,
+                latency_ms INTEGER NOT NULL DEFAULT 0,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                actor TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (evaluation_id) REFERENCES recommendation_evaluations(id)
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recommendation_learning_runs_created "
+            "ON recommendation_learning_runs(created_at DESC)"
+        )
+
+    @staticmethod
+    def _migration_029_rss_release_reconciliation(conn: sqlite3.Connection) -> None:
+        """Persist RSS provenance and reviewable release matches without lifecycle writes."""
+        conn.execute(
+            """CREATE TABLE rss_feed_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feed_url TEXT NOT NULL,
+                item_key TEXT NOT NULL,
+                guid TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL,
+                normalized_title TEXT NOT NULL,
+                published_at TIMESTAMP NOT NULL,
+                link TEXT NOT NULL DEFAULT '',
+                enclosure_url TEXT NOT NULL DEFAULT '',
+                content_hash TEXT NOT NULL,
+                first_seen_at TIMESTAMP NOT NULL,
+                last_seen_at TIMESTAMP NOT NULL,
+                UNIQUE(feed_url, item_key)
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE rss_release_reconciliations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rss_item_id INTEGER NOT NULL UNIQUE,
+                episode_id INTEGER,
+                status TEXT NOT NULL CHECK(status IN ('auto_linked', 'review_required', 'unmatched', 'conflict')),
+                match_method TEXT NOT NULL,
+                confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+                reason TEXT NOT NULL,
+                evidence_json TEXT NOT NULL DEFAULT '{}',
+                outcome_id INTEGER,
+                actor TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(rss_item_id) REFERENCES rss_feed_items(id) ON DELETE CASCADE,
+                FOREIGN KEY(episode_id) REFERENCES episodes(id) ON DELETE SET NULL,
+                FOREIGN KEY(outcome_id) REFERENCES recommendation_outcomes(id) ON DELETE SET NULL
+            )"""
+        )
+        conn.execute("CREATE INDEX idx_rss_reconciliations_status ON rss_release_reconciliations(status, updated_at DESC)")
+        conn.execute(
+            """CREATE TABLE rss_reconciliation_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feed_url TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('completed', 'failed')),
+                item_count INTEGER NOT NULL DEFAULT 0,
+                auto_linked_count INTEGER NOT NULL DEFAULT 0,
+                review_count INTEGER NOT NULL DEFAULT 0,
+                unmatched_count INTEGER NOT NULL DEFAULT 0,
+                latency_ms INTEGER NOT NULL DEFAULT 0,
+                error_code TEXT NOT NULL DEFAULT '',
+                actor TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        conn.execute("CREATE INDEX idx_rss_runs_created ON rss_reconciliation_runs(created_at DESC)")
 
     @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
@@ -1228,6 +1309,8 @@ class SchemaManager:
             (25, "repair_legacy_orphan_references", SchemaManager._migration_025_repair_legacy_orphan_references),
             (26, "episode_governance_metadata", SchemaManager._migration_026_episode_governance_metadata),
             (27, "structured_governance_controls", SchemaManager._migration_027_structured_governance_controls),
+            (28, "shadow_learning_operations", SchemaManager._migration_028_shadow_learning_operations),
+            (29, "rss_release_reconciliation", SchemaManager._migration_029_rss_release_reconciliation),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

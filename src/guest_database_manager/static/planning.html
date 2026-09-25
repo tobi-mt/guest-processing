@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
     <link rel="stylesheet" href="/static/styles.css?v=20260923.2" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260923.1" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260925.1" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -390,6 +390,8 @@
               <p class="learning-loading">Loading learning status…</p>
             </div>
             <div class="learning-actions" aria-label="Recommendation learning actions">
+              <button id="learning-shadow-cycle" type="button" class="secondary-button">Run shadow cycle now</button>
+              <button id="learning-rss-reconcile" type="button" class="secondary-button">Reconcile podcast RSS</button>
               <button id="learning-evaluate" type="button" class="secondary-button">Run offline evaluation</button>
               <button id="learning-rollback" type="button" class="ghost-button">Rollback active policy</button>
             </div>
@@ -755,6 +757,6 @@
     <script src="/static/workspace-shell.js?v=20260923.3" defer></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
     <script src="/static/planning-intelligence.js?v=20260923.1" defer></script>
-    <script src="/static/planning.js?v=20260923.1" defer></script>
+    <script src="/static/planning.js?v=20260925.2" defer></script>
   </body>
 </html>

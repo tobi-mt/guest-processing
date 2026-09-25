@@ -12,6 +12,7 @@ import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Iterable
 from uuid import uuid4
 
@@ -180,6 +181,7 @@ class RecommendationLearning:
                 "SELECT version, parent_version, status, training_summary_json, created_by, approved_by, created_at, approved_at, row_version FROM recommendation_policies ORDER BY id DESC"
             ).fetchall()
             evaluations = conn.execute("SELECT * FROM recommendation_evaluations ORDER BY id DESC LIMIT 10").fetchall()
+            runs = conn.execute("SELECT * FROM recommendation_learning_runs ORDER BY id DESC LIMIT 10").fetchall()
             outcome_breakdown = {
                 str(row[0]): int(row[1])
                 for row in conn.execute(
@@ -195,6 +197,19 @@ class RecommendationLearning:
             outcome_values = [float(row[0]) for row in conn.execute(
                 "SELECT value FROM recommendation_outcomes ORDER BY occurred_at DESC, id DESC LIMIT 60"
             ).fetchall()]
+            performance_values = [float(row[0]) for row in conn.execute(
+                "SELECT value FROM recommendation_outcomes WHERE outcome_type = 'performance'"
+            ).fetchall()]
+            scored_rows = [
+                (_loads(row[0], {}), float(row[1]))
+                for row in conn.execute(
+                    """SELECT o.features_json, r.value
+                       FROM recommendation_outcomes r
+                       JOIN recommendation_observations o ON o.id = r.observation_id
+                       WHERE o.feature_schema_version = ?""",
+                    (FEATURE_SCHEMA_VERSION,),
+                ).fetchall()
+            ]
             pending_reviews = [dict(row) for row in conn.execute(
                 """SELECT e.id AS episode_id,
                           COALESCE(NULLIF(e.published_title, ''), NULLIF(e.episode_title, ''), 'Untitled episode') AS episode_title,
@@ -215,6 +230,13 @@ class RecommendationLearning:
         recent_mean = sum(recent) / len(recent) if recent else None
         previous_mean = sum(previous) / len(previous) if previous else None
         drift = abs(recent_mean - previous_mean) if recent_mean is not None and previous_mean is not None else None
+        active_weights = _validated_weights(_loads(active["weights_json"], {})) if active else None
+        log_loss = self._log_loss(scored_rows, active_weights or {}) if scored_rows else None
+        decisions = outcome_breakdown.get("accepted", 0) + outcome_breakdown.get("rejected", 0)
+        accepted = outcome_breakdown.get("accepted", 0)
+        released = outcome_breakdown.get("released", 0)
+        latest_run = dict(runs[0]) if runs else None
+        latest_run_details = _loads(latest_run.get("details_json"), {}) if latest_run else {}
         return {
             "active_policy": dict(active) if active else None,
             "settings": dict(settings) if settings else {},
@@ -228,12 +250,117 @@ class RecommendationLearning:
             "pending_outcome_reviews": pending_reviews,
             "policies": [{**dict(row), "training_summary": _loads(row["training_summary_json"], {})} for row in policies],
             "evaluations": [{**dict(row), "guardrails": _loads(row["guardrails_json"], {}), "report": _loads(row["report_json"], {})} for row in evaluations],
+            "runs": [{**dict(row), "details": _loads(row["details_json"], {})} for row in runs],
+            "evidence_progress": {
+                "linked": int(counts[1]) - unlinked_outcomes,
+                "minimum": int((dict(settings) if settings else {}).get("min_samples", 30)),
+                "credible_target": 100,
+            },
+            "kpis": {
+                "ranking_acceptance_rate": accepted / decisions if decisions else None,
+                "release_completion_rate": released / accepted if accepted else None,
+                "post_release_performance": sum(performance_values) / len(performance_values) if performance_values else None,
+                "log_loss": log_loss,
+                "human_override_rate": outcome_breakdown.get("rejected", 0) / decisions if decisions else None,
+                "latest_cycle_latency_ms": latest_run.get("latency_ms") if latest_run else None,
+                "fallback_rate": latest_run_details.get("fallback_rate"),
+            },
             "monitoring": {
                 "recent_outcomes": len(recent), "previous_outcomes": len(previous),
                 "recent_mean": recent_mean, "previous_mean": previous_mean,
                 "outcome_drift": drift, "alert": bool(drift is not None and drift > 0.2),
             },
         }
+
+    def run_shadow_cycle(
+        self,
+        recommendations: Iterable[dict[str, Any]],
+        *,
+        actor: str = "shadow-learning-automation",
+        cycle_key: str = "",
+    ) -> dict[str, Any]:
+        """Capture recommendations and link later release outcomes without changing ranking."""
+        key = cycle_key.strip() or f"shadow:{datetime.now(timezone.utc).date().isoformat()}"
+        with connect_database(self.db_path) as conn:
+            conn.row_factory = __import__("sqlite3").Row
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO recommendation_learning_runs
+                   (cycle_key, status, actor) VALUES (?, 'running', ?)""",
+                (key, actor),
+            )
+            conn.commit()
+            existing = conn.execute(
+                "SELECT * FROM recommendation_learning_runs WHERE cycle_key = ?", (key,)
+            ).fetchone()
+        if cursor.rowcount == 0:
+            return {**dict(existing), "idempotent_replay": True}
+
+        started = perf_counter()
+        try:
+            items = list(recommendations)
+            observed = self.observe(items, actor=actor, correlation_id=key)
+            linked = 0
+            with connect_database(self.db_path) as conn:
+                conn.row_factory = __import__("sqlite3").Row
+                releasable = conn.execute(
+                    """SELECT e.id, e.release_date
+                       FROM episodes e
+                       JOIN recommendation_observations o ON o.id = (
+                           SELECT MAX(latest.id) FROM recommendation_observations latest
+                           WHERE latest.episode_id = e.id
+                       )
+                       WHERE LOWER(TRIM(COALESCE(e.release_status, ''))) = 'released'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM recommendation_outcomes r
+                           WHERE r.episode_id = e.id AND r.outcome_type = 'released'
+                         )"""
+                ).fetchall()
+            for row in releasable:
+                self.record_outcome(
+                    int(row["id"]), outcome_type="released", value=None,
+                    metadata={"release_date": row["release_date"]}, actor=actor,
+                    source="shadow_learning_automation", occurred_at=str(row["release_date"] or ""),
+                    idempotency_key=f"shadow-released:{row['id']}",
+                )
+                linked += 1
+
+            current = self.status()
+            evaluation = None
+            if current["outcomes"]["linked"] >= int(current["settings"].get("min_samples", 30)):
+                evaluation = self.evaluate(actor=actor)
+            run_status = "completed" if evaluation else "insufficient_data"
+            details = {
+                "policy_version": observed["policy_version"],
+                "ranking_changed": False,
+                "evaluation_status": evaluation.get("status") if evaluation else None,
+                "fallback_rate": (
+                    sum((item.get("learning") or {}).get("mode") == "invalid_policy_fallback" for item in items)
+                    / len(items)
+                    if items else 0.0
+                ),
+            }
+            values = (run_status, observed["recorded"], linked,
+                      evaluation.get("id") if evaluation else None, _json(details))
+        except Exception as exc:
+            run_status = "failed"
+            details = {"error_type": type(exc).__name__, "ranking_changed": False}
+            values = (run_status, 0, 0, None, _json(details))
+            raise
+        finally:
+            latency_ms = max(0, round((perf_counter() - started) * 1000))
+            with connect_database(self.db_path) as conn:
+                conn.row_factory = __import__("sqlite3").Row
+                conn.execute(
+                    """UPDATE recommendation_learning_runs SET status = ?, observations_recorded = ?,
+                       outcomes_linked = ?, evaluation_id = ?, details_json = ?, latency_ms = ?
+                       WHERE cycle_key = ?""",
+                    (*values, latency_ms, key),
+                )
+                conn.commit()
+                run = conn.execute(
+                    "SELECT * FROM recommendation_learning_runs WHERE cycle_key = ?", (key,)
+                ).fetchone()
+        return {**dict(run), "details": details, "idempotent_replay": False}
 
     def observe(self, recommendations: Iterable[dict[str, Any]], *, actor: str, correlation_id: str = "") -> dict[str, Any]:
         items = list(recommendations)
@@ -286,7 +413,9 @@ class RecommendationLearning:
             if existing:
                 return dict(existing)
             observation = conn.execute(
-                "SELECT id FROM recommendation_observations WHERE episode_id = ? ORDER BY id DESC LIMIT 1", (episode_id,)
+                """SELECT id FROM recommendation_observations
+                   WHERE episode_id = ? AND datetime(created_at) <= datetime(?)
+                   ORDER BY datetime(created_at) DESC, id DESC LIMIT 1""", (episode_id, when)
             ).fetchone()
             cursor = conn.execute(
                 """INSERT INTO recommendation_outcomes
@@ -320,7 +449,7 @@ class RecommendationLearning:
                    FROM recommendation_outcomes r JOIN recommendation_observations o ON o.id = r.observation_id
                    WHERE o.feature_schema_version = ? ORDER BY r.occurred_at, r.id""", (FEATURE_SCHEMA_VERSION,)
             ).fetchall()
-            samples = []
+            sample_rows = []
             for row in rows:
                 features = _loads(row["features_json"], {})
                 if not isinstance(features, dict):
@@ -329,21 +458,25 @@ class RecommendationLearning:
                     name: _finite_float(features.get(name), field=f"Stored feature {name}", default=0.0)
                     for name in FEATURE_NAMES
                 }
-                samples.append((clean_features, _finite_float(row["value"], field="Stored outcome value")))
+                sample_rows.append((int(row["episode_id"]), clean_features, _finite_float(row["value"], field="Stored outcome value")))
+            episode_ids = list(dict.fromkeys(row[0] for row in sample_rows))
             minimum = int(settings["min_samples"])
-            if len(samples) < minimum:
-                report = {"message": f"Need {minimum} linked outcomes; found {len(samples)}", "generated_at": _now()}
+            if len(episode_ids) < minimum:
+                report = {"message": f"Need {minimum} independently linked episodes; found {len(episode_ids)}", "generated_at": _now()}
                 cursor = conn.execute(
                     """INSERT INTO recommendation_evaluations
                        (candidate_version, champion_version, sample_count, baseline_metric, candidate_metric, uplift,
                         guardrails_json, report_json, status, created_by) VALUES (?, ?, ?, 0, 0, 0, ?, ?, 'insufficient_data', ?)""",
-                    ("none", champion["version"], len(samples), _json({"passed": False}), _json(report), actor),
+                    ("none", champion["version"], len(episode_ids), _json({"passed": False}), _json(report), actor),
                 )
                 conn.commit()
                 return dict(conn.execute("SELECT * FROM recommendation_evaluations WHERE id = ?", (cursor.lastrowid,)).fetchone())
 
-            split = max(1, int(len(samples) * 0.8))
-            training, validation = samples[:split], samples[split:] or samples[-1:]
+            split = max(1, int(len(episode_ids) * 0.8))
+            training_ids = set(episode_ids[:split])
+            validation_ids = set(episode_ids[split:] or episode_ids[-1:])
+            training = [(features, label) for episode_id, features, label in sample_rows if episode_id in training_ids]
+            validation = [(features, label) for episode_id, features, label in sample_rows if episode_id in validation_ids]
             current = _validated_weights(_loads(champion["weights_json"], {}))
             if current is None:
                 raise LearningError("The active recommendation policy contains invalid weights")
@@ -365,15 +498,17 @@ class RecommendationLearning:
             prediction_shift = sum(abs(_probability(features, bounded) - _probability(features, current)) for features, _ in validation) / len(validation)
             guardrails = {
                 "non_sensitive_features_only": True,
+                "independent_episode_split": not bool(training_ids & validation_ids),
+                "label_diversity": len({round(label, 6) for _, _, label in sample_rows}) >= 2,
                 "max_weight_change": max(abs(bounded[name] - current.get(name, 0.0)) for name in FEATURE_NAMES) <= bound + 1e-9,
                 "mean_prediction_shift": round(prediction_shift, 6),
                 "prediction_shift_ok": prediction_shift <= 0.15,
                 "validation_samples": len(validation),
             }
-            passed = uplift >= float(settings["min_uplift"]) and all((guardrails["non_sensitive_features_only"], guardrails["max_weight_change"], guardrails["prediction_shift_ok"]))
-            digest = hashlib.sha256(_json({"parent": champion["version"], "weights": bounded, "samples": len(samples)}).encode()).hexdigest()[:10]
+            passed = uplift >= float(settings["min_uplift"]) and all((guardrails["non_sensitive_features_only"], guardrails["independent_episode_split"], guardrails["label_diversity"], guardrails["max_weight_change"], guardrails["prediction_shift_ok"]))
+            digest = hashlib.sha256(_json({"parent": champion["version"], "weights": bounded, "episodes": len(episode_ids)}).encode()).hexdigest()[:10]
             version = f"release-learner-{digest}"
-            summary = {"sample_count": len(samples), "baseline_log_loss": baseline_loss, "candidate_log_loss": candidate_loss, "uplift": uplift, "feature_schema_version": FEATURE_SCHEMA_VERSION}
+            summary = {"sample_count": len(episode_ids), "outcome_count": len(sample_rows), "baseline_log_loss": baseline_loss, "candidate_log_loss": candidate_loss, "uplift": uplift, "feature_schema_version": FEATURE_SCHEMA_VERSION}
             conn.execute(
                 """INSERT OR IGNORE INTO recommendation_policies
                    (version, parent_version, status, weights_json, training_summary_json, created_by)
@@ -384,7 +519,7 @@ class RecommendationLearning:
                 """INSERT INTO recommendation_evaluations
                    (candidate_version, champion_version, sample_count, baseline_metric, candidate_metric, uplift,
                     guardrails_json, report_json, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (version, champion["version"], len(samples), baseline_loss, candidate_loss, uplift, _json(guardrails), _json(summary), "passed" if passed else "failed", actor),
+                (version, champion["version"], len(episode_ids), baseline_loss, candidate_loss, uplift, _json(guardrails), _json(summary), "passed" if passed else "failed", actor),
             )
             self._audit(conn, "recommendation_policy_evaluated", actor, "Offline holdout evaluation", {"version": version, "evaluation_id": cursor.lastrowid, "status": "passed" if passed else "failed"})
             conn.commit()
@@ -471,7 +606,11 @@ class RecommendationLearning:
         if not settings.get("automation_enabled") or settings.get("kill_switch"):
             return {"status": "blocked", "reason": "automation_disabled_or_killed", "active_policy": status["active_policy"]}
         if status["monitoring"]["alert"]:
-            return {"status": "blocked", "reason": "outcome_drift_alert", "active_policy": status["active_policy"]}
+            active = status.get("active_policy") or {}
+            if active.get("version") and active.get("version") != "release-planner-v1":
+                restored = self.rollback(actor=actor, reason="Automatic rollback after outcome-drift guardrail alert")
+                return {"status": "rolled_back", "reason": "outcome_drift_alert", "active_policy": restored}
+            return {"status": "blocked", "reason": "outcome_drift_alert", "active_policy": active}
         evaluation = self.evaluate(actor=actor)
         if evaluation["status"] != "passed":
             return {"status": "not_promoted", "reason": evaluation["status"], "evaluation": evaluation}

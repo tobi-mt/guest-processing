@@ -1379,6 +1379,26 @@
   border-top: 1px solid rgba(91, 70, 47, 0.09);
 }
 
+.learning-progress {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(20, 90, 74, 0.15);
+  border-radius: 16px;
+  background: rgba(223, 242, 234, 0.3);
+}
+
+.learning-progress > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.learning-progress span { color: var(--muted); font-size: 0.8rem; }
+.learning-progress-track { height: 10px; overflow: hidden; border-radius: 999px; background: rgba(20, 90, 74, 0.12); }
+.learning-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.2s ease; }
+
 .learning-metric-card strong {
   overflow-wrap: anywhere;
   font-size: 1.15rem;

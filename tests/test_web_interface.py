@@ -440,6 +440,11 @@ def test_growth_import_links_released_performance_to_prior_recommendation(temp_d
         actor="producer",
         correlation_id="outcome-recommendation-1",
     )
+    with sqlite3.connect(temp_db.db_path) as conn:
+        conn.execute(
+            "UPDATE recommendation_observations SET created_at = '2026-08-31 12:00:00' WHERE episode_id = ?",
+            (episode["id"],),
+        )
     common = {
         "episode_id": episode["id"],
         "provider": "youtube",

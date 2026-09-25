@@ -130,6 +130,25 @@ and the relevant verification gate pass.
 - [x] Evaluate fit and scheduling recommendations against historical decisions;
       report calibration, precision by score band, disagreement, and overrides.
 - [x] Keep AI scores advisory, source-linked, freshness-aware, and versioned.
+- [x] Operate recommendation learning in governed shadow mode.
+  - [x] Capture one idempotent trusted-ranking snapshot per day without changing rank.
+  - [x] Link released episodes and verified growth evidence only to prior observations.
+  - [x] Track progress toward 30 independently linked episodes and a 100-episode credible target.
+  - [x] Publish acceptance, release completion, post-release performance, log-loss,
+        human-override, latency, fallback, drift, and run-health indicators.
+  - [x] Run evidence-gated offline evaluation and bounded promotion automatically.
+  - [x] Keep the rules baseline active until all gates pass, with audited activation,
+        automatic drift rollback, a manual emergency kill switch, and instant rollback.
+  - [x] Reconcile the authoritative podcast RSS feed with unique-title and date guardrails;
+        retain ambiguous, duplicate-title, lifecycle-conflict, and unmatched items for review.
+  - [x] Preserve RSS provenance, idempotently record historical release outcomes, prevent
+        post-outcome observations from leaking into labels, and monitor feed latency/failures.
+  - Acceptance: migrations 28–29 passed empty/current/representative-legacy rehearsal and
+    rollback testing; 600-episode QA preserved identical ranking; production shadow
+    worker is active with the rules baseline and promotion lock intact. Production RSS
+    reconciliation processed 520 items into 311 verified links, 39 review items, and 170
+    unmatched archive items with zero failures; historical labels remain excluded from
+    training until a genuinely prior observation exists.
 
 ## P3 — Quality, accessibility, and release operations
 
