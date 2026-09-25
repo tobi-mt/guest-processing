@@ -222,8 +222,51 @@ body {
   margin-top: 14px;
 }
 
+.premium-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.premium-badge {
+  display: inline-flex;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(15, 93, 79, 0.09);
+  color: var(--accent);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.premium-badge.warm {
+  background: var(--accent-gold-soft);
+  color: #805a12;
+}
+
 .intake-panel .workflow-note {
   margin: 14px 0 18px;
+}
+
+.workflow-note,
+.privacy-note {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(15, 93, 79, 0.07);
+  border: 1px solid rgba(15, 93, 79, 0.1);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.workflow-note p,
+.privacy-note p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.workflow-note.soft {
+  background: rgba(189, 138, 46, 0.08);
 }
 
 .progress-strip {
@@ -299,6 +342,12 @@ body {
   display: grid;
 }
 
+.form-step > h3,
+.form-step > .step-copy,
+.form-step > .workflow-note {
+  grid-column: 1 / -1;
+}
+
 .full-width {
   grid-column: 1 / -1;
 }
@@ -332,6 +381,44 @@ label small {
   font-weight: 400;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.field-heading {
+  display: inline;
+}
+
+.required-marker,
+.optional-marker {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 0.08em;
+}
+
+.required-marker {
+  color: #7d2c21;
+}
+
+.optional-marker {
+  color: var(--muted);
+}
+
+.checkbox-field {
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.checkbox-field input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
 }
 
 input,

@@ -54,7 +54,7 @@ def test_public_intake_http_workflow_serves_page_submits_and_persists(temp_db, m
         submission = requests.post(f"{base_url}/api/intake", json=VALID_SELF_APPLICATION, timeout=5)
 
     assert page.status_code == 200
-    assert 'src="/static/intake.js?v=20260817.1"' in page.text
+    assert 'src="/static/intake.js?v=20260925.2"' in page.text
     assert submission.status_code == 201
     body = submission.json()
     assert body["message"] == "Thank you for applying. Your submission has been received."
@@ -73,6 +73,69 @@ def test_public_intake_http_workflow_rejects_incomplete_payload_without_persisti
 
     assert response.status_code == 400
     assert response.json()["error"] == "Please complete the required field: motivation"
+    assert temp_db.get_all_guests() == []
+
+
+def test_public_intake_accepts_application_without_public_profiles(temp_db, monkeypatch):
+    """Editorially useful applicants must not be excluded for lacking a website or social profile."""
+    monkeypatch.delenv(API_TOKEN_ENV_VAR, raising=False)
+    application = dict(VALID_SELF_APPLICATION)
+    application.pop("website")
+    application.pop("social_handles")
+    application["email"] = "private-intake-guest@example.test"
+
+    with running_public_intake_server(temp_db.db_path) as base_url:
+        response = requests.post(f"{base_url}/api/intake", json=application, timeout=5)
+
+    assert response.status_code == 201
+    assert response.json()["guest"]["website"] == ""
+
+
+def test_public_intake_accepts_concise_optional_boundaries_and_experience(temp_db, monkeypatch):
+    """Optional context must not be subject to hidden essay-length requirements."""
+    monkeypatch.delenv(API_TOKEN_ENV_VAR, raising=False)
+    application = dict(VALID_SELF_APPLICATION)
+    application.update(
+        email="concise-optional@example.test",
+        experience="First timer",
+        additional_info="No politics",
+    )
+
+    with running_public_intake_server(temp_db.db_path) as base_url:
+        response = requests.post(f"{base_url}/api/intake", json=application, timeout=5)
+
+    assert response.status_code == 201
+    assert response.json()["guest"]["additional_info"] == "No politics"
+
+
+def test_public_intake_rejects_malformed_and_non_object_json_cleanly(temp_db, monkeypatch):
+    """Broken clients should receive stable 400 responses instead of dropped connections."""
+    monkeypatch.delenv(API_TOKEN_ENV_VAR, raising=False)
+    with running_public_intake_server(temp_db.db_path) as base_url:
+        malformed = requests.post(
+            f"{base_url}/api/intake",
+            data=b'{"application_role":',
+            headers={"Content-Type": "application/json"},
+            timeout=5,
+        )
+        non_object = requests.post(f"{base_url}/api/intake", json=["not", "an", "application"], timeout=5)
+
+    assert malformed.status_code == 400
+    assert malformed.json() == {"error": "Please submit a valid application request."}
+    assert non_object.status_code == 400
+    assert non_object.json() == {"error": "Please submit the application as a JSON object."}
+
+
+def test_public_intake_rejects_oversized_request_before_processing(temp_db, monkeypatch):
+    """The public endpoint must cap memory use from unexpectedly large requests."""
+    monkeypatch.delenv(API_TOKEN_ENV_VAR, raising=False)
+    oversized = {"application_role": "self", "background": "x" * (129 * 1024)}
+
+    with running_public_intake_server(temp_db.db_path) as base_url:
+        response = requests.post(f"{base_url}/api/intake", json=oversized, timeout=5)
+
+    assert response.status_code == 400
+    assert "too large" in response.json()["error"].lower()
     assert temp_db.get_all_guests() == []
 
 

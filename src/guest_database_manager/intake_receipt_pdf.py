@@ -19,25 +19,22 @@ from reportlab.platypus import HRFlowable, KeepTogether, Paragraph, SimpleDocTem
 _QUESTIONS = (
     ("About you", "full_name", "Full name"),
     ("About you", "email", "Email address"),
-    ("About you", "website", "Website"),
-    ("About you", "social_handles", "Social and public profiles"),
-    ("Your journey", "background", "A brief overview of your personal and professional background"),
-    ("Your journey", "profession", "What is your current profession, and what led you to this career path?"),
-    ("Your journey", "motivation", "What motivates or inspires you in your work and life?"),
-    ("Your journey", "life_experiences", "What life experiences or pivotal moments have shaped who you are today?"),
-    ("Your perspective", "core_values", "What are your core values or guiding principles?"),
-    ("Your perspective", "faith_choice", "Do you follow a specific faith, spiritual practice, or philosophical tradition?"),
-    ("Your perspective", "faith_detail", "Tell us a little more about that practice or tradition"),
-    ("Your perspective", "alignment_choice", "Do you believe your beliefs and values align with the themes of soulful conversations?"),
-    ("Your perspective", "alignment_detail", "If yes, how do you think your perspective could contribute meaningfully?"),
-    ("Your perspective", "favorite_quote_choice", "Do you have a favourite quote or philosophy that guides your life?"),
-    ("Your perspective", "favorite_quote_detail", "Share the quote or philosophy and why it resonates with you"),
-    ("The conversation", "passionate_topics", "What topics or themes are you most passionate about discussing?"),
-    ("The conversation", "message", "What message or takeaway would you like to leave with our listeners?"),
-    ("The conversation", "experience_choice", "Have you been a guest on podcasts or spoken at events before?"),
-    ("The conversation", "experience_detail", "If yes, please share links or a little context"),
-    ("The conversation", "additional_info", "Is there anything else you'd like us to know about you?"),
-    ("The conversation", "has_social_media", "Are you following us on podcast platforms and social media?"),
+    ("About you", "website", "Primary website or public profile (optional)"),
+    ("About you", "social_handles", "Additional public links (optional)"),
+    ("About you", "background", "Introduce yourself in a few sentences"),
+    ("About you", "profession", "What work do you do, and what perspective have you earned through it?"),
+    ("Your story", "life_experiences", "What turning point or lived experience most shaped who you are today?"),
+    ("Your story", "motivation", "Why does sharing this story matter to you now?"),
+    ("Your story", "core_values", "What values or principles guided you through that experience?"),
+    ("Your story", "faith_choice", "Does a faith, spiritual practice, or philosophy meaningfully shape this story? (optional)"),
+    ("Your story", "faith_detail", "Relevant faith, spiritual, or philosophical context"),
+    ("The episode", "passionate_topics", "What topics could you discuss with unusual depth or first-hand authority?"),
+    ("The episode", "message", "What should a listener understand, feel, or do differently after hearing your story?"),
+    ("The episode", "alignment_detail", "Why would this story belong on Mirror Talk specifically?"),
+    ("The episode", "experience_choice", "Have you been interviewed or spoken publicly before? (optional)"),
+    ("The episode", "experience_detail", "Previous interview or speaking context"),
+    ("The episode", "additional_info", "Conversation boundaries or anything else we should know (optional)"),
+    ("The episode", "favorite_quote_detail", "A favourite quote or philosophy (optional)"),
 )
 
 
@@ -58,7 +55,7 @@ def _answers_for(guest: Mapping[str, Any]) -> dict[str, str]:
 
     # Older stored applications use these field names; preserve their answers too.
     answers["faith_choice"] = answers["faith_choice"] or _text(guest.get("faith"))
-    answers["alignment_choice"] = answers["alignment_choice"] or _text(guest.get("alignment"))
+    answers["alignment_detail"] = answers["alignment_detail"] or _text(guest.get("alignment"))
     answers["favorite_quote_detail"] = answers["favorite_quote_detail"] or _text(guest.get("favorite_quote"))
     answers["experience_detail"] = answers["experience_detail"] or _text(guest.get("experience"))
     return answers

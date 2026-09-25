@@ -1762,6 +1762,40 @@ def test_public_intake_requires_server_side_required_answers(temp_db):
         )
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "full_name",
+        "email",
+        "background",
+        "profession",
+        "motivation",
+        "life_experiences",
+        "core_values",
+        "alignment",
+        "passionate_topics",
+        "message",
+    ),
+)
+def test_public_intake_rejects_whitespace_only_required_answers(temp_db, field_name):
+    """Whitespace must not bypass any required editorial or contact question."""
+    service = GuestWebService(temp_db.db_path)
+    payload = {
+        **SELF_INTAKE_DEFAULTS,
+        "full_name": "Whitespace Guest",
+        "email": "whitespace@example.com",
+        "background": "I am a writer and facilitator shaped by recovery, community care, and honest conversations.",
+        "profession": "Writer",
+        "passionate_topics": "Healing",
+        "message": "Hope",
+        field_name: "   \n\t  ",
+    }
+
+    expected_field = field_name.replace("_", " ")
+    with pytest.raises(WebInterfaceError, match=rf"required field: {expected_field}"):
+        service.create_intake_submission(payload)
+
+
 def test_public_intake_requires_email_server_side(temp_db):
     """Direct requests cannot bypass the browser's required email field."""
     service = GuestWebService(temp_db.db_path)
@@ -1848,6 +1882,22 @@ def test_agency_referral_sends_personal_application_link(monkeypatch, temp_db):
     assert "full_name=Amar+Dhall" in sent["intake_url"]
     assert "email=amar%40example.com" in sent["intake_url"]
     assert sent["intake_url"].startswith("https://guest-processing-production.up.railway.app/intake?")
+
+
+def test_agency_referral_rejects_malformed_optional_agency_email(temp_db):
+    """An optional representative email must still be usable when supplied."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="valid agency email address"):
+        service.create_intake_submission(
+            {
+                "application_role": "on_behalf",
+                "agency_name": "Bright Talent Agency",
+                "agency_email": "not-an-email",
+                "represented_guest_name": "Amar Dhall",
+                "represented_guest_email": "amar@example.com",
+            }
+        )
 
 
 def test_public_intake_link_reuses_booking_domain_when_public_url_missing(monkeypatch):
@@ -2445,6 +2495,91 @@ def test_public_intake_validation_allows_one_word_message_answer(temp_db):
     )
 
     assert created_guest["message_takeaway"] == "Hope"
+
+
+@pytest.mark.parametrize(
+    "website",
+    (
+        "javascript:alert(1)",
+        "mailto:guest@example.com",
+        "https://user:password@example.com/profile",
+        "not-a-public-host",
+    ),
+)
+def test_public_intake_rejects_unsafe_or_malformed_profile_urls(temp_db, website):
+    """Optional profile links must be safe to render later in staff tools."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="valid public website or profile link"):
+        service.create_intake_submission(
+            {
+                **SELF_INTAKE_DEFAULTS,
+                "full_name": "Safe Link Guest",
+                "email": "safe-link@example.com",
+                "website": website,
+                "background": "I am a writer and facilitator shaped by recovery, community care, and honest conversations.",
+                "profession": "Writer",
+                "passionate_topics": "Healing",
+                "message": "Hope",
+            }
+        )
+
+
+def test_public_intake_rejects_structured_values_in_text_fields(temp_db):
+    """Unexpected nested JSON must not be stringified into stored guest data."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="plain text for: core values"):
+        service.create_intake_submission(
+            {
+                **SELF_INTAKE_DEFAULTS,
+                "full_name": "Nested Payload Guest",
+                "email": "nested@example.com",
+                "background": "I am a writer and facilitator shaped by recovery, community care, and honest conversations.",
+                "profession": "Writer",
+                "core_values": {"value": "hope"},
+                "passionate_topics": "Healing",
+                "message": "Hope",
+            }
+        )
+
+
+def test_public_intake_rejects_excessively_long_individual_answers(temp_db):
+    """Bounded fields protect storage without imposing hidden minimums on optional answers."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="Please shorten: motivation"):
+        service.create_intake_submission(
+            {
+                **SELF_INTAKE_DEFAULTS,
+                "full_name": "Long Answer Guest",
+                "email": "long-answer@example.com",
+                "background": "I am a writer and facilitator shaped by recovery, community care, and honest conversations.",
+                "profession": "Writer",
+                "motivation": "x" * 10_001,
+                "passionate_topics": "Healing",
+                "message": "Hope",
+            }
+        )
+
+
+@pytest.mark.parametrize("email", ("guest@localhost", "guest @example.com", "guest@@example.com", "@example.com"))
+def test_public_intake_rejects_malformed_email_addresses(temp_db, email):
+    """Server validation must stay close to the browser so follow-up addresses are usable."""
+    service = GuestWebService(temp_db.db_path)
+
+    with pytest.raises(WebInterfaceError, match="valid email address"):
+        service.create_intake_submission(
+            {
+                **SELF_INTAKE_DEFAULTS,
+                "full_name": "Email Validation Guest",
+                "email": email,
+                "background": "I am a writer and facilitator shaped by recovery, community care, and honest conversations.",
+                "profession": "Writer",
+                "passionate_topics": "Healing",
+                "message": "Hope",
+            }
+        )
 
 
 def test_public_intake_request_accepts_configured_token():
@@ -4734,9 +4869,10 @@ def test_list_guests_includes_decision_support_and_stats(temp_db):
             "background": "I help people heal, grow, and rebuild meaning after difficult seasons through honest storytelling and practical reflection.",
             "profession": "I work as a coach and speaker focused on healing, resilience, and emotional honesty.",
             "passionate_topics": "Healing, faith, identity, purpose, relationships, and resilient growth.",
-            "message": "I want listeners to leave feeling hopeful and more courageous about their own next steps.",
-            "additional_info": "I love meaningful conversations that are honest, reflective, and grounded in lived experience.",
-            "has_social_media": "Yes",
+                "message": "I want listeners to leave feeling hopeful and more courageous about their own next steps.",
+                "additional_info": "I love meaningful conversations that are honest, reflective, and grounded in lived experience.",
+                "experience": "I have spoken on community panels and reflective podcasts about resilience and healing.",
+                "has_social_media": "Yes",
         }
     )
     service.create_guest(

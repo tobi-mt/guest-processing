@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Podcast Guest Intake</title>
-    <link rel="stylesheet" href="/static/intake.css?v=20260810" />
+    <link rel="stylesheet" href="/static/intake.css?v=20260925.1" />
   </head>
   <body>
     <div class="intake-shell">
@@ -47,9 +47,8 @@
 
         <ol class="step-list">
           <li class="step-item active" data-step-indicator="1">Contact</li>
-          <li class="step-item" data-step-indicator="2">Journey</li>
-          <li class="step-item" data-step-indicator="3">Perspective</li>
-          <li class="step-item" data-step-indicator="4">Conversation</li>
+          <li class="step-item" data-step-indicator="2">Your Story</li>
+          <li class="step-item" data-step-indicator="3">The Episode</li>
         </ol>
       </aside>
 
@@ -69,7 +68,7 @@
             Take your time and answer with care. We are not looking for polished performance. We are looking for honesty, depth, and a story that can truly meet people where they are.
           </p>
           <div class="premium-badges" aria-label="Application reassurance">
-            <span class="premium-badge">About 4 to 6 minutes</span>
+            <span class="premium-badge">About 8 to 12 minutes</span>
             <span class="premium-badge">Draft saves automatically</span>
             <span class="premium-badge warm">No media polish required</span>
           </div>
@@ -84,18 +83,18 @@
         </div>
 
         <div class="draft-banner" id="draft-banner" aria-live="polite">
-          Your progress is saved automatically in this browser, so you can come back later and continue where you left off.
+          Your progress is saved only in this browser on this device, so you can return here and continue later.
         </div>
 
         <div class="workflow-note">
           <strong>What helps most</strong>
-          <p>The strongest applications usually sound grounded and human, not overly rehearsed. Short, honest answers are better than trying to sound impressive.</p>
+          <p>The strongest applications are specific and human, not overly rehearsed. Required questions are marked. We use your answers to assess editorial fit and prepare a thoughtful conversation; optional personal details do not determine your eligibility.</p>
         </div>
 
         <form id="intake-form" class="intake-form" novalidate>
           <section class="form-step active" data-step="1">
-            <h3>Let’s start with the essentials.</h3>
-            <p class="step-copy">Tell us who you are, where we can find your work, and how to reach you if your story feels like a fit.</p>
+            <h3>First, tell us who you are.</h3>
+            <p class="step-copy">We need enough context to understand you—not a polished biography. Fields marked <span class="required-marker">Required</span> must be completed.</p>
 
             <div class="workflow-note">
               <strong>Keep it personal</strong>
@@ -115,48 +114,48 @@
             <div class="conditional-followup hidden" data-conditional-source="application_role" data-conditional-value="self">
               <div class="workflow-note soft">
                 <strong>Before you continue</strong>
-                <p>Please complete the fields below, confirm that you are applying for yourself, and share at least one website or public profile link so we can review your application well.</p>
+                <p>Please confirm your identity and use an email address you personally monitor. Public-profile links are welcome but optional.</p>
               </div>
               <label class="full-width checkbox-field">
                 <input name="self_attestation" type="checkbox" value="yes" />
                 <span>I confirm that I am the guest applying for myself and that this email belongs to me professionally or personally.</span>
               </label>
               <label>
-                Full Name
-                <input name="full_name" type="text" data-conditional-required="application_role:self" />
+                <span class="field-heading">Full name <span class="required-marker">Required</span></span>
+                <input name="full_name" type="text" maxlength="200" autocomplete="name" data-conditional-required="application_role:self" />
                 <small>Use the name you would want us to use in future communication.</small>
               </label>
               <label>
-                Email Address
-                <input name="email" type="email" data-conditional-required="application_role:self" />
+                <span class="field-heading">Email address <span class="required-marker">Required</span></span>
+                <input name="email" type="email" maxlength="320" autocomplete="email" data-conditional-required="application_role:self" />
                 <small>Please use your own personal or professional email address, not a shared agency inbox.</small>
               </label>
               <label>
-                Website
-                <input name="website" type="text" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://yourwebsite.com or www.yourwebsite.com" />
-                <small>Optional. You can enter a full link or just start with `www.` and we will format it safely.</small>
+                <span class="field-heading">Primary website or public profile <span class="optional-marker">Optional</span></span>
+                <input name="website" type="text" maxlength="2048" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://yourwebsite.com or www.yourwebsite.com" />
+                <small>This can be your website, LinkedIn, Instagram, speaker page, or another representative public link.</small>
               </label>
             </div>
 
             <div class="conditional-followup hidden" data-conditional-source="application_role" data-conditional-value="on_behalf">
               <label>
                 Agency or representative name
-                <input name="agency_name" type="text" data-conditional-required="application_role:on_behalf" />
+                <input name="agency_name" type="text" maxlength="200" data-conditional-required="application_role:on_behalf" />
                 <small>Tell us the name of the agency, PR representative, or management contact.</small>
               </label>
               <label>
                 Agency email address
-                <input name="agency_email" type="email" />
+                <input name="agency_email" type="email" maxlength="320" />
                 <small>Optional, but helpful if we need to follow up with the representative.</small>
               </label>
               <label>
                 Guest full name
-                <input name="represented_guest_name" type="text" data-conditional-required="application_role:on_behalf" />
+                <input name="represented_guest_name" type="text" maxlength="200" data-conditional-required="application_role:on_behalf" />
                 <small>We will use this name when inviting the guest personally.</small>
               </label>
               <label>
                 Guest email address
-                <input name="represented_guest_email" type="email" data-conditional-required="application_role:on_behalf" />
+                <input name="represented_guest_email" type="email" maxlength="320" data-conditional-required="application_role:on_behalf" />
                 <small>We will email the guest their own personal Mirror Talk application link.</small>
               </label>
               <div class="workflow-note soft">
@@ -166,150 +165,85 @@
             </div>
 
             <div class="conditional-followup hidden" data-conditional-source="application_role" data-conditional-value="self">
-              <div class="full-width social-group">
-                <div class="social-group-title">Social Media Handles</div>
-                <div class="social-grid">
-                  <label>
-                    Instagram
-                    <input name="social_instagram" type="text" data-social-platform="Instagram" placeholder="@name" />
-                  </label>
-                  <label>
-                    LinkedIn
-                    <input name="social_linkedin" type="text" data-social-platform="LinkedIn" placeholder="linkedin.com/in/name or Name" />
-                  </label>
-                  <label>
-                    YouTube
-                    <input name="social_youtube" type="text" data-social-platform="YouTube" placeholder="@channel or youtube.com/@channel" />
-                  </label>
-                  <label>
-                    X / Twitter
-                    <input name="social_twitter" type="text" data-social-platform="X/Twitter" placeholder="@name" />
-                  </label>
-                  <label>
-                    Facebook
-                    <input name="social_facebook" type="text" data-social-platform="Facebook" placeholder="facebook.com/name or Name" />
-                  </label>
-                  <label>
-                    TikTok
-                    <input name="social_tiktok" type="text" data-social-platform="TikTok" placeholder="@name" />
-                  </label>
-                </div>
                 <label class="full-width">
-                  Other social or media links
-                  <textarea name="social_other" rows="3" placeholder="Podcast website, speaker page, press kit, podcast links, or any other relevant profiles"></textarea>
-                  <small>Please share at least one social handle, relevant public profile, or a website so we can understand your voice and work better.</small>
+                  <span class="field-heading">Additional public links <span class="optional-marker">Optional</span></span>
+                  <textarea name="social_other" rows="2" maxlength="10000" placeholder="One link per line"></textarea>
+                  <small>Share only links that help us understand your work or voice. Follower count is not part of editorial eligibility.</small>
                 </label>
                 <input name="social_handles" type="hidden" />
-              </div>
               <label class="full-width">
-                A brief overview of your personal and professional background
-                <textarea name="background" rows="5" data-conditional-required="application_role:self"></textarea>
-                <small>Give us the shape of your story in a way that feels natural, grounded, and true to you.</small>
+                <span class="field-heading">Introduce yourself in a few sentences <span class="required-marker">Required</span></span>
+                <textarea name="background" rows="4" data-conditional-required="application_role:self" minlength="40"></textarea>
+                <small>Tell us the personal and professional context that matters for this conversation. Aim for 2–4 sentences.</small>
+              </label>
+              <label class="full-width">
+                <span class="field-heading">What work do you do, and what perspective have you earned through it? <span class="required-marker">Required</span></span>
+                <textarea name="profession" rows="4" data-conditional-required="application_role:self"></textarea>
+                <small>Titles matter less than the experience, responsibility, or insight behind your work.</small>
               </label>
             </div>
           </section>
 
           <section class="form-step" data-step="2">
-            <h3>Tell us about your journey.</h3>
-            <p class="step-copy">We want a clear sense of your professional path, what shaped it, and the experiences that made your perspective worth hearing.</p>
-
+            <h3>Share the story behind your perspective.</h3>
+            <p class="step-copy">Specific moments help us understand your depth far better than achievements or a promotional biography.</p>
             <label class="full-width">
-              What is your current profession, and what led you to this career path?
-              <textarea name="profession" rows="4" required></textarea>
-              <small>Feel free to include notable achievements, milestones, publications, or turning points that define your journey.</small>
-              <small>Example: Therapist. I came to this work after my own healing journey and years of supporting families through grief and transition.</small>
+              <span class="field-heading">What turning point or lived experience most shaped who you are today? <span class="required-marker">Required</span></span>
+              <textarea name="life_experiences" rows="5" required minlength="60"></textarea>
+              <small>Choose one concrete experience if possible: what happened, what changed, and what you understand differently now.</small>
             </label>
             <label class="full-width">
-              What motivates or inspires you in your work and life?
+              <span class="field-heading">Why does sharing this story matter to you now? <span class="required-marker">Required</span></span>
               <textarea name="motivation" rows="4" required></textarea>
-              <small>Describe the influences, convictions, or hopes that keep you focused and alive to your calling.</small>
+              <small>Tell us what you hope speaking honestly about it could make possible for other people.</small>
             </label>
             <label class="full-width">
-              What life experiences or pivotal moments have shaped who you are today?
-              <textarea name="life_experiences" rows="5" required></textarea>
-              <small>We welcome honest reflection on challenges, healing, transformation, and the moments that changed your direction.</small>
-            </label>
-          </section>
-
-          <section class="form-step" data-step="3">
-            <h3>Help us understand your perspective.</h3>
-            <p class="step-copy">Mirror Talk is built on soulful conversations, so we want to understand the values, beliefs, and inner compass behind your voice.</p>
-
-            <label class="full-width">
-              What are your core values or guiding principles?
+              <span class="field-heading">What values or principles guided you through that experience? <span class="required-marker">Required</span></span>
               <textarea name="core_values" rows="4" required></textarea>
-              <small>Tell us what grounds your decisions, relationships, and outlook on life.</small>
+              <small>Concrete examples are more useful than a list of admirable words.</small>
             </label>
             <label class="full-width">
-              Do you follow a specific faith, spiritual practice, or philosophical tradition?
+              <span class="field-heading">Does a faith, spiritual practice, or philosophy meaningfully shape this story? <span class="optional-marker">Optional</span></span>
               <select name="faith_choice">
-                <option value="">Select one</option>
-                <option value="Yes">Yes</option>
+                <option value="">Prefer not to say</option>
+                <option value="Yes">Yes, I would like to share it</option>
                 <option value="No">No</option>
               </select>
-              <small>Answer yes if this meaningfully shapes your worldview or daily life.</small>
+              <small>This is personal context, not an eligibility test.</small>
             </label>
             <div class="conditional-followup hidden" data-conditional-source="faith_choice" data-conditional-value="Yes">
               <label class="full-width">
-                Tell us a little more about that practice or tradition
+                Tell us only what feels relevant and comfortable to share
                 <textarea name="faith_detail" rows="4" data-conditional-required="faith_choice:Yes"></textarea>
-                <small>Share only what feels relevant to your story and perspective.</small>
-              </label>
-            </div>
-            <label class="full-width">
-              Do you believe your beliefs and values align with the themes of soulful conversations?
-              <select name="alignment_choice" required>
-                <option value="">Select one</option>
-                <option value="Yes">Yes</option>
-                <option value="No">No</option>
-              </select>
-              <small>We use this to understand whether your perspective naturally fits the tone and mission of Mirror Talk.</small>
-            </label>
-            <div class="conditional-followup hidden" data-conditional-source="alignment_choice" data-conditional-value="Yes">
-              <label class="full-width">
-                If yes, how do you think your perspective could contribute meaningfully?
-                <textarea name="alignment_detail" rows="4" data-conditional-required="alignment_choice:Yes"></textarea>
-                <small>Tell us what feels resonant between your story and soulful conversations.</small>
-              </label>
-            </div>
-            <label class="full-width">
-              Do you have a favourite quote or philosophy that guides your life?
-              <select name="favorite_quote_choice">
-                <option value="">Select one</option>
-                <option value="Yes">Yes</option>
-                <option value="No">No</option>
-              </select>
-              <small>If yes, we would love to hear it.</small>
-            </label>
-            <div class="conditional-followup hidden" data-conditional-source="favorite_quote_choice" data-conditional-value="Yes">
-              <label class="full-width">
-                Share the quote or philosophy and why it resonates with you
-                <textarea name="favorite_quote_detail" rows="3" data-conditional-required="favorite_quote_choice:Yes"></textarea>
-                <small>This can be a short quote, a life motto, or a philosophy you return to often.</small>
+                <small>This information helps the host approach your story with care.</small>
               </label>
             </div>
           </section>
 
-          <section class="form-step" data-step="4">
-            <h3>Let’s imagine the conversation.</h3>
-            <p class="step-copy">These final answers help us understand what listeners could gain from your story, and how ready you are for a strong episode.</p>
+          <section class="form-step" data-step="3">
+            <h3>Imagine the episode.</h3>
+            <p class="step-copy">Help us see the conversation clearly: its strongest themes, its value to listeners, and why Mirror Talk is the right setting.</p>
 
             <label class="full-width">
-              What topics or themes are you most passionate about discussing?
+              <span class="field-heading">What two or three topics could you discuss with unusual depth or first-hand authority? <span class="required-marker">Required</span></span>
               <textarea name="passionate_topics" rows="4" required></textarea>
-              <small>Think about the conversations that feel alive, honest, and valuable for listeners.</small>
-              <small>Examples: God. Personal development. Healing and identity. Faith, grief, and resilience.</small>
+              <small>Be specific enough that we can imagine an episode—not simply “growth” or “success.”</small>
             </label>
             <label class="full-width">
-              What message or takeaway would you like to leave with our listeners?
+              <span class="field-heading">What should a listener understand, feel, or do differently after hearing your story? <span class="required-marker">Required</span></span>
               <textarea name="message" rows="4" required></textarea>
-              <small>If someone listened to your episode once, what would you hope stays with them?</small>
-              <small>Examples: Hope. Keep going. Healing is possible. You are not alone.</small>
+              <small>One clear takeaway is more powerful than a general inspirational statement.</small>
             </label>
             <label class="full-width">
-              Have you been a guest on podcasts or spoken at events before?
+              <span class="field-heading">Why would this story belong on Mirror Talk specifically? <span class="required-marker">Required</span></span>
+              <textarea name="alignment_detail" rows="4" required></textarea>
+              <small>Show us the connection in your own words rather than telling us simply that you align.</small>
+              <input name="alignment_choice" type="hidden" value="Yes" />
+            </label>
+            <label class="full-width">
+              <span class="field-heading">Have you been interviewed or spoken publicly before? <span class="optional-marker">Optional</span></span>
               <select name="experience_choice">
-                <option value="">Select one</option>
+                <option value="">Prefer not to say</option>
                 <option value="Yes">Yes</option>
                 <option value="No">No</option>
               </select>
@@ -323,28 +257,30 @@
               </label>
             </div>
             <label class="full-width">
-              Is there anything else you'd like us to know about you?
-              <textarea name="additional_info" rows="4"></textarea>
-              <small>Anything personal, practical, or important that would help us understand you better.</small>
+              <span class="field-heading">Is there anything you would prefer not to discuss publicly, or anything else we should know? <span class="optional-marker">Optional</span></span>
+              <textarea name="additional_info" rows="3"></textarea>
+              <small>Boundaries do not count against your application. They help us create a safer, more respectful conversation.</small>
             </label>
             <label class="full-width">
-              Are you following us on podcast platforms and social media?
-              <select name="has_social_media">
-                <option value="">Prefer not to say</option>
-                <option value="Yes">Yes</option>
-                <option value="No">Not yet</option>
-              </select>
+              <span class="field-heading">A favourite quote or philosophy <span class="optional-marker">Optional</span></span>
+              <textarea name="favorite_quote_detail" rows="2"></textarea>
+              <small>Share this only if it genuinely adds something to your story.</small>
+              <input name="favorite_quote_choice" type="hidden" value="Yes" />
             </label>
             <label class="full-width checkbox-field">
               <input name="marketing_opt_in" type="checkbox" value="yes" />
-              <span>I would like to receive Mirror Talk's newsletter and occasional updates by email. I can unsubscribe at any time.</span>
+              <span><span class="field-heading">Newsletter <span class="optional-marker">Optional</span></span> I would like to receive Mirror Talk's newsletter and occasional updates. This choice is separate from my guest application, and I can unsubscribe at any time.</span>
             </label>
+            <div class="full-width privacy-note">
+              <strong>Before you submit</strong>
+              <p>We use these answers to review your application, contact you about guest participation, and prepare responsibly if invited. Please share only information you are comfortable providing to the Mirror Talk team.</p>
+            </div>
           </section>
 
           <div class="step-footer">
             <button type="button" id="back-button" class="secondary-button">Back</button>
             <div class="step-footer-right">
-              <span id="step-counter">Step 1 of 4</span>
+              <span id="step-counter">Step 1 of 3</span>
               <button type="button" id="next-button" class="primary-button">Continue</button>
               <button type="submit" id="submit-button" class="primary-button hidden">Submit Application</button>
             </div>
@@ -418,6 +354,6 @@
       </main>
     </div>
 
-    <script src="/static/intake.js?v=20260817.1" defer></script>
+    <script src="/static/intake.js?v=20260925.2" defer></script>
   </body>
 </html>

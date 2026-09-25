@@ -205,11 +205,6 @@ FORM_FIELDS = {
 }
 LONG_TEXT_FIELDS = [
     "background",
-    "profession",
-    "passionate_topics",
-    "message",
-    "experience",
-    "additional_info",
 ]
 REQUIRED_INTAKE_FIELDS = (
     "full_name",
@@ -225,12 +220,15 @@ REQUIRED_INTAKE_FIELDS = (
 )
 MIN_WORDS_BY_FIELD = {
     "background": 8,
-    "profession": 1,
-    "passionate_topics": 1,
-    "message": 1,
-    "experience": 4,
-    "additional_info": 4,
 }
+MAX_INTAKE_REQUEST_BYTES = 128 * 1024
+MAX_INTAKE_FIELD_LENGTHS = {
+    "full_name": 200,
+    "email": 320,
+    "website": 2048,
+    "social_handles": 10_000,
+}
+DEFAULT_MAX_INTAKE_FIELD_LENGTH = 10_000
 SPAM_KEYWORDS = {
     "seo",
     "casino",
@@ -448,6 +446,17 @@ def _normalize_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _is_valid_email_address(value: Any) -> bool:
+    """Apply conservative syntax checks without excluding valid international addresses."""
+    email = _normalize_text(value)
+    if not email or len(email) > 320 or any(character.isspace() for character in email):
+        return False
+    if email.count("@") != 1:
+        return False
+    local_part, domain = email.rsplit("@", 1)
+    return bool(local_part and "." in domain and not domain.startswith(".") and not domain.endswith("."))
+
+
 def _configured_dashboard_users() -> Dict[str, Dict[str, str]]:
     """Return configured dashboard identities while preserving legacy credentials."""
     users: Dict[str, Dict[str, str]] = {}
@@ -487,6 +496,15 @@ def _normalize_website(value: Any) -> str:
     website = _normalize_text(value)
     if website and not re.match(r"^[a-z]+://", website, flags=re.IGNORECASE):
         website = f"https://{website}"
+    if website:
+        try:
+            parsed = urlsplit(website)
+            host = parsed.hostname or ""
+            valid = parsed.scheme.casefold() in {"http", "https"} and "." in host and not parsed.username
+        except (TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise WebInterfaceError("Please enter a valid public website or profile link beginning with http:// or https://.")
     return website
 
 
@@ -519,6 +537,14 @@ def _normalize_episode_release_status(release_date: str, release_status: str) ->
 
 def validate_intake_payload(payload: Dict[str, str], *, require_required_fields: bool = False) -> None:
     """Reject incomplete, spammy, or low-effort intake submissions."""
+    for field_name, raw_value in payload.items():
+        if isinstance(raw_value, (dict, list, tuple, set)):
+            raise WebInterfaceError(f"Please enter plain text for: {field_name.replace('_', ' ')}")
+        value = _normalize_text(raw_value)
+        max_length = MAX_INTAKE_FIELD_LENGTHS.get(field_name, DEFAULT_MAX_INTAKE_FIELD_LENGTH)
+        if len(value) > max_length:
+            raise WebInterfaceError(f"Please shorten: {field_name.replace('_', ' ')}")
+
     combined_text = " ".join(str(payload.get(field_name, "")) for field_name in payload).lower()
 
     if any(keyword in combined_text for keyword in SPAM_KEYWORDS):
@@ -529,9 +555,6 @@ def validate_intake_payload(payload: Dict[str, str], *, require_required_fields:
             if not _normalize_text(payload.get(field_name)):
                 field_label = field_name.replace("_", " ")
                 raise WebInterfaceError(f"Please complete the required field: {field_label}")
-
-        if not (_normalize_text(payload.get("website")) or _normalize_text(payload.get("social_handles"))):
-            raise WebInterfaceError("Please provide a website or social/public profile.")
 
     for field_name in LONG_TEXT_FIELDS:
         value = str(payload.get(field_name, "")).strip()
@@ -565,8 +588,8 @@ def build_guest_payload(payload: Dict[str, Any], source_name: str = FORM_SOURCE_
         raise WebInterfaceError("Full name is required.")
 
     email = guest_data["email"]
-    if email and "@" not in email:
-        raise WebInterfaceError("Email address must contain '@'.")
+    if email and not _is_valid_email_address(email):
+        raise WebInterfaceError("Please enter a valid email address.")
 
     if source_name == INTAKE_SOURCE_NAME:
         validate_intake_payload(guest_data)
@@ -3174,9 +3197,11 @@ class GuestWebService:
         guest_email = _normalize_text(payload.get("represented_guest_email"))
         if not agency_name:
             raise WebInterfaceError("Please share the agency or representative name.")
+        if agency_email and not _is_valid_email_address(agency_email):
+            raise WebInterfaceError("Please enter a valid agency email address or leave it blank.")
         if not guest_name:
             raise WebInterfaceError("Please share the guest's full name.")
-        if not guest_email or "@" not in guest_email:
+        if not _is_valid_email_address(guest_email):
             raise WebInterfaceError("Please share the guest's real email address so we can contact them directly.")
 
         referral_note = (
@@ -7944,11 +7969,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized intake request"})
                 return
 
-            payload = self._read_json_payload()
             try:
+                payload = self._read_json_payload(max_bytes=MAX_INTAKE_REQUEST_BYTES)
                 guest = self.service.create_intake_submission(payload)
-            except WebInterfaceError as exc:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            except (WebInterfaceError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                message = str(exc) if isinstance(exc, WebInterfaceError) else "Please submit a valid application request."
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": message})
                 return
 
             self._send_json(
@@ -8755,13 +8781,23 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
         """Silence default request logging."""
 
-    def _read_json_payload(self) -> Dict[str, Any]:
-        content_length = int(self.headers.get("Content-Length", "0"))
+    def _read_json_payload(self, *, max_bytes: Optional[int] = None) -> Dict[str, Any]:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError) as exc:
+            raise WebInterfaceError("Invalid request size.") from exc
+        if content_length < 0:
+            raise WebInterfaceError("Invalid request size.")
+        if max_bytes is not None and content_length > max_bytes:
+            raise WebInterfaceError("This application is too large to submit. Please shorten your answers and try again.")
         if content_length == 0:
             return {}
 
         raw_data = self.rfile.read(content_length)
-        return json.loads(raw_data.decode("utf-8"))
+        payload = json.loads(raw_data.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise WebInterfaceError("Please submit the application as a JSON object.")
+        return payload
 
     @staticmethod
     def _query_params(path: str) -> Dict[str, str]:

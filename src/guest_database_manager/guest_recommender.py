@@ -224,7 +224,7 @@ def build_strategic_guest_scorecard(guest: Dict[str, Any]) -> Dict[str, Any]:
         "expertise_credibility": min(100, _word_count(public_credibility) * 3 + (20 if guest.get("website") else 0)),
         "emotional_depth": min(100, _word_count(depth) * 2.5 + _word_count(guest.get("message_takeaway"))),
         # Presence proves a distribution route, not audience size or willingness.
-        "distribution_potential": (35 if guest.get("social_media_handles") else 0) + (25 if guest.get("website") else 0) + (20 if _normalize_text(guest.get("following_us")) == "yes" else 0),
+        "distribution_potential": (35 if guest.get("social_media_handles") else 0) + (25 if guest.get("website") else 0),
         "originality": min(100, len(_theme_tokens(guest)) * 4),
     }
     dimensions["distribution_potential"] = min(80, dimensions["distribution_potential"])
@@ -279,7 +279,6 @@ def score_guest(
     alignment = _clean_text(guest.get("alignment"))
     website = _clean_text(guest.get("website"))
     social_handles = _clean_text(guest.get("social_media_handles"))
-    following_us = _normalize_text(guest.get("following_us"))
     email = _clean_text(guest.get("email"))
 
     long_form_blocks = [
@@ -342,12 +341,6 @@ def score_guest(
     if podcast_experience:
         score += 5
         strengths.append("appears comfortable with interviews or speaking")
-    if following_us == "yes":
-        score += 5
-        strengths.append("already follows Mirror Talk")
-    elif following_us == "not yet":
-        score -= 1
-
     if email:
         score += 4
     else:

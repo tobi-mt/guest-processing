@@ -19,13 +19,14 @@ const socialHandlesField = form.elements.namedItem("social_handles");
 const applicationRoleField = form.elements.namedItem("application_role");
 const selfAttestationField = form.elements.namedItem("self_attestation");
 
-const stepNames = ["Contact", "Journey", "Perspective", "Conversation"];
+const stepNames = ["Contact", "Your Story", "The Episode"];
 const DRAFT_STORAGE_KEY = "mirror-talk-intake-draft-v1";
-const DEFAULT_DRAFT_BANNER_TEXT = "Your progress is saved automatically in this browser, so you can come back later and continue where you left off.";
+const DEFAULT_DRAFT_BANNER_TEXT = "Your progress is saved only in this browser on this device, so you can return here and continue later.";
 
 let currentStep = 0;
 let isComplete = false;
 let draftBannerResetTimer = null;
+let draftSaveTimer = null;
 
 function isAgencyMode() {
   return String(applicationRoleField?.value || "").trim() === "on_behalf";
@@ -86,13 +87,6 @@ function hasStructuredSocialValue() {
   return Boolean(String(socialOtherField?.value || "").trim());
 }
 
-function getSocialPresenceFocusTarget() {
-  const firstFilledSocialField =
-    socialPlatformFields.find((field) => String(field.value || "").trim()) ||
-    (String(socialOtherField?.value || "").trim() ? socialOtherField : null);
-  return firstFilledSocialField || websiteField || socialPlatformFields[0] || socialOtherField;
-}
-
 function supportsLocalStorage() {
   try {
     return typeof window.localStorage !== "undefined";
@@ -117,15 +111,22 @@ function getDraftPayload() {
   }
 }
 
+function getDraftFormValues() {
+  const values = Object.fromEntries(new FormData(form).entries());
+  form.querySelectorAll('input[type="checkbox"][name]').forEach((field) => {
+    values[field.name] = field.checked;
+  });
+  return values;
+}
+
 function saveDraft() {
   if (!supportsLocalStorage()) {
     return;
   }
 
-  const formValues = Object.fromEntries(new FormData(form).entries());
   const payload = {
     step: currentStep,
-    values: formValues,
+    values: getDraftFormValues(),
     savedAt: new Date().toISOString(),
   };
 
@@ -135,6 +136,16 @@ function saveDraft() {
   } catch (error) {
     return;
   }
+}
+
+function scheduleDraftSave() {
+  if (draftSaveTimer) {
+    window.clearTimeout(draftSaveTimer);
+  }
+  draftSaveTimer = window.setTimeout(() => {
+    draftSaveTimer = null;
+    saveDraft();
+  }, 350);
 }
 
 function clearDraft() {
@@ -158,6 +169,13 @@ function restoreDraft() {
   for (const [name, value] of Object.entries(draft.values)) {
     const field = form.elements.namedItem(name);
     if (!field || typeof field.value === "undefined") {
+      continue;
+    }
+    if (field.type === "checkbox") {
+      // Older drafts stored the submitted checkbox value ("yes"); newer drafts
+      // store an explicit boolean so an unchecked box cannot be confused with a
+      // missing field.
+      field.checked = value === true || value === field.value;
       continue;
     }
     field.value = value;
@@ -295,7 +313,7 @@ function syncStepUI() {
   } else {
     if (agencyMode) {
       stepCounter.textContent = "Agency Referral";
-      progressFill.style.width = "25%";
+      progressFill.style.width = `${100 / steps.length}%`;
       progressCaption.textContent = "Confirming the right guest is invited personally";
       submitButton.textContent = "Send Personal Application Link";
     } else {
@@ -398,25 +416,20 @@ function validateCurrentStep() {
     return true;
   }
 
-  if (activeStep.contains(socialHandlesField)) {
-    const hasWebsite = Boolean(String(websiteField?.value || "").trim());
-    const hasSocial = Boolean(String(socialHandlesField.value || "").trim());
+  return true;
+}
 
-    if (!hasWebsite && !hasSocial) {
-      setMessage("Please share at least a website or one social/public profile so we can verify and understand your public voice.", "error");
-      const focusTarget = getSocialPresenceFocusTarget();
-      if (focusTarget) {
-        showFieldValidation(focusTarget, "Please provide a website or social/public profile.");
-      }
-      return false;
-    }
-
-    if (!hasWebsite || !hasSocial) {
-      setMessage("You can submit with either a website or social presence. Sharing both simply helps us review your application more quickly.", "pending");
-    }
+function validateSelfAttestation() {
+  if (!isSelfApplicationMode() || !selfAttestationField || selfAttestationField.checked) {
+    return true;
   }
 
-  return true;
+  currentStep = 0;
+  syncStepUI();
+  const errorText = "Please confirm that you are the guest applying for yourself before continuing.";
+  setMessage(errorText, "error");
+  showFieldValidation(selfAttestationField, errorText);
+  return false;
 }
 
 function validateEntireForm() {
@@ -424,6 +437,9 @@ function validateEntireForm() {
     currentStep = 0;
     syncStepUI();
     return validateCurrentStep();
+  }
+  if (!validateSelfAttestation()) {
+    return false;
   }
   for (let index = 0; index < steps.length; index += 1) {
     syncSocialHandlesField();
@@ -434,25 +450,6 @@ function validateEntireForm() {
       return false;
     }
 
-    if (steps[index].contains(socialHandlesField)) {
-      const hasWebsite = Boolean(String(websiteField?.value || "").trim());
-      const hasSocial = Boolean(String(socialHandlesField.value || "").trim());
-
-      if (!hasWebsite && !hasSocial) {
-        currentStep = index;
-        syncStepUI();
-        setMessage("Please share at least a website or one social/public profile so we can verify and understand your public voice.", "error");
-        const focusTarget = getSocialPresenceFocusTarget();
-        if (focusTarget) {
-          showFieldValidation(focusTarget, "Please provide a website or social/public profile.");
-        }
-        return false;
-      }
-
-      if (!hasWebsite || !hasSocial) {
-        setMessage("You can submit with either a website or social presence. Sharing both simply helps us review your application more quickly.", "pending");
-      }
-    }
   }
 
   return true;
@@ -547,15 +544,17 @@ form.addEventListener("submit", async (event) => {
   syncSocialHandlesField();
   updateConditionalGroups();
   if (!validateEntireForm()) {
-    setMessage("Please complete the highlighted field before submitting.", "error");
     return;
   }
 
   const payload = Object.fromEntries(new FormData(form).entries());
+  // Serialize this security-relevant confirmation from the DOM state
+  // explicitly instead of relying on implicit checkbox FormData behavior.
+  payload.self_attestation = selfAttestationField?.checked ? "yes" : "";
   const wasAgencyMode = isAgencyMode();
   payload.faith = buildConditionalAnswer("faith_choice", "faith_detail");
   payload.alignment = buildConditionalAnswer("alignment_choice", "alignment_detail");
-  payload.favorite_quote = buildConditionalAnswer("favorite_quote_choice", "favorite_quote_detail");
+  payload.favorite_quote = String(form.elements.namedItem("favorite_quote_detail")?.value || "").trim();
   payload.experience = buildConditionalAnswer("experience_choice", "experience_detail");
   submitButton.disabled = true;
   submitButton.textContent = "Submitting...";
@@ -603,13 +602,16 @@ form.addEventListener("input", () => {
   clearFieldHighlights();
   syncSocialHandlesField();
   updateConditionalGroups();
-  saveDraft();
+  scheduleDraftSave();
 });
 
-form.addEventListener("change", () => {
+form.addEventListener("change", (event) => {
   clearFieldHighlights();
   syncSocialHandlesField();
   updateConditionalGroups();
+  if (event.target === applicationRoleField) {
+    syncStepUI();
+  }
   saveDraft();
 });
 

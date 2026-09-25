@@ -9,7 +9,7 @@ import pytest
 
 
 STATIC_ROOT = Path(__file__).parents[1] / "src" / "guest_database_manager" / "static"
-WORKSPACES = ("index.html", "operations.html", "planning.html", "booking.html", "partners.html")
+WORKSPACES = ("index.html", "operations.html", "planning.html", "booking.html", "partners.html", "intake.html")
 
 
 def _strip_markup(value: str) -> str:
@@ -105,7 +105,41 @@ def test_intake_continue_uses_immediate_browser_validation_feedback() -> None:
     assert "function showFieldValidation(field, customMessage = \"\")" in javascript
     assert "field.reportValidity();" in javascript
     assert "showFieldValidation(selfAttestationField, errorText);" in javascript
-    assert 'intake.js?v=20260817.1' in (STATIC_ROOT / "intake.html").read_text(encoding="utf-8")
+    assert 'intake.js?v=20260925.2' in (STATIC_ROOT / "intake.html").read_text(encoding="utf-8")
+
+
+def test_intake_attestation_state_is_preserved_and_submitted_explicitly() -> None:
+    """A checked self-attestation must survive draft restore and reach the API."""
+    javascript = (STATIC_ROOT / "intake.js").read_text(encoding="utf-8")
+
+    assert 'values[field.name] = field.checked;' in javascript
+    assert 'field.checked = value === true || value === field.value;' in javascript
+    assert 'if (!validateSelfAttestation())' in javascript
+    assert 'payload.self_attestation = selfAttestationField?.checked ? "yes" : "";' in javascript
+
+
+def test_intake_redesign_is_three_steps_and_labels_choice_architecture() -> None:
+    """The shorter application must distinguish core questions from optional context."""
+    source = (STATIC_ROOT / "intake.html").read_text(encoding="utf-8")
+
+    assert source.count('class="form-step') == 3
+    assert "Step 1 of 3" in source
+    assert "About 8 to 12 minutes" in source
+    assert source.count('class="required-marker"') >= 10
+    assert source.count('class="optional-marker"') >= 6
+    assert "Follower count is not part of editorial eligibility" in source
+    assert "Boundaries do not count against your application" in source
+    assert 'intake.css?v=20260925.1' in source
+
+
+def test_intake_preserves_specific_errors_and_debounces_draft_writes() -> None:
+    javascript = (STATIC_ROOT / "intake.js").read_text(encoding="utf-8")
+
+    assert 'const stepNames = ["Contact", "Your Story", "The Episode"];' in javascript
+    assert "function scheduleDraftSave()" in javascript
+    assert "scheduleDraftSave();" in javascript
+    assert "if (event.target === applicationRoleField)" in javascript
+    assert 'setMessage("Please complete the highlighted field before submitting."' not in javascript
 
 
 def test_workspace_heroes_use_compact_responsive_stats_layouts() -> None:
