@@ -75,6 +75,9 @@ from guest_database_manager.metrics import build_operational_metrics
 from guest_database_manager.partner_intelligence import PartnerIntelligence, PartnerIntelligenceError
 from guest_database_manager.partner_discovery import curated_signals
 from guest_database_manager.partner_pitch_templates import list_pitch_templates
+from guest_database_manager.podcast_insights import PodcastInsights
+from guest_database_manager.podcast_analytics_connectors import AnalyticsConnectorError, PodcastAnalyticsConnectors
+from guest_database_manager.podcast_source_monitor import PodcastSourceMonitor
 from guest_database_manager.production_governance import POLICY_VERSION, classify_focus
 from guest_database_manager.recommendation_learning import (
     FEATURE_SCHEMA_VERSION,
@@ -775,9 +778,44 @@ class GuestWebService:
         self.recommendation_learning = RecommendationLearning(self.db_path)
         self.rss_release_reconciler = RSSReleaseReconciler(self.db_path)
         self.growth_intelligence = GrowthIntelligence(self.db_path)
+        self.podcast_insights = PodcastInsights(self.db_path)
+        self.podcast_source_monitor = PodcastSourceMonitor(self.db_path)
+        self.podcast_analytics_connectors = PodcastAnalyticsConnectors(self.db_path)
 
     def get_growth_intelligence(self) -> Dict[str, Any]:
         return self.growth_intelligence.dashboard()
+
+    def get_podcast_insights(self) -> Dict[str, Any]:
+        dashboard = self.podcast_insights.dashboard()
+        coverage = self.podcast_source_monitor.status()
+        apple = next((row for row in coverage["public"] if row["source_key"] == "apple_public"), {})
+        apple_evidence = apple.get("evidence") or {}
+        rss = self.rss_release_reconciler.status()
+        rss_items = rss.get("items") or None
+        dashboard["public_catalog"] = {
+            "published_episodes": apple_evidence.get("episode_count") or rss_items,
+            "latest_release": apple_evidence.get("latest_release") or rss.get("latest_fetch_at"),
+            "rss_items": rss_items,
+            "public_sources_available": coverage["public_available"],
+            "public_sources_expected": coverage["public_expected"],
+        }
+        if dashboard["quality"]["status"] == "no_data" and coverage["public_available"]:
+            dashboard["quality"]["status"] = "public_only"
+        dashboard["source_coverage"] = coverage
+        dashboard["analytics_connectors"] = self.podcast_analytics_connectors.status()
+        return dashboard
+
+    def begin_google_analytics_connection(self, *, actor: str, origin: str) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.begin_google(actor=actor, origin=origin)
+
+    def complete_google_analytics_connection(self, *, state: str, code: str, origin: str) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.complete_google(state=state, code=code, origin=origin)
+
+    def sync_google_analytics(self, *, actor: str, force: bool = False) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.sync_google(actor=actor, force=force)
+
+    def disconnect_google_analytics(self, *, actor: str) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.disconnect_google(actor=actor)
 
     def record_growth_observations(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         observations = payload.get("observations")
@@ -1058,6 +1096,16 @@ class GuestWebService:
                     self.reconcile_rss_releases(actor="rss-release-automation")
                 except Exception:
                     logger.exception("RSS release reconciliation cycle failed")
+                try:
+                    self.podcast_source_monitor.run(actor="podcast-source-automation")
+                except Exception:
+                    logger.exception("Podcast source monitoring cycle failed")
+                try:
+                    self.podcast_analytics_connectors.sync_google(actor="podcast-analytics-automation")
+                except AnalyticsConnectorError:
+                    logger.warning("Private podcast analytics synchronization needs attention")
+                except Exception:
+                    logger.exception("Private podcast analytics synchronization failed")
                 try:
                     self.run_shadow_learning_cycle(actor="shadow-learning-automation")
                     self.run_recommendation_learning_cycle(actor="learning-automation")
@@ -7116,6 +7164,28 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if request_path == "/api/analytics-connectors/google/callback":
+            query = self._query_params(self.path)
+            if query.get("error"):
+                self._redirect("/insights?connector=denied")
+                return
+            try:
+                self.service.complete_google_analytics_connection(
+                    state=query.get("state", ""),
+                    code=query.get("code", ""),
+                    origin=self._current_service_origin(),
+                )
+            except AnalyticsConnectorError:
+                logger.warning("Google analytics OAuth callback could not be completed")
+                self._redirect("/insights?connector=failed")
+                return
+            try:
+                self.service.sync_google_analytics(actor="google-oauth-connect", force=True)
+            except AnalyticsConnectorError:
+                logger.warning("Initial Google analytics synchronization needs attention")
+            self._redirect("/insights?connector=connected")
+            return
+
         if request_path in {"/", "/intake", "/intake/", "/intake.html"}:
             self._serve_static("intake.html")
             return
@@ -7154,6 +7224,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
                 return
             self._serve_static("partners.html", set_session_cookie=True)
+            return
+
+        if request_path in {"/insights", "/insights.html"}:
+            if not self._is_authorized_dashboard_request():
+                self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
+                return
+            self._serve_static("insights.html", set_session_cookie=True)
             return
 
         if request_path in {"/planning", "/planning.html"}:
@@ -7334,6 +7411,20 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.get_growth_intelligence())
+            return
+
+        if request_path == "/api/podcast-insights":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.get_podcast_insights())
+            return
+
+        if request_path == "/api/analytics-connectors":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_json(HTTPStatus.OK, self.service.podcast_analytics_connectors.status())
             return
 
         if request_path == "/api/exceptions":
@@ -7739,6 +7830,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
             self._invalidate_learning_cache()
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if self.path in {"/api/analytics-connectors/google/connect", "/api/analytics-connectors/google/sync"}:
+            actor = str((self._session_claims() or {}).get("sub") or "admin")
+            try:
+                if self.path.endswith("/connect"):
+                    result = self.service.begin_google_analytics_connection(
+                        actor=actor, origin=self._current_service_origin()
+                    )
+                else:
+                    result = self.service.sync_google_analytics(actor=actor, force=True)
+            except AnalyticsConnectorError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
             self._send_json(HTTPStatus.OK, result)
             return
 
@@ -8789,6 +8895,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         if not self._enforce_dashboard_security(required_role="admin", require_csrf=True):
             return
+        if self.path == "/api/analytics-connectors/google":
+            actor = str((self._session_claims() or {}).get("sub") or "admin")
+            self._send_json(HTTPStatus.OK, self.service.disconnect_google_analytics(actor=actor))
+            return
         if self.path.startswith("/api/guests/"):
             if not self._is_authorized_dashboard_request():
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
@@ -8994,7 +9104,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def _required_role_for_request(method: str, path: str) -> str:
         if method == "GET":
             return "viewer"
-        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge", "/api/recommendation-learning/settings", "/api/recommendation-learning/promote", "/api/recommendation-learning/rollback", "/api/recommendation-learning/cycle"}:
+        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge", "/api/recommendation-learning/settings", "/api/recommendation-learning/promote", "/api/recommendation-learning/rollback", "/api/recommendation-learning/cycle", "/api/analytics-connectors/google/connect", "/api/analytics-connectors/google/sync"}:
             return "admin"
         return "operator"
 

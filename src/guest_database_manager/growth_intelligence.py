@@ -32,6 +32,20 @@ CANONICAL_METRICS = {
     "guest_newsletter_inclusions": "count",
     "email_subscribers_gained": "count",
     "site_to_podcast_conversion_pct": "percent",
+    "downloads": "count",
+    "plays": "count",
+    "streams": "count",
+    "unique_listeners": "count",
+    "listeners": "count",
+    "followers": "count",
+    "subscribers": "count",
+    "watch_time_hours": "count",
+    "device_mobile": "count",
+    "device_desktop": "count",
+    "device_tablet": "count",
+    "device_tv": "count",
+    "device_smart_speaker": "count",
+    "device_other": "count",
 }
 MFS_COMPONENTS = ("organic_reach", "consumption_depth_pct", "conversion_rate_pct", "return_rate_pct")
 
@@ -72,7 +86,7 @@ def _metric_value(metric: str, value: Any) -> float:
         raise GrowthIntelligenceError("metric_value must be numeric.") from exc
     if not math.isfinite(number) or number < 0:
         raise GrowthIntelligenceError("metric_value must be a finite non-negative number.")
-    if CANONICAL_METRICS[metric] == "percent" and number > 100:
+    if CANONICAL_METRICS.get(metric) == "percent" and number > 100:
         raise GrowthIntelligenceError("Percentage metrics cannot exceed 100.")
     return number
 
@@ -137,7 +151,8 @@ class GrowthIntelligence:
         valid_episode_ids: set[int],
     ) -> tuple[dict[str, Any], tuple[Any, ...], str]:
         metric = _text(row.get("metric_name"))
-        if metric not in CANONICAL_METRICS:
+        dimensional = bool(re.fullmatch(r"(?:device|country)_[a-z0-9_]{2,64}", metric))
+        if metric not in CANONICAL_METRICS and not dimensional:
             raise GrowthIntelligenceError(f"Unsupported metric_name: {metric or 'missing'}.")
         episode_id = row.get("episode_id")
         try:
@@ -177,7 +192,7 @@ class GrowthIntelligence:
             "source_reference": source_reference,
         }
         prepared = (
-            episode_id, provider, metric, value, CANONICAL_METRICS[metric], scope, start, end,
+            episode_id, provider, metric, value, CANONICAL_METRICS.get(metric, "count"), scope, start, end,
             source_reference, source_hash, observation_key, key,
         )
         return normalized, prepared, observation_key

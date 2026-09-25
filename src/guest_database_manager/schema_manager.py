@@ -1277,6 +1277,61 @@ class SchemaManager:
         conn.execute("CREATE INDEX idx_rss_runs_created ON rss_reconciliation_runs(created_at DESC)")
 
     @staticmethod
+    def _migration_030_podcast_source_monitoring(conn: sqlite3.Connection) -> None:
+        """Track public source availability without treating it as private audience evidence."""
+        conn.execute(
+            """CREATE TABLE podcast_source_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_key TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('available', 'unavailable')),
+                evidence_json TEXT NOT NULL DEFAULT '{}',
+                latency_ms INTEGER NOT NULL DEFAULT 0,
+                error_code TEXT NOT NULL DEFAULT '',
+                actor TEXT NOT NULL,
+                checked_at TIMESTAMP NOT NULL
+            )"""
+        )
+        conn.execute("CREATE INDEX idx_podcast_source_checks_latest ON podcast_source_checks(source_key, checked_at DESC)")
+
+    @staticmethod
+    def _migration_031_analytics_oauth_connectors(conn: sqlite3.Connection) -> None:
+        """Persist encrypted delegated access and retry-safe connector health."""
+        conn.execute(
+            """CREATE TABLE analytics_oauth_connections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL UNIQUE,
+                account_subject TEXT NOT NULL DEFAULT '',
+                account_email TEXT NOT NULL DEFAULT '',
+                refresh_token_ciphertext TEXT NOT NULL DEFAULT '',
+                scopes_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL CHECK(status IN ('connected', 'error', 'revoked', 'disconnected')),
+                connected_at TIMESTAMP NOT NULL,
+                last_sync_at TIMESTAMP,
+                last_success_at TIMESTAMP,
+                last_error_code TEXT NOT NULL DEFAULT '',
+                last_error_at TIMESTAMP,
+                next_retry_at TIMESTAMP,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK(consecutive_failures >= 0),
+                revoked_at TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE analytics_oauth_states (
+                state_hash TEXT PRIMARY KEY,
+                actor TEXT NOT NULL,
+                code_verifier_ciphertext TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                consumed_at TIMESTAMP
+            )"""
+        )
+        conn.execute("CREATE INDEX idx_analytics_connections_retry ON analytics_oauth_connections(status, next_retry_at)")
+        conn.execute("CREATE INDEX idx_analytics_states_expiry ON analytics_oauth_states(expires_at)")
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1311,6 +1366,8 @@ class SchemaManager:
             (27, "structured_governance_controls", SchemaManager._migration_027_structured_governance_controls),
             (28, "shadow_learning_operations", SchemaManager._migration_028_shadow_learning_operations),
             (29, "rss_release_reconciliation", SchemaManager._migration_029_rss_release_reconciliation),
+            (30, "podcast_source_monitoring", SchemaManager._migration_030_podcast_source_monitoring),
+            (31, "analytics_oauth_connectors", SchemaManager._migration_031_analytics_oauth_connectors),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:
