@@ -47,7 +47,11 @@ def test_google_oauth_state_is_hashed_short_lived_and_one_time(temp_db, monkeypa
     monkeypatch.setattr(connectors, "_post_form", lambda *args, **kwargs: {
         "refresh_token": "durable-refresh-token", "access_token": "access", "scope": "openid email"
     })
-    monkeypatch.setattr(connectors, "_get_json", lambda *args: {"sub": "account-1", "email": "owner@example.test"})
+    def google_identity(url, _token):
+        if "userinfo" in url:
+            return {"sub": "account-1", "email": "owner@example.test"}
+        return {"items": [{"id": "UC-one", "snippet": {"title": "Mirror Talk"}}]}
+    monkeypatch.setattr(connectors, "_get_json", google_identity)
     result = connectors.complete_google(state=state, code="code", origin="https://example.test")
     assert result["status"] == "connected"
 
@@ -69,13 +73,13 @@ def test_google_sync_is_idempotent_and_updates_health(temp_db, monkeypatch):
     with sqlite3.connect(temp_db.db_path) as conn:
         conn.execute(
             """INSERT INTO analytics_oauth_connections
-               (provider, refresh_token_ciphertext, status, connected_at, updated_at)
-               VALUES ('google', ?, 'connected', '2026-09-25T00:00:00Z', '2026-09-25T00:00:00Z')""",
+               (provider, youtube_channel_id, refresh_token_ciphertext, status, connected_at, updated_at)
+               VALUES ('google', 'UC-test', ?, 'connected', '2026-09-25T00:00:00Z', '2026-09-25T00:00:00Z')""",
             (encrypted,),
         )
         conn.commit()
     monkeypatch.setattr(connectors, "_refresh_access_token", lambda token: "access")
-    monkeypatch.setattr(connectors, "_collect_google", lambda token: [{
+    monkeypatch.setattr(connectors, "_collect_google", lambda token, **kwargs: [{
         "provider": "youtube", "metric_name": "plays", "metric_value": 42,
         "period_start": "2026-08-01", "period_end": "2026-08-28",
         "traffic_scope": "all", "source_reference": "youtube-analytics-api",
@@ -91,6 +95,68 @@ def test_google_sync_is_idempotent_and_updates_health(temp_db, monkeypatch):
     assert status["status"] == "connected"
     assert status["last_success_at"]
     assert "refresh_token_ciphertext" not in status
+
+
+def test_google_oauth_keeps_two_distinct_channel_connections(temp_db, monkeypatch):
+    _configure(monkeypatch)
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    identities = iter([
+        ("account-1", "one@example.test", "UC-one", "Mirror Talk Main"),
+        ("account-2", "two@example.test", "UC-two", "Mirror Talk Clips"),
+    ])
+    active = {}
+
+    def google_response(url, _token):
+        if "userinfo" in url:
+            account, email, channel_id, title = next(identities)
+            active.update(account=account, email=email, channel_id=channel_id, title=title)
+            return {"sub": account, "email": email}
+        return {"items": [{"id": active["channel_id"], "snippet": {"title": active["title"]}}]}
+
+    monkeypatch.setattr(connectors, "_post_form", lambda *args, **kwargs: {
+        "refresh_token": "refresh", "access_token": "access", "scope": "openid email",
+    })
+    monkeypatch.setattr(connectors, "_get_json", google_response)
+    for _ in range(2):
+        authorization = connectors.begin_google(actor="admin", origin="https://example.test")
+        state = parse_qs(urlsplit(authorization["authorization_url"]).query)["state"][0]
+        connectors.complete_google(state=state, code="code", origin="https://example.test")
+
+    connections = connectors.status()["google"]["connections"]
+    assert [(item["youtube_channel_id"], item["youtube_channel_title"]) for item in connections] == [
+        ("UC-one", "Mirror Talk Main"), ("UC-two", "Mirror Talk Clips"),
+    ]
+    assert [item["sync_ga4"] for item in connections] == [True, False]
+
+
+def test_google_sync_keeps_channel_observations_independent(temp_db, monkeypatch):
+    _configure(monkeypatch)
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    encrypted = connectors._cipher().encrypt(b"refresh").decode()
+    with sqlite3.connect(temp_db.db_path) as conn:
+        for channel_id, title in (("UC-one", "Main"), ("UC-two", "Clips")):
+            conn.execute(
+                """INSERT INTO analytics_oauth_connections
+                   (provider, youtube_channel_id, youtube_channel_title, refresh_token_ciphertext,
+                    status, connected_at, updated_at)
+                   VALUES ('google', ?, ?, ?, 'connected', '2026-09-25T00:00:00Z', '2026-09-25T00:00:00Z')""",
+                (channel_id, title, encrypted),
+            )
+        conn.commit()
+    monkeypatch.setattr(connectors, "_refresh_access_token", lambda token: "access")
+    monkeypatch.setattr(connectors, "_collect_google", lambda token, **kwargs: [{
+        "provider": f"youtube:{kwargs['channel_id']}", "metric_name": "plays", "metric_value": 10,
+        "period_start": "2026-08-01", "period_end": "2026-08-28", "traffic_scope": "all",
+        "source_reference": f"youtube-analytics-api:{kwargs['channel_id']}",
+    }])
+
+    result = connectors.sync_google(actor="automation", force=True)
+
+    assert result["inserted"] == 2
+    with sqlite3.connect(temp_db.db_path) as conn:
+        assert conn.execute(
+            "SELECT provider FROM growth_metric_observations ORDER BY provider"
+        ).fetchall() == [("youtube:uc-one",), ("youtube:uc-two",)]
 
 
 def test_disconnect_deletes_retained_token_even_if_remote_revoke_fails(temp_db, monkeypatch):

@@ -97,7 +97,11 @@ class PodcastSourceMonitor:
         private = []
         for source in PRIVATE_SOURCES:
             tokens = self._provider_tokens(source["key"])
-            source_rows = [row for row in observations if str(row["provider"]).casefold() in tokens]
+            source_rows = [
+                row for row in observations
+                if str(row["provider"]).casefold() in tokens
+                or (source["key"] == "youtube_analytics" and str(row["provider"]).casefold().startswith("youtube:"))
+            ]
             private.append({
                 **source,
                 "status": "data_present" if source_rows else "provider_access_required",

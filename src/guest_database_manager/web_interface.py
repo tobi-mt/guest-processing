@@ -811,11 +811,17 @@ class GuestWebService:
     def complete_google_analytics_connection(self, *, state: str, code: str, origin: str) -> Dict[str, Any]:
         return self.podcast_analytics_connectors.complete_google(state=state, code=code, origin=origin)
 
-    def sync_google_analytics(self, *, actor: str, force: bool = False) -> Dict[str, Any]:
-        return self.podcast_analytics_connectors.sync_google(actor=actor, force=force)
+    def sync_google_analytics(self, *, actor: str, force: bool = False,
+                              connection_id: int | None = None) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.sync_google(
+            actor=actor, force=force, connection_id=connection_id
+        )
 
-    def disconnect_google_analytics(self, *, actor: str) -> Dict[str, Any]:
-        return self.podcast_analytics_connectors.disconnect_google(actor=actor)
+    def disconnect_google_analytics(self, *, actor: str,
+                                    connection_id: int | None = None) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.disconnect_google(
+            actor=actor, connection_id=connection_id
+        )
 
     def record_growth_observations(self, payload: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
         observations = payload.get("observations")
@@ -7170,7 +7176,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._redirect("/insights?connector=denied")
                 return
             try:
-                self.service.complete_google_analytics_connection(
+                connected = self.service.complete_google_analytics_connection(
                     state=query.get("state", ""),
                     code=query.get("code", ""),
                     origin=self._current_service_origin(),
@@ -7180,7 +7186,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._redirect("/insights?connector=failed")
                 return
             try:
-                self.service.sync_google_analytics(actor="google-oauth-connect", force=True)
+                self.service.sync_google_analytics(
+                    actor="google-oauth-connect", force=True,
+                    connection_id=int(connected["connection_id"]),
+                )
             except AnalyticsConnectorError:
                 logger.warning("Initial Google analytics synchronization needs attention")
             self._redirect("/insights?connector=connected")
@@ -7841,7 +7850,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         actor=actor, origin=self._current_service_origin()
                     )
                 else:
-                    result = self.service.sync_google_analytics(actor=actor, force=True)
+                    payload = self._read_json_payload()
+                    connection_id = payload.get("connection_id")
+                    result = self.service.sync_google_analytics(
+                        actor=actor, force=True,
+                        connection_id=int(connection_id) if connection_id not in (None, "") else None,
+                    )
             except AnalyticsConnectorError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -8895,9 +8909,19 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         if not self._enforce_dashboard_security(required_role="admin", require_csrf=True):
             return
-        if self.path == "/api/analytics-connectors/google":
+        if urlsplit(self.path).path == "/api/analytics-connectors/google":
             actor = str((self._session_claims() or {}).get("sub") or "admin")
-            self._send_json(HTTPStatus.OK, self.service.disconnect_google_analytics(actor=actor))
+            query = self._query_params(self.path)
+            connection_id = query.get("connection_id")
+            try:
+                result = self.service.disconnect_google_analytics(
+                    actor=actor,
+                    connection_id=int(connection_id) if connection_id else None,
+                )
+            except AnalyticsConnectorError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
             return
         if self.path.startswith("/api/guests/"):
             if not self._is_authorized_dashboard_request():

@@ -181,3 +181,31 @@ def test_dimension_breakdown_keeps_each_providers_latest_available_period(temp_d
     assert {(row["provider"], row["period_end"]) for row in devices} == {
         ("youtube", "2026-09-22"), ("website", "2026-09-20"),
     }
+
+
+def test_channel_scoped_youtube_rows_replace_matching_legacy_aggregate_once_all_channels_are_present(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    with connect_database(temp_db.db_path) as conn:
+        for channel_id in ("UC-one", "UC-two"):
+            conn.execute(
+                """INSERT INTO analytics_oauth_connections
+                   (provider, youtube_channel_id, youtube_channel_title, status, connected_at, updated_at)
+                   VALUES ('google', ?, ?, 'connected', '2026-09-25T00:00:00Z', '2026-09-25T00:00:00Z')""",
+                (channel_id, channel_id),
+            )
+        conn.commit()
+    service.record_growth_observations({"observations": [
+        {"provider": "youtube", "metric_name": "plays", "metric_value": 100,
+         "period_start": "2026-09-01", "period_end": "2026-09-22", "source_reference": "legacy"},
+        {"provider": "youtube:UC-one", "metric_name": "plays", "metric_value": 100,
+         "period_start": "2026-09-01", "period_end": "2026-09-22", "source_reference": "one"},
+        {"provider": "youtube:UC-two", "metric_name": "plays", "metric_value": 50,
+         "period_start": "2026-09-01", "period_end": "2026-09-22", "source_reference": "two"},
+    ]}, actor="automation")
+
+    result = PodcastInsights(temp_db.db_path).dashboard()
+
+    assert result["summary"]["plays"] == 150
+    assert {card["provider"] for card in result["provider_strength"]} == {
+        "youtube:uc-one", "youtube:uc-two",
+    }

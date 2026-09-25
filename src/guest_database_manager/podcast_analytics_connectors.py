@@ -83,15 +83,18 @@ class PodcastAnalyticsConnectors:
         config = self._config()
         with connect_database(self.db_path) as conn:
             conn.row_factory = __import__("sqlite3").Row
-            row = conn.execute(
-                """SELECT provider, account_email, status, scopes_json, connected_at,
+            rows = conn.execute(
+                """SELECT id, provider, account_email, youtube_channel_id, youtube_channel_title,
+                          youtube_channel_thumbnail, sync_ga4, status, scopes_json, connected_at,
                           last_sync_at, last_success_at, last_error_code, last_error_at,
                           next_retry_at, consecutive_failures, revoked_at, updated_at
-                   FROM analytics_oauth_connections WHERE provider = 'google'"""
-            ).fetchone()
-        connection = dict(row) if row else None
-        if connection:
+                   FROM analytics_oauth_connections WHERE provider = 'google'
+                   ORDER BY connected_at, id"""
+            ).fetchall()
+        connections = [dict(row) for row in rows]
+        for connection in connections:
             connection["scopes"] = json.loads(connection.pop("scopes_json") or "[]")
+            connection["sync_ga4"] = bool(connection["sync_ga4"])
         oauth_ready = bool(config["client_id"] and config["client_secret"] and len(config["token_key"]) >= 32)
         return {
             "google": {
@@ -99,7 +102,8 @@ class PodcastAnalyticsConnectors:
                 "ga4_configured": bool(config["ga4_property_id"]),
                 "youtube_supported": True,
                 "ga4_supported": True,
-                "connection": connection,
+                "connections": connections,
+                "connection": connections[0] if len(connections) == 1 else None,
                 "required_environment": [
                     GOOGLE_CLIENT_ID_ENV,
                     GOOGLE_CLIENT_SECRET_ENV,
@@ -185,81 +189,180 @@ class PodcastAnalyticsConnectors:
             raise AnalyticsConnectorError("Google did not issue durable offline access. Reconnect and grant consent.")
         access_token = str(token.get("access_token") or "")
         profile = self._get_json("https://openidconnect.googleapis.com/v1/userinfo", access_token)
+        channel_payload = self._get_json(
+            "https://www.googleapis.com/youtube/v3/channels?" + urlencode({
+                "part": "id,snippet,statistics", "mine": "true", "maxResults": 50,
+            }),
+            access_token,
+        )
+        channel_items = channel_payload.get("items") or []
+        if not channel_items:
+            raise AnalyticsConnectorError("This Google account does not expose an owned YouTube channel.")
+        channel = channel_items[0]
+        channel_id = str(channel.get("id") or "").strip()
+        snippet = channel.get("snippet") or {}
+        if not channel_id:
+            raise AnalyticsConnectorError("Google did not return a stable YouTube channel id.")
+        thumbnails = snippet.get("thumbnails") or {}
+        thumbnail = str((thumbnails.get("default") or thumbnails.get("medium") or {}).get("url") or "")
         cipher = self._cipher().encrypt(refresh_token.encode()).decode()
         scopes = sorted(set(str(token.get("scope") or "").split()))
         with connect_database(self.db_path) as conn:
+            existing = conn.execute(
+                "SELECT id, sync_ga4 FROM analytics_oauth_connections WHERE provider='google' AND youtube_channel_id=?",
+                (channel_id,),
+            ).fetchone()
+            has_primary = bool(conn.execute(
+                "SELECT 1 FROM analytics_oauth_connections WHERE provider='google' AND sync_ga4=1 LIMIT 1"
+            ).fetchone())
+            sync_ga4 = int(existing[1]) if existing else (0 if has_primary else 1)
             conn.execute(
                 """INSERT INTO analytics_oauth_connections
-                   (provider, account_subject, account_email, refresh_token_ciphertext, scopes_json,
+                   (provider, account_subject, account_email, youtube_channel_id, youtube_channel_title,
+                    youtube_channel_thumbnail, sync_ga4, refresh_token_ciphertext, scopes_json,
                     status, connected_at, consecutive_failures, updated_at)
-                   VALUES ('google', ?, ?, ?, ?, 'connected', ?, 0, ?)
-                   ON CONFLICT(provider) DO UPDATE SET
+                   VALUES ('google', ?, ?, ?, ?, ?, ?, ?, ?, 'connected', ?, 0, ?)
+                   ON CONFLICT(provider, youtube_channel_id) DO UPDATE SET
                      account_subject=excluded.account_subject, account_email=excluded.account_email,
+                     youtube_channel_title=excluded.youtube_channel_title,
+                     youtube_channel_thumbnail=excluded.youtube_channel_thumbnail,
                      refresh_token_ciphertext=excluded.refresh_token_ciphertext, scopes_json=excluded.scopes_json,
                      status='connected', connected_at=excluded.connected_at, last_error_code='',
                      last_error_at=NULL, next_retry_at=NULL, consecutive_failures=0, revoked_at=NULL,
                      updated_at=excluded.updated_at""",
-                (str(profile.get("sub") or ""), str(profile.get("email") or ""), cipher,
+                (str(profile.get("sub") or ""), str(profile.get("email") or ""), channel_id,
+                 str(snippet.get("title") or channel_id), thumbnail, sync_ga4, cipher,
                  json.dumps(scopes), _iso(now), _iso(now)),
             )
+            connection_id = int(conn.execute(
+                "SELECT id FROM analytics_oauth_connections WHERE provider='google' AND youtube_channel_id=?",
+                (channel_id,),
+            ).fetchone()[0])
             self._audit(conn, "analytics_oauth_connected", str(row["actor"]), "Read-only Google analytics access granted",
-                        {"provider": "google", "account_email": str(profile.get("email") or ""), "scopes": scopes})
+                        {"provider": "google", "connection_id": connection_id, "account_email": str(profile.get("email") or ""),
+                         "youtube_channel_id": channel_id, "youtube_channel_title": str(snippet.get("title") or channel_id),
+                         "scopes": scopes})
             conn.commit()
-        return {"status": "connected", "account_email": str(profile.get("email") or "")}
+        return {"status": "connected", "connection_id": connection_id,
+                "account_email": str(profile.get("email") or ""), "youtube_channel_id": channel_id,
+                "youtube_channel_title": str(snippet.get("title") or channel_id)}
 
-    def sync_google(self, *, actor: str, force: bool = False) -> dict[str, Any]:
+    def sync_google(self, *, actor: str, force: bool = False, connection_id: int | None = None) -> dict[str, Any]:
         with connect_database(self.db_path) as conn:
             conn.row_factory = __import__("sqlite3").Row
-            row = conn.execute("SELECT * FROM analytics_oauth_connections WHERE provider = 'google'").fetchone()
-        if not row or row["status"] == "disconnected":
+            if connection_id is None:
+                rows = conn.execute(
+                    "SELECT * FROM analytics_oauth_connections WHERE provider='google' AND status != 'disconnected' ORDER BY id"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM analytics_oauth_connections WHERE provider='google' AND id=?", (connection_id,)
+                ).fetchall()
+        if not rows:
             return {"status": "not_connected", "inserted": 0}
+        results = [self._sync_google_connection(row, actor=actor, force=force) for row in rows]
+        return {
+            "status": "completed" if all(item["status"] in {"completed", "fresh", "retry_scheduled"} for item in results) else "partial",
+            "connections": results,
+            "inserted": sum(int(item.get("inserted") or 0) for item in results),
+            "duplicates": sum(int(item.get("duplicates") or 0) for item in results),
+            "observations": sum(int(item.get("observations") or 0) for item in results),
+        }
+
+    def _sync_google_connection(self, row: Any, *, actor: str, force: bool) -> dict[str, Any]:
+        connection_id = int(row["id"])
         if row["status"] == "revoked":
-            return {"status": "reconnect_required", "inserted": 0}
+            return {"status": "reconnect_required", "connection_id": connection_id, "inserted": 0}
         now = _now()
         if not force:
             if row["last_success_at"] and now - datetime.fromisoformat(str(row["last_success_at"]).replace("Z", "+00:00")) < timedelta(hours=20):
-                return {"status": "fresh", "inserted": 0}
+                return {"status": "fresh", "connection_id": connection_id, "inserted": 0}
             if row["next_retry_at"] and str(row["next_retry_at"]) > _iso(now):
-                return {"status": "retry_scheduled", "inserted": 0}
+                return {"status": "retry_scheduled", "connection_id": connection_id, "inserted": 0}
         try:
             refresh = self._cipher().decrypt(str(row["refresh_token_ciphertext"]).encode()).decode()
         except (InvalidToken, AnalyticsConnectorError) as exc:
-            self._record_failure("credential_decryption_failed", revoked=True)
+            self._record_failure(connection_id, "credential_decryption_failed", revoked=True)
             raise AnalyticsConnectorError("Stored Google authorization cannot be decrypted; reconnect the account.") from exc
         try:
             access = self._refresh_access_token(refresh)
-            observations = self._collect_google(access)
+            channel_id = str(row["youtube_channel_id"] or "")
+            channel_title = str(row["youtube_channel_title"] or "")
+            if not channel_id:
+                identity = self._youtube_channel_identity(access)
+                channel_id, channel_title = identity["id"], identity["title"]
+                with connect_database(self.db_path) as conn:
+                    conflict = conn.execute(
+                        "SELECT id FROM analytics_oauth_connections WHERE provider='google' AND youtube_channel_id=? AND id!=?",
+                        (channel_id, connection_id),
+                    ).fetchone()
+                    if conflict:
+                        raise AnalyticsConnectorError("This YouTube channel is already connected; disconnect the legacy duplicate.")
+                    conn.execute(
+                        """UPDATE analytics_oauth_connections
+                           SET youtube_channel_id=?, youtube_channel_title=?, youtube_channel_thumbnail=?, updated_at=?
+                           WHERE id=?""",
+                        (channel_id, channel_title, identity["thumbnail"], _iso(now), connection_id),
+                    )
+                    conn.commit()
+            observations = self._collect_google(
+                access, channel_id=channel_id, channel_title=channel_title, sync_ga4=bool(row["sync_ga4"]),
+            )
             result = self.growth.record_observations(
-                observations, actor=actor, correlation_id=f"google-sync-{now.date().isoformat()}"
+                observations, actor=actor, correlation_id=f"google-sync-{connection_id}-{now.date().isoformat()}"
             ) if observations else {"inserted": 0, "duplicates": 0}
         except AnalyticsConnectorError as exc:
             code = "authorization_revoked" if "authorization" in str(exc).lower() else "provider_sync_failed"
-            self._record_failure(code, revoked=code == "authorization_revoked")
+            self._record_failure(connection_id, code, revoked=code == "authorization_revoked")
             raise
         except Exception as exc:
-            self._record_failure("provider_sync_failed", revoked=False)
+            self._record_failure(connection_id, "provider_sync_failed", revoked=False)
             raise AnalyticsConnectorError("A configured Google analytics source could not be synchronized.") from exc
         with connect_database(self.db_path) as conn:
             conn.execute(
                 """UPDATE analytics_oauth_connections SET status='connected', last_sync_at=?, last_success_at=?,
                    last_error_code='', last_error_at=NULL, next_retry_at=NULL, consecutive_failures=0, updated_at=?
-                   WHERE provider='google'""",
-                (_iso(now), _iso(now), _iso(now)),
+                   WHERE provider='google' AND id=?""",
+                (_iso(now), _iso(now), _iso(now), connection_id),
             )
             self._audit(conn, "analytics_sync_completed", actor, "Scheduled private analytics synchronization",
-                        {"provider": "google", "observation_count": len(observations),
+                        {"provider": "google", "connection_id": connection_id,
+                         "youtube_channel_id": str(row["youtube_channel_id"] or ""), "observation_count": len(observations),
                          "inserted": int(result.get("inserted") or 0), "duplicates": int(result.get("duplicates") or 0)})
             conn.commit()
-        return {"status": "completed", **result, "observations": len(observations)}
+        return {"status": "completed", "connection_id": connection_id, **result, "observations": len(observations)}
 
-    def disconnect_google(self, *, actor: str = "admin") -> dict[str, Any]:
+    def _youtube_channel_identity(self, access_token: str) -> dict[str, str]:
+        payload = self._get_json(
+            "https://www.googleapis.com/youtube/v3/channels?" + urlencode({
+                "part": "id,snippet", "mine": "true", "maxResults": 50,
+            }),
+            access_token,
+        )
+        items = payload.get("items") or []
+        if not items or not str(items[0].get("id") or "").strip():
+            raise AnalyticsConnectorError("This Google account does not expose an owned YouTube channel.")
+        snippet = items[0].get("snippet") or {}
+        thumbnails = snippet.get("thumbnails") or {}
+        return {
+            "id": str(items[0]["id"]),
+            "title": str(snippet.get("title") or items[0]["id"]),
+            "thumbnail": str((thumbnails.get("default") or thumbnails.get("medium") or {}).get("url") or ""),
+        }
+
+    def disconnect_google(self, *, actor: str = "admin", connection_id: int | None = None) -> dict[str, Any]:
         with connect_database(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT refresh_token_ciphertext FROM analytics_oauth_connections WHERE provider='google'"
-            ).fetchone()
-        if row and row[0]:
+            rows = conn.execute(
+                "SELECT id, refresh_token_ciphertext FROM analytics_oauth_connections WHERE provider='google'"
+                + (" AND id=?" if connection_id is not None else ""),
+                (connection_id,) if connection_id is not None else (),
+            ).fetchall()
+        if connection_id is None and len(rows) > 1:
+            raise AnalyticsConnectorError("Choose the specific Google channel to disconnect.")
+        row = rows[0] if rows else None
+        if row and row[1]:
             try:
-                refresh = self._cipher().decrypt(str(row[0]).encode()).decode()
+                refresh = self._cipher().decrypt(str(row[1]).encode()).decode()
                 self._post_form("https://oauth2.googleapis.com/revoke", {"token": refresh}, expect_json=False)
             except Exception:
                 pass  # Local revocation must still remove retained authorization.
@@ -267,30 +370,36 @@ class PodcastAnalyticsConnectors:
         with connect_database(self.db_path) as conn:
             conn.execute(
                 """UPDATE analytics_oauth_connections SET refresh_token_ciphertext='', status='disconnected',
-                   revoked_at=?, next_retry_at=NULL, updated_at=? WHERE provider='google'""",
-                (now, now),
+                   revoked_at=?, next_retry_at=NULL, updated_at=? WHERE provider='google' AND id=?""",
+                (now, now, int(row[0]) if row else -1),
             )
             self._audit(conn, "analytics_oauth_disconnected", actor, "Retained Google refresh token deleted",
                         {"provider": "google", "status": "disconnected"})
             conn.commit()
-        return {"status": "disconnected"}
+        return {"status": "disconnected", "connection_id": int(row[0]) if row else connection_id}
 
-    def _collect_google(self, access_token: str) -> list[dict[str, Any]]:
+    def _collect_google(self, access_token: str, *, channel_id: str = "", channel_title: str = "",
+                        sync_ga4: bool = True) -> list[dict[str, Any]]:
         end = date.today() - timedelta(days=3)
         start = end - timedelta(days=27)
         common = {"period_start": start.isoformat(), "period_end": end.isoformat(), "traffic_scope": "all"}
         rows: list[dict[str, Any]] = []
+        channel_selector = f"channel=={channel_id}" if channel_id else "channel==MINE"
+        youtube_provider = f"youtube:{channel_id}" if channel_id else "youtube"
+        youtube_reference = f"youtube-analytics-api:{channel_id or 'mine'}"
         yt = self._get_json("https://youtubeanalytics.googleapis.com/v2/reports?" + urlencode({
-            "ids": "channel==MINE", "startDate": start.isoformat(), "endDate": end.isoformat(),
+            "ids": channel_selector, "startDate": start.isoformat(), "endDate": end.isoformat(),
             "metrics": "views,estimatedMinutesWatched,averageViewDuration",
         }), access_token)
         values = (yt.get("rows") or [[0, 0, 0]])[0]
         for metric, value in (("plays", values[0]), ("watch_time_hours", float(values[1]) / 60),
                               ("average_view_duration_seconds", values[2])):
-            rows.append({**common, "provider": "youtube", "metric_name": metric, "metric_value": value,
-                         "source_reference": "youtube-analytics-api"})
+            rows.append({**common, "provider": youtube_provider, "metric_name": metric, "metric_value": value,
+                         "source_reference": youtube_reference})
         channel = self._get_json(
-            "https://www.googleapis.com/youtube/v3/channels?" + urlencode({"part": "statistics", "mine": "true"}),
+            "https://www.googleapis.com/youtube/v3/channels?" + urlencode(
+                {"part": "statistics", "id": channel_id} if channel_id else {"part": "statistics", "mine": "true"}
+            ),
             access_token,
         )
         channel_items = channel.get("items") or []
@@ -298,14 +407,16 @@ class PodcastAnalyticsConnectors:
             subscriber_count = (channel_items[0].get("statistics") or {}).get("subscriberCount")
             if subscriber_count is not None:
                 today = date.today().isoformat()
-                rows.append({"provider": "youtube", "metric_name": "subscribers", "metric_value": subscriber_count,
+                rows.append({"provider": youtube_provider, "metric_name": "subscribers", "metric_value": subscriber_count,
                              "period_start": today, "period_end": today, "traffic_scope": "all",
-                             "source_reference": "youtube-data-api"})
-        rows.extend(self._youtube_dimension(access_token, start, end, "deviceType", "device"))
-        rows.extend(self._youtube_dimension(access_token, start, end, "country", "country"))
+                             "source_reference": f"youtube-data-api:{channel_id or 'mine'}"})
+        rows.extend(self._youtube_dimension(access_token, start, end, "deviceType", "device",
+                                            channel_selector, youtube_provider, youtube_reference))
+        rows.extend(self._youtube_dimension(access_token, start, end, "country", "country",
+                                            channel_selector, youtube_provider, youtube_reference))
 
         property_id = self._config()["ga4_property_id"]
-        if property_id:
+        if property_id and sync_ga4:
             ga = self._ga4_report(access_token, property_id, start, end, [], ["activeUsers"])
             active = ((ga.get("rows") or [{}])[0].get("metricValues") or [{"value": 0}])[0]["value"]
             rows.append({**common, "provider": "website", "metric_name": "organic_reach", "metric_value": active,
@@ -314,14 +425,16 @@ class PodcastAnalyticsConnectors:
             rows.extend(self._ga4_dimensions(access_token, property_id, start, end, "country", "country"))
         return rows
 
-    def _youtube_dimension(self, token: str, start: date, end: date, dimension: str, prefix: str) -> list[dict[str, Any]]:
+    def _youtube_dimension(self, token: str, start: date, end: date, dimension: str, prefix: str,
+                           channel_selector: str = "channel==MINE", provider: str = "youtube",
+                           source_reference: str = "youtube-analytics-api") -> list[dict[str, Any]]:
         data = self._get_json("https://youtubeanalytics.googleapis.com/v2/reports?" + urlencode({
-            "ids": "channel==MINE", "startDate": start.isoformat(), "endDate": end.isoformat(),
+            "ids": channel_selector, "startDate": start.isoformat(), "endDate": end.isoformat(),
             "metrics": "views", "dimensions": dimension, "sort": "-views", "maxResults": 50,
         }), token)
-        return [{"provider": "youtube", "metric_name": f"{prefix}_{self._slug(item[0])}", "metric_value": item[1],
+        return [{"provider": provider, "metric_name": f"{prefix}_{self._slug(item[0])}", "metric_value": item[1],
                  "period_start": start.isoformat(), "period_end": end.isoformat(), "traffic_scope": "all",
-                 "source_reference": "youtube-analytics-api"} for item in data.get("rows") or []]
+                 "source_reference": source_reference} for item in data.get("rows") or []]
 
     def _ga4_report(self, token: str, property_id: str, start: date, end: date,
                     dimensions: list[str], metrics: list[str]) -> dict[str, Any]:
@@ -360,17 +473,20 @@ class PodcastAnalyticsConnectors:
             raise AnalyticsConnectorError("Google authorization did not return an access token.")
         return token
 
-    def _record_failure(self, code: str, *, revoked: bool) -> None:
+    def _record_failure(self, connection_id: int, code: str, *, revoked: bool) -> None:
         now = _now()
         with connect_database(self.db_path) as conn:
-            row = conn.execute("SELECT consecutive_failures FROM analytics_oauth_connections WHERE provider='google'").fetchone()
+            row = conn.execute(
+                "SELECT consecutive_failures FROM analytics_oauth_connections WHERE provider='google' AND id=?",
+                (connection_id,),
+            ).fetchone()
             failures = int(row[0] if row else 0) + 1
             delay = min(24 * 60, 5 * (2 ** min(failures - 1, 8)))
             conn.execute(
                 """UPDATE analytics_oauth_connections SET status=?, last_sync_at=?, last_error_code=?,
-                   last_error_at=?, next_retry_at=?, consecutive_failures=?, updated_at=? WHERE provider='google'""",
+                   last_error_at=?, next_retry_at=?, consecutive_failures=?, updated_at=? WHERE provider='google' AND id=?""",
                 ("revoked" if revoked else "error", _iso(now), code, _iso(now),
-                 None if revoked else _iso(now + timedelta(minutes=delay)), failures, _iso(now)),
+                 None if revoked else _iso(now + timedelta(minutes=delay)), failures, _iso(now), connection_id),
             )
             conn.commit()
 

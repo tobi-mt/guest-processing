@@ -1332,6 +1332,49 @@ class SchemaManager:
         conn.execute("CREATE INDEX idx_analytics_states_expiry ON analytics_oauth_states(expires_at)")
 
     @staticmethod
+    def _migration_032_multi_google_channels(conn: sqlite3.Connection) -> None:
+        """Allow independent OAuth health and identity for multiple YouTube channels."""
+        conn.execute("ALTER TABLE analytics_oauth_connections RENAME TO analytics_oauth_connections_legacy")
+        conn.execute(
+            """CREATE TABLE analytics_oauth_connections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                account_subject TEXT NOT NULL DEFAULT '',
+                account_email TEXT NOT NULL DEFAULT '',
+                youtube_channel_id TEXT NOT NULL DEFAULT '',
+                youtube_channel_title TEXT NOT NULL DEFAULT '',
+                youtube_channel_thumbnail TEXT NOT NULL DEFAULT '',
+                sync_ga4 INTEGER NOT NULL DEFAULT 0 CHECK(sync_ga4 IN (0, 1)),
+                refresh_token_ciphertext TEXT NOT NULL DEFAULT '',
+                scopes_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL CHECK(status IN ('connected', 'error', 'revoked', 'disconnected')),
+                connected_at TIMESTAMP NOT NULL,
+                last_sync_at TIMESTAMP,
+                last_success_at TIMESTAMP,
+                last_error_code TEXT NOT NULL DEFAULT '',
+                last_error_at TIMESTAMP,
+                next_retry_at TIMESTAMP,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK(consecutive_failures >= 0),
+                revoked_at TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL,
+                UNIQUE(provider, youtube_channel_id)
+            )"""
+        )
+        conn.execute(
+            """INSERT INTO analytics_oauth_connections
+               (id, provider, account_subject, account_email, refresh_token_ciphertext, scopes_json,
+                status, connected_at, last_sync_at, last_success_at, last_error_code, last_error_at,
+                next_retry_at, consecutive_failures, revoked_at, updated_at, sync_ga4)
+               SELECT id, provider, account_subject, account_email, refresh_token_ciphertext, scopes_json,
+                      status, connected_at, last_sync_at, last_success_at, last_error_code, last_error_at,
+                      next_retry_at, consecutive_failures, revoked_at, updated_at, 1
+               FROM analytics_oauth_connections_legacy"""
+        )
+        conn.execute("DROP TABLE analytics_oauth_connections_legacy")
+        conn.execute("CREATE INDEX idx_analytics_connections_retry ON analytics_oauth_connections(status, next_retry_at)")
+        conn.execute("CREATE INDEX idx_analytics_connections_subject ON analytics_oauth_connections(provider, account_subject)")
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1368,6 +1411,7 @@ class SchemaManager:
             (29, "rss_release_reconciliation", SchemaManager._migration_029_rss_release_reconciliation),
             (30, "podcast_source_monitoring", SchemaManager._migration_030_podcast_source_monitoring),
             (31, "analytics_oauth_connectors", SchemaManager._migration_031_analytics_oauth_connectors),
+            (32, "multi_google_channels", SchemaManager._migration_032_multi_google_channels),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

@@ -36,6 +36,22 @@ class PodcastInsights:
                           source_reference, imported_at
                    FROM growth_metric_observations ORDER BY period_end, id"""
             ).fetchall()]
+            identified_channels = int(conn.execute(
+                """SELECT COUNT(*) FROM analytics_oauth_connections
+                   WHERE provider='google' AND youtube_channel_id != '' AND status != 'disconnected'"""
+            ).fetchone()[0])
+
+        scoped_youtube = {str(row["provider"]) for row in rows if str(row["provider"]).startswith("youtube:")}
+        if identified_channels and len(scoped_youtube) >= identified_channels:
+            scoped_keys = {
+                (str(row["metric_name"]), str(row["period_start"]), str(row["period_end"]))
+                for row in rows if str(row["provider"]).startswith("youtube:")
+            }
+            rows = [
+                row for row in rows
+                if str(row["provider"]) != "youtube"
+                or (str(row["metric_name"]), str(row["period_start"]), str(row["period_end"])) not in scoped_keys
+            ]
 
         providers = sorted({str(row["provider"]).strip().casefold() for row in rows})
         provider_cards = []
