@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -63,6 +64,36 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _finite_float(value: Any, *, field: str, default: float | None = None) -> float:
+    """Parse a finite numeric value or raise a safe, operator-facing error."""
+    if value is None or value == "":
+        if default is not None:
+            return default
+        raise LearningError(f"{field} must be a finite number")
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise LearningError(f"{field} must be a finite number") from exc
+    if not math.isfinite(numeric):
+        raise LearningError(f"{field} must be a finite number")
+    return numeric
+
+
+def _validated_weights(value: Any) -> dict[str, float] | None:
+    """Return a complete finite policy vector, or None for unsafe persisted data."""
+    if not isinstance(value, dict):
+        return None
+    weights: dict[str, float] = {}
+    for name, raw in value.items():
+        if name not in FEATURE_NAMES:
+            continue
+        try:
+            weights[name] = _finite_float(raw, field=f"Policy weight {name}")
+        except LearningError:
+            return None
+    return weights
+
+
 def extract_features(recommendation: dict[str, Any]) -> dict[str, float]:
     """Extract a small, explainable, non-sensitive feature vector."""
     readiness = recommendation.get("promotion_readiness") or {}
@@ -73,16 +104,16 @@ def extract_features(recommendation: dict[str, Any]) -> dict[str, float]:
     capacity = recommendation.get("calendar_capacity") or {}
     return {
         "bias": 1.0,
-        "base_score": max(-1.0, min(1.0, float(recommendation.get("base_priority_score") or recommendation.get("priority_score") or 0) / 100.0)),
-        "promotion_readiness": max(0.0, min(1.0, float(readiness.get("score") or 0) / 100.0)),
+        "base_score": max(-1.0, min(1.0, _finite_float(recommendation.get("base_priority_score") or recommendation.get("priority_score"), field="Recommendation score", default=0.0) / 100.0)),
+        "promotion_readiness": max(0.0, min(1.0, _finite_float(readiness.get("score"), field="Promotion readiness score", default=0.0) / 100.0)),
         "has_research": 1.0 if research else 0.0,
         "has_website": 1.0 if str(recommendation.get("website") or "").strip() else 0.0,
         "has_title": 1.0 if str(recommendation.get("working_title") or recommendation.get("episode_title") or "").strip() else 0.0,
         "watchout_count": min(1.0, len(watchouts) / 4.0),
-        "production_buffer": max(-1.0, min(1.0, float(forecast.get("buffer_days") or 0) / 28.0)),
-        "audience_fatigue": max(0.0, min(1.0, float(fatigue.get("score") or 0) / 100.0)),
+        "production_buffer": max(-1.0, min(1.0, _finite_float(forecast.get("buffer_days"), field="Production buffer", default=0.0) / 28.0)),
+        "audience_fatigue": max(0.0, min(1.0, _finite_float(fatigue.get("score"), field="Audience fatigue score", default=0.0) / 100.0)),
         "event_alignment": 1.0 if recommendation.get("time_sensitive_event_alignment") else 0.0,
-        "capacity_delay": max(0.0, min(1.0, float(capacity.get("weeks_until_slot") or 0) / 12.0)),
+        "capacity_delay": max(0.0, min(1.0, _finite_float(capacity.get("weeks_until_slot"), field="Capacity delay", default=0.0) / 12.0)),
     }
 
 
@@ -100,16 +131,20 @@ def apply_active_policy(db_path: str | Path, recommendations: Iterable[dict[str,
         row = conn.execute("SELECT * FROM recommendation_policies WHERE status = 'active'").fetchone()
     if not row:
         return items
-    weights = _loads(row["weights_json"], {})
+    raw_weights = _loads(row["weights_json"], {})
+    weights = _validated_weights(raw_weights)
+    policy_is_valid = weights is not None
+    weights = weights or {}
     for item in items:
         features = extract_features(item)
         adjustment = max(-10.0, min(10.0, (_probability(features, weights) - 0.5) * 20.0)) if weights else 0.0
-        item["priority_score"] = round(float(item.get("priority_score") or 0) + adjustment, 1)
+        base_score = _finite_float(item.get("priority_score"), field="Recommendation score", default=0.0)
+        item["priority_score"] = round(base_score + adjustment, 1)
         item["learning"] = {
             "policy_version": row["version"],
             "feature_schema_version": FEATURE_SCHEMA_VERSION,
             "adjustment": round(adjustment, 1),
-            "mode": "adaptive" if weights else "rules_baseline",
+            "mode": "adaptive" if weights else "rules_baseline" if policy_is_valid else "invalid_policy_fallback",
         }
     if weights:
         items.sort(key=lambda item: (-float(item.get("priority_score") or 0), str(item.get("guest_name") or "")))
@@ -230,11 +265,19 @@ class RecommendationLearning:
         kind = outcome_type.strip().lower()
         if kind not in OUTCOME_LABELS:
             raise LearningError("Unsupported recommendation outcome")
-        numeric = OUTCOME_LABELS[kind] if value is None else float(value)
+        numeric = OUTCOME_LABELS[kind] if value is None else _finite_float(value, field="Outcome value")
         if numeric is None or not 0 <= numeric <= 1:
             raise LearningError("Outcome value must be between 0 and 1")
         key = idempotency_key.strip() or str(uuid4())
         when = occurred_at.strip() or _now()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", when):
+            when = f"{when}T00:00:00Z"
+        try:
+            parsed_when = datetime.fromisoformat(when.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise LearningError("Outcome timestamp must be a valid ISO 8601 datetime") from exc
+        if parsed_when.tzinfo is None or parsed_when.utcoffset() is None:
+            raise LearningError("Outcome timestamp must include a timezone")
         with connect_database(self.db_path) as conn:
             conn.row_factory = __import__("sqlite3").Row
             if not conn.execute("SELECT 1 FROM episodes WHERE id = ?", (episode_id,)).fetchone():
@@ -277,7 +320,16 @@ class RecommendationLearning:
                    FROM recommendation_outcomes r JOIN recommendation_observations o ON o.id = r.observation_id
                    WHERE o.feature_schema_version = ? ORDER BY r.occurred_at, r.id""", (FEATURE_SCHEMA_VERSION,)
             ).fetchall()
-            samples = [(_loads(row["features_json"], {}), float(row["value"])) for row in rows]
+            samples = []
+            for row in rows:
+                features = _loads(row["features_json"], {})
+                if not isinstance(features, dict):
+                    raise LearningError("Stored recommendation features are invalid")
+                clean_features = {
+                    name: _finite_float(features.get(name), field=f"Stored feature {name}", default=0.0)
+                    for name in FEATURE_NAMES
+                }
+                samples.append((clean_features, _finite_float(row["value"], field="Stored outcome value")))
             minimum = int(settings["min_samples"])
             if len(samples) < minimum:
                 report = {"message": f"Need {minimum} linked outcomes; found {len(samples)}", "generated_at": _now()}
@@ -292,7 +344,9 @@ class RecommendationLearning:
 
             split = max(1, int(len(samples) * 0.8))
             training, validation = samples[:split], samples[split:] or samples[-1:]
-            current = {name: float(value) for name, value in _loads(champion["weights_json"], {}).items() if name in FEATURE_NAMES}
+            current = _validated_weights(_loads(champion["weights_json"], {}))
+            if current is None:
+                raise LearningError("The active recommendation policy contains invalid weights")
             learned = dict(current)
             for _ in range(400):
                 gradients = {name: 0.0 for name in FEATURE_NAMES}
@@ -394,8 +448,8 @@ class RecommendationLearning:
             "automation_enabled": 1 if payload.get("automation_enabled") is True else 0,
             "kill_switch": 1 if payload.get("kill_switch", True) is True else 0,
             "min_samples": int(payload.get("min_samples", 30)),
-            "min_uplift": float(payload.get("min_uplift", 0.03)),
-            "max_weight_change": float(payload.get("max_weight_change", 0.25)),
+            "min_uplift": _finite_float(payload.get("min_uplift", 0.03), field="Minimum uplift"),
+            "max_weight_change": _finite_float(payload.get("max_weight_change", 0.25), field="Maximum weight change"),
         }
         if not 20 <= values["min_samples"] <= 10000 or not 0 <= values["min_uplift"] <= 1 or not 0 < values["max_weight_change"] <= 0.5:
             raise LearningError("Learning safety settings are outside their allowed bounds")

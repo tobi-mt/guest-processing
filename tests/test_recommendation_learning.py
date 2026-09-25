@@ -120,6 +120,51 @@ def test_automatic_promotion_is_blocked_by_default(temp_db):
         learning.promote("missing", actor="system", reason="automatic", expected_row_version=1, automatic=True)
 
 
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_values_cannot_poison_learning(temp_db, invalid):
+    episode_id, _ = temp_db.upsert_episode({"guest_name": "Finite Guest", "episode_title": "Finite"})
+    learning = RecommendationLearning(temp_db.db_path)
+
+    with pytest.raises(LearningError, match="finite number"):
+        learning.observe([_recommendation(episode_id, invalid)], actor="operator")
+    with pytest.raises(LearningError, match="finite number"):
+        learning.record_outcome(
+            episode_id, outcome_type="performance", value=invalid, metadata={}, actor="operator",
+            source="test", occurred_at="2026-01-01T12:00:00Z", idempotency_key=f"invalid-{invalid}",
+        )
+    with pytest.raises(LearningError, match="finite number"):
+        learning.update_settings({"min_uplift": invalid}, actor="admin")
+
+    assert learning.status()["counts"] == {"observations": 0, "outcomes": 0, "evaluations": 0}
+
+
+def test_outcome_timestamp_requires_valid_timezone(temp_db):
+    episode_id, _ = temp_db.upsert_episode({"guest_name": "Time Guest", "episode_title": "Time"})
+    learning = RecommendationLearning(temp_db.db_path)
+
+    for timestamp in ("not-a-date", "2026-01-01T12:00:00"):
+        with pytest.raises(LearningError, match="timestamp"):
+            learning.record_outcome(
+                episode_id, outcome_type="released", value=None, metadata={}, actor="operator",
+                source="test", occurred_at=timestamp, idempotency_key=f"invalid-{timestamp}",
+            )
+
+    assert learning.status()["counts"]["outcomes"] == 0
+
+
+def test_invalid_persisted_policy_weights_fail_safe(temp_db):
+    with sqlite3.connect(temp_db.db_path) as conn:
+        conn.execute(
+            "UPDATE recommendation_policies SET weights_json = ? WHERE status = 'active'",
+            ('{"bias": NaN}',),
+        )
+
+    ranked = apply_active_policy(temp_db.db_path, [_recommendation(1, 50)])
+
+    assert ranked[0]["priority_score"] == 50
+    assert ranked[0]["learning"]["mode"] == "invalid_policy_fallback"
+
+
 def test_feedback_learning_writes_are_atomic_and_restore_is_not_acceptance(temp_db):
     episode_id, _ = temp_db.upsert_episode({"guest_name": "Atomic Guest", "episode_title": "Atomic"})
     service = GuestWebService(temp_db.db_path)
