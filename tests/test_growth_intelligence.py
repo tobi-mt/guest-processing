@@ -223,6 +223,24 @@ def test_csv_preview_unfolds_wide_canonical_metric_columns(temp_db):
     }
 
 
+def test_csv_preview_recognizes_provider_export_aliases_and_single_date_column(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+
+    preview = intelligence.preview_csv(
+        'Date,Plays,Audience,Downloads,Average Consumption\n"Sep 22, 2026",181,72,240,54.5',
+        provider="spotify",
+        source_reference="spotify-overview.csv",
+    )
+
+    assert preview["format"] == "wide"
+    assert preview["summary"]["ready"] == 4
+    assert {item["metric_name"] for item in preview["observations"]} == {
+        "plays", "unique_listeners", "downloads", "consumption_depth_pct",
+    }
+    assert {item["period_start"] for item in preview["observations"]} == {"2026-09-22"}
+    assert {item["period_end"] for item in preview["observations"]} == {"2026-09-22"}
+
+
 def test_dashboard_groups_import_history_by_correlation_id(temp_db):
     intelligence = GrowthIntelligence(temp_db.db_path)
     intelligence.record_observations(

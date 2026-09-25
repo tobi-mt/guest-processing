@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
     <link rel="stylesheet" href="/static/styles.css?v=20260923.2" />
-    <link rel="stylesheet" href="/static/operations.css?v=20260925.1" />
+    <link rel="stylesheet" href="/static/operations.css?v=20260925.2" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -332,6 +332,26 @@
                 <h2 id="analytics-import-title">Guided analytics import</h2>
                 <p class="tool-copy">Preview mapping, episode links, invalid values, and duplicates before anything is written.</p>
               </div>
+            </div>
+            <div class="provider-export-grid" aria-label="Provider export assistants">
+              <article class="provider-export-card">
+                <div><span class="status-chip pending">Supervised export</span><h3>Spotify for Creators</h3></div>
+                <p>Exports plays, audience, downloads, discovery, devices, geography, and episode performance. Because Spotify hosts the current RSS feed, applicable downloads also cover the podcast-host evidence gap.</p>
+                <ol><li>Open Analytics and select the required date range.</li><li>Use Spotify’s Export or Download CSV control.</li><li>Return here and choose the downloaded file.</li></ol>
+                <div class="provider-export-actions"><a class="secondary-button" href="https://creators.spotify.com/analytics" target="_blank" rel="noopener noreferrer">Open Spotify analytics</a><button class="ghost-button" type="button" data-import-provider="spotify">Prepare Spotify import</button></div>
+              </article>
+              <article class="provider-export-card">
+                <div><span class="status-chip pending">Supervised export</span><h3>Apple Podcasts Connect</h3></div>
+                <p>Exports listeners, engaged listeners, plays, average consumption, devices, countries, and episode performance from the authenticated owner dashboard.</p>
+                <ol><li>Open Analytics and choose the show and reporting period.</li><li>Download the available CSV report.</li><li>Return here and preview it before importing.</li></ol>
+                <div class="provider-export-actions"><a class="secondary-button" href="https://podcastsconnect.apple.com/analytics" target="_blank" rel="noopener noreferrer">Open Apple analytics</a><button class="ghost-button" type="button" data-import-provider="apple_podcasts">Prepare Apple import</button></div>
+              </article>
+              <article class="provider-export-card">
+                <div><span class="status-chip pending">Any verified host</span><h3>Podcast hosting report</h3></div>
+                <p>Use this for an IAB-aligned hosting export when the data is distinct from Spotify’s report. The preview prevents duplicate provider-period metrics from being written.</p>
+                <ol><li>Export downloads, audience, apps, devices, or geography.</li><li>Select Podcast host below.</li><li>Review the detected columns and evidence period.</li></ol>
+                <div class="provider-export-actions"><button class="ghost-button" type="button" data-import-provider="podcast_host">Prepare host import</button></div>
+              </article>
             </div>
             <form id="analytics-import-form" class="guest-form">
               <label class="full-width">Analytics CSV
@@ -757,7 +777,7 @@
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script src="/static/workspace-shell.js?v=20260923.3" defer></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
-    <script src="/static/planning-intelligence.js?v=20260923.1" defer></script>
+    <script src="/static/planning-intelligence.js?v=20260925.2" defer></script>
     <script src="/static/planning.js?v=20260925.2" defer></script>
   </body>
 </html>

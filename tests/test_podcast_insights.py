@@ -78,7 +78,10 @@ def test_source_coverage_never_treats_public_listing_as_private_analytics(temp_d
     assert coverage["public_expected"] == 6
     assert coverage["private_connected"] == 0
     assert coverage["private_expected"] == 5
-    assert all(item["status"] == "not_connected" for item in coverage["private"])
+    assert all(item["status"] == "provider_access_required" for item in coverage["private"])
+    assert coverage["automated_connected"] == 0
+    assert coverage["automated_expected"] == 2
+    assert coverage["provider_limited_count"] == 3
 
 
 def test_web_insights_keeps_private_metrics_missing_without_public_checks(temp_db):
@@ -121,3 +124,60 @@ def test_web_insights_surfaces_verified_public_catalog_without_inventing_private
     assert result["quality"]["status"] == "public_only"
     assert result["summary"]["downloads"] is None
     assert result["summary"]["unique_listeners"] is None
+
+
+def test_newer_subscriber_snapshot_does_not_hide_latest_play_window(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "youtube", "metric_name": "plays", "metric_value": 181,
+         "period_start": "2026-08-26", "period_end": "2026-09-22", "source_reference": "youtube-api"},
+        {"provider": "youtube", "metric_name": "watch_time_hours", "metric_value": 7.8,
+         "period_start": "2026-08-26", "period_end": "2026-09-22", "source_reference": "youtube-api"},
+        {"provider": "youtube", "metric_name": "subscribers", "metric_value": 65,
+         "period_start": "2026-09-25", "period_end": "2026-09-25", "source_reference": "youtube-data-api"},
+    ]}, actor="automation")
+
+    result = PodcastInsights(temp_db.db_path).dashboard()
+
+    assert result["summary"]["plays"] == 181
+    assert result["summary"]["plays_period_end"] == "2026-09-22"
+    assert result["trend"] == [{
+        "period_start": "2026-08-26", "period_end": "2026-09-22", "downloads": None, "plays": 181.0,
+    }]
+    assert result["provider_strength"][0]["metrics"]["plays"] == 181
+    assert result["provider_strength"][0]["metrics"]["subscribers"] == 65
+
+
+def test_dimension_shares_are_calculated_within_provider_not_across_incompatible_sources(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "youtube", "metric_name": "device_mobile", "metric_value": 80,
+         "period_start": "2026-09-01", "period_end": "2026-09-22", "source_reference": "youtube-api"},
+        {"provider": "youtube", "metric_name": "device_desktop", "metric_value": 20,
+         "period_start": "2026-09-01", "period_end": "2026-09-22", "source_reference": "youtube-api"},
+        {"provider": "website", "metric_name": "device_desktop", "metric_value": 10,
+         "period_start": "2026-09-01", "period_end": "2026-09-22", "source_reference": "ga4-api"},
+    ]}, actor="automation")
+
+    devices = PodcastInsights(temp_db.db_path).dashboard()["devices"]
+    shares = {(row["provider"], row["name"]): row["share_pct"] for row in devices}
+
+    assert shares[("youtube", "Mobile")] == 80
+    assert shares[("youtube", "Desktop")] == 20
+    assert shares[("website", "Desktop")] == 100
+
+
+def test_dimension_breakdown_keeps_each_providers_latest_available_period(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "youtube", "metric_name": "device_mobile", "metric_value": 80,
+         "period_start": "2026-09-01", "period_end": "2026-09-22", "source_reference": "youtube-api"},
+        {"provider": "website", "metric_name": "device_desktop", "metric_value": 10,
+         "period_start": "2026-09-01", "period_end": "2026-09-20", "source_reference": "ga4-api"},
+    ]}, actor="automation")
+
+    devices = PodcastInsights(temp_db.db_path).dashboard()["devices"]
+
+    assert {(row["provider"], row["period_end"]) for row in devices} == {
+        ("youtube", "2026-09-22"), ("website", "2026-09-20"),
+    }

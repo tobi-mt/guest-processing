@@ -21,11 +21,11 @@ PUBLIC_SOURCES = (
 )
 
 PRIVATE_SOURCES = (
-    {"key": "spotify_creators", "name": "Spotify for Creators", "metrics": ["listeners", "followers", "streams", "devices", "geography"], "access": "Authenticated export or approved analytics integration"},
-    {"key": "apple_connect", "name": "Apple Podcasts Connect", "metrics": ["listeners", "engaged listeners", "plays", "consumption", "devices", "geography"], "access": "Authenticated export"},
-    {"key": "youtube_analytics", "name": "YouTube Analytics", "metrics": ["viewers", "views", "watch time", "subscribers", "devices", "geography", "retention"], "access": "Channel-owner OAuth or export"},
-    {"key": "podcast_host", "name": "Podcast hosting analytics", "metrics": ["IAB downloads", "unique listeners", "apps", "devices", "geography"], "access": "Hosting-provider export"},
-    {"key": "website_analytics", "name": "Mirror Talk website analytics", "metrics": ["episode-page users", "referrals", "conversions", "countries", "devices"], "access": "Analytics property export or API"},
+    {"key": "spotify_creators", "name": "Spotify for Creators", "metrics": ["listeners", "followers", "streams", "devices", "geography"], "access": "Provider export required; no supported private analytics API.", "connection_mode": "provider_limited"},
+    {"key": "apple_connect", "name": "Apple Podcasts Connect", "metrics": ["listeners", "engaged listeners", "plays", "consumption", "devices", "geography"], "access": "Provider export required; Apple does not offer third-party analytics access.", "connection_mode": "provider_limited"},
+    {"key": "youtube_analytics", "name": "YouTube Analytics", "metrics": ["plays", "watch time", "subscribers", "devices", "geography", "retention"], "access": "Automated read-only Google OAuth sync.", "connection_mode": "automated"},
+    {"key": "podcast_host", "name": "Podcast hosting analytics", "metrics": ["IAB downloads", "unique listeners", "apps", "devices", "geography"], "access": "Use the Spotify for Creators export when it contains hosting-wide downloads; otherwise use the verified host export.", "connection_mode": "provider_limited"},
+    {"key": "website_analytics", "name": "Mirror Talk website analytics", "metrics": ["active users", "countries", "devices", "referrals", "conversions"], "access": "Automated read-only GA4 API sync.", "connection_mode": "automated"},
 )
 
 
@@ -85,19 +85,33 @@ class PodcastSourceMonitor:
                    JOIN (SELECT source_key, MAX(id) id FROM podcast_source_checks GROUP BY source_key) latest
                      ON latest.id = c.id ORDER BY c.source_name"""
             ).fetchall()]
-            imported = {str(row[0]).casefold() for row in conn.execute(
-                "SELECT DISTINCT provider FROM growth_metric_observations"
-            ).fetchall()}
+            observations = [dict(row) for row in conn.execute(
+                """SELECT provider, metric_name, period_end FROM growth_metric_observations
+                   ORDER BY period_end, id"""
+            ).fetchall()]
         for row in public:
             try:
                 row["evidence"] = json.loads(row.pop("evidence_json") or "{}")
             except json.JSONDecodeError:
                 row["evidence"] = {}
-        private = [{**source, "status": "data_present" if any(token in imported for token in self._provider_tokens(source["key"])) else "not_connected"}
-                   for source in PRIVATE_SOURCES]
+        private = []
+        for source in PRIVATE_SOURCES:
+            tokens = self._provider_tokens(source["key"])
+            source_rows = [row for row in observations if str(row["provider"]).casefold() in tokens]
+            private.append({
+                **source,
+                "status": "data_present" if source_rows else "provider_access_required",
+                "observation_count": len(source_rows),
+                "metrics_present": sorted({str(row["metric_name"]) for row in source_rows}),
+                "latest_period_end": max((str(row["period_end"]) for row in source_rows), default=None),
+            })
+        automated = [row for row in private if row["connection_mode"] == "automated"]
+        limited = [row for row in private if row["connection_mode"] == "provider_limited"]
         return {"public": public, "private": private, "public_available": sum(row["status"] == "available" for row in public),
                 "public_expected": len(PUBLIC_SOURCES), "private_connected": sum(row["status"] == "data_present" for row in private),
-                "private_expected": len(PRIVATE_SOURCES)}
+                "private_expected": len(PRIVATE_SOURCES),
+                "automated_connected": sum(row["status"] == "data_present" for row in automated),
+                "automated_expected": len(automated), "provider_limited_count": len(limited)}
 
     @staticmethod
     def _provider_tokens(key: str) -> set[str]:

@@ -265,7 +265,7 @@ def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20260925.1' in html
+    assert 'operations.css?v=20260925.2' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -332,7 +332,7 @@ def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
 
     assert 'id="growth-intelligence-dashboard" aria-live="polite"' in html
     assert 'id="analytics-import-message" class="message" aria-live="polite"' in html
-    assert 'planning-intelligence.js?v=20260923.1' in html
+    assert 'planning-intelligence.js?v=20260925.2' in html
     assert 'planning.js?v=20260925.2' in html
     assert 'return String(value ?? "")' in javascript
     assert "escapeHtml(reach.organic ?? 0)" in javascript
@@ -377,7 +377,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
     assert "planning.js?v=20260925.2" in html
-    assert "operations.css?v=20260925.1" in html
+    assert "operations.css?v=20260925.2" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript
@@ -403,13 +403,19 @@ def test_scheduling_intelligence_prioritizes_decisions_and_guides_evidence_impor
 
     assert 'id="exception-center" class="exception-center" aria-live="polite"' in html
     assert 'id="analytics-import-form"' in html
+    assert 'class="provider-export-grid"' in html
+    assert 'data-import-provider="spotify"' in html
+    assert 'data-import-provider="apple_podcasts"' in html
+    assert 'data-import-provider="podcast_host"' in html
     assert 'id="analytics-mapping-fields"' in html
     assert 'id="analytics-preview" class="analytics-preview hidden" aria-live="polite"' in html
     assert 'class="operations-tool scheduling-admin-hub"' in html
     assert 'id="recommendation-comparison-grid"' in html
     assert 'request("/api/growth-intelligence/preview"' in javascript
+    assert 'document.querySelectorAll("[data-import-provider]")' in javascript
     assert 'request("/api/exceptions")' in javascript
     assert "renderRecommendationComparison" in javascript
     assert "recommendation_decision" in planning_javascript
     assert ".comparison-grid" in styles
     assert ".analytics-mapping-grid" in styles
+    assert ".provider-export-grid" in styles

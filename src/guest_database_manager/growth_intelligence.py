@@ -57,9 +57,19 @@ CSV_FIELD_ALIASES = {
     "metric_name": ("metric_name", "metric name", "metric", "measure"),
     "metric_value": ("metric_value", "metric value", "value", "result"),
     "traffic_scope": ("traffic_scope", "traffic scope", "scope", "traffic type"),
-    "period_start": ("period_start", "period start", "start date", "start", "from"),
+    "period_start": ("period_start", "period start", "start date", "start", "from", "date"),
     "period_end": ("period_end", "period end", "end date", "end", "to", "date"),
     "source_reference": ("source_reference", "source reference", "source file", "reference"),
+}
+
+EXPORTED_METRIC_ALIASES = {
+    "plays": ("plays", "play starts"),
+    "downloads": ("downloads", "downloaded"),
+    "streams": ("streams",),
+    "unique_listeners": ("audience", "unique audience", "unique listeners"),
+    "listeners": ("listeners",),
+    "followers": ("followers",),
+    "consumption_depth_pct": ("average consumption", "average consumption percentage", "avg consumption"),
 }
 
 
@@ -75,8 +85,15 @@ def _iso_date(value: Any, field: str) -> str:
     text = _text(value)
     try:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).date().isoformat()
-    except ValueError as exc:
-        raise GrowthIntelligenceError(f"{field} must be an ISO date or datetime.") from exc
+    except ValueError:
+        for date_format in ("%m/%d/%Y", "%Y/%m/%d", "%b %d, %Y", "%B %d, %Y"):
+            try:
+                return datetime.strptime(text, date_format).date().isoformat()
+            except ValueError:
+                continue
+    raise GrowthIntelligenceError(
+        f"{field} must be an ISO date, US date (MM/DD/YYYY), or named-month date."
+    )
 
 
 def _metric_value(metric: str, value: Any) -> float:
@@ -221,11 +238,16 @@ class GrowthIntelligence:
         if not raw_rows or len(raw_rows) > 500:
             raise GrowthIntelligenceError("Provide between 1 and 500 analytics rows.")
         resolved_mapping = self._resolve_csv_mapping(headers, mapping)
+        aliases_by_metric = {
+            metric: {self._header_key(metric), self._header_key(metric.replace("_", " "))}
+            | {self._header_key(alias) for alias in EXPORTED_METRIC_ALIASES.get(metric, ())}
+            for metric in CANONICAL_METRICS
+        }
         wide_metric_headers = {
             metric: header
-            for metric in CANONICAL_METRICS
+            for metric, aliases in aliases_by_metric.items()
             for header in headers
-            if self._header_key(header) in {self._header_key(metric), self._header_key(metric.replace("_", " "))}
+            if self._header_key(header) in aliases
         }
         long_format = "metric_name" in resolved_mapping and "metric_value" in resolved_mapping
         missing = [field for field in ("period_start", "period_end") if field not in resolved_mapping]

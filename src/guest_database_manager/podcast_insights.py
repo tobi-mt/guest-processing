@@ -42,7 +42,11 @@ class PodcastInsights:
         for provider in providers:
             provider_rows = [row for row in rows if str(row["provider"]).strip().casefold() == provider]
             latest_end = max(row["period_end"] for row in provider_rows)
-            latest = [row for row in provider_rows if row["period_end"] == latest_end]
+            latest = []
+            for metric in {row["metric_name"] for row in provider_rows}:
+                metric_rows = [row for row in provider_rows if row["metric_name"] == metric]
+                metric_end = max(row["period_end"] for row in metric_rows)
+                latest.extend(row for row in metric_rows if row["period_end"] == metric_end)
             metrics: dict[str, float] = {}
             for metric in {row["metric_name"] for row in latest}:
                 metrics[metric] = self._metric_total(latest, metric)
@@ -57,11 +61,8 @@ class PodcastInsights:
 
         periods = sorted({(row["period_start"], row["period_end"]) for row in rows})
         latest_common_period = max(periods, default=None, key=lambda value: value[1])
-        common_rows = [row for row in rows if latest_common_period and (row["period_start"], row["period_end"]) == latest_common_period]
-        totals = {
-            metric: self._metric_total(common_rows, metric)
-            for metric in sorted(ADDITIVE_METRICS)
-        }
+        downloads_total, downloads_period = self._latest_family_total(rows, {"downloads", "downloads_7d"})
+        plays_total, plays_period = self._latest_family_total(rows, {"plays", "streams"})
         audience_by_platform = []
         for card in provider_cards:
             for metric in AUDIENCE_METRICS:
@@ -76,10 +77,14 @@ class PodcastInsights:
         trend = []
         for start, end in periods:
             period_rows = [row for row in rows if row["period_start"] == start and row["period_end"] == end]
+            if not any(row["metric_name"] in {"downloads", "downloads_7d", "plays", "streams"} for row in period_rows):
+                continue
             trend.append({
                 "period_start": start, "period_end": end,
-                "downloads": self._metric_total(period_rows, "downloads") + self._metric_total(period_rows, "downloads_7d"),
-                "plays": self._metric_total(period_rows, "plays") + self._metric_total(period_rows, "streams"),
+                "downloads": self._metric_total(period_rows, "downloads") + self._metric_total(period_rows, "downloads_7d")
+                if any(row["metric_name"] in {"downloads", "downloads_7d"} for row in period_rows) else None,
+                "plays": self._metric_total(period_rows, "plays") + self._metric_total(period_rows, "streams")
+                if any(row["metric_name"] in {"plays", "streams"} for row in period_rows) else None,
             })
 
         metric_names = {row["metric_name"] for row in rows}
@@ -99,8 +104,10 @@ class PodcastInsights:
                 "platforms_with_private_analytics": len(provider_cards),
                 "latest_period_start": latest_common_period[0] if latest_common_period else None,
                 "latest_period_end": latest_common_period[1] if latest_common_period else None,
-                "downloads": totals.get("downloads", 0) + totals.get("downloads_7d", 0) if has_downloads else None,
-                "plays": totals.get("plays", 0) + totals.get("streams", 0) if has_plays else None,
+                "downloads": downloads_total if has_downloads else None,
+                "downloads_period_end": downloads_period[1] if downloads_period else None,
+                "plays": plays_total if has_plays else None,
+                "plays_period_end": plays_period[1] if plays_period else None,
                 "unique_listeners": None,
                 "unique_listener_explanation": "Cross-platform listeners are not additive; a deduplicated total requires compatible identity-level reporting from every provider.",
             },
@@ -148,6 +155,17 @@ class PodcastInsights:
             total += sum(float(row["metric_value"]) for row in (show_rows or provider_rows))
         return total
 
+    @classmethod
+    def _latest_family_total(cls, rows: list[dict[str, Any]], metrics: set[str]) -> tuple[float, tuple[str, str] | None]:
+        candidates = [row for row in rows if row["metric_name"] in metrics]
+        period = max(
+            {(row["period_start"], row["period_end"]) for row in candidates},
+            default=None,
+            key=lambda value: (value[1], value[0]),
+        )
+        selected = [row for row in candidates if period and (row["period_start"], row["period_end"]) == period]
+        return sum(cls._metric_total(selected, metric) for metric in metrics), period
+
     @staticmethod
     def _has_mixed_grain(rows: list[dict[str, Any]], provider: str, metric: str,
                          start: str, end: str) -> bool:
@@ -158,16 +176,23 @@ class PodcastInsights:
     @staticmethod
     def _dimension_breakdown(rows: list[dict[str, Any]], prefix: str) -> list[dict[str, Any]]:
         candidates = [row for row in rows if str(row["metric_name"]).startswith(prefix)]
-        latest = max((row["period_end"] for row in candidates), default=None)
-        selected = [row for row in candidates if row["period_end"] == latest]
         values = []
-        for provider, metric in sorted({(str(row["provider"]), str(row["metric_name"])) for row in selected}):
-            relevant = [row for row in selected if str(row["provider"]) == provider and row["metric_name"] == metric]
+        for provider, metric in sorted({(str(row["provider"]), str(row["metric_name"])) for row in candidates}):
+            provider_metric_rows = [
+                row for row in candidates
+                if str(row["provider"]) == provider and row["metric_name"] == metric
+            ]
+            latest = max((row["period_end"] for row in provider_metric_rows), default=None)
+            relevant = [row for row in provider_metric_rows if row["period_end"] == latest]
             show_rows = [row for row in relevant if row.get("episode_id") is None]
             values.append({"name": metric[len(prefix):].replace("_", " ").title(),
                            "value": sum(float(row["metric_value"]) for row in (show_rows or relevant)),
                            "provider": provider, "period_end": latest})
-        total = sum(item["value"] for item in values)
+        provider_totals = {
+            provider: sum(item["value"] for item in values if item["provider"] == provider)
+            for provider in {item["provider"] for item in values}
+        }
         for item in values:
+            total = provider_totals[item["provider"]]
             item["share_pct"] = round(item["value"] * 100 / total, 1) if total else None
-        return sorted(values, key=lambda item: -item["value"])
+        return sorted(values, key=lambda item: (item["provider"], -item["value"]))

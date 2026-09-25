@@ -9,7 +9,7 @@
     ["metric_name", "Metric name", false, ["metric name", "metric_name", "metric", "measure"]],
     ["metric_value", "Metric value", false, ["metric value", "metric_value", "value", "result"]],
     ["traffic_scope", "Traffic scope", false, ["traffic scope", "traffic_scope", "scope", "traffic type"]],
-    ["period_start", "Period start *", true, ["period start", "period_start", "start date", "start", "from"]],
+    ["period_start", "Period start *", true, ["period start", "period_start", "start date", "start", "from", "date"]],
     ["period_end", "Period end *", true, ["period end", "period_end", "end date", "end", "to", "date"]],
     ["source_reference", "Source reference", false, ["source reference", "source_reference", "source file", "reference"]],
   ];
@@ -266,6 +266,15 @@
     const importButton = document.getElementById("analytics-import-button");
     const message = document.getElementById("analytics-import-message");
     if (!form || !fileInput || !importButton) return;
+
+    document.querySelectorAll("[data-import-provider]").forEach((button) => {
+      button.addEventListener("click", () => {
+        form.elements.provider.value = button.dataset.importProvider || "";
+        form.scrollIntoView({ behavior: "smooth", block: "start" });
+        fileInput.focus();
+        setMessage(message, `Choose the downloaded ${form.elements.provider.selectedOptions[0]?.text || "provider"} CSV. It will be previewed without writing data.`, "pending");
+      });
+    });
 
     fileInput.addEventListener("change", async () => {
       previewedObservations = [];
