@@ -141,9 +141,7 @@ def test_newer_subscriber_snapshot_does_not_hide_latest_play_window(temp_db):
 
     assert result["summary"]["plays"] == 181
     assert result["summary"]["plays_period_end"] == "2026-09-22"
-    assert result["trend"] == [{
-        "period_start": "2026-08-26", "period_end": "2026-09-22", "downloads": None, "plays": 181.0,
-    }]
+    assert result["trend"] == []
     assert result["provider_strength"][0]["metrics"]["plays"] == 181
     assert result["provider_strength"][0]["metrics"]["subscribers"] == 65
 
@@ -209,3 +207,54 @@ def test_channel_scoped_youtube_rows_replace_matching_legacy_aggregate_once_all_
     assert {card["provider"] for card in result["provider_strength"]} == {
         "youtube:uc-one", "youtube:uc-two",
     }
+
+
+def test_summary_keeps_youtube_window_separate_from_newer_spotify_daily_rows(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    observations = [
+        {"provider": "youtube:channel", "metric_name": "plays", "metric_value": 150,
+         "period_start": "2026-08-26", "period_end": "2026-09-22", "source_reference": "youtube"},
+    ]
+    for day, downloads, plays, audience in (
+        ("2026-09-22", 10, 4, 8), ("2026-09-23", 11, 5, 9),
+        ("2026-09-24", 12, 6, 10), ("2026-09-25", 13, 7, 11),
+    ):
+        observations.extend([
+            {"provider": "spotify", "metric_name": "downloads", "metric_value": downloads,
+             "period_start": day, "period_end": day, "source_reference": "spotify"},
+            {"provider": "spotify", "metric_name": "plays", "metric_value": plays,
+             "period_start": day, "period_end": day, "source_reference": "spotify"},
+            {"provider": "spotify", "metric_name": "unique_listeners", "metric_value": audience,
+             "period_start": day, "period_end": day, "source_reference": "spotify"},
+        ])
+    service.record_growth_observations({"observations": observations}, actor="automation")
+
+    summary = PodcastInsights(temp_db.db_path).dashboard()["summary"]
+
+    assert summary["plays"] == 150
+    assert summary["plays_period_end"] == "2026-09-22"
+    assert summary["spotify_28d"] == {
+        "period_start": "2026-08-29", "period_end": "2026-09-25",
+        "downloads": 46.0, "plays": 22.0, "latest_daily_audience": 11.0,
+    }
+
+
+def test_apple_country_plays_are_aggregated_across_months_with_clean_labels(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "apple_podcasts", "metric_name": "country_plays_germany_276", "metric_value": 7,
+         "period_start": "2026-08-01", "period_end": "2026-08-31", "source_reference": "apple"},
+        {"provider": "apple_podcasts", "metric_name": "country_plays_germany_276", "metric_value": 3,
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "apple"},
+        {"provider": "apple_podcasts", "metric_name": "country_plays_canada_124", "metric_value": 5,
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "apple"},
+    ]}, actor="analyst")
+
+    countries = PodcastInsights(temp_db.db_path).dashboard()["countries"]
+
+    assert countries == [
+        {"name": "Germany", "value": 10.0, "provider": "apple_podcasts",
+         "period_start": "2026-08-01", "period_end": "2026-09-30", "measure": "plays", "share_pct": 66.7},
+        {"name": "Canada", "value": 5.0, "provider": "apple_podcasts",
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "measure": "plays", "share_pct": 33.3},
+    ]

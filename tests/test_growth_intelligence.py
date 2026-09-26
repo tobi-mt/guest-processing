@@ -286,7 +286,8 @@ def test_apple_country_export_preserves_month_and_location_grain(temp_db):
 
     assert preview["format"] == "provider"
     assert preview["summary"]["ready"] == 1
-    assert preview["observations"][0]["metric_name"] == "country_germany_276"
+    assert preview["observations"][0]["metric_name"] == "country_plays_germany_276"
+    assert preview["observations"][0]["metric_value"] == 7
     assert preview["observations"][0]["period_start"] == "2026-09-01"
     assert preview["observations"][0]["period_end"] == "2026-09-30"
 
@@ -312,7 +313,7 @@ def test_apple_episode_export_requires_unique_internal_title_match(temp_db):
     assert {row["episode_id"] for row in matched["observations"]} == {episode_id}
 
 
-def test_apple_follower_export_imports_non_negative_flows_not_ambiguous_net_stock(temp_db):
+def test_apple_follower_export_imports_current_net_follower_stock(temp_db):
     intelligence = GrowthIntelligence(temp_db.db_path)
     preview = intelligence.preview_csv(
         "Date,Net Followers,Gross Followers,Gross Unfollowers\n20260901,8,10,2",
@@ -320,10 +321,9 @@ def test_apple_follower_export_imports_non_negative_flows_not_ambiguous_net_stoc
         source_reference="apple-followers.csv",
     )
 
-    assert preview["summary"]["ready"] == 2
-    assert {row["metric_name"] for row in preview["observations"]} == {
-        "followers_gained", "followers_lost",
-    }
+    assert preview["summary"]["ready"] == 1
+    assert preview["observations"][0]["metric_name"] == "followers"
+    assert preview["observations"][0]["metric_value"] == 8
 
 
 def test_dashboard_groups_import_history_by_correlation_id(temp_db):

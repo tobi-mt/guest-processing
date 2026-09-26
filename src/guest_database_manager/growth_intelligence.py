@@ -190,14 +190,14 @@ class GrowthIntelligence:
                 ("country", "Country/Region Code", "Country/Region"),
                 ("city", "City Code", "City"),
             ):
-                if {code_column, name_column, "Unique Listeners"}.issubset(header_set):
+                if {code_column, name_column, "Plays"}.issubset(header_set):
                     for row_number, raw in enumerate(raw_rows, 2):
                         start, end = month_bounds(raw.get("Date"))
                         slug = cls._metric_slug(f"{raw.get(name_column)} {raw.get(code_column)}")
-                        if slug and _text(raw.get("Unique Listeners")):
+                        if slug and _text(raw.get("Plays")):
                             candidates.append((row_number, {
-                                "metric_name": f"{dimension}_{slug}",
-                                "metric_value": raw.get("Unique Listeners"),
+                                "metric_name": f"{dimension}_plays_{slug}",
+                                "metric_value": raw.get("Plays"),
                                 "period_start": start,
                                 "period_end": end,
                             }))
@@ -205,10 +205,7 @@ class GrowthIntelligence:
         if provider_key == "apple_podcasts" and {
             "Date", "Net Followers", "Gross Followers", "Gross Unfollowers"
         }.issubset(header_set):
-            metric_columns = {
-                "followers_gained": "Gross Followers",
-                "followers_lost": "Gross Unfollowers",
-            }
+            metric_columns = {"followers": "Net Followers"}
             for row_number, raw in enumerate(raw_rows, 2):
                 parsed = datetime.strptime(_text(raw.get("Date")), "%Y%m%d").date()
                 start = parsed.replace(day=1).isoformat()

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Mirror Talk Podcast Reach</title>
   <link rel="stylesheet" href="/static/styles.css?v=20260906.1">
-  <link rel="stylesheet" href="/static/insights.css?v=20260925.9">
+  <link rel="stylesheet" href="/static/insights.css?v=20260926.2">
 </head>
 <body>
 <div class="page-shell insights-shell">
@@ -17,9 +17,6 @@
     <section id="insights-quality" class="panel insights-quality" aria-live="polite">Loading source coverage…</section>
     <section id="insights-summary" class="insights-summary" aria-label="Podcast reach summary"></section>
     <section id="reach-highlights" class="reach-highlights" aria-label="Current reach highlights"></section>
-    <section class="panel" aria-labelledby="connections-title"><div class="section-heading"><div><p class="eyebrow">Private analytics</p><h2 id="connections-title">Secure connections</h2></div><p>Read-only authorization; platform passwords are never stored, and Apple/Spotify browser sessions remain local.</p></div><div id="analytics-connections" class="analytics-connections" aria-live="polite">Loading connection health…</div></section>
-    <section class="panel" aria-labelledby="source-coverage-title"><div class="section-heading"><div><p class="eyebrow">Evidence coverage</p><h2 id="source-coverage-title">Connected sources and remaining gaps</h2></div><p>Automated sources are separated from provider-limited sources.</p></div><div id="source-coverage" class="source-coverage"></div></section>
-    <section class="panel" aria-labelledby="platform-title"><div class="section-heading"><div><p class="eyebrow">Distribution footprint</p><h2 id="platform-title">Where Mirror Talk is available</h2></div><p>Verified public listings; availability is not an audience count.</p></div><div id="platform-grid" class="platform-grid"></div></section>
     <section class="insights-two-column">
       <article class="panel"><div class="section-heading"><div><p class="eyebrow">Measured evidence</p><h2>Performance by source</h2></div></div><div id="provider-strength"></div></article>
       <article class="panel"><div class="section-heading"><div><p class="eyebrow">Owned audiences</p><h2>Audience counters</h2></div></div><div id="audience-platform"></div></article>
@@ -28,11 +25,14 @@
       <article class="panel"><div class="section-heading"><div><p class="eyebrow">Listening context</p><h2>Devices</h2></div></div><div id="device-breakdown"></div></article>
       <article class="panel"><div class="section-heading"><div><p class="eyebrow">Geography</p><h2>Where people listen</h2></div></div><div id="country-breakdown"></div></article>
     </section>
-    <section class="panel"><div class="section-heading"><div><p class="eyebrow">Movement over time</p><h2>Downloads and plays</h2></div><button id="insights-refresh" class="secondary-button" type="button">Refresh</button></div><div id="reach-trend" class="reach-trend"></div></section>
-    <section class="panel"><p class="eyebrow">Metric contract</p><h2>What these numbers mean</h2><div id="metric-definitions" class="definition-grid"></div></section>
+    <section class="panel"><div class="section-heading"><div><p class="eyebrow">Movement over time</p><h2>Spotify daily downloads and plays</h2></div><button id="insights-refresh" class="secondary-button" type="button">Refresh</button></div><div id="reach-trend" class="reach-trend"></div></section>
+    <section class="panel" aria-labelledby="platform-title"><div class="section-heading"><div><p class="eyebrow">Distribution footprint</p><h2 id="platform-title">Where Mirror Talk is available</h2></div><p>Verified public listings; availability is not an audience count.</p></div><div id="platform-grid" class="platform-grid"></div></section>
+    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Private analytics</span><strong id="connections-title">Connection health</strong></span><span>Show details</span></summary><p class="disclosure-intro">Read-only authorization; platform passwords are never stored, and Apple/Spotify browser sessions remain local.</p><div id="analytics-connections" class="analytics-connections" aria-live="polite">Loading connection health…</div></details>
+    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Evidence coverage</span><strong id="source-coverage-title">Sources and remaining gaps</strong></span><span>Show details</span></summary><p class="disclosure-intro">Automated sources are separated from provider-limited sources.</p><div id="source-coverage" class="source-coverage"></div></details>
+    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Metric contract</span><strong>What these numbers mean</strong></span><span>Show details</span></summary><div id="metric-definitions" class="definition-grid"></div></details>
   </main>
 </div>
 <script src="/static/performance-utils.js?v=20260807.1"></script>
-<script src="/static/insights.js?v=20260926.1" defer></script>
+<script src="/static/insights.js?v=20260926.2" defer></script>
 </body>
 </html>
