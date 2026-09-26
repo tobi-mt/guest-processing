@@ -53,14 +53,27 @@ class PodcastInsights:
                 or (str(row["metric_name"]), str(row["period_start"]), str(row["period_end"])) not in scoped_keys
             ]
 
-        providers = sorted({str(row["provider"]).strip().casefold() for row in rows})
+        provider_groups: dict[str, list[dict[str, Any]]] = {}
+        period_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        grain_groups: dict[tuple[str, str, str, str], int] = {}
+        for row in rows:
+            provider = str(row["provider"]).strip().casefold()
+            provider_groups.setdefault(provider, []).append(row)
+            period = (row["period_start"], row["period_end"])
+            period_groups.setdefault(period, []).append(row)
+            grain_key = (provider, row["metric_name"], *period)
+            grain_groups[grain_key] = grain_groups.get(grain_key, 0) | (1 if row.get("episode_id") is None else 2)
+
+        providers = sorted(provider_groups)
         provider_cards = []
         for provider in providers:
-            provider_rows = [row for row in rows if str(row["provider"]).strip().casefold() == provider]
+            provider_rows = provider_groups[provider]
             latest_end = max(row["period_end"] for row in provider_rows)
             latest = []
-            for metric in {row["metric_name"] for row in provider_rows}:
-                metric_rows = [row for row in provider_rows if row["metric_name"] == metric]
+            metric_groups: dict[str, list[dict[str, Any]]] = {}
+            for row in provider_rows:
+                metric_groups.setdefault(row["metric_name"], []).append(row)
+            for metric_rows in metric_groups.values():
                 metric_end = max(row["period_end"] for row in metric_rows)
                 latest.extend(row for row in metric_rows if row["period_end"] == metric_end)
             metrics: dict[str, float] = {}
@@ -75,7 +88,7 @@ class PodcastInsights:
                 "freshness": self._freshness(latest_end),
             })
 
-        periods = sorted({(row["period_start"], row["period_end"]) for row in rows})
+        periods = sorted(period_groups)
         latest_common_period = max(periods, default=None, key=lambda value: value[1])
         downloads_total, downloads_period = self._latest_family_total(rows, {"downloads", "downloads_7d"})
         plays_total, plays_period = self._latest_family_total(rows, {"plays", "streams"})
@@ -92,7 +105,7 @@ class PodcastInsights:
         countries = self._dimension_breakdown(rows, COUNTRY_PREFIX)
         trend = []
         for start, end in periods:
-            period_rows = [row for row in rows if row["period_start"] == start and row["period_end"] == end]
+            period_rows = period_groups[(start, end)]
             if not any(row["metric_name"] in {"downloads", "downloads_7d", "plays", "streams"} for row in period_rows):
                 continue
             trend.append({
@@ -108,11 +121,11 @@ class PodcastInsights:
         has_plays = bool(metric_names & {"plays", "streams"})
         latest_end = max((row["period_end"] for row in rows), default=None)
         stale = sum(self._freshness(card["period_end"]) == "stale" for card in provider_cards)
-        mixed_grain = sorted({
+        mixed_grain = sorted(
             f"{provider}:{metric}:{start}:{end}"
-            for provider in providers for metric in metric_names for start, end in periods
-            if self._has_mixed_grain(rows, provider, metric, start, end)
-        })
+            for (provider, metric, start, end), grain_mask in grain_groups.items()
+            if grain_mask == 3
+        )
         return {
             "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "summary": {
