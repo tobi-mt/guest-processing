@@ -116,7 +116,14 @@ class PodcastInsights:
 
         devices = self._dimension_breakdown(rows, DEVICE_PREFIX)
         countries = self._dimension_breakdown(
-            [row for row in rows if not str(row["metric_name"]).startswith("country_plays_")],
+            [
+                row for row in rows
+                if not str(row["metric_name"]).startswith("country_plays_")
+                and not (
+                    str(row["provider"]).casefold() == "apple_podcasts"
+                    and str(row["metric_name"]).startswith(COUNTRY_PREFIX)
+                )
+            ],
             COUNTRY_PREFIX,
         )
         countries.extend(self._additive_dimension_breakdown(

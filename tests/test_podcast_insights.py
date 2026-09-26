@@ -248,6 +248,8 @@ def test_apple_country_plays_are_aggregated_across_months_with_clean_labels(temp
          "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "apple"},
         {"provider": "apple_podcasts", "metric_name": "country_plays_canada_124", "metric_value": 5,
          "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "apple"},
+        {"provider": "apple_podcasts", "metric_name": "country_germany_276", "metric_value": 99,
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "legacy"},
     ]}, actor="analyst")
 
     countries = PodcastInsights(temp_db.db_path).dashboard()["countries"]
