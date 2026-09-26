@@ -134,6 +134,9 @@ class PodcastInsights:
         countries.extend(self._additive_dimension_breakdown(
             rows, "country_plays_", provider="apple_podcasts"
         ))
+        cities = self._additive_dimension_breakdown(
+            rows, "city_plays_", provider="apple_podcasts"
+        )
         trend = []
         trend_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for row in spotify_rows:
@@ -183,6 +186,7 @@ class PodcastInsights:
             "audience_by_platform": audience_by_platform,
             "devices": devices,
             "countries": countries,
+            "cities": cities,
             "trend": trend[-14:],
             "monthly_trends": {"spotify": spotify_monthly, "apple_podcasts": apple_monthly},
             "quality": {

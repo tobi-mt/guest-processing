@@ -262,6 +262,19 @@ def test_apple_country_plays_are_aggregated_across_months_with_clean_labels(temp
     ]
 
 
+def test_apple_city_plays_are_available_as_a_separate_drilldown(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "apple_podcasts", "metric_name": "city_plays_berlin_2950159", "metric_value": 12,
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "apple-city"},
+    ]}, actor="analyst")
+
+    assert PodcastInsights(temp_db.db_path).dashboard()["cities"] == [{
+        "name": "Berlin", "value": 12.0, "provider": "apple_podcasts",
+        "period_start": "2026-09-01", "period_end": "2026-09-30", "measure": "plays", "share_pct": 100.0,
+    }]
+
+
 def test_platform_totals_and_monthly_trends_preserve_additive_grain(temp_db):
     service = GuestWebService(temp_db.db_path)
     service.record_growth_observations({"observations": [

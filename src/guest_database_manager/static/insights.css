@@ -63,6 +63,9 @@
 .dimension-group>summary span{margin-left:auto;color:var(--muted);font-size:.78rem}
 .dimension-group .insight-bars{padding:0 0 18px}
 .dimension-note{margin:0;color:var(--muted);font-size:.8rem;line-height:1.45}
+.city-breakdown{margin-top:16px;border-top:1px solid var(--border);padding-top:14px}
+.city-breakdown>summary{color:var(--accent);font-size:.82rem;font-weight:800;cursor:pointer}
+.city-breakdown>#city-breakdown{margin-top:8px}
 .insight-bar>div:first-child{display:flex;justify-content:space-between;gap:12px}
 .insight-bar-track{height:10px;margin:7px 0;border-radius:999px;background:#eee7dc;overflow:hidden}
 .insight-bar-track span{display:block;height:100%;border-radius:inherit;background:var(--accent)}
