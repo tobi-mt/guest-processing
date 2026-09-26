@@ -285,9 +285,14 @@ def test_apple_country_export_preserves_month_and_location_grain(temp_db):
     )
 
     assert preview["format"] == "provider"
-    assert preview["summary"]["ready"] == 1
-    assert preview["observations"][0]["metric_name"] == "country_plays_germany_276"
-    assert preview["observations"][0]["metric_value"] == 7
+    assert preview["summary"]["ready"] == 4
+    metrics = {row["metric_name"]: row["metric_value"] for row in preview["observations"]}
+    assert metrics == {
+        "country_plays_germany_276": 7,
+        "country_listening_seconds_germany_276": 120,
+        "country_listeners_germany_276": 4,
+        "country_engaged_listeners_germany_276": 2,
+    }
     assert preview["observations"][0]["period_start"] == "2026-09-01"
     assert preview["observations"][0]["period_end"] == "2026-09-30"
 

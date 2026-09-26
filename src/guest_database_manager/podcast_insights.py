@@ -105,6 +105,11 @@ class PodcastInsights:
         spotify_window = self._rolling_daily_metrics(
             spotify_rows, {"downloads", "plays", "unique_listeners"}, days=28
         )
+        spotify_lifetime = self._spotify_lifetime(spotify_rows)
+        spotify_monthly = self._spotify_monthly(spotify_rows)
+        apple_rows = [row for row in rows if str(row["provider"]).casefold() == "apple_podcasts"]
+        apple_summary = self._apple_summary(apple_rows)
+        apple_monthly = self._apple_monthly(apple_rows)
         audience_by_platform = []
         for card in provider_cards:
             for metric in AUDIENCE_METRICS:
@@ -168,6 +173,8 @@ class PodcastInsights:
                 "plays": plays_total if has_youtube_plays else None,
                 "plays_period_end": plays_period[1] if plays_period else None,
                 "spotify_28d": spotify_window,
+                "spotify_lifetime": spotify_lifetime,
+                "apple": apple_summary,
                 "unique_listeners": None,
                 "unique_listener_explanation": "Cross-platform listeners are not additive; a deduplicated total requires compatible identity-level reporting from every provider.",
             },
@@ -177,6 +184,7 @@ class PodcastInsights:
             "devices": devices,
             "countries": countries,
             "trend": trend[-14:],
+            "monthly_trends": {"spotify": spotify_monthly, "apple_podcasts": apple_monthly},
             "quality": {
                 "status": "no_data" if not rows else "partial" if len(provider_cards) < len(PLATFORMS) else "covered",
                 "observation_count": len(rows),
@@ -247,6 +255,71 @@ class PodcastInsights:
             "plays": cls._metric_total(selected, "plays") + cls._metric_total(selected, "streams"),
             "latest_daily_audience": cls._metric_total(latest_rows, "unique_listeners"),
         }
+
+    @classmethod
+    def _spotify_lifetime(cls, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        daily = [row for row in rows if row["period_start"] == row["period_end"]]
+        if not daily:
+            return None
+        return {
+            "period_start": min(row["period_start"] for row in daily),
+            "period_end": max(row["period_end"] for row in daily),
+            "downloads": cls._metric_total(daily, "downloads"),
+            "plays": cls._metric_total(daily, "plays") + cls._metric_total(daily, "streams"),
+        }
+
+    @classmethod
+    def _spotify_monthly(cls, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        months: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            if row["period_start"] == row["period_end"] and row["metric_name"] in {"downloads", "plays", "streams"}:
+                months.setdefault(row["period_end"][:7], []).append(row)
+        return [{
+            "period": month,
+            "downloads": cls._metric_total(month_rows, "downloads"),
+            "plays": cls._metric_total(month_rows, "plays") + cls._metric_total(month_rows, "streams"),
+        } for month, month_rows in sorted(months.items())]
+
+    @staticmethod
+    def _apple_summary(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        country_rows = [row for row in rows if str(row["metric_name"]).startswith("country_")]
+        if not country_rows:
+            return None
+        plays = [row for row in country_rows if str(row["metric_name"]).startswith("country_plays_")]
+        listening = [row for row in country_rows if str(row["metric_name"]).startswith("country_listening_seconds_")]
+        followers = [row for row in rows if row["metric_name"] == "followers"]
+        latest_month = max((row["period_end"] for row in country_rows), default=None)
+        latest = [row for row in country_rows if row["period_end"] == latest_month]
+        listeners = [row for row in latest if str(row["metric_name"]).startswith("country_listeners_")]
+        engaged = [row for row in latest if str(row["metric_name"]).startswith("country_engaged_listeners_")]
+        latest_followers = max(followers, key=lambda row: row["period_end"], default=None)
+        return {
+            "period_start": min(row["period_start"] for row in country_rows),
+            "period_end": max(row["period_end"] for row in country_rows),
+            "plays": sum(float(row["metric_value"]) for row in plays),
+            "listening_time_hours": sum(float(row["metric_value"]) for row in listening) / 3600,
+            "latest_month_listeners": sum(float(row["metric_value"]) for row in listeners),
+            "latest_month_engaged_listeners": sum(float(row["metric_value"]) for row in engaged),
+            "followers": float(latest_followers["metric_value"]) if latest_followers else None,
+        }
+
+    @staticmethod
+    def _apple_monthly(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        months: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            metric = str(row["metric_name"])
+            if metric.startswith(("country_plays_", "country_listening_seconds_", "country_listeners_", "country_engaged_listeners_")):
+                months.setdefault(row["period_start"][:7], []).append(row)
+        result = []
+        for month, month_rows in sorted(months.items()):
+            result.append({
+                "period": month,
+                "plays": sum(float(row["metric_value"]) for row in month_rows if str(row["metric_name"]).startswith("country_plays_")),
+                "listening_time_hours": sum(float(row["metric_value"]) for row in month_rows if str(row["metric_name"]).startswith("country_listening_seconds_")) / 3600,
+                "listeners": sum(float(row["metric_value"]) for row in month_rows if str(row["metric_name"]).startswith("country_listeners_")),
+                "engaged_listeners": sum(float(row["metric_value"]) for row in month_rows if str(row["metric_name"]).startswith("country_engaged_listeners_")),
+            })
+        return result
 
     @staticmethod
     def _has_mixed_grain(rows: list[dict[str, Any]], provider: str, metric: str,

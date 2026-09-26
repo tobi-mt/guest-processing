@@ -6,7 +6,36 @@ const csrfToken = () => decodeURIComponent((document.cookie.match(/(?:^|;\s*)das
 const metricLabel = (value) => String(value || "").replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
 const duration = (seconds) => seconds == null ? "Unavailable" : `${Math.floor(Number(seconds) / 60)}m ${Math.round(Number(seconds) % 60)}s`;
 let providerLabels = {};
+let trendRange = 24;
 const providerLabel = (provider) => providerLabels[provider] || metricLabel(provider);
+
+function linePath(values, width, height, maxValue) {
+  if (!values.length) return "";
+  return values.map((value, index) => {
+    const x = values.length === 1 ? width / 2 : index * width / (values.length - 1);
+    const y = height - (Number(value || 0) / Math.max(maxValue, 1)) * height;
+    return `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+}
+
+function trendChart(title, rows, series) {
+  const selected = trendRange === 0 ? rows : rows.slice(-trendRange);
+  if (!selected.length) return `<article class="trend-card"><h3>${escapeHtml(title)}</h3>${empty("No monthly history is available.")}</article>`;
+  const width = 720; const height = 210;
+  const maxValue = Math.max(...selected.flatMap((row) => series.map((item) => Number(row[item.key] || 0))), 1);
+  const first = selected[0].period; const middle = selected[Math.floor((selected.length - 1) / 2)].period; const last = selected.at(-1).period;
+  const paths = series.map((item) => `<path class="trend-line ${item.className}" d="${linePath(selected.map((row) => row[item.key]), width, height, maxValue)}"></path>`).join("");
+  const latest = selected.at(-1);
+  const tableRows = selected.map((row) => `<tr><td>${escapeHtml(row.period)}</td>${series.map((item) => `<td>${number(row[item.key])}</td>`).join("")}</tr>`).join("");
+  return `<article class="trend-card"><div class="trend-card-heading"><div><h3>${escapeHtml(title)}</h3><p>${series.map((item) => `${escapeHtml(item.label)}: <strong>${number(latest[item.key])}</strong>`).join(" · ")} in ${escapeHtml(last)}</p></div><div class="trend-legend">${series.map((item) => `<span class="${item.className}">${escapeHtml(item.label)}</span>`).join("")}</div></div><svg class="line-chart" viewBox="0 0 ${width} ${height + 28}" role="img" aria-label="${escapeHtml(title)} monthly trend from ${escapeHtml(first)} to ${escapeHtml(last)}"><line x1="0" y1="${height}" x2="${width}" y2="${height}" class="chart-axis"></line>${paths}<text x="0" y="${height + 22}">${escapeHtml(first)}</text><text x="${width / 2}" y="${height + 22}" text-anchor="middle">${escapeHtml(middle)}</text><text x="${width}" y="${height + 22}" text-anchor="end">${escapeHtml(last)}</text></svg><details class="trend-data"><summary>View monthly values</summary><div class="trend-table-wrap"><table><thead><tr><th>Month</th>${series.map((item) => `<th>${escapeHtml(item.label)}</th>`).join("")}</tr></thead><tbody>${tableRows}</tbody></table></div></details></article>`;
+}
+
+function renderMonthlyTrends(monthly) {
+  const spotify = monthly.spotify || []; const apple = monthly.apple_podcasts || [];
+  const target = document.getElementById("reach-trend");
+  target.innerHTML = `<div class="trend-controls" aria-label="Trend range"><button type="button" data-trend-range="12" class="${trendRange === 12 ? "active" : ""}">12 months</button><button type="button" data-trend-range="24" class="${trendRange === 24 ? "active" : ""}">24 months</button><button type="button" data-trend-range="0" class="${trendRange === 0 ? "active" : ""}">All history</button></div><div class="monthly-trend-grid">${trendChart("Spotify activity", spotify, [{key:"downloads",label:"Downloads",className:"series-primary"},{key:"plays",label:"Spotify plays",className:"series-secondary"}])}${trendChart("Apple listening", apple, [{key:"plays",label:"Plays",className:"series-primary"},{key:"listeners",label:"Monthly listeners",className:"series-secondary"}])}</div>`;
+  target.querySelectorAll("[data-trend-range]").forEach((button) => button.addEventListener("click", () => { trendRange = Number(button.dataset.trendRange); renderMonthlyTrends(monthly); }));
+}
 
 async function connectorRequest(path, options = {}) {
   const controller = new AbortController();
@@ -92,6 +121,10 @@ function render(payload) {
     ["YouTube engagement", youtubeChannels.length ? duration(weightedDuration) : "Unavailable", "View-weighted average duration across connected channels in the latest measured window."],
     ["Website geography", topCountry ? `${topCountry.name} · ${topCountry.share_pct}%` : "Geography pending", topCountry ? `${number(topCountry.value)} source-backed active users in the leading country.` : "No GA4 country evidence is available."],
   ].map(([label,value,detail]) => `<article class="highlight-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><p>${escapeHtml(detail)}</p></article>`).join("");
+  const spotifyLifetime = summary.spotify_lifetime || {};
+  const apple = summary.apple || {};
+  const totalCard = (label, value, detail) => `<div class="total-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`;
+  document.getElementById("platform-overviews").innerHTML = `<article class="platform-overview"><div class="platform-overview-heading"><div><span>Spotify for Creators</span><h2>Audio performance</h2></div><small>${escapeHtml(spotifyLifetime.period_start || "—")} – ${escapeHtml(spotifyLifetime.period_end || "—")}</small></div><div class="total-metric-grid">${totalCard("Lifetime downloads", number(spotifyLifetime.downloads), "Everywhere outside Spotify")}${totalCard("Lifetime Spotify plays", number(spotifyLifetime.plays), "Additive play starts")}${totalCard("Last 28 days", number((spotify.downloads || 0) + (spotify.plays || 0)), `${number(spotify.downloads)} downloads · ${number(spotify.plays)} plays`)}${totalCard("Latest daily audience", number(spotify.latest_daily_audience), `Single day ending ${spotify.period_end || "—"}; not a lifetime unique total`)}</div></article><article class="platform-overview"><div class="platform-overview-heading"><div><span>Apple Podcasts</span><h2>Listening performance</h2></div><small>${escapeHtml(apple.period_start || "—")} – ${escapeHtml(apple.period_end || "—")}</small></div><div class="total-metric-grid">${totalCard("Lifetime plays", number(apple.plays), "Additive country-month plays")}${totalCard("Lifetime listening time", apple.listening_time_hours == null ? "Unavailable" : `${number(Math.round(apple.listening_time_hours))}h`, "Summed listening seconds converted to hours")}${totalCard("Latest monthly listeners", number(apple.latest_month_listeners), `Reporting month ending ${apple.period_end || "—"}`)}${totalCard("Followers", number(apple.followers), "Latest net follower total")}</div></article>`;
   const coverage = payload.source_coverage || {}; const publicSources = coverage.public || []; const privateSources = coverage.private || [];
   renderConnections(payload.analytics_connectors || {});
   const automated = privateSources.filter((source) => source.connection_mode === "automated"); const limited = privateSources.filter((source) => source.connection_mode === "provider_limited");
@@ -103,8 +136,7 @@ function render(payload) {
   document.getElementById("audience-platform").innerHTML = audience.length ? audience.map((item) => `<article class="provider-row"><div><strong>${escapeHtml(providerLabel(item.provider))}</strong><span>${number(item.value)}</span></div><p>${escapeHtml(item.metric.replaceAll("_", " "))}</p><small>Through ${escapeHtml(item.period_end)}</small></article>`).join("") : empty("Import unique listeners, followers, or subscriber counts from each platform. These will remain separate to prevent double-counting.");
   renderBars(payload.devices || [], document.getElementById("device-breakdown"));
   renderBars(payload.countries || [], document.getElementById("country-breakdown"));
-  const trend = payload.trend || [];
-  document.getElementById("reach-trend").innerHTML = trend.length ? `<div class="trend-table" role="table"><div class="trend-row trend-head" role="row"><span>Period</span><span>Downloads</span><span>Plays</span></div>${trend.map((item) => `<div class="trend-row" role="row"><span>${escapeHtml(item.period_end)}</span><strong>${number(item.downloads)}</strong><strong>${number(item.plays)}</strong></div>`).join("")}</div>` : empty("Import at least two reporting periods to establish a trend.");
+  renderMonthlyTrends(payload.monthly_trends || {});
   document.getElementById("metric-definitions").innerHTML = Object.entries(payload.definitions || {}).map(([key,value]) => `<article><strong>${escapeHtml(key.replaceAll("_", " "))}</strong><p>${escapeHtml(value)}</p></article>`).join("") + `<article><strong>Reliability guardrails</strong><p>${(quality.limitations || []).map(escapeHtml).join(" ")}</p></article>`;
 }
 

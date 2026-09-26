@@ -260,3 +260,44 @@ def test_apple_country_plays_are_aggregated_across_months_with_clean_labels(temp
         {"name": "Canada", "value": 5.0, "provider": "apple_podcasts",
          "period_start": "2026-09-01", "period_end": "2026-09-30", "measure": "plays", "share_pct": 33.3},
     ]
+
+
+def test_platform_totals_and_monthly_trends_preserve_additive_grain(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "spotify", "metric_name": "downloads", "metric_value": 10,
+         "period_start": "2026-08-31", "period_end": "2026-08-31", "source_reference": "spotify"},
+        {"provider": "spotify", "metric_name": "plays", "metric_value": 5,
+         "period_start": "2026-08-31", "period_end": "2026-08-31", "source_reference": "spotify"},
+        {"provider": "spotify", "metric_name": "downloads", "metric_value": 20,
+         "period_start": "2026-09-01", "period_end": "2026-09-01", "source_reference": "spotify"},
+        {"provider": "apple_podcasts", "metric_name": "country_plays_germany_276", "metric_value": 7,
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "apple"},
+        {"provider": "apple_podcasts", "metric_name": "country_listening_seconds_germany_276", "metric_value": 3600,
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "apple"},
+        {"provider": "apple_podcasts", "metric_name": "country_listeners_germany_276", "metric_value": 4,
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "apple"},
+        {"provider": "apple_podcasts", "metric_name": "country_engaged_listeners_germany_276", "metric_value": 2,
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "apple"},
+        {"provider": "apple_podcasts", "metric_name": "followers", "metric_value": 103,
+         "period_start": "2026-09-01", "period_end": "2026-09-30", "source_reference": "followers"},
+    ]}, actor="analyst")
+
+    result = PodcastInsights(temp_db.db_path).dashboard()
+
+    assert result["summary"]["spotify_lifetime"] == {
+        "period_start": "2026-08-31", "period_end": "2026-09-01", "downloads": 30.0, "plays": 5.0,
+    }
+    assert result["summary"]["apple"] == {
+        "period_start": "2026-09-01", "period_end": "2026-09-30", "plays": 7.0,
+        "listening_time_hours": 1.0, "latest_month_listeners": 4.0,
+        "latest_month_engaged_listeners": 2.0, "followers": 103.0,
+    }
+    assert result["monthly_trends"] == {
+        "spotify": [
+            {"period": "2026-08", "downloads": 10.0, "plays": 5.0},
+            {"period": "2026-09", "downloads": 20.0, "plays": 0.0},
+        ],
+        "apple_podcasts": [{"period": "2026-09", "plays": 7.0, "listening_time_hours": 1.0,
+                            "listeners": 4.0, "engaged_listeners": 2.0}],
+    }
