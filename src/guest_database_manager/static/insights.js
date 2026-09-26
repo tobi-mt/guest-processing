@@ -9,12 +9,22 @@ let providerLabels = {};
 const providerLabel = (provider) => providerLabels[provider] || metricLabel(provider);
 
 async function connectorRequest(path, options = {}) {
-  const headers = {Accept:"application/json", ...(options.headers || {})};
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 30000);
+  const headers = {Accept:"application/json", "Content-Type":"application/json", ...(options.headers || {})};
   if (options.method && options.method !== "GET") headers["X-CSRF-Token"] = csrfToken();
-  const response = await fetch(path, {credentials:"same-origin", ...options, headers});
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || "The analytics connection request failed.");
-  return payload;
+  try {
+    const response = await fetch(path, {credentials:"same-origin", ...options, headers, signal:controller.signal});
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `The analytics connection request failed (${response.status}).`);
+    return payload;
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("The analytics request timed out. Check service health and try again.");
+    if (error instanceof TypeError) throw new Error("The analytics service could not be reached. Refresh the page; if this continues, check /readyz and the latest deployment.");
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 function renderConnections(connectors) {
