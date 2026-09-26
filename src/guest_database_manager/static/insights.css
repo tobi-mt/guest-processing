@@ -33,6 +33,14 @@
 .total-metric span{color:var(--muted);font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.035em}
 .total-metric strong{font-size:1.35rem}
 .total-metric small{color:var(--muted);line-height:1.4}
+.decision-intelligence{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.decision-card{padding:18px;border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:16px;background:rgba(255,255,255,.55)}
+.decision-card.high{border-left-color:#9f3328}
+.decision-card.medium{border-left-color:#b87525}
+.decision-card header{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.decision-card h3{margin:.75rem 0 .45rem;font-size:1rem;line-height:1.35}
+.decision-card p{margin:0;color:var(--muted);line-height:1.5}
+.decision-card small{display:block;margin-top:.8rem;color:var(--accent);font-weight:700}
 .platform-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .platform-card{display:grid;gap:6px;min-height:130px;padding:18px;border:1px solid var(--border);border-radius:18px;background:rgba(255,255,255,.62);color:inherit;text-decoration:none}
 .platform-card:hover,.platform-card:focus-visible{border-color:var(--accent);transform:translateY(-2px)}
@@ -133,7 +141,7 @@
 .disclosure-panel>.disclosure-intro,.disclosure-panel>.analytics-connections,.disclosure-panel>.source-coverage,.disclosure-panel>.definition-grid{margin:18px 24px 24px}
 .disclosure-intro{color:var(--muted)}
 @media(max-width:1000px){.source-coverage{grid-template-columns:1fr 1fr}.source-column:first-child{grid-column:1/-1}}
-@media(max-width:900px){.insights-hero,.insights-two-column,.analytics-connections,.insights-quality,.platform-overviews,.monthly-trend-grid{grid-template-columns:1fr}.connection-group-heading{align-items:start;flex-direction:column}
+@media(max-width:900px){.insights-hero,.insights-two-column,.analytics-connections,.insights-quality,.platform-overviews,.monthly-trend-grid,.decision-intelligence{grid-template-columns:1fr}.connection-group-heading{align-items:start;flex-direction:column}
 .insights-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
 .reach-highlights{grid-template-columns:1fr}
 }

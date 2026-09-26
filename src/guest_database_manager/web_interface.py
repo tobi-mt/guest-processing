@@ -76,6 +76,7 @@ from guest_database_manager.partner_intelligence import PartnerIntelligence, Par
 from guest_database_manager.partner_discovery import curated_signals
 from guest_database_manager.partner_pitch_templates import list_pitch_templates
 from guest_database_manager.podcast_insights import PodcastInsights
+from guest_database_manager.growth_decision_intelligence import GrowthDecisionIntelligence
 from guest_database_manager.podcast_analytics_connectors import AnalyticsConnectorError, PodcastAnalyticsConnectors
 from guest_database_manager.podcast_source_monitor import PodcastSourceMonitor
 from guest_database_manager.production_governance import POLICY_VERSION, classify_focus
@@ -779,6 +780,7 @@ class GuestWebService:
         self.rss_release_reconciler = RSSReleaseReconciler(self.db_path)
         self.growth_intelligence = GrowthIntelligence(self.db_path)
         self.podcast_insights = PodcastInsights(self.db_path)
+        self.growth_decision_intelligence = GrowthDecisionIntelligence(self.db_path)
         self.podcast_source_monitor = PodcastSourceMonitor(self.db_path)
         self.podcast_analytics_connectors = PodcastAnalyticsConnectors(self.db_path)
 
@@ -803,6 +805,9 @@ class GuestWebService:
             dashboard["quality"]["status"] = "public_only"
         dashboard["source_coverage"] = coverage
         dashboard["analytics_connectors"] = self.podcast_analytics_connectors.status()
+        dashboard["decision_intelligence"] = self.growth_decision_intelligence.dashboard(
+            dashboard.get("monthly_trends") or {}, self.recommendation_learning.status()
+        )
         return dashboard
 
     def begin_google_analytics_connection(self, *, actor: str, origin: str) -> Dict[str, Any]:

@@ -37,6 +37,14 @@ function renderMonthlyTrends(monthly) {
   target.querySelectorAll("[data-trend-range]").forEach((button) => button.addEventListener("click", () => { trendRange = Number(button.dataset.trendRange); renderMonthlyTrends(monthly); }));
 }
 
+function renderDecisionIntelligence(intelligence) {
+  const target = document.getElementById("decision-intelligence");
+  const recommendations = intelligence.recommendations || [];
+  const confidence = Number(intelligence.confidence_score || 0);
+  document.getElementById("decision-confidence").textContent = `${Math.round(confidence * 100)}% evidence confidence · advisory shadow mode`;
+  target.innerHTML = recommendations.length ? recommendations.map((item) => `<article class="decision-card ${escapeHtml(item.priority || "normal")}"><header><span>${escapeHtml(item.priority || "normal")} priority</span><span>${escapeHtml(item.confidence || "unknown")} confidence</span></header><h3>${escapeHtml(item.action)}</h3><p>${escapeHtml(item.rationale)}</p><small>No ranking or publishing change was made.</small></article>`).join("") : `<div class="insights-empty"><strong>No action required</strong><p>The current evidence does not support a material planning change.</p></div>`;
+}
+
 async function connectorRequest(path, options = {}) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 30000);
@@ -125,6 +133,7 @@ function render(payload) {
   const apple = summary.apple || {};
   const totalCard = (label, value, detail) => `<div class="total-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`;
   document.getElementById("platform-overviews").innerHTML = `<article class="platform-overview"><div class="platform-overview-heading"><div><span>Spotify for Creators</span><h2>Audio performance</h2></div><small>${escapeHtml(spotifyLifetime.period_start || "—")} – ${escapeHtml(spotifyLifetime.period_end || "—")}</small></div><div class="total-metric-grid">${totalCard("Lifetime downloads", number(spotifyLifetime.downloads), "Everywhere outside Spotify")}${totalCard("Lifetime Spotify plays", number(spotifyLifetime.plays), "Additive play starts")}${totalCard("Last 28 days", number((spotify.downloads || 0) + (spotify.plays || 0)), `${number(spotify.downloads)} downloads · ${number(spotify.plays)} plays`)}${totalCard("Latest daily audience", number(spotify.latest_daily_audience), `Single day ending ${spotify.period_end || "—"}; not a lifetime unique total`)}</div></article><article class="platform-overview"><div class="platform-overview-heading"><div><span>Apple Podcasts</span><h2>Listening performance</h2></div><small>${escapeHtml(apple.period_start || "—")} – ${escapeHtml(apple.period_end || "—")}</small></div><div class="total-metric-grid">${totalCard("Lifetime plays", number(apple.plays), "Additive country-month plays")}${totalCard("Lifetime listening time", apple.listening_time_hours == null ? "Unavailable" : `${number(Math.round(apple.listening_time_hours))}h`, "Summed listening seconds converted to hours")}${totalCard("Latest monthly listeners", number(apple.latest_month_listeners), `Reporting month ending ${apple.period_end || "—"}`)}${totalCard("Followers", number(apple.followers), "Latest net follower total")}</div></article>`;
+  renderDecisionIntelligence(payload.decision_intelligence || {});
   const coverage = payload.source_coverage || {}; const publicSources = coverage.public || []; const privateSources = coverage.private || [];
   renderConnections(payload.analytics_connectors || {});
   const automated = privateSources.filter((source) => source.connection_mode === "automated"); const limited = privateSources.filter((source) => source.connection_mode === "provider_limited");
