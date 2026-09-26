@@ -48,6 +48,13 @@ def test_local_collector_keeps_browser_session_local_and_ingests_validated_expor
     )
 
     assert result["inserted"] == 3
+    duplicate = connectors.ingest_local_export(
+        provider="spotify", token=token, csv_text=csv_text,
+        source_reference="spotify-overview.csv",
+    )
+    assert duplicate["status"] == "completed"
+    assert duplicate["inserted"] == 0
+    assert duplicate["duplicates"] == 3
     collector = connectors.status()["local_collectors"]
     assert collector["configured"] is True
     assert collector["session_storage"] == "local_only"

@@ -193,13 +193,21 @@ class PodcastAnalyticsConnectors:
                     "The provider export contains rows that require review; nothing was imported automatically."
                 )
             observations = preview.get("observations") or []
-            if not observations:
+            duplicate_count = int(preview["summary"].get("duplicates") or 0)
+            if not observations and duplicate_count:
+                result = {
+                    "submitted": duplicate_count,
+                    "inserted": 0,
+                    "duplicates": duplicate_count,
+                }
+            elif not observations:
                 raise AnalyticsConnectorError("The provider export contains no new valid observations.")
-            result = self.growth.record_observations(
-                observations,
-                actor="local-analytics-collector",
-                correlation_id=f"local-{provider}-{hashlib.sha256(csv_text.encode()).hexdigest()[:20]}",
-            )
+            else:
+                result = self.growth.record_observations(
+                    observations,
+                    actor="local-analytics-collector",
+                    correlation_id=f"local-{provider}-{hashlib.sha256(csv_text.encode()).hexdigest()[:20]}",
+                )
         except Exception as exc:
             with connect_database(self.db_path) as conn:
                 conn.execute(
