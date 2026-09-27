@@ -1012,6 +1012,7 @@ class GuestDatabase:
                 interview_data.get("title"),
                 interview_data.get("scheduled_for"),
                 interview_data.get("timezone", "Europe/Berlin"),
+                interview_data.get("guest_timezone"),
                 interview_data.get("join_url"),
                 interview_status,
                 confirmation_status,
@@ -1026,7 +1027,7 @@ class GuestDatabase:
                     """
                     UPDATE interviews SET
                         guest_id = ?, guest_name = ?, guest_email = ?, calendar_event_id = ?, calendar_source = ?,
-                        event_updated_at = ?, last_synced_at = ?, reschedule_token = ?, reschedule_token_created_at = ?, title = ?, scheduled_for = ?, timezone = ?,
+                        event_updated_at = ?, last_synced_at = ?, reschedule_token = ?, reschedule_token_created_at = ?, title = ?, scheduled_for = ?, timezone = ?, guest_timezone = ?,
                         join_url = ?, status = ?, confirmation_status = ?, reminder_status = ?,
                         reminder_sent_at = ?, notes = ?, owner = ?, row_version = row_version + 1,
                         updated_at = CURRENT_TIMESTAMP
@@ -1062,10 +1063,10 @@ class GuestDatabase:
                 """
                 INSERT INTO interviews (
                     guest_id, guest_name, guest_email, calendar_event_id, calendar_source, event_updated_at,
-                    last_synced_at, reschedule_token, reschedule_token_created_at, title, scheduled_for, timezone, join_url, status, confirmation_status,
+                    last_synced_at, reschedule_token, reschedule_token_created_at, title, scheduled_for, timezone, guest_timezone, join_url, status, confirmation_status,
                     reminder_status, reminder_sent_at, notes, updated_at
                     , owner
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                 """,
                 fields,
             )
@@ -2039,6 +2040,43 @@ class GuestDatabase:
                      )
                    ORDER BY log.id DESC LIMIT ?""",
                 (max(1, int(limit)),),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_public_bookings_missing_confirmation(
+        self, *, grace_minutes: int = 5, limit: int = 50, include_historical: bool = False
+    ) -> List[Dict]:
+        """Return confirmed public bookings that never entered the email pipeline.
+
+        The grace period avoids racing the live booking request between the
+        interview commit and its confirmation delivery record.
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT interview.*
+                   FROM interviews AS interview
+                   WHERE interview.notes LIKE '%through the Mirror Talk guest booking flow.%'
+                     AND (? = 1 OR datetime(interview.created_at) >= COALESCE(
+                         (SELECT datetime(applied_at) FROM schema_migrations WHERE version = 34),
+                         datetime(interview.created_at)
+                     ))
+                     AND datetime(interview.created_at) <= datetime('now', ?)
+                     AND datetime(interview.scheduled_for) >= datetime('now')
+                     AND LOWER(COALESCE(interview.status, '')) != 'cancelled'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM reminder_log AS log
+                         WHERE log.interview_id = interview.id
+                           AND log.reminder_type = 'booking_confirmation'
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM email_outbox AS outbox
+                         WHERE outbox.interview_id = interview.id
+                           AND outbox.email_type = 'booking_confirmation'
+                     )
+                   ORDER BY datetime(interview.scheduled_for), interview.id
+                   LIMIT ?""",
+                (int(include_historical), f"-{max(0, int(grace_minutes))} minutes", max(1, int(limit))),
             ).fetchall()
             return [dict(row) for row in rows]
 

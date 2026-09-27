@@ -375,6 +375,7 @@ EXPORTABLE_FIELDS: Dict[str, list[str]] = {
         "title",
         "scheduled_for",
         "timezone",
+        "guest_timezone",
         "join_url",
         "confirmation_status",
         "reminder_status",
@@ -2986,6 +2987,7 @@ class GuestWebService:
         reference = datetime.now()
         duplicate_groups: Dict[str, list[Dict[str, Any]]] = {}
         cleanup_candidates: list[Dict[str, Any]] = []
+        missing_calendar: list[Dict[str, Any]] = []
 
         for interview in interviews:
             scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
@@ -3019,6 +3021,24 @@ class GuestWebService:
                     }
                 )
 
+            is_public_booking = "through the Mirror Talk guest booking flow." in _normalize_text(interview.get("notes"))
+            if (
+                future_or_current
+                and status != "cancelled"
+                and confirmation not in {"declined", "reschedule_requested"}
+                and is_public_booking
+                and not _normalize_text(interview.get("calendar_event_id"))
+            ):
+                missing_calendar.append(
+                    {
+                        "id": interview.get("id"),
+                        "guest_name": guest_name,
+                        "title": _normalize_text(interview.get("title")),
+                        "scheduled_for": interview.get("scheduled_for"),
+                        "reason": "This guest booking was saved, but no Google Calendar event is linked.",
+                    }
+                )
+
         duplicate_alerts = []
         for items in duplicate_groups.values():
             if len(items) < 2:
@@ -3041,9 +3061,22 @@ class GuestWebService:
 
         duplicate_alerts.sort(key=lambda item: item["guest_name"].lower())
         cleanup_candidates.sort(key=lambda item: _normalize_text(item.get("scheduled_for")))
+        missing_calendar.sort(key=lambda item: _normalize_text(item.get("scheduled_for")))
+        missing_confirmation = [
+            {
+                "id": item.get("id"),
+                "guest_name": _normalize_text(item.get("guest_name")),
+                "title": _normalize_text(item.get("title")),
+                "scheduled_for": item.get("scheduled_for"),
+                "reason": "This guest booking has no booking-confirmation delivery record.",
+            }
+            for item in self.database.list_public_bookings_missing_confirmation(include_historical=True)
+        ]
         return {
             "double_bookings": duplicate_alerts,
             "calendar_cleanup": cleanup_candidates,
+            "calendar_missing": missing_calendar,
+            "confirmation_missing": missing_confirmation,
         }
 
     @staticmethod
@@ -3801,6 +3834,9 @@ class GuestWebService:
 
     def create_interview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create or update an interview record."""
+        guest_timezone = _normalize_text(payload.get("guest_timezone"))
+        if guest_timezone:
+            guest_timezone = self._resolve_booking_timezone_name(guest_timezone)
         interview_data = {
             "id": payload.get("id"),
             "row_version": payload.get("row_version"),
@@ -3814,6 +3850,7 @@ class GuestWebService:
             "title": _normalize_text(payload.get("title")),
             "scheduled_for": _normalize_text(payload.get("scheduled_for")),
             "timezone": _normalize_text(payload.get("timezone")) or "Europe/Berlin",
+            "guest_timezone": guest_timezone,
             "join_url": _normalize_text(payload.get("join_url")),
             "status": _normalize_text(payload.get("status")) or "scheduled",
             "confirmation_status": _normalize_text(payload.get("confirmation_status")) or "pending",
@@ -3985,6 +4022,7 @@ class GuestWebService:
             "id": interview.get("id"),
             "scheduled_for": interview.get("scheduled_for"),
             "timezone": interview.get("timezone"),
+            "guest_timezone": interview.get("guest_timezone") or interview.get("timezone"),
             "join_url": interview.get("join_url"),
             "status": interview.get("status"),
             "confirmation_status": interview.get("confirmation_status"),
@@ -4019,8 +4057,20 @@ class GuestWebService:
         try:
             ZoneInfo(timezone_name)
         except ZoneInfoNotFoundError as exc:
-            raise WebInterfaceError("Booking override timezone is invalid.") from exc
+            raise WebInterfaceError("Timezone is invalid. Please refresh the booking page and try again.") from exc
         return timezone_name
+
+    def _guest_facing_timezone(self, interview: Dict[str, Any]) -> str:
+        """Return the guest timezone, falling back safely for legacy records."""
+        candidate = _normalize_text(interview.get("guest_timezone"))
+        if candidate:
+            try:
+                resolved = self._resolve_booking_timezone_name(candidate)
+            except WebInterfaceError:
+                resolved = None
+            if resolved:
+                return resolved
+        return _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
 
     @staticmethod
     def _normalize_booking_override_payload(value: Any) -> Optional[str]:
@@ -4275,6 +4325,10 @@ class GuestWebService:
             int(interview["id"]),
             {
                 "guest_email": _normalize_text(guest.get("email")) or _normalize_text(interview.get("guest_email")),
+                "guest_timezone": (
+                    self._resolve_booking_timezone_name(browser_timezone_label)
+                    if browser_timezone_label else timezone_label
+                ),
                 "join_url": _normalize_text(interview.get("join_url")) or self._booking_join_url(),
                 "status": "scheduled",
                 "confirmation_status": "confirmed",
@@ -4508,6 +4562,7 @@ class GuestWebService:
         booking_settings = self._guest_booking_settings(guest)
         timezone_label = booking_settings["timezone"]
         browser_timezone_label = _normalize_text(payload.get("timezone"))
+        guest_timezone = self._resolve_booking_timezone_name(browser_timezone_label) if browser_timezone_label else timezone_label
         guest_note = _normalize_text(payload.get("note"))
         if not scheduled_for:
             raise WebInterfaceError("Please choose one of the available interview slots.")
@@ -4524,6 +4579,7 @@ class GuestWebService:
                 update_payload = {
                     "scheduled_for": normalized_scheduled_for,
                     "timezone": timezone_label,
+                    "guest_timezone": guest_timezone,
                     "join_url": _normalize_text(existing_interview.get("join_url")) or self._booking_join_url(),
                     "status": "scheduled",
                     "confirmation_status": "confirmed",
@@ -4593,6 +4649,7 @@ class GuestWebService:
                 "title": f"Soulful Conversation with {_normalize_text(guest.get('full_name') or guest.get('name') or 'Guest')}",
                 "scheduled_for": normalized_scheduled_for,
                 "timezone": timezone_label,
+                "guest_timezone": guest_timezone,
                 "join_url": self._booking_join_url(),
                 "status": "scheduled",
                 "confirmation_status": "confirmed",
@@ -5502,7 +5559,7 @@ class GuestWebService:
             raise WebInterfaceError("Interview date is invalid or missing.")
 
         guest_name = _normalize_text(interview.get("guest_name")) or "Guest"
-        timezone_label = _normalize_text(interview.get("timezone")) or "CET"
+        timezone_label = self._guest_facing_timezone(interview)
         join_url = _normalize_text(interview.get("join_url"))
 
         email_manager = self._build_email_manager()
@@ -5535,7 +5592,7 @@ class GuestWebService:
             raise WebInterfaceError("Interview date is invalid or missing.")
 
         guest_name = _normalize_text(interview.get("guest_name")) or "Guest"
-        timezone_label = _normalize_text(interview.get("timezone")) or "CET"
+        timezone_label = self._guest_facing_timezone(interview)
 
         email_manager = self._build_email_manager()
         template = email_manager.get_interview_cancellation_template(
@@ -5581,7 +5638,7 @@ class GuestWebService:
             interview.get("guest_name"),
             interview.get("title"),
         ) or "Guest"
-        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        timezone_label = self._guest_facing_timezone(interview)
         join_url = _normalize_text(interview.get("join_url")) or self._booking_join_url()
 
         email_manager = self._build_email_manager()
@@ -5676,7 +5733,7 @@ class GuestWebService:
         proposal = self._normalize_reschedule_proposal(
             mode=proposal_mode,
             proposed_times=proposed_times,
-            timezone_name=proposal_timezone or interview.get("timezone"),
+            timezone_name=proposal_timezone or interview.get("guest_timezone") or interview.get("timezone"),
         )
         timezone_label = proposal["timezone"]
         reschedule_url = self._reschedule_link_for_interview(interview_id)
@@ -5829,7 +5886,7 @@ class GuestWebService:
             interview.get("guest_name"),
             interview.get("title"),
         ) or "Guest"
-        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        timezone_label = self._guest_facing_timezone(interview)
         join_url = _normalize_text(interview.get("join_url")) or self._booking_join_url()
 
         email_manager = self._build_email_manager()
@@ -5917,7 +5974,7 @@ class GuestWebService:
         proposal = self._normalize_reschedule_proposal(
             mode=proposal_mode,
             proposed_times=proposed_times,
-            timezone_name=proposal_timezone or interview.get("timezone"),
+            timezone_name=proposal_timezone or interview.get("guest_timezone") or interview.get("timezone"),
         )
         timezone_label = proposal["timezone"]
         reschedule_url = self._reschedule_link_for_interview(interview_id)
@@ -6306,6 +6363,43 @@ class GuestWebService:
         refreshed = self.database.get_interview_by_id(interview_id)
         if not refreshed:
             raise WebInterfaceError("Interview not found after Google Calendar update.")
+        return self._serialize_interview_reminder(refreshed)
+
+    def create_interview_google_calendar_event(self, interview_id: int) -> Dict[str, Any]:
+        """Create a missing Google Calendar event after explicit operator approval."""
+        interview = self.database.get_interview_by_id(interview_id)
+        if not interview:
+            raise WebInterfaceError("Interview not found.")
+        if _normalize_text(interview.get("calendar_event_id")):
+            raise WebInterfaceError("This interview is already linked to a Google Calendar event.")
+        if _normalize_text(interview.get("status")).lower() == "cancelled":
+            raise WebInterfaceError("A cancelled interview cannot be added to Google Calendar.")
+
+        client = self._build_google_calendar_client()
+        if client is None:
+            raise WebInterfaceError("Google Calendar sync is not configured on the server.")
+
+        try:
+            created_event = client.create_event_from_interview(interview)
+        except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
+            raise WebInterfaceError(str(exc)) from exc
+
+        event_id = _normalize_text(created_event.get("id"))
+        if not event_id:
+            raise WebInterfaceError("Google Calendar did not return an event id; the interview was not linked.")
+        self.database.update_interview(
+            interview_id,
+            {
+                "calendar_event_id": event_id,
+                "calendar_source": "google_calendar",
+                "event_updated_at": created_event.get("updated"),
+                "last_synced_at": datetime.now().astimezone().isoformat(),
+            },
+        )
+        self._invalidate_payload_cache("operations")
+        refreshed = self.database.get_interview_by_id(interview_id)
+        if not refreshed:
+            raise WebInterfaceError("Interview not found after Google Calendar creation.")
         return self._serialize_interview_reminder(refreshed)
 
     def remove_interview_from_google_calendar(self, interview_id: int) -> Dict[str, Any]:
@@ -6752,7 +6846,9 @@ class GuestWebService:
             raise WebInterfaceError("Guest not found after sending the email.")
         return serialize_guest(refreshed)
 
-    def _send_booking_confirmation_email(self, guest: Dict[str, Any], interview: Dict[str, Any]) -> Dict[str, str]:
+    def _send_booking_confirmation_email(
+        self, guest: Dict[str, Any], interview: Dict[str, Any], *, queue_only: bool = False
+    ) -> Dict[str, str]:
         """Send or durably queue a booking confirmation, returning guest-safe delivery state."""
         guest_email = _normalize_text(guest.get("email")) or _normalize_text(interview.get("guest_email"))
         scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
@@ -6772,7 +6868,7 @@ class GuestWebService:
 
         email_manager = self._build_email_manager()
         guest_name = _normalize_text(guest.get("full_name") or guest.get("name")) or "there"
-        timezone_label = _normalize_text(interview.get("timezone")) or self._booking_timezone_name()
+        timezone_label = self._guest_facing_timezone(interview)
         join_url = _normalize_text(interview.get("join_url")) or self._booking_join_url()
         template = email_manager.get_booking_confirmation_template(
             guest_name,
@@ -6793,7 +6889,7 @@ class GuestWebService:
         sent = False
         last_error = ""
         idempotency_key = f"booking_confirmation:{interview.get('id')}:{scheduled_for.isoformat()}"
-        if email_manager.is_configured():
+        if email_manager.is_configured() and not queue_only:
             for attempt in range(1, BOOKING_CONFIRMATION_RETRY_ATTEMPTS + 1):
                 try:
                     sent = email_manager.send_booking_confirmation_email(
@@ -6840,7 +6936,8 @@ class GuestWebService:
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        next_attempt_at = (datetime.now(timezone.utc) + timedelta(minutes=BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES)).replace(
+        retry_delay = 0 if queue_only else BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES
+        next_attempt_at = (datetime.now(timezone.utc) + timedelta(minutes=retry_delay)).replace(
             microsecond=0
         ).strftime("%Y-%m-%d %H:%M:%S")
         provider = "resend" if email_manager.resend_api_key else "smtp"
@@ -6882,8 +6979,19 @@ class GuestWebService:
             self.database.finish_automation_run(run_id, status="skipped", details={"reason": "email_not_configured"})
             return result
 
+        recovered = {"sent": 0, "queued": 0, "unavailable": 0}
+        for interview in self.database.list_public_bookings_missing_confirmation(limit=limit):
+            guest = self.database.get_guest_by_id(int(interview["guest_id"])) if interview.get("guest_id") else {}
+            delivery = self._send_booking_confirmation_email(guest or {}, interview, queue_only=True)
+            status = _normalize_text(delivery.get("status")) or "unavailable"
+            recovered[status] = recovered.get(status, 0) + 1
+
         due_entries = self.database.claim_due_email_outbox(worker_id=worker_id, limit=limit)
-        results = {"checked": len(due_entries), "sent": 0, "retrying": 0, "failed": 0}
+        results = {
+            "checked": len(due_entries), "sent": 0, "retrying": 0, "failed": 0,
+            "recovered_sent": recovered["sent"], "recovered_queued": recovered["queued"],
+            "recovered_unavailable": recovered["unavailable"],
+        }
 
         for entry in due_entries:
             attachments_payload = []
@@ -8719,6 +8827,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
                 try:
                     interview = self.service.push_interview_to_google_calendar(interview_id)
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+
+                self._send_json(HTTPStatus.OK, interview)
+                return
+
+            if self.path.endswith("/create-calendar-event"):
+                interview_id = self._extract_record_id(self.path[: -len("/create-calendar-event")], "/api/interviews/")
+                if interview_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid interview id"})
+                    return
+
+                try:
+                    interview = self.service.create_interview_google_calendar_event(interview_id)
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return

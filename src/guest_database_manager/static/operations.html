@@ -114,8 +114,14 @@
                 <input name="scheduled_for" type="datetime-local" required />
               </label>
               <label>
-                Timezone
+                Calendar timezone
                 <input name="timezone" type="text" value="Europe/Berlin" />
+                <small class="field-hint">Used for host scheduling and Google Calendar.</small>
+              </label>
+              <label>
+                Guest email timezone
+                <input name="guest_timezone" type="text" placeholder="e.g. America/Toronto" />
+                <small class="field-hint">Used to display dates and times in guest emails. Personal booking links fill this automatically.</small>
               </label>
               <details class="planning-advanced full-width smart-form-details">
                 <summary>Assignment, links, and status <span>Optional</span></summary>
@@ -324,6 +330,6 @@
 
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script src="/static/workspace-shell.js?v=20260923.3" defer></script>
-    <script src="/static/operations.js?v=20260915.1" defer></script>
+    <script src="/static/operations.js?v=20260927.3" defer></script>
   </body>
 </html>

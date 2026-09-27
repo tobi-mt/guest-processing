@@ -86,6 +86,7 @@ class SchemaManager:
             title TEXT,
             scheduled_for TIMESTAMP NOT NULL,
             timezone TEXT DEFAULT 'Europe/Berlin',
+            guest_timezone TEXT,
             join_url TEXT,
             status TEXT DEFAULT 'scheduled',
             confirmation_status TEXT DEFAULT 'pending',
@@ -1394,6 +1395,11 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_034_guest_facing_timezone(conn: sqlite3.Connection) -> None:
+        """Keep guest-facing time rendering separate from calendar scheduling."""
+        SchemaManager._add_column_if_missing(conn, "interviews", "guest_timezone", "TEXT")
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1432,6 +1438,7 @@ class SchemaManager:
             (31, "analytics_oauth_connectors", SchemaManager._migration_031_analytics_oauth_connectors),
             (32, "multi_google_channels", SchemaManager._migration_032_multi_google_channels),
             (33, "local_analytics_collectors", SchemaManager._migration_033_local_analytics_collectors),
+            (34, "guest_facing_timezone", SchemaManager._migration_034_guest_facing_timezone),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

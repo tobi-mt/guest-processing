@@ -163,6 +163,22 @@ def build_exception_center(
             reason=f"{len(cleanup)} declined, rescheduled, or cancelled interview{'s' if len(cleanup) != 1 else ''} still have calendar events.",
             href="/operations", action_label="Review calendar", count=len(cleanup),
         ))
+    missing_calendar = alerts.get("calendar_missing") or []
+    if missing_calendar:
+        items.append(_item(
+            "calendar:missing_events", severity="high", category="calendar",
+            title="Confirmed guest bookings are missing calendar events",
+            reason=f"{len(missing_calendar)} upcoming guest booking{'s' if len(missing_calendar) != 1 else ''} need a reviewed Google Calendar repair.",
+            href="/operations", action_label="Repair calendar", count=len(missing_calendar),
+        ))
+    missing_confirmation = alerts.get("confirmation_missing") or []
+    if missing_confirmation:
+        items.append(_item(
+            "communication:missing_confirmations", severity="high", category="communication",
+            title="Guest bookings have no confirmation record",
+            reason=f"{len(missing_confirmation)} future guest booking{'s' if len(missing_confirmation) != 1 else ''} require review before any manual contact.",
+            href="/operations", action_label="Review confirmations", count=len(missing_confirmation),
+        ))
 
     quality = growth.get("quality") or {}
     observation_count = int(quality.get("observation_count") or 0)

@@ -25,6 +25,15 @@ let availableMonths = [];
 let slotTimezone = "Europe/Berlin";
 let rescheduleMode = false;
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function setMessage(text, tone = "") {
   bookingMessage.textContent = text;
   bookingMessage.className = `message ${tone}`.trim();
@@ -76,10 +85,10 @@ async function fetchJSON(url, options = {}) {
   }
 }
 
-function formatSlot(dateText) {
+function formatSlot(dateText, timezoneName = slotTimezone) {
   const date = new Date(dateText);
   return date.toLocaleString(undefined, {
-    timeZone: slotTimezone,
+    timeZone: timezoneName,
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -150,12 +159,13 @@ function renderExistingBooking(existing) {
     return;
   }
   bookingExisting.classList.remove("hidden");
-  const guestTimezoneNote = existing.timezone && existing.timezone !== slotTimezone
-    ? `<p class="muted">Guest local timezone captured at booking: ${existing.timezone}</p>`
-    : "";
+  const guestTimezone = existing.guest_timezone || existing.timezone || slotTimezone;
+  const guestTimezoneNote = guestTimezone !== slotTimezone
+    ? `<p>${escapeHtml(formatSlot(existing.scheduled_for, guestTimezone))} · ${escapeHtml(guestTimezone)} <span class="muted">(your local time)</span></p>`
+    : `<p class="muted">This time is shown in ${escapeHtml(guestTimezone)}, your timezone captured at booking.</p>`;
   bookingExisting.innerHTML = `
     <strong>${rescheduleMode ? "Current booking" : "You already have a booking"}</strong>
-    <p>${formatSlot(existing.scheduled_for)} · ${slotTimezone}</p>
+    <p>${escapeHtml(formatSlot(existing.scheduled_for, existing.timezone || slotTimezone))} · ${escapeHtml(existing.timezone || slotTimezone)} <span class="muted">(calendar timezone)</span></p>
     ${guestTimezoneNote}
     ${existing.join_url ? `<p>Your recording link: <a href="${existing.join_url}" target="_blank" rel="noopener">${existing.join_url}</a></p>` : ""}
     <p>${rescheduleMode ? "Choose a new date below to reschedule this conversation." : "If you need to reschedule, please reply to the email you received from Mirror Talk and we’ll support you directly."}</p>

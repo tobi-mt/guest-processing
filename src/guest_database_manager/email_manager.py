@@ -280,13 +280,14 @@ Mirror Talk Podcast"""
         subject = f"Please confirm our Soulful Conversation on {localized.strftime('%A %d %B')}"
         formatted_date = localized.strftime("%A %d %B, %Y")
         formatted_time = localized.strftime("%H:%M")
+        timezone_display = f"{timezone_label} (your local time)"
         join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
 
         body = f"""Hi {guest_name},
 
 I hope you are doing well.
 
-I’m writing to gently confirm our upcoming Soulful Conversation on Mirror Talk, scheduled for {formatted_date} at {formatted_time} {timezone_label}.
+I’m writing to gently confirm our upcoming Soulful Conversation on Mirror Talk, scheduled for {formatted_date} at {formatted_time} {timezone_display}.
 
 When you have a moment, please reply to this email to confirm that the time still works for you.
 
@@ -308,7 +309,7 @@ https://mirrortalkpodcast.com/ask-mirror-talk/
         if variant == "concise":
             body = f"""Hi {guest_name},
 
-Please confirm that our Mirror Talk conversation on {formatted_date} at {formatted_time} {timezone_label} still works for you.
+Please confirm that our Mirror Talk conversation on {formatted_date} at {formatted_time} {timezone_display} still works for you.
 
 Join us on Riverside FM:
 {join_line}
@@ -332,10 +333,11 @@ Mirror Talk Podcast"""
         subject = f"An update about our Soulful Conversation on {localized.strftime('%A %d %B')}"
         formatted_date = localized.strftime("%A %d %B, %Y")
         formatted_time = localized.strftime("%H:%M")
+        timezone_display = f"{timezone_label} (your local time)"
 
         body = f"""Hi {guest_name},
 
-I wanted to reach out personally with an update about our Soulful Conversation on Mirror Talk, originally scheduled for {formatted_date} at {formatted_time} {timezone_label}.
+I wanted to reach out personally with an update about our Soulful Conversation on Mirror Talk, originally scheduled for {formatted_date} at {formatted_time} {timezone_display}.
 
 Unfortunately, we need to cancel this booking on our side.
 
@@ -362,13 +364,14 @@ Mirror Talk Podcast"""
         subject = f"Your Soulful Conversation is booked for {localized.strftime('%A %d %B')}"
         formatted_date = localized.strftime("%A %d %B, %Y")
         formatted_time = localized.strftime("%H:%M")
+        timezone_display = f"{timezone_label} (your local time)"
         join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
 
         body = f"""Hi {guest_name},
 
 Thank you for booking your Soulful Conversation on Mirror Talk.
 
-Your interview is now scheduled for {formatted_date} at {formatted_time} {timezone_label}.
+Your interview is now scheduled for {formatted_date} at {formatted_time} {timezone_display}.
 
 We’ll be recording on Riverside FM, and you can join the session here:
 {join_line}
@@ -383,7 +386,7 @@ Mirror Talk Podcast"""
         if variant == "concise":
             body = f"""Hi {guest_name},
 
-Your Soulful Conversation is confirmed for {formatted_date} at {formatted_time} {timezone_label}.
+Your Soulful Conversation is confirmed for {formatted_date} at {formatted_time} {timezone_display}.
 
 Join the Riverside FM session here:
 {join_line}
@@ -410,6 +413,7 @@ Mirror Talk Podcast"""
         subject = "Choose a new time for your Soulful Conversation"
         formatted_date = localized.strftime("%A %d %B, %Y")
         formatted_time = localized.strftime("%H:%M")
+        timezone_display = f"{timezone_label} (your local time)"
 
         proposal_copy = ""
         localized_options = [self._localize_datetime(value, timezone_label) for value in (proposed_times or [])]
@@ -417,11 +421,11 @@ Mirror Talk Podcast"""
             proposed = localized_options[0]
             proposal_copy = (
                 "\nWe would like to propose this new time:\n"
-                f"- {proposed.strftime('%A %d %B, %Y')} at {proposed.strftime('%H:%M')} {timezone_label}\n"
+                f"- {proposed.strftime('%A %d %B, %Y')} at {proposed.strftime('%H:%M')} {timezone_display}\n"
             )
         elif proposal_mode == "alternatives" and localized_options:
             lines = "\n".join(
-                f"- {value.strftime('%A %d %B, %Y')} at {value.strftime('%H:%M')} {timezone_label}"
+                f"- {value.strftime('%A %d %B, %Y')} at {value.strftime('%H:%M')} {timezone_display}"
                 for value in localized_options
             )
             proposal_copy = f"\nWe would like to offer these alternative times:\n{lines}\n"
@@ -430,7 +434,7 @@ Mirror Talk Podcast"""
 
 Thank you again for your willingness to join Mirror Talk.
 
-Your previous Soulful Conversation slot on {formatted_date} at {formatted_time} {timezone_label} is no longer active.
+Your previous Soulful Conversation slot on {formatted_date} at {formatted_time} {timezone_display} is no longer active.
 
 You are not currently booked for a new interview time yet.
 {proposal_copy}

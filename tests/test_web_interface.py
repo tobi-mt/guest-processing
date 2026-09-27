@@ -5409,6 +5409,7 @@ def test_public_booking_creates_interview_calendar_event_and_confirmation(monkey
     assert saved is not None
     assert saved["guest_name"] == "Jordan Rivers"
     assert saved["timezone"] == "Europe/Berlin"
+    assert saved["guest_timezone"] == "Europe/Berlin"
     assert saved["calendar_event_id"] == "google-event-1"
     assert saved["confirmation_status"] == "confirmed"
     assert "Booked through the Mirror Talk guest booking flow." in (saved["notes"] or "")
@@ -5470,6 +5471,7 @@ def test_public_booking_repairs_existing_interview_without_calendar_event(monkey
     assert saved["calendar_event_id"] == "google-event-repaired"
     assert saved["confirmation_status"] == "confirmed"
     assert saved["timezone"] == "Europe/Berlin"
+    assert saved["guest_timezone"] == "America/Toronto"
     assert "Calendar invite repaired through the Mirror Talk guest booking flow." in (saved["notes"] or "")
     assert "Guest browser timezone: America/Toronto" in (saved["notes"] or "")
     assert sent == {"guest": "Jordan Rivers", "interview_id": existing["id"]}
@@ -5725,6 +5727,86 @@ def test_pending_booking_confirmation_outbox_can_be_drained(monkeypatch, temp_db
     assert any(entry["reminder_type"] == "booking_confirmation" and entry["status"] == "sent" for entry in log_entries)
 
 
+def test_outbox_worker_recovers_public_booking_that_never_entered_delivery_pipeline(monkeypatch, temp_db):
+    """A crash after saving a public booking must not permanently lose its confirmation."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    interview = service.create_interview(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Soulful Conversation with Jordan Rivers",
+            "scheduled_for": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+            "timezone": "Europe/Berlin",
+            "confirmation_status": "confirmed",
+            "notes": "Booked through the Mirror Talk guest booking flow.",
+        }
+    )
+    with sqlite3.connect(temp_db.db_path) as conn:
+        conn.execute("UPDATE schema_migrations SET applied_at = datetime('now', '-1 day') WHERE version = 34")
+        conn.execute("UPDATE interviews SET created_at = datetime('now', '-10 minutes') WHERE id = ?", (interview["id"],))
+        conn.commit()
+
+    class StubEmailManager:
+        last_error = ""
+        resend_api_key = "re_test"
+        build_calendar_invite = staticmethod(EmailManager.build_calendar_invite)
+
+        def is_configured(self):
+            return True
+
+        def get_booking_confirmation_template(self, guest_name, scheduled_for, timezone_label, join_url):
+            return {"subject": "Your Soulful Conversation is booked", "body": "Confirmation"}
+
+        def send_booking_confirmation_email(self, *args, **kwargs):
+            return True
+
+        def send_email(self, *args, **kwargs):
+            return True
+
+    manager = StubEmailManager()
+    monkeypatch.setattr(service, "_build_email_manager", lambda: manager)
+
+    result = service.process_pending_email_outbox(limit=5)
+
+    assert result["recovered_queued"] == 1
+    assert result["checked"] == 1
+    assert result["sent"] == 1
+    log_entries = temp_db.get_reminder_log(interview["id"])
+    assert [entry["status"] for entry in log_entries if entry["reminder_type"] == "booking_confirmation"] == ["sent", "queued"]
+
+
+def test_public_booking_missing_calendar_event_is_alerted_and_can_be_repaired(monkeypatch, temp_db):
+    """Operators should see and explicitly repair a partial calendar booking."""
+    service = GuestWebService(temp_db.db_path)
+    interview = service.create_interview(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "title": "Soulful Conversation with Jordan Rivers",
+            "scheduled_for": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+            "timezone": "Europe/Berlin",
+            "confirmation_status": "confirmed",
+            "notes": "Booked through the Mirror Talk guest booking flow.",
+        }
+    )
+
+    alerts = service.list_operations()["booking_alerts"]
+    assert [item["id"] for item in alerts["calendar_missing"]] == [interview["id"]]
+
+    class StubCalendarClient:
+        def create_event_from_interview(self, candidate):
+            assert candidate["id"] == interview["id"]
+            return {"id": "google-recovered-1", "updated": "2026-09-27T12:00:00Z"}
+
+    monkeypatch.setattr(service, "_build_google_calendar_client", lambda: StubCalendarClient())
+    repaired = service.create_interview_google_calendar_event(interview["id"])
+
+    assert repaired["calendar_event_id"] == "google-recovered-1"
+    assert service.list_operations()["booking_alerts"]["calendar_missing"] == []
+
+
 def test_public_reschedule_updates_existing_interview(monkeypatch, temp_db):
     """A reschedule link should update the same interview record and refresh its calendar linkage."""
     service = GuestWebService(temp_db.db_path)
@@ -5789,6 +5871,7 @@ def test_public_reschedule_updates_existing_interview(monkeypatch, temp_db):
     assert result["id"] == interview["id"]
     assert saved["scheduled_for"] == new_start
     assert saved["timezone"] == "Europe/Berlin"
+    assert saved["guest_timezone"] == "America/Toronto"
     assert saved["confirmation_status"] == "confirmed"
     assert saved["reschedule_token"] is None
     assert "Rescheduled through the Mirror Talk guest booking flow." in (saved["notes"] or "")
@@ -5930,7 +6013,7 @@ def test_booking_confirmation_email_formats_time_in_booking_timezone():
     )
 
     assert "Your Soulful Conversation is booked for Friday 10 April" == template["subject"]
-    assert "Friday 10 April, 2026 at 01:30 Europe/Berlin." in template["body"]
+    assert "Friday 10 April, 2026 at 01:30 Europe/Berlin (your local time)." in template["body"]
 
 
 def test_google_calendar_event_creation_requests_attendee_updates(monkeypatch):
@@ -6752,7 +6835,7 @@ def test_web_service_can_preview_and_send_weekly_interview_reminders(monkeypatch
 
         def get_interview_reminder_template(self, guest_name, scheduled_for, timezone_label, join_url):
             assert guest_name == "Jordan Rivers"
-            assert timezone_label == "CET"
+            assert timezone_label == "America/Toronto"
             return {"subject": "Reminder Subject", "body": f"Join here: {join_url}"}
 
         def send_email(self, to_email, subject, body, idempotency_key=""):
@@ -6774,6 +6857,7 @@ def test_web_service_can_preview_and_send_weekly_interview_reminders(monkeypatch
             "title": "Mirror Talk conversation",
             "scheduled_for": "2026-03-30 17:00:00",
             "timezone": "CET",
+            "guest_timezone": "America/Toronto",
             "join_url": "https://riverside.fm/example",
             "calendar_event_id": "calendar-event-1",
         }
@@ -6936,7 +7020,8 @@ def test_web_service_can_preview_and_send_booking_confirmation(monkeypatch, temp
             "guest_email": "jordan@example.com",
             "title": "Soulful Conversation with Jordan Rivers",
             "scheduled_for": "2026-06-11 18:00:00",
-            "timezone": "America/Toronto",
+            "timezone": "Europe/Berlin",
+            "guest_timezone": "America/Toronto",
             "join_url": "https://riverside.fm/example",
             "calendar_event_id": "calendar-event-1",
             "confirmation_status": "pending",

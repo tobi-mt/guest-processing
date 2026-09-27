@@ -412,8 +412,10 @@ function renderOperationsAlerts() {
   const alerts = latestOperationsPayload.booking_alerts || {};
   const doubleBookings = alerts.double_bookings || [];
   const cleanup = alerts.calendar_cleanup || [];
+  const missingCalendar = alerts.calendar_missing || [];
+  const missingConfirmation = alerts.confirmation_missing || [];
 
-  if (!doubleBookings.length && !cleanup.length) {
+  if (!doubleBookings.length && !cleanup.length && !missingCalendar.length && !missingConfirmation.length) {
     operationsAlerts.innerHTML = `
       <div class="insight-stack">
         <strong class="insight-label">No urgent calendar risks</strong>
@@ -463,7 +465,59 @@ function renderOperationsAlerts() {
         </div>
       </div>
     ` : ""}
+    ${missingCalendar.length ? `
+      <div class="insight-stack caution">
+        <strong class="insight-label">Guest bookings missing from Google Calendar</strong>
+        <p>These bookings were accepted from guest links but are not linked to calendar events. Review each booking before creating the missing event.</p>
+        <div class="stack-list">
+          ${missingCalendar.map((item) => `
+            <div class="mini-card">
+              <strong>${escapeHtml(item.guest_name || "Guest")}</strong>
+              <p>${escapeHtml(item.title || "Mirror Talk interview")} · ${escapeHtml(formatDateTime(item.scheduled_for))}</p>
+              <p>${escapeHtml(item.reason)}</p>
+              <button type="button" class="secondary-button small-button" data-alert-action="create-calendar" data-interview-id="${Number(item.id)}">Create Google Calendar Event</button>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    ` : ""}
+    ${missingConfirmation.length ? `
+      <div class="insight-stack caution">
+        <strong class="insight-label">Guest bookings missing confirmation records</strong>
+        <p>Review these historical bookings before contacting anyone. New bookings are recovered automatically through the outbox.</p>
+        <div class="stack-list">
+          ${missingConfirmation.map((item) => `
+            <div class="mini-card">
+              <strong>${escapeHtml(item.guest_name || "Guest")}</strong>
+              <p>${escapeHtml(item.title || "Mirror Talk interview")} · ${escapeHtml(formatDateTime(item.scheduled_for))}</p>
+              <p>${escapeHtml(item.reason)}</p>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    ` : ""}
   `;
+
+  operationsAlerts.querySelectorAll("[data-alert-action='create-calendar']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const interviewId = button.dataset.interviewId;
+      if (!confirmCriticalAction("Create the missing Google Calendar event for this confirmed guest booking?")) return;
+      button.disabled = true;
+      button.textContent = "Creating...";
+      try {
+        await fetchJSON(`/api/interviews/${interviewId}/create-calendar-event`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        setMessage(interviewMessage, "Created and linked the missing Google Calendar event.", "success");
+        await loadOperations();
+      } catch (error) {
+        setMessage(interviewMessage, error.message, "error");
+        button.disabled = false;
+        button.textContent = "Create Google Calendar Event";
+      }
+    });
+  });
 
   operationsAlerts.querySelectorAll("[data-alert-action='remove-calendar']").forEach((button) => {
     if (calendarReadOnlyMode) {
@@ -585,6 +639,14 @@ function buildBookingRiskReasonMap(alerts = {}) {
     addReason(item.id, item.reason || "This interview may still be blocking a calendar slot.");
   });
 
+  (alerts.calendar_missing || []).forEach((item) => {
+    addReason(item.id, item.reason || "This guest booking is missing its Google Calendar event.");
+  });
+
+  (alerts.confirmation_missing || []).forEach((item) => {
+    addReason(item.id, item.reason || "This guest booking has no confirmation delivery record.");
+  });
+
   return reasonsById;
 }
 
@@ -608,6 +670,7 @@ function resetInterviewForm() {
   interviewForm.reset();
   interviewForm.elements.id.value = "";
   interviewForm.elements.timezone.value = "Europe/Berlin";
+  interviewForm.elements.guest_timezone.value = "";
   interviewForm.elements.status.value = "scheduled";
   interviewForm.elements.confirmation_status.value = "pending";
   interviewForm.elements.reminder_status.value = "not_scheduled";
@@ -624,6 +687,7 @@ function loadInterviewIntoForm(interview) {
   interviewForm.elements.title.value = interview.title || "";
   interviewForm.elements.scheduled_for.value = formatDateForDateTimeInput(interview.scheduled_for);
   interviewForm.elements.timezone.value = interview.timezone || "Europe/Berlin";
+  interviewForm.elements.guest_timezone.value = interview.guest_timezone || "";
   interviewForm.elements.owner.value = interview.owner || "";
   interviewForm.elements.calendar_event_id.value = interview.calendar_event_id || "";
   interviewForm.elements.join_url.value = interview.join_url || "";
@@ -646,7 +710,8 @@ function renderInterviewInlineEditor(container, interview) {
       ${createFieldMarkup("Guest Email", `<input name="guest_email" type="email" value="${escapeHtml(interview.guest_email || "")}" />`)}
       ${createFieldMarkup("Title", `<input name="title" type="text" value="${escapeHtml(interview.title || "")}" />`, true)}
       ${createFieldMarkup("Scheduled For", `<input name="scheduled_for" type="datetime-local" value="${formatDateForDateTimeInput(interview.scheduled_for)}" required />`)}
-      ${createFieldMarkup("Timezone", `<input name="timezone" type="text" value="${escapeHtml(interview.timezone || "Europe/Berlin")}" />`)}
+      ${createFieldMarkup("Calendar Timezone", `<input name="timezone" type="text" value="${escapeHtml(interview.timezone || "Europe/Berlin")}" />`)}
+      ${createFieldMarkup("Guest Email Timezone", `<input name="guest_timezone" type="text" value="${escapeHtml(interview.guest_timezone || "")}" placeholder="e.g. America/Toronto" />`)}
       ${createFieldMarkup("Owner", `<input name="owner" type="text" value="${escapeHtml(interview.owner || "")}" />`)}
       ${createFieldMarkup("Join URL", `<input name="join_url" type="url" value="${escapeHtml(interview.join_url || "")}" />`, true)}
       ${createFieldMarkup("Status", `
@@ -760,6 +825,8 @@ function filterAndSortInterviews(interviews) {
     (alerts.double_bookings || []).flatMap((group) => (group.interviews || []).map((item) => Number(item.id))),
   );
   const cleanupIds = new Set((alerts.calendar_cleanup || []).map((item) => Number(item.id)));
+  const missingCalendarIds = new Set((alerts.calendar_missing || []).map((item) => Number(item.id)));
+  const missingConfirmationIds = new Set((alerts.confirmation_missing || []).map((item) => Number(item.id)));
 
   const filtered = interviews.filter((interview) => {
     const haystack = [
@@ -801,7 +868,7 @@ function filterAndSortInterviews(interviews) {
     if (activeInterviewPreset === "needs_confirmation" && normalizeText(interview.confirmation_status) !== "pending") {
       return false;
     }
-    if (activeInterviewPreset === "booking_risks" && !(riskIds.has(Number(interview.id)) || cleanupIds.has(Number(interview.id)))) {
+    if (activeInterviewPreset === "booking_risks" && !(riskIds.has(Number(interview.id)) || cleanupIds.has(Number(interview.id)) || missingCalendarIds.has(Number(interview.id)) || missingConfirmationIds.has(Number(interview.id)))) {
       return false;
     }
     return true;
@@ -954,6 +1021,8 @@ function renderInterviews(interviews, totalCount) {
       </div>
       <div class="operations-meta">
         <span>Scheduled: ${escapeHtml(formatDateTime(interview.scheduled_for))}</span>
+        <span>Calendar timezone: ${escapeHtml(interview.timezone || "Europe/Berlin")}</span>
+        <span>Guest email timezone: ${escapeHtml(interview.guest_timezone || interview.timezone || "Europe/Berlin")}</span>
         <span>Owner: ${escapeHtml(interview.owner || "Unassigned")}</span>
         <span>Confirmation SLA: ${escapeHtml(confirmationSlaLabel(interview))}</span>
         <span>Last contact: ${escapeHtml(formatDateTime(interview.reminder_sent_at || interview.event_updated_at || interview.updated_at))}</span>
