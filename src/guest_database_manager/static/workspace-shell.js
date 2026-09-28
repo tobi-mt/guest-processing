@@ -43,9 +43,11 @@
       <div class="workspace-utility-bar" aria-label="Workspace tools">
         <button type="button" data-open-command>Search <kbd>⌘K</kbd></button>
         <button type="button" data-open-briefing>My work</button>
+        <a href="/account-settings">Account</a>
+        <a href="/accounts" data-account-admin hidden>Accounts</a>
         <button type="button" data-toggle-density>${density === "compact" ? "Comfortable" : "Compact"}</button>
       </div>
-      <nav class="mobile-workspace-nav" aria-label="Workspace navigation"><a href="/dashboard">Guests</a><a href="/operations">Interviews</a><a href="/planning">Episodes</a><button type="button" data-open-command>Search</button></nav>
+      <nav class="mobile-workspace-nav" aria-label="Workspace navigation"><a href="/dashboard">Guests</a><a href="/operations">Interviews</a><a href="/planning">Episodes</a><button type="button" data-open-command>Search</button><a href="/account-settings">Account</a><a href="/accounts" data-account-admin hidden>Accounts</a></nav>
       <dialog id="workspace-command-dialog" class="workspace-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form><p class="eyebrow">Global command menu</p><h2>Find anything</h2><label class="command-search-label">Search guests, interviews, episodes, transcripts, and actions<input id="workspace-command-input" type="search" autocomplete="off" placeholder="Search or type a command…" /></label><div id="workspace-command-results" class="command-results" aria-live="polite"></div><div id="workspace-recent-results" class="recent-results"></div></dialog>
       <dialog id="workspace-briefing-dialog" class="workspace-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form><p class="eyebrow">Personal operating view</p><h2>My work</h2><div class="briefing-switch"><button type="button" data-briefing-window="daily">Today</button><button type="button" data-briefing-window="weekly">This week</button></div><div id="workspace-briefing-results" aria-live="polite"><p>Loading…</p></div></dialog>`);
   }
@@ -80,6 +82,9 @@
 
   function init() {
     buildShell();
+    getJson("/api/dashboard/session").then((session) => {
+      if (session.role === "super_admin") document.querySelectorAll("[data-account-admin]").forEach((link) => link.removeAttribute("hidden"));
+    }).catch(() => {});
     initializeDetailsPersistence();
     initializeUnsavedWarnings();
     const command = document.getElementById("workspace-command-dialog");

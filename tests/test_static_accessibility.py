@@ -348,8 +348,8 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
     for name in ("index.html", "operations.html", "planning.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
-        assert 'workspace-shell.js?v=20260923.3' in html
-        assert 'styles.css?v=20260923.2' in html
+        assert 'workspace-shell.js?v=20260927.3' in html
+        assert 'styles.css?v=20260927.2' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -358,6 +358,22 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     assert 'mirror-talk-details-state' in shell
     assert 'data-toggle-density' in shell
     assert ".mobile-workspace-nav" in styles
+
+
+def test_account_surfaces_have_labeled_fields_and_status_regions() -> None:
+    accounts = (STATIC_ROOT / "accounts.html").read_text(encoding="utf-8")
+    settings = (STATIC_ROOT / "account-settings.html").read_text(encoding="utf-8")
+    recovery = (STATIC_ROOT / "account-recovery.html").read_text(encoding="utf-8")
+    assert "Create account and invitation" in accounts
+    assert 'id="form-message" class="message" aria-live="polite"' in accounts
+    assert 'autocomplete="current-password"' in settings
+    assert 'autocomplete="one-time-code"' in settings
+    assert 'id="mfa-message" aria-live="polite"' in settings
+    assert 'autocomplete="new-password"' in recovery
+    assert 'id="message" aria-live="polite"' in recovery
+    login = (STATIC_ROOT / "dashboard-login.html").read_text(encoding="utf-8")
+    assert "[hidden]" in login and "display: none !important" in login
+    assert "[hidden]{display:none!important}" in settings
 
 
 def test_guided_import_replaces_raw_json_and_exposes_history_and_reviews() -> None:

@@ -16,8 +16,40 @@ from guest_database_manager.web_interface import (
     DASHBOARD_SESSION_SECRET_ENV_VAR,
     DASHBOARD_USERNAME_ENV_VAR,
     DASHBOARD_USERS_ENV_VAR,
+    DEPLOYMENT_ENV_VAR,
+    PUBLIC_URL_ENV_VAR,
+    GuestThreadingHTTPServer,
     create_web_server,
 )
+
+
+def test_web_server_accept_backlog_supports_browser_api_bursts():
+    assert GuestThreadingHTTPServer.request_queue_size >= 128
+    assert GuestThreadingHTTPServer.daemon_threads is True
+
+
+def test_production_refuses_weak_auth_configuration(monkeypatch, temp_db):
+    monkeypatch.setenv(DEPLOYMENT_ENV_VAR, "production")
+    monkeypatch.setenv(DASHBOARD_SESSION_SECRET_ENV_VAR, "too-short")
+    monkeypatch.setenv(PUBLIC_URL_ENV_VAR, "https://app.example.com")
+    try:
+        create_web_server(host="127.0.0.1", port=0, db_path=temp_db.db_path)
+    except RuntimeError as exc:
+        assert "at least 32 characters" in str(exc)
+    else:
+        raise AssertionError("production accepted a weak session secret")
+
+
+def test_production_refuses_non_https_public_origin(monkeypatch, temp_db):
+    monkeypatch.setenv(DEPLOYMENT_ENV_VAR, "production")
+    monkeypatch.setenv(DASHBOARD_SESSION_SECRET_ENV_VAR, "x" * 40)
+    monkeypatch.setenv(PUBLIC_URL_ENV_VAR, "http://app.example.com")
+    try:
+        create_web_server(host="127.0.0.1", port=0, db_path=temp_db.db_path)
+    except RuntimeError as exc:
+        assert "HTTPS origin" in str(exc)
+    else:
+        raise AssertionError("production accepted a non-HTTPS public origin")
 
 
 @contextmanager
@@ -62,6 +94,33 @@ def test_login_issues_signed_session_and_security_headers(monkeypatch, temp_db):
         assert response.headers["X-Frame-Options"] == "DENY"
         assert response.headers["X-Content-Type-Options"] == "nosniff"
         assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+
+
+def test_login_rejects_scheme_relative_redirect(monkeypatch, temp_db):
+    configure_auth(monkeypatch)
+    with running_server(temp_db.db_path) as base_url:
+        session = requests.Session()
+        response = session.post(
+            f"{base_url}/api/dashboard/login",
+            json={"username": "producer", "password": "correct horse", "next": "//evil.example/path"},
+            timeout=5,
+        )
+        assert response.status_code == 200
+        assert response.json()["redirect_to"] == "/dashboard"
+
+
+def test_public_recovery_is_rate_limited(monkeypatch, temp_db):
+    configure_auth(monkeypatch)
+    with running_server(temp_db.db_path) as base_url:
+        statuses = [
+            requests.post(
+                f"{base_url}/api/account-recovery",
+                json={"token": "invalid", "password": "Strong unrelated pass 42"}, timeout=5,
+            ).status_code
+            for _ in range(7)
+        ]
+        assert statuses[:6] == [400] * 6
+        assert statuses[6] == 429
 
 
 def test_health_and_readiness_are_public_and_truthful(monkeypatch, temp_db):
@@ -334,3 +393,56 @@ def test_multi_user_roles_are_resolved_per_identity(monkeypatch, temp_db):
 
         assert viewer_write.status_code == 403
         assert operator_write.status_code == 201
+
+
+def test_super_admin_can_create_suspend_and_recover_accounts(monkeypatch, temp_db):
+    monkeypatch.setenv(DASHBOARD_USERNAME_ENV_VAR, "mt_admin")
+    monkeypatch.setenv(DASHBOARD_PASSWORD_ENV_VAR, "legacy admin password")
+    monkeypatch.setenv(DASHBOARD_SESSION_SECRET_ENV_VAR, "integration-signing-secret")
+    with running_server(temp_db.db_path) as base_url:
+        admin = requests.Session()
+        assert admin.post(
+            f"{base_url}/api/dashboard/login",
+            json={"username": "mt_admin", "password": "legacy admin password"}, timeout=5,
+        ).status_code == 200
+        assert admin.get(f"{base_url}/api/dashboard/session", timeout=5).json()["role"] == "super_admin"
+        csrf = {"X-CSRF-Token": admin.cookies["dashboard_csrf"]}
+
+        created = admin.post(
+            f"{base_url}/api/accounts",
+            json={"username": "new-producer", "email": "producer@example.com", "role": "operator"},
+            headers=csrf, timeout=5,
+        )
+        assert created.status_code == 201
+        account_id = created.json()["account"]["id"]
+        token = created.json()["invitation_url"].split("token=", 1)[1]
+
+        reset = requests.post(
+            f"{base_url}/api/account-recovery", json={"token": token, "password": "Recovered pass 84"}, timeout=5,
+        )
+        assert reset.status_code == 200
+        member = requests.Session()
+        assert member.post(
+            f"{base_url}/api/dashboard/login",
+            json={"username": "new-producer", "password": "Recovered pass 84"}, timeout=5,
+        ).status_code == 200
+
+        member_csrf = {"X-CSRF-Token": member.cookies["dashboard_csrf"]}
+        changed = member.post(
+            f"{base_url}/api/account/password",
+            json={"current_password": "Recovered pass 84", "new_password": "Stronger private pass 126"},
+            headers=member_csrf, timeout=5,
+        )
+        assert changed.status_code == 200
+        assert member.get(f"{base_url}/api/dashboard/session", timeout=5).status_code == 401
+        member = requests.Session()
+        assert member.post(
+            f"{base_url}/api/dashboard/login",
+            json={"username": "new-producer", "password": "Stronger private pass 126"}, timeout=5,
+        ).status_code == 200
+
+        suspended = admin.post(
+            f"{base_url}/api/accounts/{account_id}", json={"is_active": False}, headers=csrf, timeout=5,
+        )
+        assert suspended.status_code == 200
+        assert member.get(f"{base_url}/api/dashboard/session", timeout=5).status_code == 401

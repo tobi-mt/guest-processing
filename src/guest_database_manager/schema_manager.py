@@ -1400,6 +1400,60 @@ class SchemaManager:
         SchemaManager._add_column_if_missing(conn, "interviews", "guest_timezone", "TEXT")
 
     @staticmethod
+    def _migration_035_dashboard_accounts(conn: sqlite3.Connection) -> None:
+        """Persist dashboard identities and short-lived, one-time recovery credentials."""
+        conn.execute(
+            """CREATE TABLE dashboard_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                email TEXT COLLATE NOCASE UNIQUE,
+                display_name TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL CHECK(role IN ('viewer', 'operator', 'admin', 'super_admin')),
+                password_hash TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+                must_set_password INTEGER NOT NULL DEFAULT 0 CHECK(must_set_password IN (0, 1)),
+                auth_version INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL,
+                created_by TEXT NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                updated_by TEXT NOT NULL,
+                last_login_at TIMESTAMP
+                ,password_changed_at TIMESTAMP
+                ,mfa_enabled INTEGER NOT NULL DEFAULT 0 CHECK(mfa_enabled IN (0, 1))
+                ,mfa_secret_ciphertext TEXT
+                ,mfa_pending_secret_ciphertext TEXT
+                ,mfa_last_counter INTEGER
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE dashboard_account_recovery_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                purpose TEXT NOT NULL CHECK(purpose IN ('invitation', 'recovery')),
+                expires_at TIMESTAMP NOT NULL,
+                used_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                created_by TEXT NOT NULL,
+                FOREIGN KEY(account_id) REFERENCES dashboard_accounts(id) ON DELETE CASCADE
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE dashboard_account_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMP NOT NULL,
+                FOREIGN KEY(account_id) REFERENCES dashboard_accounts(id) ON DELETE CASCADE
+            )"""
+        )
+        conn.execute("CREATE INDEX idx_dashboard_recovery_expiry ON dashboard_account_recovery_tokens(expires_at, used_at)")
+        conn.execute("CREATE INDEX idx_dashboard_account_events ON dashboard_account_events(account_id, created_at DESC)")
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1439,6 +1493,7 @@ class SchemaManager:
             (32, "multi_google_channels", SchemaManager._migration_032_multi_google_channels),
             (33, "local_analytics_collectors", SchemaManager._migration_033_local_analytics_collectors),
             (34, "guest_facing_timezone", SchemaManager._migration_034_guest_facing_timezone),
+            (35, "dashboard_accounts", SchemaManager._migration_035_dashboard_accounts),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

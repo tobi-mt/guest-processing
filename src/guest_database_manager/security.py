@@ -13,7 +13,7 @@ from threading import Lock
 from typing import Any
 
 
-ROLE_RANK = {"viewer": 10, "operator": 20, "admin": 30}
+ROLE_RANK = {"viewer": 10, "operator": 20, "admin": 30, "super_admin": 40}
 
 
 class SessionError(ValueError):
@@ -34,7 +34,8 @@ class SessionSigner:
         self.ttl_seconds = max(60, int(ttl_seconds))
 
     def issue(
-        self, *, role: str = "admin", subject: str = "dashboard", now: int | None = None
+        self, *, role: str = "admin", subject: str = "dashboard", now: int | None = None,
+        account_id: int | None = None, auth_version: int | None = None,
     ) -> tuple[str, dict[str, Any]]:
         normalized_role = str(role).strip().lower()
         if normalized_role not in ROLE_RANK:
@@ -48,6 +49,9 @@ class SessionSigner:
             "csrf": secrets.token_urlsafe(24),
             "sid": secrets.token_urlsafe(18),
         }
+        if account_id is not None:
+            claims["aid"] = int(account_id)
+            claims["av"] = int(auth_version or 1)
         payload = json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8")
         encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
         signature = hmac.new(self._secret, encoded.encode("ascii"), hashlib.sha256).hexdigest()

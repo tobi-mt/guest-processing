@@ -40,6 +40,7 @@ from openpyxl import Workbook
 load_dotenv()
 
 from guest_database_manager.ask_mirror_talk_client import AskMirrorTalkClient, AskMirrorTalkClientError
+from guest_database_manager.accounts import AccountError, AccountStore
 from guest_database_manager.apollo_client import ApolloClient
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
@@ -118,6 +119,8 @@ DASHBOARD_SESSION_SECRET_ENV_VAR = "MIRROR_TALK_DASHBOARD_SESSION_SECRET"
 DASHBOARD_SESSION_TTL_ENV_VAR = "MIRROR_TALK_DASHBOARD_SESSION_TTL_SECONDS"
 DASHBOARD_ROLE_ENV_VAR = "MIRROR_TALK_DASHBOARD_ROLE"
 DASHBOARD_USERS_ENV_VAR = "MIRROR_TALK_DASHBOARD_USERS_JSON"
+DEPLOYMENT_ENV_VAR = "MIRROR_TALK_ENV"
+PUBLIC_URL_ENV_VAR = "MIRROR_TALK_PUBLIC_URL"
 EMAIL_SMTP_SERVER_ENV_VAR = "MIRROR_TALK_SMTP_SERVER"
 EMAIL_SMTP_PORT_ENV_VAR = "MIRROR_TALK_SMTP_PORT"
 EMAIL_USERNAME_ENV_VAR = "MIRROR_TALK_SMTP_USERNAME"
@@ -479,13 +482,13 @@ def _configured_dashboard_users() -> Dict[str, Dict[str, str]]:
                     continue
                 password = _normalize_text(record.get("password"))
                 role = _normalize_text(record.get("role")).lower() or "viewer"
-                if password and role in {"viewer", "operator", "admin"}:
+                if password and role in {"viewer", "operator", "admin", "super_admin"}:
                     users[normalized_username] = {"password": password, "role": role}
 
     legacy_username = os.environ.get(DASHBOARD_USERNAME_ENV_VAR, "").strip()
     legacy_password = os.environ.get(DASHBOARD_PASSWORD_ENV_VAR, "").strip()
     legacy_role = os.environ.get(DASHBOARD_ROLE_ENV_VAR, "admin").strip().lower() or "admin"
-    if legacy_username and legacy_password and legacy_role in {"viewer", "operator", "admin"}:
+    if legacy_username and legacy_password and legacy_role in {"viewer", "operator", "admin", "super_admin"}:
         users.setdefault(legacy_username, {"password": legacy_password, "role": legacy_role})
     return users
 
@@ -495,6 +498,29 @@ def _dashboard_auth_configured() -> bool:
         os.environ.get(name, "").strip()
         for name in (DASHBOARD_USERS_ENV_VAR, DASHBOARD_USERNAME_ENV_VAR, DASHBOARD_PASSWORD_ENV_VAR)
     )
+
+
+def _safe_dashboard_redirect(value: Any) -> str:
+    """Allow only same-origin absolute paths after authentication."""
+    path = _normalize_text(value) or "/dashboard"
+    if not path.startswith("/") or path.startswith("//") or "\\" in path:
+        return "/dashboard"
+    return path
+
+
+def _is_production() -> bool:
+    return os.environ.get(DEPLOYMENT_ENV_VAR, "").strip().casefold() == "production"
+
+
+def _validate_production_auth_config(session_secret: str) -> None:
+    if not _is_production():
+        return
+    if len(session_secret) < 32:
+        raise RuntimeError(f"{DASHBOARD_SESSION_SECRET_ENV_VAR} must contain at least 32 characters in production")
+    public_url = os.environ.get(PUBLIC_URL_ENV_VAR, "").strip()
+    parsed = urlsplit(public_url)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.path not in {"", "/"}:
+        raise RuntimeError(f"{PUBLIC_URL_ENV_VAR} must be an HTTPS origin without credentials or a path in production")
 
 
 def _normalize_website(value: Any) -> str:
@@ -766,6 +792,7 @@ class GuestWebService:
     """Service layer for the direct web interface."""
 
     db_path: Path
+    account_encryption_secret: str = ""
     _payload_cache: Dict[str, tuple[float, Dict[str, Any]]] = field(default_factory=dict, init=False, repr=False)
     _outbox_stop: Optional[Event] = field(default=None, init=False, repr=False)
     _outbox_thread: Optional[Thread] = field(default=None, init=False, repr=False)
@@ -774,6 +801,9 @@ class GuestWebService:
 
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
+        self.accounts = AccountStore(self.db_path, encryption_secret=self.account_encryption_secret)
+        for username, record in _configured_dashboard_users().items():
+            self.accounts.bootstrap(username, record["password"], role=record["role"])
         self.partner_intelligence = PartnerIntelligence(
             self.database, ai_factory=self._get_ai_assistant, apollo_factory=self._get_apollo_client
         )
@@ -1301,16 +1331,11 @@ class GuestWebService:
             return 5.0
         return 3.0
 
-    @staticmethod
-    def _team_members_payload() -> list[Dict[str, str]]:
-        """Expose configured dashboard identities without credential material."""
+    def _team_members_payload(self) -> list[Dict[str, str]]:
+        """Expose active persisted identities without credential material."""
         return [
-            {
-                "username": username,
-                "label": username,
-                "role": record["role"],
-            }
-            for username, record in sorted(_configured_dashboard_users().items(), key=lambda item: item[0].casefold())
+            {"username": row["username"], "label": row["display_name"] or row["username"], "role": row["role"]}
+            for row in self.accounts.list_accounts() if row["is_active"]
         ]
 
     @staticmethod
@@ -7264,6 +7289,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     service: GuestWebService
     _session_signer: SessionSigner
     _login_limiter: LoginRateLimiter
+    _recovery_limiter: LoginRateLimiter
 
     def end_headers(self) -> None:
         """Apply browser protections consistently to every response."""
@@ -7342,12 +7368,36 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if request_path in {"/dashboard-login", "/login"}:
             if self._is_authorized_dashboard_request():
                 query = self._query_params(self.path)
-                next_path = _normalize_text(query.get("next")) or "/dashboard"
-                if not next_path.startswith("/"):
-                    next_path = "/dashboard"
+                next_path = _safe_dashboard_redirect(query.get("next"))
                 self._redirect(next_path)
                 return
             self._serve_static("dashboard-login.html")
+            return
+
+        if request_path in {"/account-recovery", "/account-recovery.html"}:
+            self._serve_static("account-recovery.html")
+            return
+
+        if request_path in {"/account-settings", "/account-settings.html"}:
+            if not self._session_claims():
+                self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
+                return
+            self._serve_static("account-settings.html", set_session_cookie=True)
+            return
+
+        if request_path in {"/accounts", "/accounts.html"}:
+            claims = self._session_claims()
+            if not claims:
+                self._redirect(f"/dashboard-login?{urlencode({'next': request_path})}")
+                return
+            if not role_allows(str(claims.get("role")), "super_admin"):
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Super administrator access is required"})
+                return
+            account = self.service.accounts.session_account(int(claims.get("aid") or 0))
+            if _is_production() and not (account or {}).get("mfa_enabled"):
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Enable MFA in Account settings before administering accounts"})
+                return
+            self._serve_static("accounts.html", set_session_cookie=True)
             return
 
         if request_path in {"/book", "/book/", "/booking", "/book.html"}:
@@ -7413,10 +7463,17 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             if not claims or not role_allows(str(claims.get("role")), "viewer"):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
-            self._send_json(
-                HTTPStatus.OK,
-                {"username": claims.get("sub", "dashboard"), "role": claims.get("role", "viewer")},
-            )
+            account = self.service.accounts.session_account(int(claims.get("aid") or 0)) if claims.get("aid") else None
+            self._send_json(HTTPStatus.OK, {
+                "username": claims.get("sub", "dashboard"), "role": claims.get("role", "viewer"),
+                "mfa_enabled": bool((account or {}).get("mfa_enabled")),
+            })
+            return
+
+        if request_path == "/api/accounts":
+            if not self._enforce_dashboard_security(required_role="super_admin", require_csrf=False):
+                return
+            self._send_json(HTTPStatus.OK, {"accounts": self.service.accounts.list_accounts()})
             return
 
         if request_path == "/api/audit-events":
@@ -7883,6 +7940,22 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/api/account-recovery":
+            client = self._client_identity()
+            if not self.__class__._recovery_limiter.is_allowed(client):
+                self._send_json(HTTPStatus.TOO_MANY_REQUESTS, {"error": "Too many recovery attempts. Try again later."})
+                return
+            try:
+                payload = self._read_json_payload()
+                self.service.accounts.recover(str(payload.get("token") or ""), str(payload.get("password") or ""))
+            except AccountError as exc:
+                self.__class__._recovery_limiter.record_failure(client)
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self.__class__._recovery_limiter.record_success(client)
+            self._send_json(HTTPStatus.OK, {"ok": True})
+            return
+
         if self.path == "/api/dashboard/login":
             client = self._client_identity()
             if not self.__class__._login_limiter.is_allowed(client):
@@ -7891,21 +7964,21 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json_payload()
             provided_username = _normalize_text(payload.get("username"))
             provided_password = _normalize_text(payload.get("password"))
-            redirect_to = _normalize_text(payload.get("next")) or "/dashboard"
-            if not redirect_to.startswith("/"):
-                redirect_to = "/dashboard"
+            redirect_to = _safe_dashboard_redirect(payload.get("next"))
 
-            configured_users = _configured_dashboard_users()
-            auth_required = _dashboard_auth_configured()
-            matched_user = configured_users.get(provided_username)
-            credentials_match = bool(
-                matched_user
-                and secrets.compare_digest(provided_password, matched_user["password"])
+            matched_account = self.service.accounts.authenticate(
+                provided_username, provided_password, otp=_normalize_text(payload.get("otp"))
             )
+            auth_required = _dashboard_auth_configured() or self.service.accounts.has_accounts()
+            credentials_match = matched_account is not None
 
             if auth_required and not credentials_match:
                 self.__class__._login_limiter.record_failure(client)
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Invalid dashboard credentials"})
+                return
+
+            if matched_account and matched_account.get("mfa_required"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication code required", "mfa_required": True})
                 return
 
             self.__class__._login_limiter.record_success(client)
@@ -7916,11 +7989,105 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(response)))
             self._send_dashboard_session_cookies(
-                role=(matched_user or {}).get("role", "admin"),
+                role=(matched_account or {}).get("role", "admin"),
                 subject=provided_username or "dashboard",
+                account_id=(matched_account or {}).get("id"),
+                auth_version=(matched_account or {}).get("auth_version"),
             )
             self.end_headers()
             self.wfile.write(response)
+            return
+
+        if self.path == "/api/accounts":
+            if not self._enforce_dashboard_security(required_role="super_admin", require_csrf=True):
+                return
+            claims = self._session_claims() or {}
+            try:
+                account = self.service.accounts.create(self._read_json_payload(), actor=str(claims.get("sub") or "super_admin"))
+                token = self.service.accounts.create_access_token(
+                    int(account["id"]), actor=str(claims.get("sub") or "super_admin"), purpose="invitation", minutes=60
+                )
+            except AccountError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.CREATED, {
+                "account": account,
+                "invitation_url": f"{self._current_service_origin()}/account-recovery?token={token}",
+            })
+            return
+
+        if self.path == "/api/account/password":
+            if not self._enforce_dashboard_security(required_role="viewer", require_csrf=True):
+                return
+            claims = self._session_claims() or {}
+            try:
+                payload = self._read_json_payload()
+                self.service.accounts.change_password(
+                    int(claims.get("aid") or 0), str(payload.get("current_password") or ""),
+                    str(payload.get("new_password") or ""), actor=str(claims.get("sub") or "account"),
+                )
+            except AccountError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, {"ok": True, "reauthenticate": True})
+            return
+
+        if self.path == "/api/account/sessions/invalidate":
+            if not self._enforce_dashboard_security(required_role="viewer", require_csrf=True):
+                return
+            claims = self._session_claims() or {}
+            try:
+                self.service.accounts.invalidate_sessions(
+                    int(claims.get("aid") or 0), actor=str(claims.get("sub") or "account")
+                )
+            except AccountError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, {"ok": True, "reauthenticate": True})
+            return
+
+        if self.path in {"/api/account/mfa/start", "/api/account/mfa/confirm", "/api/account/mfa/disable"}:
+            if not self._enforce_dashboard_security(required_role="viewer", require_csrf=True):
+                return
+            claims = self._session_claims() or {}
+            account_id = int(claims.get("aid") or 0)
+            actor = str(claims.get("sub") or "account")
+            try:
+                payload = self._read_json_payload()
+                if self.path.endswith("/start"):
+                    result = self.service.accounts.begin_mfa(account_id, actor=actor)
+                    self._send_json(HTTPStatus.OK, result)
+                elif self.path.endswith("/confirm"):
+                    self.service.accounts.confirm_mfa(account_id, str(payload.get("code") or ""), actor=actor)
+                    self._send_json(HTTPStatus.OK, {"ok": True, "reauthenticate": True})
+                else:
+                    self.service.accounts.disable_mfa(
+                        account_id, str(payload.get("password") or ""), str(payload.get("code") or ""), actor=actor
+                    )
+                    self._send_json(HTTPStatus.OK, {"ok": True, "reauthenticate": True})
+            except AccountError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+
+        account_match = re.fullmatch(r"/api/accounts/(\d+)(/recovery-token)?", urlsplit(self.path).path)
+        if account_match:
+            if not self._enforce_dashboard_security(required_role="super_admin", require_csrf=True):
+                return
+            claims = self._session_claims() or {}
+            account_id = int(account_match.group(1))
+            try:
+                if account_match.group(2):
+                    token = self.service.accounts.create_recovery_token(account_id, actor=str(claims.get("sub") or "super_admin"))
+                    origin = self._current_service_origin()
+                    self._send_json(HTTPStatus.CREATED, {"recovery_url": f"{origin}/account-recovery?token={token}"})
+                else:
+                    account = self.service.accounts.update(
+                        account_id, self._read_json_payload(), actor=str(claims.get("sub") or "super_admin"),
+                        actor_id=int(claims.get("aid") or 0),
+                    )
+                    self._send_json(HTTPStatus.OK, {"account": account})
+            except AccountError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
 
         if self.path == "/api/dashboard/logout":
@@ -9253,15 +9420,18 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _send_dashboard_session_cookies(
-        self, *, role: Optional[str] = None, subject: Optional[str] = None
+        self, *, role: Optional[str] = None, subject: Optional[str] = None,
+        account_id: Optional[int] = None, auth_version: Optional[int] = None,
     ) -> None:
         current_claims = self._session_claims() or {}
         effective_role = role or str(current_claims.get("role") or os.environ.get(DASHBOARD_ROLE_ENV_VAR, "admin"))
         effective_subject = subject or str(current_claims.get("sub") or "dashboard")
         token, claims = self.__class__._session_signer.issue(
-            role=effective_role.strip().lower() or "admin", subject=effective_subject
+            role=effective_role.strip().lower() or "admin", subject=effective_subject,
+            account_id=account_id if account_id is not None else current_claims.get("aid"),
+            auth_version=auth_version if auth_version is not None else current_claims.get("av"),
         )
-        secure = "; Secure" if self._request_is_secure() else ""
+        secure = "; Secure" if _is_production() or self._request_is_secure() else ""
         max_age = self.__class__._session_signer.ttl_seconds
         self.send_header(
             "Set-Cookie",
@@ -9298,7 +9468,14 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if not cookie:
             return None
         try:
-            return self.__class__._session_signer.verify(cookie.value)
+            claims = self.__class__._session_signer.verify(cookie.value)
+            if claims.get("aid") is not None:
+                account = self.service.accounts.session_account(int(claims["aid"]))
+                if not account or int(account["auth_version"]) != int(claims.get("av") or 0):
+                    return None
+                claims["role"] = account["role"]
+                claims["sub"] = account["username"]
+            return claims
         except SessionError:
             return None
 
@@ -9326,6 +9503,11 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             if not role_allows(str(claims.get("role")), required_role):
                 self._send_json(HTTPStatus.FORBIDDEN, {"error": "Insufficient dashboard permissions"})
                 return False
+            if required_role == "super_admin" and _is_production():
+                account = self.service.accounts.session_account(int(claims.get("aid") or 0))
+                if not (account or {}).get("mfa_enabled"):
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "MFA is required for account administration"})
+                    return False
             if require_csrf:
                 csrf_header = self.headers.get("X-CSRF-Token", "").strip()
                 csrf_cookie = self._cookies().get("dashboard_csrf")
@@ -9345,7 +9527,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if basic_identity:
             return role_allows(basic_identity[1], required_role)
 
-        if not _dashboard_auth_configured():
+        if not _dashboard_auth_configured() and not self.service.accounts.has_accounts():
             return True
         self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
         return False
@@ -9425,6 +9607,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
     def _current_service_origin(self) -> str:
         """Infer the current public service origin from forwarded or host headers."""
+        configured = os.environ.get(PUBLIC_URL_ENV_VAR, "").strip().rstrip("/")
+        if configured:
+            return configured
         forwarded_proto = (self.headers.get("X-Forwarded-Proto") or "").strip()
         proto = forwarded_proto or ("https" if self.server.server_port == 443 else "http")
 
@@ -9456,7 +9641,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         if claims and role_allows(str(claims.get("role")), "viewer"):
             return True
 
-        if not _dashboard_auth_configured():
+        if not _dashboard_auth_configured() and not self.service.accounts.has_accounts():
             return True
 
         return self._is_valid_basic_auth()
@@ -9465,8 +9650,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         return self._basic_auth_identity() is not None
 
     def _basic_auth_identity(self) -> Optional[tuple[str, str]]:
-        configured_users = _configured_dashboard_users()
-        if not _dashboard_auth_configured():
+        if _is_production():
+            return None
+        if not _dashboard_auth_configured() and not self.service.accounts.has_accounts():
             return "dashboard", "admin"
         auth_header = self.headers.get("Authorization", "")
         if not auth_header.startswith("Basic "):
@@ -9479,9 +9665,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             return None
 
-        matched = configured_users.get(username)
-        if matched and secrets.compare_digest(password, matched["password"]):
-            return username, matched["role"]
+        matched = self.service.accounts.authenticate(username, password)
+        if matched:
+            return matched["username"], matched["role"]
         return None
 
     def _send_basic_auth_challenge(self) -> None:
@@ -9513,18 +9699,29 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             return None
 
 
+class GuestThreadingHTTPServer(ThreadingHTTPServer):
+    """Bounded-process web server tuned for short concurrent browser/API bursts."""
+
+    request_queue_size = 128
+    daemon_threads = True
+    block_on_close = True
+
+
 def create_web_server(
     host: str = "127.0.0.1",
     port: int = 8601,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> ThreadingHTTPServer:
     """Create the HTTP server for the direct web interface."""
-    server = ThreadingHTTPServer((host, port), GuestWebRequestHandler)
-    GuestWebRequestHandler.service = GuestWebService(Path(db_path))
     configured_secret = os.environ.get(DASHBOARD_SESSION_SECRET_ENV_VAR, "").strip()
+    _validate_production_auth_config(configured_secret)
+    server = GuestThreadingHTTPServer((host, port), GuestWebRequestHandler)
+    effective_secret = configured_secret or secrets.token_urlsafe(32)
+    GuestWebRequestHandler.service = GuestWebService(Path(db_path), account_encryption_secret=effective_secret)
     session_ttl = int(os.environ.get(DASHBOARD_SESSION_TTL_ENV_VAR, str(8 * 60 * 60)) or str(8 * 60 * 60))
-    GuestWebRequestHandler._session_signer = SessionSigner(configured_secret or secrets.token_urlsafe(32), ttl_seconds=session_ttl)
+    GuestWebRequestHandler._session_signer = SessionSigner(effective_secret, ttl_seconds=session_ttl)
     GuestWebRequestHandler._login_limiter = LoginRateLimiter()
+    GuestWebRequestHandler._recovery_limiter = LoginRateLimiter(max_failures=6, window_seconds=5 * 60, lock_seconds=15 * 60)
     return server
 
 

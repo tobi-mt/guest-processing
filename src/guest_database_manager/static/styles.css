@@ -2237,7 +2237,7 @@ button:active:not(:disabled) {
   padding: 0.4rem; border: 1px solid rgba(23, 97, 80, 0.18); border-radius: 999px;
   background: rgba(255, 252, 247, 0.96); box-shadow: 0 8px 24px rgba(55, 42, 28, 0.12); backdrop-filter: blur(12px);
 }
-.workspace-utility-bar button, .mobile-workspace-nav button { border: 0; background: transparent; color: #176150; font: inherit; font-weight: 750; cursor: pointer; padding: 0.55rem 0.7rem; }
+.workspace-utility-bar button, .workspace-utility-bar a, .mobile-workspace-nav button { border: 0; background: transparent; color: #176150; font: inherit; font-weight: 750; cursor: pointer; padding: 0.55rem 0.7rem; text-decoration: none; }
 .workspace-utility-bar kbd { font: inherit; opacity: 0.65; }
 .workspace-dialog { width: min(720px, calc(100vw - 2rem)); max-height: min(760px, calc(100vh - 2rem)); border: 0; border-radius: 1.5rem; padding: 1.5rem; background: #fffdf9; color: #2f251d; box-shadow: 0 28px 80px rgba(30, 25, 18, 0.28); }
 .workspace-dialog::backdrop { background: rgba(31, 25, 18, 0.52); backdrop-filter: blur(3px); }
@@ -2262,7 +2262,7 @@ html[data-density="compact"] .guest-card, html[data-density="compact"] .episode-
 @media (max-width: 760px) {
   body { padding-bottom: 4.25rem; }
   .workspace-utility-bar { display: none; }
-  .mobile-workspace-nav { position: fixed; z-index: 95; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(4, 1fr); background: #fffdf9; border-top: 1px solid #d9cec0; box-shadow: 0 -6px 24px rgba(40, 30, 20, 0.1); }
+  .mobile-workspace-nav { position: fixed; z-index: 95; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr)); background: #fffdf9; border-top: 1px solid #d9cec0; box-shadow: 0 -6px 24px rgba(40, 30, 20, 0.1); }
   .mobile-workspace-nav a, .mobile-workspace-nav button { min-width: 0; padding: 0.9rem 0.25rem; text-align: center; color: #176150; text-decoration: none; font-size: 0.8rem; font-weight: 750; }
   .command-result { grid-template-columns: auto minmax(0, 1fr); }
   .command-actions { grid-column: 2; grid-row: auto; flex-direction: row; }

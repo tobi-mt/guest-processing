@@ -20,6 +20,10 @@
         box-sizing: border-box;
       }
 
+      [hidden] {
+        display: none !important;
+      }
+
       body {
         margin: 0;
         min-height: 100vh;
@@ -113,6 +117,10 @@
           Password
           <input id="password" name="password" type="password" autocomplete="current-password" required />
         </label>
+        <label id="otp-label" hidden>
+          Authentication code
+          <input id="otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" />
+        </label>
         <button id="submit" type="submit">Sign In</button>
         <p id="message" class="message" aria-live="polite"></p>
       </form>
@@ -143,6 +151,7 @@
         const payload = {
           username: form.username.value.trim(),
           password: form.password.value,
+          otp: form.otp.value.trim(),
           next: nextPath(),
         };
 
@@ -156,6 +165,11 @@
 
           const data = await response.json();
           if (!response.ok) {
+            if (data.mfa_required) {
+              document.getElementById("otp-label").hidden = false;
+              form.otp.required = true;
+              form.otp.focus();
+            }
             throw new Error(data.error || "Login failed");
           }
 

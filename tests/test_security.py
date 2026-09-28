@@ -18,6 +18,7 @@ def test_signed_session_expires_and_rejects_tampering():
 
 
 def test_role_hierarchy_is_explicit():
+    assert role_allows("super_admin", "admin")
     assert role_allows("admin", "operator")
     assert role_allows("operator", "viewer")
     assert not role_allows("viewer", "operator")

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Account administration · Mirror Talk</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260927.1">
+  <style>
+    body{background:#f5efe5;color:#30271e}.accounts-page{width:min(980px,calc(100% - 2rem));margin:2rem auto 5rem}.accounts-header{display:flex;justify-content:space-between;gap:1rem;align-items:center}.account-panel{background:#fffdf9;border:1px solid #ded3c6;border-radius:1.2rem;padding:1.25rem;margin-top:1rem}.account-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem}.account-form label{display:grid;gap:.35rem;font-weight:700}.account-form input,.account-form select{min-height:44px;border:1px solid #cfc2b3;border-radius:.7rem;padding:.65rem;font:inherit}.account-form button,.account-actions button{min-height:44px;border:0;border-radius:999px;padding:.65rem 1rem;background:#176150;color:white;font-weight:750;cursor:pointer}.account-form button{grid-column:1/-1}.account-list{display:grid;gap:.7rem}.account-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;border:1px solid #e5dbcf;border-radius:.9rem;padding:1rem}.account-row p{margin:.2rem 0;color:#6d5c4b}.account-actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}.account-actions select{min-height:44px}.account-actions .secondary{background:#e9e1d6;color:#3b3025}.message{min-height:1.4rem}.error{color:#902f23}.recovery-output{overflow-wrap:anywhere;background:#f1ede5;padding:.7rem;border-radius:.6rem}@media(max-width:680px){.account-form,.account-row{grid-template-columns:1fr}.accounts-header{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body><main class="accounts-page">
+  <header class="accounts-header"><div><p class="eyebrow">Super administrator</p><h1>Accounts and access</h1><p>Create identities, assign roles, suspend access, and issue one-time recovery links.</p></div><a href="/dashboard">Back to dashboard</a></header>
+  <section class="account-panel"><h2>Create account</h2><form id="account-form" class="account-form">
+    <label>Username<input name="username" autocomplete="off" required minlength="3"></label>
+    <label>Display name<input name="display_name" autocomplete="name"></label>
+    <label>Email<input name="email" type="email" autocomplete="email"></label>
+    <label>Role<select name="role"><option value="viewer">Viewer</option><option value="operator">Operator</option><option value="admin">Admin</option><option value="super_admin">Super admin</option></select></label>
+    <p>The teammate will set their own password using a one-time invitation link.</p>
+    <button type="submit">Create account and invitation</button><p id="form-message" class="message" aria-live="polite"></p>
+  </form></section>
+  <section class="account-panel"><h2>Team accounts</h2><div id="account-list" class="account-list" aria-live="polite">Loading…</div><p id="action-message" class="message" aria-live="polite"></p></section>
+</main><script src="/static/accounts.js?v=20260927.2" defer></script></body></html>
