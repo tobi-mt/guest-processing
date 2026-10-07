@@ -1454,6 +1454,36 @@ class SchemaManager:
         conn.execute("CREATE INDEX idx_dashboard_account_events ON dashboard_account_events(account_id, created_at DESC)")
 
     @staticmethod
+    def _migration_036_repair_dashboard_account_events(conn: sqlite3.Connection) -> None:
+        """Repair incomplete account schemas whose migration ledger says they are current."""
+        SchemaManager._add_column_if_missing(
+            conn, "dashboard_accounts", "must_set_password", "INTEGER NOT NULL DEFAULT 0 CHECK(must_set_password IN (0, 1))"
+        )
+        SchemaManager._add_column_if_missing(conn, "dashboard_accounts", "password_changed_at", "TIMESTAMP")
+        SchemaManager._add_column_if_missing(
+            conn, "dashboard_accounts", "mfa_enabled", "INTEGER NOT NULL DEFAULT 0 CHECK(mfa_enabled IN (0, 1))"
+        )
+        SchemaManager._add_column_if_missing(conn, "dashboard_accounts", "mfa_secret_ciphertext", "TEXT")
+        SchemaManager._add_column_if_missing(conn, "dashboard_accounts", "mfa_pending_secret_ciphertext", "TEXT")
+        SchemaManager._add_column_if_missing(conn, "dashboard_accounts", "mfa_last_counter", "INTEGER")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS dashboard_account_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMP NOT NULL,
+                FOREIGN KEY(account_id) REFERENCES dashboard_accounts(id) ON DELETE CASCADE
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dashboard_account_events "
+            "ON dashboard_account_events(account_id, created_at DESC)"
+        )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1494,6 +1524,7 @@ class SchemaManager:
             (33, "local_analytics_collectors", SchemaManager._migration_033_local_analytics_collectors),
             (34, "guest_facing_timezone", SchemaManager._migration_034_guest_facing_timezone),
             (35, "dashboard_accounts", SchemaManager._migration_035_dashboard_accounts),
+            (36, "repair_dashboard_account_events", SchemaManager._migration_036_repair_dashboard_account_events),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

@@ -5,6 +5,8 @@
 .insights-nav{display:grid;gap:10px;align-content:start}
 .insights-nav a{min-height:44px}
 .insights-shell main{display:grid;gap:20px}
+.analytics-import-panel{display:grid;gap:20px;scroll-margin-top:20px}
+.reach-import-form,.reach-experiment-form{margin-top:0}
 .insights-quality{display:grid;grid-template-columns:1.2fr 1fr auto;gap:24px;align-items:center;border-left:5px solid var(--accent)}
 .insights-quality p{margin:.35rem 0 0;color:var(--muted)}
 .coverage-pill{display:inline-flex;margin-right:10px;padding:5px 10px;border-radius:999px;background:#efe8d8;text-transform:uppercase;font-size:.7rem;font-weight:800;letter-spacing:.06em}

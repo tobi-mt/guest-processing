@@ -30,7 +30,7 @@
       if (show) visible += 1;
     });
     $('#prospect-count').textContent = `${visible} of ${cards.length} partners shown`;
-    $('#partner-filter-empty').hidden = visible !== 0;
+    $('#partner-filter-empty').hidden = cards.length === 0 || visible !== 0;
     $('#clear-partner-filters').hidden = !query && activeStage === 'all';
   }
   function showAllPartners() {

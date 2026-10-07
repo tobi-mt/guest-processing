@@ -18,7 +18,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
@@ -67,6 +67,45 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     } <= episode_columns
     assert "content_class" not in interview_columns
     assert "guest_timezone" in interview_columns
+
+
+def test_account_event_repair_migration_restores_missing_table(tmp_path):
+    db_path = tmp_path / "account-events-repair.db"
+    SchemaManager.create_tables(str(db_path))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE dashboard_account_events")
+        for column in (
+            "mfa_last_counter",
+            "mfa_pending_secret_ciphertext",
+            "mfa_secret_ciphertext",
+            "mfa_enabled",
+            "password_changed_at",
+            "must_set_password",
+        ):
+            conn.execute(f"ALTER TABLE dashboard_accounts DROP COLUMN {column}")
+        conn.execute("DELETE FROM schema_migrations WHERE version = 36")
+
+    SchemaManager.create_tables(str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        account_columns = {row[1] for row in conn.execute("PRAGMA table_info(dashboard_accounts)")}
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dashboard_account_events'"
+        ).fetchone()
+        index = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_dashboard_account_events'"
+        ).fetchone()
+    assert table == ("dashboard_account_events",)
+    assert index == ("idx_dashboard_account_events",)
+    assert {
+        "must_set_password",
+        "password_changed_at",
+        "mfa_enabled",
+        "mfa_secret_ciphertext",
+        "mfa_pending_secret_ciphertext",
+        "mfa_last_counter",
+    } <= account_columns
+    assert 36 in _versions(db_path)
 
 
 def test_shadow_learning_migration_rolls_back_ddl_on_failure(monkeypatch, tmp_path):

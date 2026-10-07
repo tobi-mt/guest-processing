@@ -1573,6 +1573,24 @@
   gap: 0.65rem;
 }
 
+.planning-destination-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.planning-destination-grid .operations-preview {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.planning-destination-grid .operations-preview p {
+  margin: 0;
+}
+
+.planning-destination-grid .secondary-button {
+  justify-self: start;
+}
+
 .episode-editor-modal-content {
   width: min(980px, 100%);
   max-width: 980px;

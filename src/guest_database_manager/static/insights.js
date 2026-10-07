@@ -1,7 +1,7 @@
 const escapeHtml = window.PerformanceUtils?.escapeHtml || ((value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[character]));
 const number = (value) => value == null ? "Unavailable" : new Intl.NumberFormat().format(Number(value));
 const safeUrl = (value) => { try { const parsed = new URL(String(value)); return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "#"; } catch { return "#"; } };
-const empty = (message) => `<div class="insights-empty"><strong>Not measured yet</strong><p>${escapeHtml(message)}</p><a href="/planning?tab=scheduling_intelligence#analytics-import">Import verified analytics</a></div>`;
+const empty = (message) => `<div class="insights-empty"><strong>Not measured yet</strong><p>${escapeHtml(message)}</p><a href="#analytics-import">Import verified analytics</a></div>`;
 const csrfToken = () => decodeURIComponent((document.cookie.match(/(?:^|;\s*)dashboard_csrf=([^;]+)/) || [])[1] || "");
 const metricLabel = (value) => String(value || "").replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
 const duration = (seconds) => seconds == null ? "Unavailable" : `${Math.floor(Number(seconds) / 60)}m ${Math.round(Number(seconds) % 60)}s`;
@@ -137,7 +137,7 @@ function render(payload) {
   const coverage = payload.source_coverage || {}; const publicSources = coverage.public || []; const privateSources = coverage.private || [];
   renderConnections(payload.analytics_connectors || {});
   const automated = privateSources.filter((source) => source.connection_mode === "automated"); const limited = privateSources.filter((source) => source.connection_mode === "provider_limited");
-  const sourceRow = (source) => { const metrics = source.metrics_present?.length ? source.metrics_present : source.metrics || []; const shown = metrics.slice(0, 5); return `<article class="source-row"><div><strong>${escapeHtml(source.name)}</strong><span class="source-status ${escapeHtml(source.status)}">${escapeHtml(source.status === "data_present" ? "connected" : "access required")}</span></div><small>${source.status === "data_present" ? `${Number(source.observation_count || 0)} observations · through ${escapeHtml(source.latest_period_end || "unknown")}` : escapeHtml(source.access)}</small><p>${source.metrics_present?.length ? "Measured" : "Can provide"}: ${shown.map(metricLabel).map(escapeHtml).join(", ")}${metrics.length > shown.length ? ` +${metrics.length - shown.length} more` : ""}</p>${source.connection_mode === "provider_limited" ? '<a class="source-import-link" href="/planning?tab=scheduling_intelligence#analytics-import">Open supervised import</a>' : ""}</article>`; };
+  const sourceRow = (source) => { const metrics = source.metrics_present?.length ? source.metrics_present : source.metrics || []; const shown = metrics.slice(0, 5); return `<article class="source-row"><div><strong>${escapeHtml(source.name)}</strong><span class="source-status ${escapeHtml(source.status)}">${escapeHtml(source.status === "data_present" ? "connected" : "access required")}</span></div><small>${source.status === "data_present" ? `${Number(source.observation_count || 0)} observations · through ${escapeHtml(source.latest_period_end || "unknown")}` : escapeHtml(source.access)}</small><p>${source.metrics_present?.length ? "Measured" : "Can provide"}: ${shown.map(metricLabel).map(escapeHtml).join(", ")}${metrics.length > shown.length ? ` +${metrics.length - shown.length} more` : ""}</p>${source.connection_mode === "provider_limited" ? '<a class="source-import-link" href="#analytics-import">Open supervised import</a>' : ""}</article>`; };
   document.getElementById("source-coverage").innerHTML = `<div class="source-column"><h3>Public distribution <span>${Number(coverage.public_available || 0)}/${Number(coverage.public_expected || 0)}</span></h3>${publicSources.length ? publicSources.map((source) => `<article class="source-row"><div><strong>${escapeHtml(source.source_name)}</strong><span class="source-status ${escapeHtml(source.status)}">${escapeHtml(source.status)}</span></div><small>Checked ${escapeHtml(source.checked_at || "not yet")} · ${number(source.latency_ms)} ms</small></article>`).join("") : empty("The daily public-source monitor has not completed its first run.")}</div><div class="source-column"><h3>Automated evidence <span>${Number(coverage.automated_connected || 0)}/${Number(coverage.automated_expected || 0)}</span></h3>${automated.map(sourceRow).join("")}</div><div class="source-column"><h3>Provider-limited <span>${Number(coverage.provider_limited_count || 0)}</span></h3>${limited.map(sourceRow).join("")}</div>`;
   document.getElementById("platform-grid").innerHTML = (payload.platforms || []).map((platform) => `<a class="platform-card" href="${escapeHtml(safeUrl(platform.url))}" target="_blank" rel="noopener noreferrer"><span>${escapeHtml(platform.kind)}</span><strong>${escapeHtml(platform.name)}</strong><small>Verified ${escapeHtml(platform.verified_on)} · ${escapeHtml(platform.source)}</small></a>`).join("");
   document.getElementById("provider-strength").innerHTML = providers.length ? providers.map((item) => `<article class="provider-row"><div><strong>${escapeHtml(providerLabel(item.provider))}</strong><span class="freshness ${escapeHtml(item.freshness)}">${escapeHtml(item.freshness)}</span></div><p class="metric-pairs">${Object.entries(item.metrics || {}).map(([key,value]) => `<span>${escapeHtml(metricLabel(key))}<strong>${number(value)}</strong></span>`).join("")}</p><small>${escapeHtml(item.period_start)} – ${escapeHtml(item.period_end)} · ${item.sources.length} verified source${item.sources.length === 1 ? "" : "s"}</small></article>`).join("") : empty("No private analytics have been collected.");
@@ -154,4 +154,25 @@ async function load() {
   render(await connectorRequest("/api/podcast-insights"));
 }
 document.getElementById("insights-refresh")?.addEventListener("click", () => load().catch((error) => { document.getElementById("insights-quality").textContent = error.message; }));
+document.getElementById("growth-experiment-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = document.getElementById("growth-experiment-message");
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  message.textContent = "Registering experiment…";
+  message.className = "message pending";
+  try {
+    const result = await connectorRequest("/api/growth-intelligence/experiments", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) });
+    message.textContent = `Registered ${result.name} as a draft experiment.`;
+    message.className = "message success";
+    form.reset();
+  } catch (error) {
+    message.textContent = error.message;
+    message.className = "message error";
+  } finally {
+    button.disabled = false;
+  }
+});
+window.addEventListener("growth-intelligence-changed", () => load().catch(() => {}));
 load().catch((error) => { document.getElementById("insights-quality").textContent = error.message; });

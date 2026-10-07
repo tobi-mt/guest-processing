@@ -4,14 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Mirror Talk Podcast Reach</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260906.1">
-  <link rel="stylesheet" href="/static/insights.css?v=20260926.5">
+  <link rel="stylesheet" href="/static/styles.css?v=20261007.1">
+  <link rel="stylesheet" href="/static/operations.css?v=20261007.2">
+  <link rel="stylesheet" href="/static/insights.css?v=20261007.1">
 </head>
 <body>
 <div class="page-shell insights-shell">
   <header class="hero insights-hero">
     <div><p class="eyebrow">Podcast intelligence</p><h1>Source-backed reach, without guesswork.</h1><p class="hero-copy">A live view of Mirror Talk across YouTube, the website, podcast distribution, devices, geography, and measurement coverage.</p></div>
-    <nav class="insights-nav" aria-label="Podcast intelligence workspaces"><a class="dashboard-link" href="/planning?tab=scheduling_intelligence#analytics-import">Import analytics</a><a class="dashboard-link" href="/planning">Episode planning</a><a class="dashboard-link" href="/dashboard">Guest dashboard</a></nav>
+    <nav class="insights-nav" aria-label="Podcast intelligence workspaces"><a class="dashboard-link" href="#analytics-import">Import analytics</a><a class="dashboard-link" href="/planning">Episode Planning</a><a class="dashboard-link" href="/partners">Partner Intelligence</a><a class="dashboard-link" href="/dashboard">Guest Dashboard</a></nav>
   </header>
   <main>
     <section id="insights-quality" class="panel insights-quality" aria-live="polite">Loading source coverage…</section>
@@ -28,6 +29,25 @@
       <article class="panel"><div class="section-heading"><div><p class="eyebrow">Geography</p><h2>Where people listen</h2></div></div><div id="country-breakdown"></div><details class="city-breakdown"><summary>Top Apple cities</summary><div id="city-breakdown"></div></details></article>
     </section>
     <section class="panel"><div class="section-heading"><div><p class="eyebrow">Movement over time</p><h2>Apple and Spotify monthly trends</h2></div><button id="insights-refresh" class="secondary-button" type="button">Refresh</button></div><div id="reach-trend" class="reach-trend"></div></section>
+    <section id="analytics-import" class="panel analytics-import-panel" aria-labelledby="analytics-import-title">
+      <div class="section-heading"><div><p class="eyebrow">Verified evidence</p><h2 id="analytics-import-title">Import performance analytics</h2><p class="tool-copy">Preview column mapping, episode links, invalid values, and duplicates before anything is written.</p></div></div>
+      <div class="provider-export-grid" aria-label="Provider export assistants">
+        <article class="provider-export-card"><div><span class="status-chip pending">Current podcast host</span><h3>Spotify for Creators</h3></div><p>Import the verified export for plays, audience, downloads, discovery, devices, geography, and episode performance.</p><div class="provider-export-actions"><a class="secondary-button" href="https://creators.spotify.com/analytics" target="_blank" rel="noopener noreferrer">Open Spotify analytics</a><button class="ghost-button" type="button" data-import-provider="spotify">Prepare Spotify import</button></div></article>
+        <article class="provider-export-card"><div><span class="status-chip pending">Supervised export</span><h3>Apple Podcasts Connect</h3></div><p>Import listeners, engaged listeners, plays, average consumption, devices, countries, and episode performance.</p><div class="provider-export-actions"><a class="secondary-button" href="https://podcastsconnect.apple.com/analytics" target="_blank" rel="noopener noreferrer">Open Apple analytics</a><button class="ghost-button" type="button" data-import-provider="apple_podcasts">Prepare Apple import</button></div></article>
+        <article class="provider-export-card"><div><span class="status-chip pending">Other verified source</span><h3>Website, email, or another host</h3></div><p>Use a canonical export from another provider. Do not import the same reporting period twice.</p><div class="provider-export-actions"><button class="ghost-button" type="button" data-import-provider="podcast_host">Prepare other import</button></div></article>
+      </div>
+      <form id="analytics-import-form" class="guest-form reach-import-form">
+        <label class="full-width">Analytics CSV<input id="analytics-file" name="file" type="file" accept=".csv,text/csv" required></label>
+        <label>Provider<select name="provider" required><option value="">Choose provider</option><option value="youtube">YouTube</option><option value="spotify">Spotify</option><option value="apple_podcasts">Apple Podcasts</option><option value="podcast_host">Podcast host</option><option value="website">Website</option><option value="email">Email platform</option><option value="manual">Other verified source</option></select></label>
+        <label>Source reference<input name="source_reference" required placeholder="Filled from the selected filename"></label>
+        <details id="analytics-mapping-panel" class="full-width analytics-mapping-panel" open><summary>Review column mapping</summary><p class="field-hint">Known Spotify and Apple exports are mapped automatically. Other files require reporting-period dates plus metric names and values.</p><div id="analytics-mapping-fields" class="analytics-mapping-grid"></div></details>
+        <div class="form-actions full-width"><button id="analytics-preview-button" type="submit" class="primary-button">Preview data quality</button><button id="analytics-import-button" type="button" class="secondary-button" disabled>Import valid rows</button></div>
+      </form>
+      <p id="analytics-import-message" class="message" aria-live="polite"></p>
+      <div id="analytics-preview" class="analytics-preview hidden" aria-live="polite"></div>
+      <div id="analytics-import-history" class="analytics-import-history" aria-live="polite"><p>Loading recent imports…</p></div>
+    </section>
+    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Measured improvement</span><strong>Register a reach experiment</strong></span><span>Show form</span></summary><p class="disclosure-intro">Define a governed comparison only after its evidence source and success metric are clear.</p><form id="growth-experiment-form" class="guest-form reach-experiment-form"><label>Name<input name="name" required></label><label>Primary metric<select name="primary_metric" required><option value="organic_reach">Organic reach</option><option value="downloads_7d">7-day downloads</option><option value="conversion_rate_pct">Conversion rate</option><option value="return_rate_pct">Return rate</option></select></label><label class="full-width">Hypothesis<textarea name="hypothesis" rows="3" required></textarea></label><label>Control<input name="control_label" required placeholder="Tuesday 17:00"></label><label>Treatment<input name="treatment_label" required placeholder="Tuesday 05:00"></label><label>Starts on<input name="starts_on" type="date"></label><label>Ends on<input name="ends_on" type="date"></label><div class="form-actions full-width"><button type="submit" class="secondary-button">Register draft experiment</button></div></form><p id="growth-experiment-message" class="message" aria-live="polite"></p></details>
     <section class="panel" aria-labelledby="platform-title"><div class="section-heading"><div><p class="eyebrow">Distribution footprint</p><h2 id="platform-title">Where Mirror Talk is available</h2></div><p>Verified public listings; availability is not an audience count.</p></div><div id="platform-grid" class="platform-grid"></div></section>
     <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Private analytics</span><strong id="connections-title">Connection health</strong></span><span>Show details</span></summary><p class="disclosure-intro">Read-only authorization; platform passwords are never stored, and Apple/Spotify browser sessions remain local.</p><div id="analytics-connections" class="analytics-connections" aria-live="polite">Loading connection health…</div></details>
     <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Evidence coverage</span><strong id="source-coverage-title">Sources and remaining gaps</strong></span><span>Show details</span></summary><p class="disclosure-intro">Automated sources are separated from provider-limited sources.</p><div id="source-coverage" class="source-coverage"></div></details>
@@ -35,6 +55,7 @@
   </main>
 </div>
 <script src="/static/performance-utils.js?v=20260807.1"></script>
-<script src="/static/insights.js?v=20260926.5" defer></script>
+<script src="/static/planning-intelligence.js?v=20261007.1" defer></script>
+<script src="/static/insights.js?v=20261007.1" defer></script>
 </body>
 </html>

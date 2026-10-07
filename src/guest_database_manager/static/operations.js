@@ -319,16 +319,18 @@ function getYearValue(value) {
   return date ? String(date.getFullYear()) : "";
 }
 
-function updateResultsMeta(node, shown, total, emptyMessage, filteredMessage) {
+function updateResultsMeta(node, matched, total, visible, emptyMessage, filteredMessage) {
   if (!total) {
     node.textContent = emptyMessage;
     return;
   }
-  if (shown === total) {
+  if (matched === total && visible === matched) {
     node.textContent = `Showing all ${total} item${total === 1 ? "" : "s"}.`;
     return;
   }
-  node.textContent = `Showing ${shown} of ${total} item${total === 1 ? "" : "s"} after filtering. ${filteredMessage}`;
+  const filterText = matched < total ? `${matched} of ${total} items match the current view.` : `${matched} items match the current view.`;
+  const visibleText = visible < matched ? ` Displaying ${visible} right now.` : "";
+  node.textContent = `${filterText}${visibleText} ${filteredMessage}`.trim();
 }
 
 function updatePresetButtons(buttons, activeValue, dataName) {
@@ -946,15 +948,16 @@ async function updateInterviewStatus(interview, payload, pendingLabel, successLa
 
 function renderInterviews(interviews, totalCount) {
   interviewList.innerHTML = "";
+  const visibleInterviews = interviews.slice(0, visibleInterviewCount);
   updateResultsMeta(
     interviewResultsMeta,
     interviews.length,
     totalCount,
+    visibleInterviews.length,
     "",
     "Refine the search, year, or confirmation filters to narrow the calendar."
   );
 
-  const visibleInterviews = interviews.slice(0, visibleInterviewCount);
   if (!interviews.length) {
     interviewList.innerHTML = totalCount
       ? "<p class='guest-summary'>No interviews match the current controls.</p>"
@@ -1665,19 +1668,17 @@ function renderInterviews(interviews, totalCount) {
 
 function renderReminderCandidates(interviews, totalCount) {
   reminderList.innerHTML = "";
+  const visibleReminders = interviews.slice(0, visibleReminderCount);
   updateResultsMeta(
     reminderResultsMeta,
     interviews.length,
     totalCount,
+    visibleReminders.length,
     "No reminder emails are due for this week.",
     "Use search to focus on one guest or conversation."
   );
 
-  const visibleReminders = interviews.slice(0, visibleReminderCount);
   if (!interviews.length) {
-    reminderList.innerHTML = totalCount
-      ? "<p class='guest-summary'>No reminders match the current search.</p>"
-      : "<p class='guest-summary'>No reminder emails are due for this week.</p>";
     reminderLoadMoreButton.classList.add("hidden");
     return;
   }

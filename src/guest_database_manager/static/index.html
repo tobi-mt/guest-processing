@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Guest Database Manager</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260927.2" />
+    <title>Mirror Talk Guest Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20261007.1" />
   </head>
   <body>
     <div class="page-shell">
@@ -99,7 +99,7 @@
             <a class="dashboard-link" href="/operations">Podcast Operations</a>
             <a class="dashboard-link" href="/planning">Episode Planning</a>
             <a class="dashboard-link" href="/insights">Podcast Reach</a>
-            <a class="dashboard-link" href="/planning?tab=scheduling_intelligence#exception-center">Exception Center</a>
+            <a class="dashboard-link" href="/partners">Partner Intelligence</a>
             <a class="dashboard-link" href="/availability">Availability</a>
             <a class="dashboard-link" href="/intake">Public Intake Form</a>
           </nav>
@@ -319,24 +319,11 @@
           <div class="guest-card-details-body">
             <p class="guest-card-section-label">Actions</p>
             <div class="guest-actions">
-          <button data-action="edit" class="ghost-button small-button">Edit</button>
-          <button data-action="copy" class="ghost-button small-button">Copy Intake</button>
-          <button data-action="activity" class="ghost-button small-button">Activity</button>
-          <button data-action="research" class="ghost-button small-button">Research Guest</button>
-          <button data-action="ai_email_draft" class="ai-button small-button" title="Generate AI email draft">✨ AI Email</button>
-          <button data-action="ai_questions" class="ai-button small-button" title="Generate interview questions">❓ Questions</button>
-          <button data-action="ai_analysis" class="ai-button small-button" title="Deep AI analysis">🔍 Analysis</button>
-          <button data-action="resend_booking_link" class="ghost-button small-button">Resend Booking Link</button>
-          <button data-action="resend_personal_application" class="ghost-button small-button">Resend Personal Application</button>
-          <button data-action="move_to_planning" class="ghost-button small-button">Move To Planning</button>
-          <button data-action="accepted_email" class="secondary-button small-button">Accept + Send</button>
-          <button data-action="accepted" class="primary-button small-button">Accept</button>
-          <button data-action="needs_information" class="ghost-button small-button">Request Information</button>
-          <button data-action="rejected_email" class="secondary-button small-button">Decline + Email</button>
-          <button data-action="rejected" class="secondary-button small-button">Reject</button>
-          <button data-action="skipped" class="secondary-button small-button">Skip</button>
-          <button data-action="unprocessed" class="ghost-button small-button">Reset</button>
-          <button data-action="delete" class="danger-button small-button">Delete</button>
+              <div class="guest-action-group"><span>Guest record</span><div><button data-action="edit" class="ghost-button small-button">Edit</button><button data-action="copy" class="ghost-button small-button">Copy Intake</button><button data-action="activity" class="ghost-button small-button">Activity</button><button data-action="research" class="ghost-button small-button">Research Guest</button></div></div>
+              <div class="guest-action-group"><span>Preparation</span><div><button data-action="ai_email_draft" class="ai-button small-button" title="Generate AI email draft">✨ AI Email</button><button data-action="ai_questions" class="ai-button small-button" title="Generate interview questions">❓ Questions</button><button data-action="ai_analysis" class="ai-button small-button" title="Deep AI analysis">🔍 Analysis</button></div></div>
+              <div class="guest-action-group"><span>Workflow</span><div><button data-action="resend_booking_link" class="ghost-button small-button">Resend Booking Link</button><button data-action="resend_personal_application" class="ghost-button small-button">Resend Personal Application</button><button data-action="move_to_planning" class="ghost-button small-button">Move To Planning</button></div></div>
+              <div class="guest-action-group"><span>Decision</span><div><button data-action="accepted_email" class="secondary-button small-button">Accept + Send</button><button data-action="accepted" class="primary-button small-button">Accept</button><button data-action="needs_information" class="ghost-button small-button">Request Information</button><button data-action="rejected_email" class="secondary-button small-button">Decline + Email</button><button data-action="rejected" class="secondary-button small-button">Decline</button><button data-action="skipped" class="secondary-button small-button">Skip</button></div></div>
+              <div class="guest-action-group guest-action-group-danger"><span>Recovery and removal</span><div><button data-action="unprocessed" class="ghost-button small-button">Reset Decision</button><button data-action="delete" class="danger-button small-button">Delete Guest</button></div></div>
             </div>
             <div class="card-action-feedback"></div>
             <div class="inline-editor hidden"></div>

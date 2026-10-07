@@ -12,8 +12,13 @@ from guest_database_manager.lifecycle import LifecycleTransitionError, validate_
         ("interview", "scheduled", "completed"),
         ("confirmation", "pending", "confirmed"),
         ("production", "editing", "ready"),
+        ("production", "recorded", "released"),
+        ("production", "released", "editing"),
         ("release", "scheduled", "released"),
+        ("release", "unplanned", "released"),
+        ("release", "released", "unplanned"),
         ("promotion", "needs_assets", "ready"),
+        ("promotion", "unknown", "released"),
         ("communication", "retrying", "sent"),
     ],
 )
@@ -30,7 +35,6 @@ def test_same_state_is_idempotent():
     [
         ("application", "accepted", "submitted"),
         ("interview", "completed", "scheduled"),
-        ("release", "released", "unplanned"),
         ("communication", "sent", "retrying"),
     ],
 )

@@ -37,6 +37,8 @@ def test_exception_center_combines_evidence_content_and_urgent_workflow(temp_db)
     assert "content:missing_transcript" in keys
     assert "workflow:episode:1:readiness" in keys
     assert payload["counts"]["high"] >= 2
+    evidence_item = next(item for item in payload["items"] if item["key"] == "evidence:no_growth_data")
+    assert evidence_item["href"] == "/insights#analytics-import"
 
 
 def test_exception_center_is_clear_when_sources_have_no_findings(temp_db):

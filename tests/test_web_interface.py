@@ -887,7 +887,9 @@ def test_web_service_can_research_guest_and_store_public_profile_context(monkeyp
     assert researched_guest["guest_research"]["research_mode"] == "manual"
     timing = researched_guest["guest_research"]["release_timing_recommendation"]
     assert timing["recommended_windows"]
-    assert timing["recommended_windows"][0]["month"] in {4, 10}
+    first_window = timing["recommended_windows"][0]
+    assert set(first_window["matched_signals"]).intersection({"healing", "leadership"})
+    assert datetime.fromisoformat(first_window["window_start"]).date() > datetime.now(timezone.utc).date()
     assert timing["basis"].startswith("Saved public-profile topics")
     assert researched_guest["guest_research"]["freshness"]["status"] in {"fresh", "aging", "stale", "unknown"}
 

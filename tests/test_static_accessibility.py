@@ -169,6 +169,14 @@ def test_operations_hero_uses_reusable_ai_status_styles() -> None:
     assert "style=" not in ai_card.group(1)
 
 
+def test_weekly_confirmations_uses_one_empty_state_message() -> None:
+    html = (STATIC_ROOT / "operations.html").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
+
+    assert javascript.count("No reminder emails are due for this week.") == 1
+    assert "operations.js?v=20261007.2" in html
+
+
 def test_routine_creation_forms_hide_optional_fields_and_offer_safe_defaults() -> None:
     dashboard = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
     operations = (STATIC_ROOT / "operations.html").read_text(encoding="utf-8")
@@ -265,7 +273,7 @@ def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20260925.3' in html
+    assert 'operations.css?v=20261007.2' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -324,16 +332,16 @@ def test_partner_recipient_filter_reveals_actions_and_preserves_selected_recipie
     assert "clearFilters:Boolean(changesStage)" in javascript
     assert "revealProspect(prospectId)" in javascript
     assert "Continue: ${stageLabel[stage]}" in javascript
+    assert "cards.length === 0 || visible !== 0" in javascript
+    assert "partners.js?v=20261007.1" in html
 
 
 def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
-    html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+    html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
 
-    assert 'id="growth-intelligence-dashboard" aria-live="polite"' in html
     assert 'id="analytics-import-message" class="message" aria-live="polite"' in html
-    assert 'planning-intelligence.js?v=20260925.2' in html
-    assert 'planning.js?v=20260925.2' in html
+    assert 'planning-intelligence.js?v=20261007.1' in html
     assert 'return String(value ?? "")' in javascript
     assert "escapeHtml(reach.organic ?? 0)" in javascript
     assert "escapeHtml(reach.paid ?? 0)" in javascript
@@ -349,7 +357,7 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     for name in ("index.html", "operations.html", "planning.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
         assert 'workspace-shell.js?v=20260927.3' in html
-        assert 'styles.css?v=20260927.2' in html
+        assert 'styles.css?v=20261007.1' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -358,6 +366,16 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     assert 'mirror-talk-details-state' in shell
     assert 'data-toggle-density' in shell
     assert ".mobile-workspace-nav" in styles
+
+
+def test_guest_actions_are_grouped_by_user_intent() -> None:
+    html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
+    styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    for label in ("Guest record", "Preparation", "Workflow", "Decision", "Recovery and removal"):
+        assert label in html
+    assert "guest-action-group-danger" in html
+    assert ".guest-action-group > span" in styles
 
 
 def test_account_surfaces_have_labeled_fields_and_status_regions() -> None:
@@ -377,15 +395,16 @@ def test_account_surfaces_have_labeled_fields_and_status_regions() -> None:
 
 
 def test_guided_import_replaces_raw_json_and_exposes_history_and_reviews() -> None:
-    html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+    html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
+    planning_html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning-intelligence.js").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
     assert "Observation JSON" not in html
     assert 'id="analytics-import-history"' in html
-    assert 'id="outcome-review-queue"' in html
-    assert "Spotify currently hosts the podcast and its RSS feed" in html
-    assert "Other hosting provider" in html
-    assert "Do not import the same Spotify period twice" in html
+    assert 'id="outcome-review-queue"' in planning_html
+    assert "Spotify for Creators" in html
+    assert "another host" in html
+    assert "Do not import the same reporting period twice" in html
     assert "repeat(auto-fit, minmax(min(100%, 18rem), 1fr))" in styles
     assert "renderImportHistory" in javascript
     assert "renderOutcomeReviews" in javascript
@@ -397,8 +416,8 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20260925.2" in html
-    assert "operations.css?v=20260925.3" in html
+    assert "planning.js?v=20261007.2" in html
+    assert "operations.css?v=20261007.2" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript
@@ -418,18 +437,20 @@ def test_editorial_mix_fits_its_card_at_narrow_container_widths() -> None:
 
 def test_scheduling_intelligence_prioritizes_decisions_and_guides_evidence_import() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+    insights_html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning-intelligence.js").read_text(encoding="utf-8")
     planning_javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
     assert 'id="exception-center" class="exception-center" aria-live="polite"' in html
-    assert 'id="analytics-import-form"' in html
-    assert 'class="provider-export-grid"' in html
-    assert 'data-import-provider="spotify"' in html
-    assert 'data-import-provider="apple_podcasts"' in html
-    assert 'data-import-provider="podcast_host"' in html
-    assert 'id="analytics-mapping-fields"' in html
-    assert 'id="analytics-preview" class="analytics-preview hidden" aria-live="polite"' in html
+    assert 'id="analytics-import-form"' not in html
+    assert 'id="analytics-import-form"' in insights_html
+    assert 'class="provider-export-grid"' in insights_html
+    assert 'data-import-provider="spotify"' in insights_html
+    assert 'data-import-provider="apple_podcasts"' in insights_html
+    assert 'data-import-provider="podcast_host"' in insights_html
+    assert 'id="analytics-mapping-fields"' in insights_html
+    assert 'id="analytics-preview" class="analytics-preview hidden" aria-live="polite"' in insights_html
     assert 'class="operations-tool scheduling-admin-hub"' in html
     assert 'id="recommendation-comparison-grid"' in html
     assert 'request("/api/growth-intelligence/preview"' in javascript
@@ -440,3 +461,25 @@ def test_scheduling_intelligence_prioritizes_decisions_and_guides_evidence_impor
     assert ".comparison-grid" in styles
     assert ".analytics-mapping-grid" in styles
     assert ".provider-export-grid" in styles
+
+
+def test_planning_separates_daily_decisions_from_data_administration() -> None:
+    html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+
+    assert 'data-planning-tab="data_tools"' in html
+    assert html.count('data-planning-panel="data_tools"') == 2
+    assert "Episode data and recommendation safeguards" in html
+    assert "Use the right tool for the job" in html
+    assert "intermediate steps are not required" in html
+    scheduling_start = html.index('data-planning-panel="scheduling_intelligence"')
+    data_tools_start = html.index('data-planning-panel="data_tools"')
+    assert 'id="episode-import-form"' not in html[scheduling_start:data_tools_start]
+
+
+def test_paginated_workspace_counts_distinguish_matches_from_visible_cards() -> None:
+    planning = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+    operations = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
+
+    for javascript in (planning, operations):
+        assert "visible < matched" in javascript
+        assert "Displaying ${visible} right now" in javascript

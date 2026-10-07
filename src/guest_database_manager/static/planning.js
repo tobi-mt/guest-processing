@@ -665,16 +665,18 @@ function getEpisodeYear(episode) {
   return interviewYear ? String(interviewYear.getFullYear()) : "";
 }
 
-function updateResultsMeta(node, shown, total, emptyMessage, filteredMessage) {
+function updateResultsMeta(node, matched, total, visible, emptyMessage, filteredMessage) {
   if (!total) {
     node.textContent = emptyMessage;
     return;
   }
-  if (shown === total) {
+  if (matched === total && visible === matched) {
     node.textContent = `Showing all ${total} item${total === 1 ? "" : "s"}.`;
     return;
   }
-  node.textContent = `Showing ${shown} of ${total} item${total === 1 ? "" : "s"} after filtering. ${filteredMessage}`;
+  const filterText = matched < total ? `${matched} of ${total} items match the current view.` : `${matched} items match the current view.`;
+  const visibleText = visible < matched ? ` Displaying ${visible} right now.` : "";
+  node.textContent = `${filterText}${visibleText} ${filteredMessage}`.trim();
 }
 
 function updatePresetButtons(buttons, activeValue, dataName) {
@@ -2175,17 +2177,18 @@ function deriveEpisodeNextAction(episode) {
 
 function renderEpisodes(episodes, totalCount, episodeNumberMap) {
   episodeList.innerHTML = "";
+  const visibleEpisodes = episodes.slice(0, visibleEpisodeCount);
   updateResultsMeta(
     episodeResultsMeta,
     episodes.length,
     totalCount,
+    visibleEpisodes.length,
     "",
     activeProductionStage
       ? `Production stage: ${productionStageLabel(activeProductionStage)}. Select the stage again or use Clear stage to return to the full list.`
       : "Use search, category, year, or status filters to focus the planning queue."
   );
 
-  const visibleEpisodes = episodes.slice(0, visibleEpisodeCount);
   if (!episodes.length) {
     episodeList.innerHTML = totalCount
       ? "<p class='guest-summary'>No episodes match the current planning controls.</p>"
@@ -2709,15 +2712,16 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
 
 function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
   recommendationList.innerHTML = "";
+  const visibleRecommendations = recommendations.slice(0, visibleRecommendationCount);
   updateResultsMeta(
     recommendationResultsMeta,
     recommendations.length,
     totalCount,
+    visibleRecommendations.length,
     "Import the yearly release CSVs and the Not Yet Released queue to generate recommendations.",
     "Adjust search, category, or sort to inspect the strongest release candidates."
   );
 
-  const visibleRecommendations = recommendations.slice(0, visibleRecommendationCount);
   if (!recommendations.length) {
     recommendationList.innerHTML = totalCount
       ? "<p class='guest-summary'>No recommendations match the current controls.</p>"

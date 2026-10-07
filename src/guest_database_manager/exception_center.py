@@ -189,7 +189,7 @@ def build_exception_center(
             category="evidence",
             title="Growth intelligence has no evidence",
             reason="Recommendations cannot learn from release outcomes until verified analytics are imported.",
-            href="/planning?tab=scheduling_intelligence#analytics-import",
+            href="/insights#analytics-import",
             action_label="Import analytics",
         ))
     elif growth.get("freshness") == "stale":
