@@ -7203,6 +7203,37 @@ class GuestWebService:
             error_msg = str(exc).strip()
             raise WebInterfaceError(f"AI question generation error: {error_msg}") from exc
 
+    def generate_interview_manuscript(
+        self,
+        guest_id: int,
+        settings: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Generate a complete editorial manuscript from approved guest context."""
+        ai_assistant = self._get_ai_assistant()
+        if not ai_assistant:
+            raise WebInterfaceError("AI features are not available. Please configure OPENAI_API_KEY.")
+        guest = self.database.get_guest_by_id(guest_id)
+        if not guest:
+            raise WebInterfaceError("Guest not found.")
+        try:
+            manuscript = (
+                ai_assistant.generate_interview_manuscript(guest, settings=settings)
+                if settings
+                else ai_assistant.generate_interview_manuscript(guest)
+            )
+            if not manuscript:
+                detail = ai_assistant.last_error or "No manuscript was returned"
+                raise WebInterfaceError(f"AI manuscript generation failed: {detail}. Please try again.")
+            return {
+                "guest_id": guest_id,
+                "guest_name": _normalize_text(guest.get("full_name")) or "Unknown",
+                "manuscript": manuscript,
+            }
+        except WebInterfaceError:
+            raise
+        except Exception as exc:
+            raise WebInterfaceError("AI manuscript generation failed. Please try again.") from exc
+
     def analyze_guest_with_ai(self, guest_id: int) -> Dict[str, Any]:
         """Get AI-powered deep analysis of a guest."""
         ai_assistant = self._get_ai_assistant()
@@ -7898,6 +7929,39 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
 
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if request_path.startswith("/api/guests/") and request_path.endswith("/ai-interview-manuscript"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            guest_id = self._extract_record_id(request_path[:-len("/ai-interview-manuscript")], "/api/guests/")
+            if guest_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid guest id"})
+                return
+            query = self._query_params(self.path)
+            allowed_settings = {
+                "conversation_depth": {"balanced", "deep", "very_deep"},
+                "guest_type": {"automatic", "author", "entrepreneur", "researcher", "spiritual", "leadership", "health", "personal_story", "other"},
+                "emotional_sensitivity": {"normal", "careful", "highly_sensitive"},
+                "technical_complexity": {"general_audience", "intermediate", "expert"},
+                "primary_emphasis": {"automatic", "personal_story", "transformation", "leadership", "purpose", "healing", "spirituality", "ideas", "entrepreneurship"},
+                "research_mode": {"application_only", "application_and_saved_research"},
+            }
+            settings = {}
+            for key, allowed in allowed_settings.items():
+                value = query.get(key)
+                if value:
+                    if value not in allowed:
+                        self._send_json(HTTPStatus.BAD_REQUEST, {"error": f"Invalid {key.replace('_', ' ')}"})
+                        return
+                    settings[key] = value
+            try:
+                payload = self.service.generate_interview_manuscript(guest_id, settings=settings)
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
             self._send_json(HTTPStatus.OK, payload)
             return
 

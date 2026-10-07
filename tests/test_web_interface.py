@@ -299,6 +299,32 @@ def test_ai_analysis_is_saved_and_reused_for_the_same_guest_data(monkeypatch, te
     assert second["analysis"] == first["analysis"]
 
 
+def test_web_service_generates_complete_interview_manuscript(monkeypatch, temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Manuscript Guest", "email": "manuscript@example.com"})
+    expected = {
+        "core_theme": "A human theme",
+        "introduction": "A short introduction.",
+        "main_questions": [f"Question {index}?" for index in range(1, 11)],
+        "closing_questions": [f"Closing {index}?" for index in range(1, 4)],
+        "listener_takeaways": ["One", "Two", "Three"],
+        "producer_note": "",
+    }
+
+    class StubAssistant:
+        last_error = None
+
+        def generate_interview_manuscript(self, data):
+            assert data["full_name"] == "Manuscript Guest"
+            return expected
+
+    monkeypatch.setattr(service, "_get_ai_assistant", lambda: StubAssistant())
+
+    result = service.generate_interview_manuscript(guest["id"])
+    assert result["guest_name"] == "Manuscript Guest"
+    assert result["manuscript"] == expected
+
+
 def test_created_guest_invalidates_preloaded_guest_list_cache(temp_db):
     service = GuestWebService(temp_db.db_path)
     assert service.list_guests(skip_expensive_enrichment=True)["stats"]["total"] == 0

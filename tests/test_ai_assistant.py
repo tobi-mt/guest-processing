@@ -1,5 +1,6 @@
 """Regression coverage for AI guest-context preparation and structured analysis."""
 
+import json
 import logging
 
 import requests
@@ -24,6 +25,42 @@ def _guest():
         "additional_info": "Launching a caregiver support group in October.",
         "website": "https://example.test",
         "social_media_handles": "@avery",
+    }
+
+
+def _story_analysis():
+    return {
+        "strongest_stories": [{"evidence": "Caregiving", "tension": "Limits", "internal_change": "Recovery", "universal_meaning": "Care", "sensitivity": "Careful"}] * 3,
+        "central_tension": "Care without self-erasure",
+        "transformation_arc": "Burnout to boundaries",
+        "human_questions": ["What changed?"],
+        "listener_applications": ["Name limits"],
+        "boundaries": ["Private medical details"],
+        "theme": "Sustainable care",
+    }
+
+
+def _conversation_design():
+    candidates = []
+    for index in range(20):
+        candidates.append({
+            "question": f"Candidate {index + 1}?",
+            "guest_specificity": 2,
+            "story_potential": 2,
+            "depth": 2,
+            "listener_relevance": 2,
+            "spoken_quality": 2,
+            "penalties": [],
+            "final_score": 10,
+            "arc_stage": "experience",
+            "evidence": "intake",
+        })
+    return {
+        "candidates": candidates,
+        "selected_questions": [f"Candidate {index + 1}?" for index in range(10)],
+        "rejected_questions": [],
+        "arc_rationale": "Human progression",
+        "average_selected_score": 10,
     }
 
 
@@ -70,6 +107,121 @@ def test_questions_receive_full_application_context(monkeypatch):
     assert "Why they want to appear" in captured["prompt"]
     assert "Faith or spiritual practice" in captured["prompt"]
     assert "Message they want listeners to take away" in captured["prompt"]
+
+
+def test_manuscript_uses_intake_and_research_and_enforces_structure(monkeypatch):
+    guest = _guest()
+    guest["guest_research"] = {"summary": "A verified public profile about caregiver advocacy."}
+    assistant = AIAssistant(api_key="test")
+    captured = {}
+
+    manuscript_payload = {
+        "core_theme": "Care without self-erasure",
+        "introduction": "Today we explore care and boundaries with Avery Stone. Avery, welcome to Mirror Talk.",
+        "main_questions": [f"Specific main question {index}?" for index in range(1, 11)],
+        "closing_questions": [f"Specific closing question {index}?" for index in range(1, 4)],
+        "listener_takeaways": ["A grounded lesson", "A practical distinction", "A reflective insight"],
+        "producer_note": "Handle the family illness with care.",
+    }
+    responses = iter(
+        [
+            {"guest_name": "Avery Stone", "fit_score": 9, "recommended_theme": "Care"},
+            _story_analysis(),
+            _conversation_design(),
+            manuscript_payload,
+            {"score": 8.7, "problems": [], "questions_to_rewrite": [], "missed_opportunities": [], "recommended_changes": []},
+            manuscript_payload,
+        ]
+    )
+
+    def fake_call(messages, temperature=0.7, response_format=None):
+        captured.setdefault("prompts", []).append(messages[-1]["content"])
+        captured["response_format"] = response_format
+        return json.dumps(next(responses))
+
+    monkeypatch.setattr(assistant, "_call_openai", fake_call)
+    manuscript = assistant.generate_interview_manuscript(guest)
+
+    assert captured["response_format"] == {"type": "json_object"}
+    assert len(captured["prompts"]) == 6
+    assert all("Boundaries can be an act of love." in prompt for prompt in (captured["prompts"][0], captured["prompts"][1], captured["prompts"][2], captured["prompts"][3], captured["prompts"][5]))
+    assert "caregiver advocacy" in captured["prompts"][0]
+    assert "20 to 30 distinct candidate questions" in captured["prompts"][2]
+    assert "8.5" in captured["prompts"][5]
+    assert len(manuscript["main_questions"]) == 10
+    assert len(manuscript["closing_questions"]) == 3
+
+
+def test_manuscript_rejects_wrong_question_count(monkeypatch):
+    assistant = AIAssistant(api_key="test")
+    responses = iter(
+        [
+            {"guest_name": "Avery Stone", "fit_score": 8, "recommended_theme": "Theme"},
+            _story_analysis(),
+            _conversation_design(),
+            {
+                "core_theme": "Theme",
+                "introduction": "Introduction",
+                "main_questions": ["Only one?"],
+                "closing_questions": ["One?", "Two?", "Three?"],
+                "listener_takeaways": ["One", "Two", "Three"],
+                "producer_note": "",
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        assistant,
+        "_call_openai",
+        lambda *args, **kwargs: json.dumps(next(responses)),
+    )
+
+    assert assistant.generate_interview_manuscript(_guest()) is None
+    assert assistant.last_error == "OpenAI returned an invalid main questions section"
+
+
+def test_manuscript_fails_closed_when_editorial_review_is_invalid(monkeypatch):
+    assistant = AIAssistant(api_key="test")
+    valid_manuscript = {
+        "core_theme": "Theme",
+        "introduction": "Introduction",
+        "main_questions": [f"Question {index}?" for index in range(10)],
+        "closing_questions": ["One?", "Two?", "Three?"],
+        "listener_takeaways": ["One", "Two", "Three"],
+        "producer_note": "",
+    }
+    responses = iter([{"fit_score": 8}, _story_analysis(), _conversation_design(), valid_manuscript, {"problems": []}])
+    monkeypatch.setattr(assistant, "_call_openai", lambda *args, **kwargs: json.dumps(next(responses)))
+
+    assert assistant.generate_interview_manuscript(_guest()) is None
+    assert assistant.last_error == "OpenAI returned an invalid editorial review"
+
+
+def test_manuscript_rejects_candidate_sets_below_quality_threshold(monkeypatch):
+    assistant = AIAssistant(api_key="test")
+    weak_design = _conversation_design()
+    weak_design["average_selected_score"] = 7.9
+    responses = iter([{"fit_score": 8}, _story_analysis(), weak_design])
+    monkeypatch.setattr(assistant, "_call_openai", lambda *args, **kwargs: json.dumps(next(responses)))
+
+    assert assistant.generate_interview_manuscript(_guest()) is None
+    assert assistant.last_error == "OpenAI returned a question set below the editorial quality threshold"
+
+
+def test_manuscript_application_only_mode_excludes_saved_research(monkeypatch):
+    guest = _guest()
+    guest["guest_research"] = {"summary": "SAVED RESEARCH MUST NOT APPEAR"}
+    assistant = AIAssistant(api_key="test")
+    captured = {}
+
+    def fake_call(messages, **kwargs):
+        captured["prompt"] = messages[-1]["content"]
+        return json.dumps({"fit_score": 8})
+
+    monkeypatch.setattr(assistant, "_call_openai", fake_call)
+    assistant.generate_interview_manuscript(guest, settings={"research_mode": "application_only"})
+
+    assert "SAVED RESEARCH MUST NOT APPEAR" not in captured["prompt"]
+    assert '"research_mode": "application_only"' in captured["prompt"]
 
 
 def test_analysis_returns_empty_result_when_the_model_returns_no_content(monkeypatch):

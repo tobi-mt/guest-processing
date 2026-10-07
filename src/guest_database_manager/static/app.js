@@ -1624,9 +1624,8 @@ function renderGuests(payload) {
             // AI Email Draft Generation
             const emailType = guest.email_status === "accepted" ? "acceptance" : "acceptance";
             await generateAIEmailDraft(guest.id, emailType);
-          } else if (action === "ai_questions") {
-            // AI Interview Questions Generation
-            await generateInterviewQuestions(guest.id, guest.full_name || "Guest");
+          } else if (action === "ai_manuscript") {
+            await generateInterviewManuscript(guest.id, guest.full_name || "Guest", button);
           } else if (action === "ai_analysis") {
             // AI Guest Analysis
             await analyzeGuestWithAI(guest.id, guest.full_name || "Guest");
@@ -2206,9 +2205,17 @@ function hideAIModal() {
   document.body.style.overflow = "";
   currentAIContent = "";
   aiModalReturnFocus = null;
-  if (returnFocus?.isConnected) {
+  if (returnFocus) {
     window.requestAnimationFrame(() => {
-      if (returnFocus.isConnected) returnFocus.focus();
+      const action = returnFocus.dataset?.action;
+      const focusTarget = returnFocus.isConnected
+        ? returnFocus
+        : action
+          ? document.querySelector(`[data-action="${CSS.escape(action)}"]`)
+          : null;
+      const disclosure = focusTarget?.closest("details");
+      if (disclosure && !disclosure.open) disclosure.open = true;
+      focusTarget?.focus();
     });
   }
 }
@@ -2302,6 +2309,69 @@ async function generateInterviewQuestions(guestId, guestName) {
     showAIModal(`❓ Interview Questions: ${guestName}`, content);
   } catch (error) {
     showAIModal("Error", `<p class="error">Failed to generate questions: ${escapeHtml(error.message)}</p>`);
+  }
+}
+
+async function generateInterviewManuscript(guestId, guestName, returnFocus = null) {
+  if (!aiEnabled) {
+    alert("AI features are not available. Please configure OPENAI_API_KEY.");
+    return;
+  }
+  const select = (id, label, options) => `
+    <label class="filter-field" for="${id}"><strong>${label}</strong>
+      <select id="${id}">${options.map(([value, text]) => `<option value="${value}">${text}</option>`).join("")}</select>
+    </label>`;
+  const controls = `
+    <form id="manuscript-settings" class="guest-form ai-manuscript-settings">
+      <p class="ai-note">Automatic defaults are recommended. Adjust only when the guest or subject needs a different editorial treatment.</p>
+      ${select("manuscript-depth", "Conversation Depth", [["balanced", "Balanced"], ["deep", "Deep"], ["very_deep", "Very Deep"]])}
+      ${select("manuscript-guest-type", "Guest Type", [["automatic", "Automatic"], ["author", "Author"], ["entrepreneur", "Entrepreneur"], ["researcher", "Researcher"], ["spiritual", "Spiritual"], ["leadership", "Leadership"], ["health", "Health"], ["personal_story", "Personal Story"], ["other", "Other"]])}
+      ${select("manuscript-sensitivity", "Emotional Sensitivity", [["normal", "Normal"], ["careful", "Careful"], ["highly_sensitive", "Highly Sensitive"]])}
+      ${select("manuscript-complexity", "Technical Complexity", [["general_audience", "General Audience"], ["intermediate", "Intermediate"], ["expert", "Expert"]])}
+      ${select("manuscript-emphasis", "Primary Emphasis", [["automatic", "Automatic"], ["personal_story", "Personal Story"], ["transformation", "Transformation"], ["leadership", "Leadership"], ["purpose", "Purpose"], ["healing", "Healing"], ["spirituality", "Spirituality"], ["ideas", "Ideas"], ["entrepreneurship", "Entrepreneurship"]])}
+      ${select("manuscript-research", "Research Mode", [["application_and_saved_research", "Application + Saved Research"], ["application_only", "Application Only"]])}
+      <button class="primary-button" type="submit">Generate Manuscript</button>
+    </form>`;
+  showAIModal(`📝 Interview Manuscript: ${guestName}`, controls, returnFocus);
+  document.getElementById("manuscript-settings")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const params = new URLSearchParams({
+      conversation_depth: document.getElementById("manuscript-depth").value,
+      guest_type: document.getElementById("manuscript-guest-type").value,
+      emotional_sensitivity: document.getElementById("manuscript-sensitivity").value,
+      technical_complexity: document.getElementById("manuscript-complexity").value,
+      primary_emphasis: document.getElementById("manuscript-emphasis").value,
+      research_mode: document.getElementById("manuscript-research").value,
+    });
+    await runInterviewManuscriptGeneration(guestId, guestName, params);
+  });
+}
+
+async function runInterviewManuscriptGeneration(guestId, guestName, params) {
+  try {
+    showAIModal(
+      `📝 Interview Manuscript: ${guestName}`,
+      "<p class='loading'>Running guest analysis, story mining, conversation design, drafting, editorial critique, and final refinement…</p>",
+    );
+    const data = await fetchJSON(`/api/guests/${guestId}/ai-interview-manuscript?${params.toString()}`);
+    const manuscript = data.manuscript || {};
+    const list = (items, ordered = false) => {
+      const tag = ordered ? "ol" : "ul";
+      return `<${tag} class="questions-list">${(items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</${tag}>`;
+    };
+    const content = `
+      <article class="ai-manuscript">
+        <p class="ai-note">Drafted only from the approved intake and saved producer research. Review every factual premise before recording.</p>
+        <section class="analysis-section"><h3>Core Theme</h3><p>${escapeHtml(manuscript.core_theme || "")}</p></section>
+        <section class="analysis-section"><h3>Short Introduction</h3><p>${escapeHtml(manuscript.introduction || "")}</p></section>
+        <section class="analysis-section"><h3>Ten Main Questions</h3>${list(manuscript.main_questions, true)}</section>
+        <section class="analysis-section"><h3>Before I Let You Go</h3>${list(manuscript.closing_questions, true)}</section>
+        <section class="analysis-section"><h3>Listener Takeaways</h3>${list(manuscript.listener_takeaways)}</section>
+        ${manuscript.producer_note ? `<section class="analysis-section"><h3>Producer Note</h3><p>${escapeHtml(manuscript.producer_note)}</p></section>` : ""}
+      </article>`;
+    showAIModal(`📝 Interview Manuscript: ${guestName}`, content);
+  } catch (error) {
+    showAIModal("Error", `<p class="error">Failed to generate manuscript: ${escapeHtml(error.message)}</p>`);
   }
 }
 

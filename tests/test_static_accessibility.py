@@ -244,7 +244,18 @@ def test_dashboard_result_modal_has_dialog_semantics_and_focus_management() -> N
     assert 'event.key === "Escape"' in javascript
     assert "event.stopPropagation()" in javascript
     assert "window.requestAnimationFrame" in javascript
-    assert "returnFocus.focus()" in javascript
+    assert "returnFocus.isConnected" in javascript
+    assert 'document.querySelector(`[data-action="${CSS.escape(action)}"]`)' in javascript
+    assert 'focusTarget?.closest("details")' in javascript
+    assert "focusTarget?.focus()" in javascript
+    assert "generateInterviewManuscript(guest.id, guest.full_name || \"Guest\", button)" in javascript
+    assert "async function generateInterviewManuscript(guestId, guestName, returnFocus = null)" in javascript
+    assert 'id="manuscript-settings"' in javascript
+    assert '"Conversation Depth"' in javascript
+    assert '"Emotional Sensitivity"' in javascript
+    assert '"Technical Complexity"' in javascript
+    assert '"Primary Emphasis"' in javascript
+    assert '"Research Mode"' in javascript
 
 
 def test_work_queue_cards_progressively_disclose_secondary_actions() -> None:
