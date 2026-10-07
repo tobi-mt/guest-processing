@@ -771,6 +771,151 @@ class GuestDatabase:
                 (guest_id, serialized, input_fingerprint, model),
             )
             conn.commit()
+
+    def get_guest_ai_artifact(
+        self,
+        guest_id: int,
+        *,
+        artifact_type: str,
+        input_fingerprint: str,
+        settings: Dict[str, Any],
+        model: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return a reusable AI artifact only for the exact inputs and settings."""
+        settings_json = dumps(settings, ensure_ascii=False, sort_keys=True)
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT * FROM guest_ai_artifacts
+                   WHERE guest_id = ? AND artifact_type = ? AND input_fingerprint = ?
+                     AND settings_json = ? AND model = ?""",
+                (guest_id, artifact_type, input_fingerprint, settings_json, model),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                payload = loads(str(row["payload_json"]))
+            except (TypeError, ValueError):
+                logger.warning("Ignoring malformed AI artifact id=%s", row["id"])
+                return None
+            return {**dict(row), "payload": payload}
+
+    def save_guest_ai_artifact(
+        self,
+        guest_id: int,
+        *,
+        artifact_type: str,
+        title: str,
+        payload: Dict[str, Any],
+        input_fingerprint: str,
+        settings: Dict[str, Any],
+        model: str,
+        actor: str,
+    ) -> Dict[str, Any]:
+        """Upsert an AI artifact and record its provenance without mutating guest fields."""
+        payload_json = dumps(payload, ensure_ascii=False, sort_keys=True)
+        settings_json = dumps(settings, ensure_ascii=False, sort_keys=True)
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO guest_ai_artifacts
+                     (guest_id, artifact_type, title, payload_json, input_fingerprint, settings_json, model, created_by)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(guest_id, artifact_type, input_fingerprint, settings_json, model)
+                   DO UPDATE SET title = excluded.title, payload_json = excluded.payload_json,
+                     created_by = excluded.created_by, updated_at = CURRENT_TIMESTAMP""",
+                (guest_id, artifact_type, title, payload_json, input_fingerprint, settings_json, model, actor),
+            )
+            row = conn.execute(
+                """SELECT id, created_at, updated_at FROM guest_ai_artifacts
+                   WHERE guest_id = ? AND artifact_type = ? AND input_fingerprint = ?
+                     AND settings_json = ? AND model = ?""",
+                (guest_id, artifact_type, input_fingerprint, settings_json, model),
+            ).fetchone()
+            self._append_audit_event_conn(
+                conn,
+                entity_type="guest",
+                entity_id=guest_id,
+                event_type="ai_artifact_saved",
+                actor=actor,
+                source="ai_assistant",
+                reason=artifact_type,
+                after={"artifact_id": int(row[0]), "artifact_type": artifact_type, "model": model},
+            )
+            conn.commit()
+            return {"id": int(row[0]), "created_at": row[1], "updated_at": row[2]}
+
+    def delete_guest_ai_artifact(self, guest_id: int, artifact_id: int, *, actor: str) -> bool:
+        """Delete one saved artifact with an audit event in the same transaction."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT id, artifact_type, model FROM guest_ai_artifacts WHERE id = ? AND guest_id = ?",
+                (artifact_id, guest_id),
+            ).fetchone()
+            if not row:
+                return False
+            conn.execute("DELETE FROM guest_ai_artifacts WHERE id = ? AND guest_id = ?", (artifact_id, guest_id))
+            self._append_audit_event_conn(
+                conn,
+                entity_type="guest",
+                entity_id=guest_id,
+                event_type="ai_artifact_deleted",
+                actor=actor,
+                source="dashboard",
+                reason=str(row["artifact_type"]),
+                before={"artifact_id": artifact_id, "artifact_type": row["artifact_type"], "model": row["model"]},
+            )
+            conn.commit()
+            return True
+
+    def delete_guest_ai_category(self, guest_id: int, category: str, *, actor: str) -> int:
+        """Delete one category of saved AI data, or all categories, with an audit event."""
+        artifact_types = {
+            "manuscripts": "interview_manuscript",
+            "questions": "interview_questions",
+            "email_drafts": "email_draft",
+        }
+        with self._connect() as conn:
+            deleted = 0
+            if category in artifact_types:
+                cursor = conn.execute(
+                    "DELETE FROM guest_ai_artifacts WHERE guest_id = ? AND artifact_type = ?",
+                    (guest_id, artifact_types[category]),
+                )
+                deleted += cursor.rowcount
+            elif category == "research":
+                current = conn.execute(
+                    "SELECT guest_research FROM guests WHERE id = ?", (guest_id,)
+                ).fetchone()
+                if current and current[0]:
+                    conn.execute(
+                        """UPDATE guests SET guest_research = NULL, guest_research_updated_at = NULL,
+                           updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1 WHERE id = ?""",
+                        (guest_id,),
+                    )
+                    deleted = 1
+            elif category == "analysis":
+                deleted = conn.execute("DELETE FROM guest_ai_analyses WHERE guest_id = ?", (guest_id,)).rowcount
+            elif category == "all":
+                deleted += conn.execute("DELETE FROM guest_ai_artifacts WHERE guest_id = ?", (guest_id,)).rowcount
+                deleted += conn.execute("DELETE FROM guest_ai_analyses WHERE guest_id = ?", (guest_id,)).rowcount
+                current = conn.execute("SELECT guest_research FROM guests WHERE id = ?", (guest_id,)).fetchone()
+                if current and current[0]:
+                    conn.execute(
+                        """UPDATE guests SET guest_research = NULL, guest_research_updated_at = NULL,
+                           updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1 WHERE id = ?""",
+                        (guest_id,),
+                    )
+                    deleted += 1
+            else:
+                raise ValueError("Unsupported AI data category")
+            self._append_audit_event_conn(
+                conn, entity_type="guest", entity_id=guest_id, event_type="ai_data_deleted",
+                actor=actor, source="dashboard", reason=category,
+                before={"category": category, "records": deleted}, after={"records": 0},
+            )
+            conn.commit()
+            return deleted
     
     def get_guest_by_name(self, name: str) -> Optional[Dict]:
         """Get a guest by name (case-insensitive)."""

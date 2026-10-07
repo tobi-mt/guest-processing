@@ -7137,7 +7137,9 @@ class GuestWebService:
             timeout = 12.0
         return ApolloClient(api_key=api_key, base_url=base_url, timeout_seconds=max(1.0, min(timeout, 30.0)))
 
-    def generate_ai_email_draft(self, guest_id: int, email_type: str, custom_note: str = "") -> Dict[str, Any]:
+    def generate_ai_email_draft(
+        self, guest_id: int, email_type: str, custom_note: str = "", actor: str = "operator"
+    ) -> Dict[str, Any]:
         """Generate AI-powered email draft for acceptance/rejection."""
         ai_assistant = self._get_ai_assistant()
         if not ai_assistant:
@@ -7148,6 +7150,14 @@ class GuestWebService:
             raise WebInterfaceError("Guest not found.")
         
         email_type_normalized = _normalize_text(email_type).lower()
+        cache_settings = {"email_type": email_type_normalized, "custom_note": _normalize_text(custom_note)}
+        fingerprint = hashlib.sha256(AIAssistant._guest_context(guest).encode("utf-8")).hexdigest()
+        cached = self.database.get_guest_ai_artifact(
+            guest_id, artifact_type="email_draft", input_fingerprint=fingerprint,
+            settings=cache_settings, model=ai_assistant.model,
+        )
+        if cached and isinstance(cached.get("payload"), dict):
+            return {**cached["payload"], "artifact_id": cached["id"], "cached": True, "saved_at": cached["updated_at"]}
         
         try:
             if email_type_normalized == "acceptance":
@@ -7164,19 +7174,27 @@ class GuestWebService:
             guest_name = _normalize_text(guest.get("full_name")) or "there"
             subject = ai_assistant.suggest_email_subject(email_type_normalized, guest_name)
             
-            return {
+            result = {
                 "guest_id": guest_id,
                 "email_type": email_type_normalized,
                 "subject": subject,
                 "body": draft,
                 "guest_name": guest_name
             }
+            saved = self.database.save_guest_ai_artifact(
+                guest_id, artifact_type="email_draft", title=f"{email_type_normalized.title()} email draft",
+                payload=result, input_fingerprint=fingerprint, settings=cache_settings,
+                model=ai_assistant.model, actor=actor,
+            )
+            return {**result, "artifact_id": saved["id"], "cached": False, "saved_at": saved["updated_at"]}
         
         except Exception as exc:
             error_msg = str(exc).strip()
             raise WebInterfaceError(f"AI email generation error: {error_msg}") from exc
 
-    def generate_interview_questions(self, guest_id: int, num_questions: int = 10) -> Dict[str, Any]:
+    def generate_interview_questions(
+        self, guest_id: int, num_questions: int = 10, actor: str = "operator"
+    ) -> Dict[str, Any]:
         """Generate AI-powered personalized interview questions."""
         ai_assistant = self._get_ai_assistant()
         if not ai_assistant:
@@ -7185,6 +7203,14 @@ class GuestWebService:
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest not found.")
+        cache_settings = {"num_questions": int(num_questions)}
+        fingerprint = hashlib.sha256(AIAssistant._guest_context(guest).encode("utf-8")).hexdigest()
+        cached = self.database.get_guest_ai_artifact(
+            guest_id, artifact_type="interview_questions", input_fingerprint=fingerprint,
+            settings=cache_settings, model=ai_assistant.model,
+        )
+        if cached and isinstance(cached.get("payload"), dict):
+            return {**cached["payload"], "artifact_id": cached["id"], "cached": True, "saved_at": cached["updated_at"]}
         
         try:
             questions = ai_assistant.generate_interview_questions(guest, num_questions=num_questions)
@@ -7192,12 +7218,18 @@ class GuestWebService:
             if not questions:
                 raise WebInterfaceError("AI question generation failed. Please try again.")
             
-            return {
+            result = {
                 "guest_id": guest_id,
                 "guest_name": _normalize_text(guest.get("full_name")) or "Unknown",
                 "num_questions": len(questions),
                 "questions": questions
             }
+            saved = self.database.save_guest_ai_artifact(
+                guest_id, artifact_type="interview_questions", title="Interview questions",
+                payload=result, input_fingerprint=fingerprint, settings=cache_settings,
+                model=ai_assistant.model, actor=actor,
+            )
+            return {**result, "artifact_id": saved["id"], "cached": False, "saved_at": saved["updated_at"]}
         
         except Exception as exc:
             error_msg = str(exc).strip()
@@ -7207,6 +7239,7 @@ class GuestWebService:
         self,
         guest_id: int,
         settings: Optional[Dict[str, str]] = None,
+        actor: str = "operator",
     ) -> Dict[str, Any]:
         """Generate a complete editorial manuscript from approved guest context."""
         ai_assistant = self._get_ai_assistant()
@@ -7215,24 +7248,80 @@ class GuestWebService:
         guest = self.database.get_guest_by_id(guest_id)
         if not guest:
             raise WebInterfaceError("Guest not found.")
+        effective_settings = {
+            "conversation_depth": (settings or {}).get("conversation_depth", "balanced"),
+            "guest_type": (settings or {}).get("guest_type", "automatic"),
+            "emotional_sensitivity": (settings or {}).get("emotional_sensitivity", "normal"),
+            "technical_complexity": (settings or {}).get("technical_complexity", "general_audience"),
+            "primary_emphasis": (settings or {}).get("primary_emphasis", "automatic"),
+            "research_mode": (settings or {}).get("research_mode", "application_and_saved_research"),
+        }
+        fingerprint_payload = {
+            "guest_context": AIAssistant._guest_context(guest),
+            "research": None if effective_settings["research_mode"] == "application_only" else guest.get("guest_research"),
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(fingerprint_payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        cached = self.database.get_guest_ai_artifact(
+            guest_id,
+            artifact_type="interview_manuscript",
+            input_fingerprint=fingerprint,
+            settings=effective_settings,
+            model=ai_assistant.model,
+        )
+        if cached and isinstance(cached.get("payload"), dict):
+            return {
+                "guest_id": guest_id,
+                "guest_name": _normalize_text(guest.get("full_name")) or "Unknown",
+                "manuscript": cached["payload"],
+                "artifact_id": cached["id"],
+                "cached": True,
+                "saved_at": cached["updated_at"],
+            }
         try:
-            manuscript = (
-                ai_assistant.generate_interview_manuscript(guest, settings=settings)
-                if settings
-                else ai_assistant.generate_interview_manuscript(guest)
-            )
+            manuscript = ai_assistant.generate_interview_manuscript(guest, settings=effective_settings)
             if not manuscript:
                 detail = ai_assistant.last_error or "No manuscript was returned"
                 raise WebInterfaceError(f"AI manuscript generation failed: {detail}. Please try again.")
+            saved = self.database.save_guest_ai_artifact(
+                guest_id,
+                artifact_type="interview_manuscript",
+                title=f"Interview manuscript for {_normalize_text(guest.get('full_name')) or 'Unknown'}",
+                payload=manuscript,
+                input_fingerprint=fingerprint,
+                settings=effective_settings,
+                model=ai_assistant.model,
+                actor=actor,
+            )
             return {
                 "guest_id": guest_id,
                 "guest_name": _normalize_text(guest.get("full_name")) or "Unknown",
                 "manuscript": manuscript,
+                "artifact_id": saved["id"],
+                "cached": False,
+                "saved_at": saved["updated_at"],
             }
         except WebInterfaceError:
             raise
         except Exception as exc:
             raise WebInterfaceError("AI manuscript generation failed. Please try again.") from exc
+
+    def delete_guest_ai_artifact(self, guest_id: int, artifact_id: int, *, actor: str) -> Dict[str, Any]:
+        if not self.database.get_guest_by_id(guest_id):
+            raise WebInterfaceError("Guest not found.")
+        if not self.database.delete_guest_ai_artifact(guest_id, artifact_id, actor=actor):
+            raise WebInterfaceError("Saved AI artifact not found.")
+        return {"deleted": True, "artifact_id": artifact_id, "guest_id": guest_id}
+
+    def delete_guest_ai_category(self, guest_id: int, category: str, *, actor: str) -> Dict[str, Any]:
+        if not self.database.get_guest_by_id(guest_id):
+            raise WebInterfaceError("Guest not found.")
+        allowed = {"research", "analysis", "manuscripts", "questions", "email_drafts", "all"}
+        if category not in allowed:
+            raise WebInterfaceError("Invalid AI data category.")
+        deleted = self.database.delete_guest_ai_category(guest_id, category, actor=actor)
+        return {"deleted": True, "category": category, "records_deleted": deleted, "guest_id": guest_id}
 
     def analyze_guest_with_ai(self, guest_id: int) -> Dict[str, Any]:
         """Get AI-powered deep analysis of a guest."""
@@ -7902,7 +7991,8 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             custom_note = query.get("note", "")
 
             try:
-                payload = self.service.generate_ai_email_draft(guest_id, email_type, custom_note)
+                actor = str((self._session_claims() or {}).get("sub") or "operator")
+                payload = self.service.generate_ai_email_draft(guest_id, email_type, custom_note, actor=actor)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -7924,7 +8014,8 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             num_questions = int(query.get("num", "10"))
 
             try:
-                payload = self.service.generate_interview_questions(guest_id, num_questions)
+                actor = str((self._session_claims() or {}).get("sub") or "operator")
+                payload = self.service.generate_interview_questions(guest_id, num_questions, actor=actor)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -7958,7 +8049,8 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         return
                     settings[key] = value
             try:
-                payload = self.service.generate_interview_manuscript(guest_id, settings=settings)
+                actor = str((self._session_claims() or {}).get("sub") or "operator")
+                payload = self.service.generate_interview_manuscript(guest_id, settings=settings, actor=actor)
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -9325,7 +9417,32 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         if not self._enforce_dashboard_security(required_role="admin", require_csrf=True):
             return
-        if urlsplit(self.path).path == "/api/analytics-connectors/google":
+        request_path = urlsplit(self.path).path
+        artifact_match = re.fullmatch(r"/api/guests/(\d+)/ai-artifacts/(\d+)", request_path)
+        if artifact_match:
+            actor = str((self._session_claims() or {}).get("sub") or "admin")
+            try:
+                result = self.service.delete_guest_ai_artifact(
+                    int(artifact_match.group(1)), int(artifact_match.group(2)), actor=actor
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+        category_match = re.fullmatch(r"/api/guests/(\d+)/ai-data/([a-z_]+)", request_path)
+        if category_match:
+            actor = str((self._session_claims() or {}).get("sub") or "admin")
+            try:
+                result = self.service.delete_guest_ai_category(
+                    int(category_match.group(1)), category_match.group(2), actor=actor
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+        if request_path == "/api/analytics-connectors/google":
             actor = str((self._session_claims() or {}).get("sub") or "admin")
             query = self._query_params(self.path)
             connection_id = query.get("connection_id")

@@ -24,11 +24,22 @@ logger = logging.getLogger(__name__)
 class AIAssistant:
     """AI-powered assistant for intelligent guest management."""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini"):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "gpt-4o-mini",
+        request_timeout_seconds: Optional[float] = None,
+    ):
         """Initialize AI assistant with OpenAI API key."""
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.model = model
         self.base_url = "https://api.openai.com/v1/chat/completions"
+        if request_timeout_seconds is None:
+            try:
+                request_timeout_seconds = float(os.getenv("MIRROR_TALK_OPENAI_TIMEOUT_SECONDS", "120") or "120")
+            except ValueError:
+                request_timeout_seconds = 120.0
+        self.request_timeout_seconds = max(10.0, min(float(request_timeout_seconds), 300.0))
         self.last_error: Optional[str] = None
         self.last_error_supports_json_fallback = False
     
@@ -66,7 +77,7 @@ class AIAssistant:
                     "Content-Type": "application/json"
                 },
                 json=request_payload,
-                timeout=30
+                timeout=(10, self.request_timeout_seconds),
             )
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]
@@ -95,6 +106,10 @@ class AIAssistant:
                 and error_type == "invalid_request_error"
                 and error_code in {"unsupported_parameter", "unsupported_value"}
             )
+            return None
+        except requests.Timeout as exc:
+            logger.error("OpenAI API request timed out after %.1f seconds: %s", self.request_timeout_seconds, type(exc).__name__)
+            self.last_error = f"OpenAI response timed out after {self.request_timeout_seconds:g} seconds"
             return None
         except requests.RequestException as exc:
             logger.error("OpenAI API request failed: %s", exc)

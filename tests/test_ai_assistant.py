@@ -234,7 +234,7 @@ def test_analysis_returns_empty_result_when_the_model_returns_no_content(monkeyp
 
 
 def test_analysis_does_not_retry_after_a_network_failure(monkeypatch):
-    assistant = AIAssistant(api_key="test")
+    assistant = AIAssistant(api_key="test", request_timeout_seconds=45)
     calls = []
 
     def fail(*args, **kwargs):
@@ -245,6 +245,7 @@ def test_analysis_does_not_retry_after_a_network_failure(monkeypatch):
 
     assert assistant.research_guest_from_text(_guest()) == {}
     assert len(calls) == 1
+    assert assistant.last_error == "OpenAI response timed out after 45 seconds"
 
 
 def test_openai_http_error_logs_safe_provider_metadata(monkeypatch, caplog):
@@ -277,9 +278,11 @@ def test_reasoning_models_omit_temperature_for_chat_completions(monkeypatch):
 
     def fake_post(*args, **kwargs):
         captured["payload"] = kwargs["json"]
+        captured["timeout"] = kwargs["timeout"]
         return Response()
 
     monkeypatch.setattr("guest_database_manager.ai_assistant.requests.post", fake_post)
 
     assert assistant._call_openai([{"role": "user", "content": "Hello"}]) == "OK"
     assert "temperature" not in captured["payload"]
+    assert captured["timeout"] == (10, 120.0)

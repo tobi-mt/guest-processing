@@ -1484,6 +1484,31 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_037_guest_ai_artifacts(conn: sqlite3.Connection) -> None:
+        """Persist reusable, provenance-aware AI outputs for a guest."""
+        conn.execute(
+            """CREATE TABLE guest_ai_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guest_id INTEGER NOT NULL,
+                artifact_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                input_fingerprint TEXT NOT NULL,
+                settings_json TEXT NOT NULL DEFAULT '{}',
+                model TEXT NOT NULL,
+                created_by TEXT NOT NULL DEFAULT 'system',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (guest_id) REFERENCES guests(id) ON DELETE CASCADE,
+                UNIQUE (guest_id, artifact_type, input_fingerprint, settings_json, model)
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX idx_guest_ai_artifacts_lookup "
+            "ON guest_ai_artifacts(guest_id, artifact_type, updated_at DESC)"
+        )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1525,6 +1550,7 @@ class SchemaManager:
             (34, "guest_facing_timezone", SchemaManager._migration_034_guest_facing_timezone),
             (35, "dashboard_accounts", SchemaManager._migration_035_dashboard_accounts),
             (36, "repair_dashboard_account_events", SchemaManager._migration_036_repair_dashboard_account_events),
+            (37, "guest_ai_artifacts", SchemaManager._migration_037_guest_ai_artifacts),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

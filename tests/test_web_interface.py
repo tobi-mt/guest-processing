@@ -313,16 +313,38 @@ def test_web_service_generates_complete_interview_manuscript(monkeypatch, temp_d
 
     class StubAssistant:
         last_error = None
+        model = "test-model"
+        calls = 0
 
-        def generate_interview_manuscript(self, data):
+        def generate_interview_manuscript(self, data, settings=None):
+            self.calls += 1
             assert data["full_name"] == "Manuscript Guest"
             return expected
 
-    monkeypatch.setattr(service, "_get_ai_assistant", lambda: StubAssistant())
+    assistant = StubAssistant()
+    monkeypatch.setattr(service, "_get_ai_assistant", lambda: assistant)
 
     result = service.generate_interview_manuscript(guest["id"])
     assert result["guest_name"] == "Manuscript Guest"
     assert result["manuscript"] == expected
+    assert result["cached"] is False
+    assert result["artifact_id"]
+
+    reused = service.generate_interview_manuscript(guest["id"])
+    assert reused["cached"] is True
+    assert reused["artifact_id"] == result["artifact_id"]
+    assert assistant.calls == 1
+
+    current = service.database.get_guest_by_id(guest["id"])
+    service.update_guest(guest["id"], {"row_version": current["row_version"], "profession": "Updated profession"})
+    regenerated = service.generate_interview_manuscript(guest["id"])
+    assert regenerated["cached"] is False
+    assert regenerated["artifact_id"] != result["artifact_id"]
+    assert assistant.calls == 2
+
+    deleted = service.delete_guest_ai_artifact(guest["id"], result["artifact_id"], actor="tester")
+    assert deleted["deleted"] is True
+    assert service.database.list_audit_events("guest", guest["id"])[0]["event_type"] == "ai_artifact_deleted"
 
 
 def test_created_guest_invalidates_preloaded_guest_list_cache(temp_db):

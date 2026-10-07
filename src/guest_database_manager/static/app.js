@@ -1261,6 +1261,10 @@ function renderGuests(payload) {
       researchButton.textContent = "Retry With Search";
       researchButton.title = "Use Google search results as a rescue path for this failed research record.";
     }
+    if (researchButton && guest.guest_research && !researchFailed) {
+      researchButton.textContent = "Refresh Research";
+      researchButton.title = "Replace the saved research with a fresh public-source result.";
+    }
     if (researchButton && !guestHasPublicProfileHint(guest)) {
       researchButton.disabled = true;
       researchButton.title = "Add a website or labeled social profile first so copilot research has a public source to read.";
@@ -1510,6 +1514,9 @@ function renderGuests(payload) {
             showAIModal(`Activity: ${guest.full_name || "Guest"}`, renderAuditTimeline(activity.events || []));
           } else if (action === "research") {
             const failedResearch = guest.guest_research?.cache_status === "failed";
+            if (guest.guest_research && !failedResearch && !confirmCriticalAction(`Replace the saved research for ${guest.full_name || "this guest"}?`)) {
+              return;
+            }
             activeGuestActionFeedback = {
               guestId: guest.id,
               text: failedResearch
@@ -1629,6 +1636,8 @@ function renderGuests(payload) {
           } else if (action === "ai_analysis") {
             // AI Guest Analysis
             await analyzeGuestWithAI(guest.id, guest.full_name || "Guest");
+          } else if (action === "ai_saved_data") {
+            showSavedAIManager(guest.id, guest.full_name || "Guest", button);
           } else if (action === "delete") {
             const guestLabel = guest.full_name || "guest";
             const needsTypedConfirmation = Boolean(guest.is_processed || guest.email_status);
@@ -2361,18 +2370,59 @@ async function runInterviewManuscriptGeneration(guestId, guestName, params) {
     };
     const content = `
       <article class="ai-manuscript">
-        <p class="ai-note">Drafted only from the approved intake and saved producer research. Review every factual premise before recording.</p>
+        <p class="ai-note">${data.cached ? "Loaded from the saved AI artifact. No model call was made." : "Generated and saved for reuse."} Review every factual premise before recording.</p>
+        <p class="ai-note">Saved ${escapeHtml(data.saved_at || "now")} · Model output is reused only while the guest inputs and producer settings still match.</p>
         <section class="analysis-section"><h3>Core Theme</h3><p>${escapeHtml(manuscript.core_theme || "")}</p></section>
         <section class="analysis-section"><h3>Short Introduction</h3><p>${escapeHtml(manuscript.introduction || "")}</p></section>
         <section class="analysis-section"><h3>Ten Main Questions</h3>${list(manuscript.main_questions, true)}</section>
         <section class="analysis-section"><h3>Before I Let You Go</h3>${list(manuscript.closing_questions, true)}</section>
         <section class="analysis-section"><h3>Listener Takeaways</h3>${list(manuscript.listener_takeaways)}</section>
         ${manuscript.producer_note ? `<section class="analysis-section"><h3>Producer Note</h3><p>${escapeHtml(manuscript.producer_note)}</p></section>` : ""}
+        ${data.artifact_id ? `<button class="danger-button" id="delete-ai-artifact" type="button">Delete Saved Manuscript</button>` : ""}
       </article>`;
     showAIModal(`📝 Interview Manuscript: ${guestName}`, content);
+    document.getElementById("delete-ai-artifact")?.addEventListener("click", async () => {
+      if (!confirmCriticalAction("Delete this saved manuscript? A future request will use the AI model again.")) return;
+      try {
+        await fetchJSON(`/api/guests/${guestId}/ai-artifacts/${data.artifact_id}`, {method: "DELETE", body: JSON.stringify({})});
+        showAIModal("Saved manuscript deleted", "<p>The manuscript was removed. Guest intake and research were not changed.</p>");
+      } catch (error) {
+        showAIModal("Delete failed", `<p class="error">${escapeHtml(error.message)}</p>`);
+      }
+    });
   } catch (error) {
     showAIModal("Error", `<p class="error">Failed to generate manuscript: ${escapeHtml(error.message)}</p>`);
   }
+}
+
+function showSavedAIManager(guestId, guestName, returnFocus = null) {
+  const categories = [
+    ["research", "Guest research"],
+    ["analysis", "Guest analysis"],
+    ["manuscripts", "Interview manuscripts"],
+    ["questions", "Interview question sets"],
+    ["email_drafts", "Email drafts"],
+    ["all", "All saved AI data"],
+  ];
+  const content = `
+    <div class="ai-saved-data">
+      <p class="ai-note">Saved results are reused only when their source data, model, and settings still match. Deleting them does not delete the guest.</p>
+      <div class="guest-actions">${categories.map(([category, label]) => `<button class="${category === "all" ? "danger-button" : "secondary-button"}" type="button" data-ai-delete-category="${category}">Delete ${label}</button>`).join("")}</div>
+    </div>`;
+  showAIModal(`Saved AI data: ${guestName}`, content, returnFocus);
+  document.querySelectorAll("[data-ai-delete-category]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const category = button.dataset.aiDeleteCategory;
+      if (!confirmCriticalAction(`Delete ${button.textContent.replace(/^Delete /, "").toLowerCase()} for ${guestName}?`)) return;
+      try {
+        const result = await fetchJSON(`/api/guests/${guestId}/ai-data/${category}`, {method: "DELETE", body: JSON.stringify({})});
+        showAIModal("Saved AI data deleted", `<p>Removed ${escapeHtml(result.records_deleted)} saved record${result.records_deleted === 1 ? "" : "s"}. Guest intake and editorial metadata were preserved.</p>`);
+        await loadGuests();
+      } catch (error) {
+        showAIModal("Delete failed", `<p class="error">${escapeHtml(error.message)}</p>`);
+      }
+    });
+  });
 }
 
 async function analyzeGuestWithAI(guestId, guestName) {
