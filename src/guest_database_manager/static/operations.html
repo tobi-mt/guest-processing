@@ -312,23 +312,23 @@
     </div>
 
     <!-- AI Modal Container -->
-    <div id="ai-modal" class="modal hidden">
+    <div id="ai-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ai-modal-title">
       <div class="modal-backdrop"></div>
       <div class="modal-content">
         <div class="modal-header">
           <h2 id="ai-modal-title">AI Result</h2>
-          <button id="ai-modal-close" class="ghost-button">✕</button>
+          <button id="ai-modal-close" class="ghost-button" type="button" aria-label="Close result dialog">✕</button>
         </div>
         <div id="ai-modal-body" class="modal-body"></div>
         <div class="modal-footer">
-          <button id="ai-modal-copy" class="secondary-button">📋 Copy</button>
-          <button id="ai-modal-done" class="primary-button">Done</button>
+          <button id="ai-modal-copy" class="secondary-button" type="button">📋 Copy</button>
+          <button id="ai-modal-done" class="primary-button" type="button">Done</button>
         </div>
       </div>
     </div>
 
     <script src="/static/performance-utils.js?v=20260803.1"></script>
     <script src="/static/workspace-shell.js?v=20260927.3" defer></script>
-    <script src="/static/operations.js?v=20261007.2" defer></script>
+    <script src="/static/operations.js?v=20261008.1" defer></script>
   </body>
 </html>

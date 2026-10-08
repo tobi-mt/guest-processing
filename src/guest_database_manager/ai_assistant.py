@@ -442,72 +442,9 @@ Never invent a credential, event, belief, feeling, or accomplishment. Do not tur
 PRODUCER SETTINGS:
 {json.dumps(editorial_settings, ensure_ascii=False, sort_keys=True)}"""
 
-        analysis_prompt = f"""Analyze this Mirror Talk guest before writing the interview.
+        draft_prompt = f"""Prepare a source-grounded Mirror Talk interview in one editorial pass.
 
 {source_context}
-
-Return strict JSON with exactly these keys: guest_name, profession, credentials, life_experiences,
-turning_points, core_values, main_ideas, current_projects, motivations, emotional_entry_points,
-intellectual_entry_points, listener_value, mirror_talk_fit, subjects_not_to_dominate, sensitive_topics,
-story_opportunities, philosophical_questions, recommended_theme, fit_score, fit_rationale.
-All fields except guest_name, profession, recommended_theme, fit_score, and fit_rationale are arrays.
-fit_score is a number from 0 to 10. Do not reward fame or prestige by itself."""
-        analysis = self._request_json(analysis_prompt, "guest analysis")
-        if analysis is None:
-            return None
-
-        story_prompt = f"""Mine the strongest human conversation available from this guest evidence.
-
-{source_context}
-
-GUEST ANALYSIS:
-{json.dumps(analysis, ensure_ascii=False, sort_keys=True)}
-
-Return strict JSON with exactly: strongest_stories (array of exactly 3 objects with evidence,
-tension, internal_change, universal_meaning, sensitivity), central_tension, transformation_arc,
-human_questions (array), listener_applications (array), boundaries (array), and theme.
-Follow EVENT to EXPERIENCE to INTERNAL RESPONSE to LESSON to UNIVERSAL MEANING. Do not invent vulnerability."""
-        story_analysis = self._request_json(story_prompt, "story analysis", temperature=0.5)
-        if story_analysis is None:
-            return None
-
-        design_prompt = f"""Design the Mirror Talk conversation before writing the manuscript.
-
-{source_context}
-
-GUEST ANALYSIS:
-{json.dumps(analysis, ensure_ascii=False, sort_keys=True)}
-
-STORY ANALYSIS:
-{json.dumps(story_analysis, ensure_ascii=False, sort_keys=True)}
-
-Generate 20 to 30 distinct candidate questions. For each return an object with question,
-guest_specificity, story_potential, depth, listener_relevance, spoken_quality, penalties,
-final_score, arc_stage, and evidence. Each positive dimension is 0 to 2. Penalties use:
-generic -3, repeated concept -2, multiple questions -2, unsupported assumption -4,
-overly promotional -2, overly technical -1, leading answer -2. Reject candidates below 7.
-Aim for an average selected-question score of at least 8.
-
-Return strict JSON with exactly: candidates (20 to 30 objects), selected_questions
-(exactly 10 question strings), rejected_questions (array), arc_rationale, and average_selected_score.
-Order selected_questions as PERSON, EXPERIENCE, TENSION, TRANSFORMATION, IDEA, WISDOM,
-LISTENER APPLICATION. Never let biography, book, business, promotion become the dominant arc."""
-        conversation_design = self._request_json(design_prompt, "conversation design", temperature=0.7)
-        if conversation_design is None or not self._validate_conversation_design(conversation_design):
-            return None
-
-        draft_prompt = f"""Create a complete interview manuscript for Mirror Talk: Soulful Conversations.
-
-{source_context}
-
-GUEST ANALYSIS:
-{json.dumps(analysis, ensure_ascii=False, sort_keys=True)}
-
-STORY ANALYSIS:
-{json.dumps(story_analysis, ensure_ascii=False, sort_keys=True)}
-
-APPROVED CONVERSATION DESIGN:
-{json.dumps(conversation_design, ensure_ascii=False, sort_keys=True)}
 
 Use only the approved intake and producer research above. Never invent facts. If a detail is uncertain,
 do not make it a factual premise. Find the human conversation beneath the guest's profession or product.
@@ -515,7 +452,8 @@ Move from what happened, to what it meant, to how it changed the guest, to what 
 Do not manufacture vulnerability, force spirituality, solicit protected information, or write promotional,
 corporate, academic, generic, repetitive, leading, multi-part, or overlong questions.
 
-Return one JSON object with exactly these keys:
+Silently analyze the guest, mine the strongest evidence-backed stories, and evaluate at least 20 possible
+questions before selecting the final arc. Return one JSON object with exactly these keys:
 - core_theme: one concise deeper theme
 - introduction: a concise, natural spoken introduction ending by welcoming the guest
 - main_questions: an array of exactly 10 concise, guest-specific questions forming a deliberate arc from
@@ -532,47 +470,15 @@ Do not use em dashes."""
         if draft is None or not self._validate_manuscript(draft):
             return None
 
-        review_prompt = f"""Act as the critical Senior Editorial Producer for Mirror Talk. Do not praise the draft.
-Evaluate guest specificity, emotional and intellectual depth, spoken language, conciseness, repetition,
-narrative progression, listener relevance, leading assumptions, unsupported facts, promotion, technicality,
-and generic podcast phrasing. Identify missed opportunities from the source material.
-
-Return strict JSON with exactly: score (0 to 10), problems (array), questions_to_rewrite (array),
-missed_opportunities (array), recommended_changes (array).
-
-SOURCE MATERIAL:
-{source_context}
-
-GUEST ANALYSIS:
-{json.dumps(analysis, ensure_ascii=False, sort_keys=True)}
-
-STORY ANALYSIS:
-{json.dumps(story_analysis, ensure_ascii=False, sort_keys=True)}
-
-CONVERSATION DESIGN:
-{json.dumps(conversation_design, ensure_ascii=False, sort_keys=True)}
-
-DRAFT MANUSCRIPT:
-{json.dumps(draft, ensure_ascii=False, sort_keys=True)}"""
-        review = self._request_json(review_prompt, "editorial review", temperature=0.2)
-        if review is None or not isinstance(review.get("score"), (int, float)):
-            self.last_error = "OpenAI returned an invalid editorial review"
-            return None
-
-        refinement_prompt = f"""Revise the Mirror Talk manuscript using the editorial review. Preserve what works
-and correct what materially improves specificity, depth, flow, spoken language, and listener relevance.
-The review score was {review['score']}; a score below 8.5 requires substantial correction.
+        refinement_prompt = f"""Act as the critical Senior Editorial Producer for Mirror Talk. Review and revise
+this draft in one pass. Correct anything that materially improves guest specificity, emotional and intellectual
+depth, spoken language, conciseness, narrative progression, listener relevance, and factual grounding.
+Remove repetition, leading assumptions, unsupported facts, promotion, jargon, and generic podcast phrasing.
 
 {source_context}
-
-GUEST ANALYSIS:
-{json.dumps(analysis, ensure_ascii=False, sort_keys=True)}
 
 DRAFT:
 {json.dumps(draft, ensure_ascii=False, sort_keys=True)}
-
-EDITORIAL REVIEW:
-{json.dumps(review, ensure_ascii=False, sort_keys=True)}
 
 Return strict JSON with exactly: core_theme, introduction, main_questions (exactly 10),
 closing_questions (exactly 3), listener_takeaways (3 or 4), and producer_note (empty unless materially useful).

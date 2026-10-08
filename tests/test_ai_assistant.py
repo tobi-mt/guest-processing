@@ -123,16 +123,7 @@ def test_manuscript_uses_intake_and_research_and_enforces_structure(monkeypatch)
         "listener_takeaways": ["A grounded lesson", "A practical distinction", "A reflective insight"],
         "producer_note": "Handle the family illness with care.",
     }
-    responses = iter(
-        [
-            {"guest_name": "Avery Stone", "fit_score": 9, "recommended_theme": "Care"},
-            _story_analysis(),
-            _conversation_design(),
-            manuscript_payload,
-            {"score": 8.7, "problems": [], "questions_to_rewrite": [], "missed_opportunities": [], "recommended_changes": []},
-            manuscript_payload,
-        ]
-    )
+    responses = iter([manuscript_payload, manuscript_payload])
 
     def fake_call(messages, temperature=0.7, response_format=None):
         captured.setdefault("prompts", []).append(messages[-1]["content"])
@@ -143,11 +134,11 @@ def test_manuscript_uses_intake_and_research_and_enforces_structure(monkeypatch)
     manuscript = assistant.generate_interview_manuscript(guest)
 
     assert captured["response_format"] == {"type": "json_object"}
-    assert len(captured["prompts"]) == 6
-    assert all("Boundaries can be an act of love." in prompt for prompt in (captured["prompts"][0], captured["prompts"][1], captured["prompts"][2], captured["prompts"][3], captured["prompts"][5]))
+    assert len(captured["prompts"]) == 2
+    assert all("Boundaries can be an act of love." in prompt for prompt in captured["prompts"])
     assert "caregiver advocacy" in captured["prompts"][0]
-    assert "20 to 30 distinct candidate questions" in captured["prompts"][2]
-    assert "8.5" in captured["prompts"][5]
+    assert "evaluate at least 20 possible" in captured["prompts"][0]
+    assert "critical Senior Editorial Producer" in captured["prompts"][1]
     assert len(manuscript["main_questions"]) == 10
     assert len(manuscript["closing_questions"]) == 3
 
@@ -156,9 +147,6 @@ def test_manuscript_rejects_wrong_question_count(monkeypatch):
     assistant = AIAssistant(api_key="test")
     responses = iter(
         [
-            {"guest_name": "Avery Stone", "fit_score": 8, "recommended_theme": "Theme"},
-            _story_analysis(),
-            _conversation_design(),
             {
                 "core_theme": "Theme",
                 "introduction": "Introduction",
@@ -179,7 +167,7 @@ def test_manuscript_rejects_wrong_question_count(monkeypatch):
     assert assistant.last_error == "OpenAI returned an invalid main questions section"
 
 
-def test_manuscript_fails_closed_when_editorial_review_is_invalid(monkeypatch):
+def test_manuscript_fails_closed_when_refined_manuscript_is_invalid(monkeypatch):
     assistant = AIAssistant(api_key="test")
     valid_manuscript = {
         "core_theme": "Theme",
@@ -189,21 +177,18 @@ def test_manuscript_fails_closed_when_editorial_review_is_invalid(monkeypatch):
         "listener_takeaways": ["One", "Two", "Three"],
         "producer_note": "",
     }
-    responses = iter([{"fit_score": 8}, _story_analysis(), _conversation_design(), valid_manuscript, {"problems": []}])
+    responses = iter([valid_manuscript, {"problems": []}])
     monkeypatch.setattr(assistant, "_call_openai", lambda *args, **kwargs: json.dumps(next(responses)))
 
     assert assistant.generate_interview_manuscript(_guest()) is None
-    assert assistant.last_error == "OpenAI returned an invalid editorial review"
+    assert assistant.last_error == "OpenAI returned an incomplete manuscript"
 
 
 def test_manuscript_rejects_candidate_sets_below_quality_threshold(monkeypatch):
     assistant = AIAssistant(api_key="test")
     weak_design = _conversation_design()
     weak_design["average_selected_score"] = 7.9
-    responses = iter([{"fit_score": 8}, _story_analysis(), weak_design])
-    monkeypatch.setattr(assistant, "_call_openai", lambda *args, **kwargs: json.dumps(next(responses)))
-
-    assert assistant.generate_interview_manuscript(_guest()) is None
+    assert assistant._validate_conversation_design(weak_design) is False
     assert assistant.last_error == "OpenAI returned a question set below the editorial quality threshold"
 
 

@@ -242,38 +242,53 @@ async function fetchJSON(url, options = {}) {
 
 async function fetchJSONInternal(url, options = {}) {
   const isReadRequest = !options.method || String(options.method).toUpperCase() === "GET";
+  const {timeoutMs = 0, ...fetchOptions} = options;
   
   // Use retry with backoff for better reliability
   return await retryWithBackoffFn(
     async () => {
-      const response = await fetch(url, {
-        credentials: "same-origin",
-        ...options,
-        headers: dashboardRequestHeaders(options, isReadRequest),
-      });
-      const rawText = await response.text();
-      let data = {};
-      if (rawText) {
-        try {
-          data = JSON.parse(rawText);
-        } catch (error) {
-          data = { error: rawText.trim() };
+      const controller = timeoutMs ? new AbortController() : null;
+      const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+      try {
+        const response = await fetch(url, {
+          credentials: "same-origin",
+          ...fetchOptions,
+          ...(controller ? {signal: controller.signal} : {}),
+          headers: dashboardRequestHeaders(fetchOptions, isReadRequest),
+        });
+        const rawText = await response.text();
+        let data = {};
+        if (rawText) {
+          try {
+            data = JSON.parse(rawText);
+          } catch (error) {
+            data = { error: rawText.trim() };
+          }
         }
-      }
-      if (!response.ok) {
-        const error = new Error(data.error || "Request failed");
-        error.status = response.status;
-        error.userMessage = getUserFriendlyErrorFn(error);
+        if (!response.ok) {
+          const error = new Error(data.error || "Request failed");
+          error.status = response.status;
+          error.userMessage = getUserFriendlyErrorFn(error);
+          throw error;
+        }
+        return data;
+      } catch (error) {
+        if (error.name === "AbortError") {
+          const timeoutError = new Error("Manuscript generation timed out. Nothing was published; please try again.");
+          timeoutError.timedOut = true;
+          throw timeoutError;
+        }
         throw error;
+      } finally {
+        if (timeoutId) window.clearTimeout(timeoutId);
       }
-      return data;
     },
     {
       maxRetries: isReadRequest ? 2 : 1,
       baseDelay: 350,
       shouldRetry: (error, attempt) => {
         // Retry on network errors and 5xx server errors
-        return isReadRequest && (!error.status || error.status >= 500);
+        return isReadRequest && !error.timedOut && (!error.status || error.status >= 500);
       }
     }
   );
@@ -2360,9 +2375,9 @@ async function runInterviewManuscriptGeneration(guestId, guestName, params) {
   try {
     showAIModal(
       `📝 Interview Manuscript: ${guestName}`,
-      "<p class='loading'>Running guest analysis, story mining, conversation design, drafting, editorial critique, and final refinement…</p>",
+      "<div class='ai-generation-status' role='status'><p class='loading'>Drafting and editorially reviewing the interview…</p><p class='ai-note'>This can take a few minutes. The request has a time limit and will show a recoverable error instead of loading forever.</p></div>",
     );
-    const data = await fetchJSON(`/api/guests/${guestId}/ai-interview-manuscript?${params.toString()}`);
+    const data = await fetchJSON(`/api/guests/${guestId}/ai-interview-manuscript?${params.toString()}`, {timeoutMs: 270000});
     const manuscript = data.manuscript || {};
     const list = (items, ordered = false) => {
       const tag = ordered ? "ol" : "ul";

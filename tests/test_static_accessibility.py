@@ -174,7 +174,7 @@ def test_weekly_confirmations_uses_one_empty_state_message() -> None:
     javascript = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
 
     assert javascript.count("No reminder emails are due for this week.") == 1
-    assert "operations.js?v=20261007.2" in html
+    assert "operations.js?v=20261008.1" in html
 
 
 def test_routine_creation_forms_hide_optional_fields_and_offer_safe_defaults() -> None:
@@ -256,6 +256,23 @@ def test_dashboard_result_modal_has_dialog_semantics_and_focus_management() -> N
     assert '"Technical Complexity"' in javascript
     assert '"Primary Emphasis"' in javascript
     assert '"Research Mode"' in javascript
+
+
+def test_operations_ai_preparation_uses_linked_guest_data_and_accessible_dialog() -> None:
+    html = (STATIC_ROOT / "operations.html").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
+
+    assert 'id="ai-modal" class="modal hidden" role="dialog"' in html
+    assert 'aria-label="Close result dialog"' in html
+    assert 'data-interview-action="ai-reminder"' not in javascript
+    assert 'data-interview-action="ai-manuscript"' in javascript
+    assert '`/api/guests/${interview.guest_id}/ai-interview-questions?num=10`' in javascript
+    assert '`/api/guests/${interview.guest_id}/ai-interview-manuscript`' in javascript
+    assert "AI-powered email generation coming soon" not in javascript
+    assert "Generic interview starter questions" not in javascript
+    assert "aiModalClose?.focus()" in javascript
+    assert 'event.key === "Escape"' in javascript
+    assert "aiModalReturnFocus?.isConnected" in javascript
 
 
 def test_work_queue_cards_progressively_disclose_secondary_actions() -> None:
