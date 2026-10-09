@@ -5206,6 +5206,17 @@ def test_public_booking_context_and_slots_for_accepted_guest(monkeypatch, temp_d
     assert availability["slots"][0]["timezone"] == tz_name
 
 
+def test_booking_timezone_normalizes_browser_indianapolis_alias():
+    """Browser-reported IANA links should resolve on runtimes with canonical-only tzdata."""
+    assert GuestWebService._resolve_booking_timezone_name("America/Indianapolis") == "America/Indiana/Indianapolis"
+
+
+def test_booking_timezone_still_rejects_unknown_identifiers():
+    """Alias compatibility must not weaken timezone validation."""
+    with pytest.raises(WebInterfaceError, match="Timezone is invalid"):
+        GuestWebService._resolve_booking_timezone_name("America/Definitely_Not_A_Timezone")
+
+
 def test_public_booking_slots_include_month_window_metadata(monkeypatch, temp_db):
     """Booking availability should expose the configured month window for the guest-facing calendar."""
     service = GuestWebService(temp_db.db_path)

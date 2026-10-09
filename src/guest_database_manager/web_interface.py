@@ -175,6 +175,9 @@ BOOKING_DEFAULT_MIN_NOTICE_HOURS = 24
 BOOKING_DEFAULT_DURATION_MINUTES = 60
 BOOKING_WEEKDAY_CODE_TO_INT = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
 BOOKING_TIMEZONE_ALIASES = {
+    # Chromium can report this backward-compatible IANA link. Some minimal
+    # production tzdata installations omit links while retaining canonical zones.
+    "AMERICA/INDIANAPOLIS": "America/Indiana/Indianapolis",
     "MST": "America/Denver",
     "MDT": "America/Denver",
     "MT": "America/Denver",

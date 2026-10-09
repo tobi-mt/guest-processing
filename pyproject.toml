@@ -31,6 +31,7 @@ dependencies = [
   "pyjwt>=2.8.0",
   "python-dotenv>=1.0.0",
   "reportlab>=4.0.0",
+  "tzdata>=2025.2",
 ]
 
 [project.urls]
