@@ -18,12 +18,13 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37]
+    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
         episode_columns = {row[1] for row in conn.execute("PRAGMA table_info(episodes)")}
         interview_columns = {row[1] for row in conn.execute("PRAGMA table_info(interviews)")}
+        availability_columns = {row[1] for row in conn.execute("PRAGMA table_info(booking_availability)")}
     assert {
         "guest_applications",
         "audit_events",
@@ -68,6 +69,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     } <= episode_columns
     assert "content_class" not in interview_columns
     assert "guest_timezone" in interview_columns
+    assert "conflict_buffer_minutes" in availability_columns
 
 
 def test_account_event_repair_migration_restores_missing_table(tmp_path):

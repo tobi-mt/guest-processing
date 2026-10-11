@@ -331,7 +331,7 @@ def test_availability_calendar_preserves_week_context_and_accessible_dates() -> 
     assert "overflow-x: auto" in styles
     assert "grid-template-columns: repeat(2, 1fr)" not in styles
     assert "availability.css?v=20260922.1" in html
-    assert "availability.js?v=20260922.1" in html
+    assert "availability.js?v=20261011.1" in html
 
 
 def test_dashboard_renders_release_timing_and_dated_guest_events() -> None:

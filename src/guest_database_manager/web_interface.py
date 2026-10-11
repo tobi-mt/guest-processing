@@ -170,7 +170,7 @@ BOOKING_DEFAULT_WEEKDAYS = ("TU", "WE", "TH")
 BOOKING_DEFAULT_TIMES = ("17:00", "19:00")
 BOOKING_DEFAULT_DAYS_AHEAD = 45
 BOOKING_DEFAULT_MONTHS_AHEAD = 3
-BOOKING_DEFAULT_BUFFER_MINUTES = 15
+BOOKING_DEFAULT_BUFFER_MINUTES = 30
 BOOKING_DEFAULT_MIN_NOTICE_HOURS = 24
 BOOKING_DEFAULT_DURATION_MINUTES = 60
 BOOKING_WEEKDAY_CODE_TO_INT = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
@@ -1355,6 +1355,7 @@ class GuestWebService:
         guests = self.database.get_all_guests()
         interviews = self.database.list_interviews()
         episodes = [self._normalize_episode_record(item) for item in self.database.list_episodes()]
+        rss_release_evidence = self.database.list_rss_release_evidence_by_episode()
         latest_applications = self.database.list_latest_guest_applications()
         reminder_ids = {
             int(item["id"])
@@ -1506,6 +1507,25 @@ class GuestWebService:
             release_date = self._parse_datetime_static(episode.get("release_date"))
             days_until_release = (release_date - reference).total_seconds() / 86400 if release_date else None
             readiness = build_promotion_readiness(episode)
+            rss_evidence = rss_release_evidence.get(episode_id)
+            if rss_evidence:
+                published_at = _normalize_text(rss_evidence.get("published_at"))
+                add_item(
+                    key=f"episode:{episode_id}:rss-release-review",
+                    domain="episode",
+                    title=title,
+                    next_action="Review RSS-confirmed release",
+                    reason=(
+                        f"The podcast RSS feed shows this episode was published on {published_at}; "
+                        "review the evidence before updating lifecycle status."
+                    ),
+                    href=href,
+                    action_label="Review release evidence",
+                    owner=episode.get("owner"),
+                    score=94,
+                    due_at=published_at,
+                )
+                continue
             if release_status == "scheduled" and (days_until_release is None or days_until_release <= 14):
                 if readiness.get("blockers"):
                     blockers = ", ".join(str(item) for item in readiness["blockers"][:2])
@@ -4230,12 +4250,14 @@ class GuestWebService:
             if weekdays and slot_times:
                 return {"timezone": stored["timezone"], "weekdays": weekdays, "slot_times": slot_times,
                         "days_ahead": stored["days_ahead"], "min_notice_hours": stored["min_notice_hours"],
+                        "conflict_buffer_minutes": int(stored.get("conflict_buffer_minutes") or BOOKING_DEFAULT_BUFFER_MINUTES),
                         "blackouts": json.loads(stored.get("blackouts_json") or "[]"),
                         "source": "saved", "updated_at": stored["updated_at"], "updated_by": stored["updated_by"]}
         reverse = {value: key for key, value in BOOKING_WEEKDAY_CODE_TO_INT.items()}
         return {"timezone": self._booking_timezone_name(), "weekdays": [reverse[value] for value in self._booking_slot_weekdays()],
                 "slot_times": list(self._booking_slot_times()), "days_ahead": self._booking_days_ahead(),
-                "min_notice_hours": self._booking_min_notice_hours(), "blackouts": [], "source": "environment", "updated_at": None, "updated_by": None}
+                "min_notice_hours": self._booking_min_notice_hours(), "conflict_buffer_minutes": self._booking_buffer_minutes(),
+                "blackouts": [], "source": "environment", "updated_at": None, "updated_by": None}
 
     def get_availability_calendar_snapshot(self, *, year: int, month: int) -> Dict[str, Any]:
         """Read-only calendar view for operators; never reconciles or changes interviews."""
@@ -4277,14 +4299,18 @@ class GuestWebService:
             raise WebInterfaceError("Booking times must be unique 24-hour times.")
         try:
             days_ahead, min_notice = int(payload.get("days_ahead")), int(payload.get("min_notice_hours"))
+            conflict_buffer = int(payload.get("conflict_buffer_minutes", BOOKING_DEFAULT_BUFFER_MINUTES))
         except (TypeError, ValueError) as exc:
-            raise WebInterfaceError("Booking window and notice must be whole numbers.") from exc
+            raise WebInterfaceError("Booking window, notice, and conflict buffer must be whole numbers.") from exc
         if not 7 <= days_ahead <= 180 or not 2 <= min_notice <= 168:
             raise WebInterfaceError("Booking window must be 7–180 days and notice 2–168 hours.")
+        if not 0 <= conflict_buffer <= 120:
+            raise WebInterfaceError("Calendar conflict buffer must be between 0 and 120 minutes.")
         if any(not re.fullmatch(r"\d{4}-\d{2}-\d{2}", item) for item in blackouts):
             raise WebInterfaceError("Blackout dates must use YYYY-MM-DD.")
         saved = self.database.save_booking_availability({"timezone": timezone_name, "weekdays": weekdays,
-            "slot_times": sorted(slot_times), "days_ahead": days_ahead, "min_notice_hours": min_notice, "blackouts": blackouts}, actor=actor)
+            "slot_times": sorted(slot_times), "days_ahead": days_ahead, "min_notice_hours": min_notice,
+            "conflict_buffer_minutes": conflict_buffer, "blackouts": blackouts}, actor=actor)
         return self.get_booking_availability() | {"updated_at": saved["updated_at"], "updated_by": saved["updated_by"]}
 
     def _find_future_interview_for_guest(self, guest: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -4485,12 +4511,15 @@ class GuestWebService:
         weekdays = set(booking_settings["weekdays"])
         slot_times = booking_settings["slot_times"]
         proposal = target.get("reschedule_proposal")
+        availability_settings = self.get_booking_availability()
+        buffer_minutes = int(availability_settings.get("conflict_buffer_minutes", self._booking_buffer_minutes()))
 
         slots: list[Dict[str, Any]] = []
+        conflicts: list[Dict[str, Any]] = []
         current_local = min_notice.astimezone(timezone_obj)
         for day_offset in range(booking_settings["days_ahead"] + 1):
             candidate_day = (current_local + timedelta(days=day_offset)).date()
-            if candidate_day.isoformat() in self.get_booking_availability().get("blackouts", []):
+            if candidate_day.isoformat() in availability_settings.get("blackouts", []):
                 continue
             weekday = datetime(candidate_day.year, candidate_day.month, candidate_day.day).weekday()
             if weekday not in weekdays:
@@ -4515,8 +4544,15 @@ class GuestWebService:
                     slot_start.astimezone(timezone.utc),
                     slot_end.astimezone(timezone.utc),
                     busy_windows,
-                    buffer_minutes=self._booking_buffer_minutes(),
+                    buffer_minutes=buffer_minutes,
                 ):
+                    conflicts.append({
+                        "start": slot_start.astimezone(timezone.utc).isoformat(),
+                        "end": slot_end.astimezone(timezone.utc).isoformat(),
+                        "timezone": booking_settings["timezone"],
+                        "available": False,
+                        "reason": f"Calendar conflict within the {buffer_minutes}-minute buffer.",
+                    })
                     continue
                 slots.append(
                     {
@@ -4547,7 +4583,7 @@ class GuestWebService:
                 proposed_start,
                 proposed_start + duration,
                 busy_windows,
-                buffer_minutes=self._booking_buffer_minutes(),
+                buffer_minutes=buffer_minutes,
             )
             offered_availability[str(option)] = is_available
             if is_available and normalized_start not in existing_starts:
@@ -4577,7 +4613,9 @@ class GuestWebService:
                 "months_ahead": booking_settings["months_ahead"],
                 "days_ahead": booking_settings["days_ahead"],
             },
+            "conflict_buffer_minutes": buffer_minutes,
             "slots": slots,
+            "conflicts": conflicts,
             "reschedule_proposal": serialized_proposal,
         }
 

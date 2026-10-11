@@ -55,6 +55,7 @@ from guest_database_manager.episode_planner import build_editorial_fit, build_re
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
 from guest_database_manager.google_service_account_calendar import GoogleServiceAccountCalendarClient
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
+from guest_database_manager.rss_release_reconciliation import RSSReleaseReconciler
 
 
 SELF_INTAKE_DEFAULTS = {
@@ -587,6 +588,34 @@ def test_action_queue_omits_guest_intake_after_any_downstream_workflow(temp_db):
     assert "Active Queue Guest" in guest_titles
     assert "Operations Queue Guest" in interview_titles
     assert "Planning Queue Episode" in episode_titles
+
+
+def test_action_queue_replaces_schedule_prompt_with_rss_release_review(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {
+            "guest_name": "Released Guest",
+            "episode_title": "A Released Conversation",
+            "production_status": "ready",
+            "promotion_status": "ready",
+            "release_status": "unplanned",
+        }
+    )
+    payload = """<?xml version="1.0"?><rss><channel><item>
+      <title>A Released Conversation</title><guid>released-conversation</guid>
+      <pubDate>Fri, 09 Oct 2026 03:00:00 GMT</pubDate>
+      <link>https://example.com/released-conversation</link>
+    </item></channel></rss>"""
+    RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml").reconcile(
+        actor="rss-preview", payload=payload
+    )
+
+    queue = service._build_action_queue(limit=100)
+    item = next(entry for entry in queue["items"] if entry["key"].startswith(f"episode:{episode['id']}"))
+
+    assert item["next_action"] == "Review RSS-confirmed release"
+    assert item["action_label"] == "Review release evidence"
+    assert "2026-10-09" in item["reason"]
 
 
 def test_episode_governance_metadata_is_validated_and_persisted(temp_db):
@@ -5415,6 +5444,35 @@ def test_booking_slot_buffer_only_blocks_nearby_conflicts(monkeypatch, temp_db):
 
     assert "10:00" not in slot_times
     assert "17:00" in slot_times
+    assert availability["conflict_buffer_minutes"] == 15
+    conflict_times = {
+        datetime.fromisoformat(item["start"].replace("Z", "+00:00")).astimezone(tz_obj).strftime("%H:%M")
+        for item in availability["conflicts"]
+        if datetime.fromisoformat(item["start"].replace("Z", "+00:00")).astimezone(tz_obj).date() == candidate_day
+    }
+    assert "10:00" in conflict_times
+
+
+def test_booking_conflict_buffer_is_saved_and_audited(temp_db):
+    service = GuestWebService(temp_db.db_path)
+
+    saved = service.save_booking_availability(
+        {
+            "timezone": "Europe/Berlin",
+            "weekdays": ["TU", "WE"],
+            "slot_times": ["17:00"],
+            "days_ahead": 45,
+            "min_notice_hours": 24,
+            "conflict_buffer_minutes": 45,
+            "blackouts": [],
+        },
+        actor="scheduler",
+    )
+
+    assert saved["conflict_buffer_minutes"] == 45
+    events = temp_db.list_audit_events("booking_availability", "1")
+    assert events[-1]["actor"] == "scheduler"
+    assert events[-1]["event_type"] == "availability_updated"
 
 
 def test_public_booking_creates_interview_calendar_event_and_confirmation(monkeypatch, temp_db):

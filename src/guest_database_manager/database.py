@@ -149,17 +149,41 @@ class GuestDatabase:
             conn.row_factory = sqlite3.Row
             before_row = conn.execute("SELECT * FROM booking_availability WHERE id = 1").fetchone()
             before = dict(before_row) if before_row else None
-            conn.execute("""INSERT INTO booking_availability (id, timezone, weekdays_json, slot_times_json, days_ahead, min_notice_hours, blackouts_json, updated_at, updated_by)
-                VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            conn.execute("""INSERT INTO booking_availability (id, timezone, weekdays_json, slot_times_json, days_ahead, min_notice_hours, blackouts_json, conflict_buffer_minutes, updated_at, updated_by)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                 ON CONFLICT(id) DO UPDATE SET timezone=excluded.timezone, weekdays_json=excluded.weekdays_json,
                 slot_times_json=excluded.slot_times_json, days_ahead=excluded.days_ahead,
-                min_notice_hours=excluded.min_notice_hours, blackouts_json=excluded.blackouts_json, updated_at=CURRENT_TIMESTAMP, updated_by=excluded.updated_by""",
-                (values['timezone'], dumps(values['weekdays']), dumps(values['slot_times']), values['days_ahead'], values['min_notice_hours'], dumps(values.get('blackouts', [])), actor))
+                min_notice_hours=excluded.min_notice_hours, blackouts_json=excluded.blackouts_json,
+                conflict_buffer_minutes=excluded.conflict_buffer_minutes,
+                updated_at=CURRENT_TIMESTAMP, updated_by=excluded.updated_by""",
+                (values['timezone'], dumps(values['weekdays']), dumps(values['slot_times']), values['days_ahead'],
+                 values['min_notice_hours'], dumps(values.get('blackouts', [])), values['conflict_buffer_minutes'], actor))
             after = dict(conn.execute("SELECT * FROM booking_availability WHERE id = 1").fetchone())
             self._append_audit_event_conn(conn, entity_type="booking_availability", entity_id=1,
                 event_type="availability_updated", actor=actor, source="availability_page", before=before, after=after)
             conn.commit()
             return after
+
+    def list_rss_release_evidence_by_episode(self) -> Dict[int, Dict[str, Any]]:
+        """Return the latest RSS publication evidence linked to each episode."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT reconciliations.episode_id, reconciliations.status,
+                          reconciliations.confidence, reconciliations.reason,
+                          items.title AS published_title, items.published_at, items.link,
+                          reconciliations.updated_at
+                   FROM rss_release_reconciliations AS reconciliations
+                   JOIN rss_feed_items AS items ON items.id = reconciliations.rss_item_id
+                   WHERE reconciliations.episode_id IS NOT NULL
+                     AND reconciliations.status IN ('auto_linked', 'review_required')
+                   ORDER BY reconciliations.episode_id, reconciliations.updated_at DESC,
+                            reconciliations.id DESC"""
+            ).fetchall()
+        evidence: Dict[int, Dict[str, Any]] = {}
+        for row in rows:
+            evidence.setdefault(int(row["episode_id"]), dict(row))
+        return evidence
 
     @staticmethod
     def get_column_value(row: Any, possible_columns: List[str]) -> str:

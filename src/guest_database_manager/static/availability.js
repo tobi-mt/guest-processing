@@ -126,10 +126,25 @@ function showDay(date) {
 
 async function load() {
   availability = await fetch("/api/availability", { credentials: "same-origin" }).then((response) => response.json());
+  if (!form.elements.conflict_buffer_minutes) {
+    const label = document.createElement("label");
+    label.textContent = "Calendar conflict buffer";
+    const input = document.createElement("input");
+    input.name = "conflict_buffer_minutes";
+    input.type = "number";
+    input.min = "0";
+    input.max = "120";
+    input.required = true;
+    const hint = document.createElement("small");
+    hint.textContent = "minutes before and after";
+    label.append(input, hint);
+    form.querySelector(".rule-grid").appendChild(label);
+  }
   document.querySelector("#weekdays").innerHTML = days.map((day) => `<label><input type="checkbox" value="${day}" ${availability.weekdays.includes(day) ? "checked" : ""}> ${day}</label>`).join("");
   form.timezone.value = availability.timezone;
   form.days_ahead.value = availability.days_ahead;
   form.min_notice_hours.value = availability.min_notice_hours;
+  form.conflict_buffer_minutes.value = availability.conflict_buffer_minutes;
   availability.slot_times.forEach(addTime);
   await refresh();
 }
@@ -141,7 +156,7 @@ form.addEventListener("input", render);
 document.querySelector("#blackout-form").onsubmit = (event) => { event.preventDefault(); const date = document.querySelector("#blackout-date").value; if (date && !availability.blackouts.includes(date)) availability.blackouts.push(date); render(); };
 form.onsubmit = async (event) => {
   event.preventDefault();
-  const payload = { timezone: form.timezone.value, weekdays: [...document.querySelectorAll("#weekdays input:checked")].map((input) => input.value), slot_times: [...document.querySelectorAll(".time-row input")].map((input) => input.value), days_ahead: form.days_ahead.value, min_notice_hours: form.min_notice_hours.value, blackouts: availability.blackouts };
+  const payload = { timezone: form.timezone.value, weekdays: [...document.querySelectorAll("#weekdays input:checked")].map((input) => input.value), slot_times: [...document.querySelectorAll(".time-row input")].map((input) => input.value), days_ahead: form.days_ahead.value, min_notice_hours: form.min_notice_hours.value, conflict_buffer_minutes: form.conflict_buffer_minutes.value, blackouts: availability.blackouts };
   const response = await fetch("/api/availability", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": decodeURIComponent(csrf()) }, body: JSON.stringify(payload) });
   const data = await response.json();
   document.querySelector("#message").textContent = response.ok ? "Availability saved." : data.error;

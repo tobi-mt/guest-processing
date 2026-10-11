@@ -576,6 +576,13 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_038_booking_conflict_buffer(conn: sqlite3.Connection) -> None:
+        """Persist the operator-controlled calendar conflict buffer."""
+        SchemaManager._add_column_if_missing(
+            conn, "booking_availability", "conflict_buffer_minutes", "INTEGER NOT NULL DEFAULT 30"
+        )
+
+    @staticmethod
     def _migration_013_ai_analysis_cache(conn: sqlite3.Connection) -> None:
         """Persist completed AI analyses separately from source research data."""
         conn.execute(
@@ -1551,6 +1558,7 @@ class SchemaManager:
             (35, "dashboard_accounts", SchemaManager._migration_035_dashboard_accounts),
             (36, "repair_dashboard_account_events", SchemaManager._migration_036_repair_dashboard_account_events),
             (37, "guest_ai_artifacts", SchemaManager._migration_037_guest_ai_artifacts),
+            (38, "booking_conflict_buffer", SchemaManager._migration_038_booking_conflict_buffer),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

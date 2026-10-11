@@ -383,6 +383,16 @@ body {
   color: var(--muted);
 }
 
+.booking-conflict-notice {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 2px solid rgba(176, 68, 52, 0.5);
+  border-radius: 14px;
+  background: rgba(176, 68, 52, 0.1);
+  color: #68261d;
+  font-weight: 700;
+}
+
 .step-badge {
   display: inline-flex;
   align-items: center;
@@ -486,6 +496,18 @@ body {
 .calendar-day.available {
   border-color: rgba(15, 93, 79, 0.2);
   background: rgba(15, 93, 79, 0.06);
+}
+
+.calendar-day.conflict,
+.time-slot-button.conflict {
+  border-color: rgba(176, 68, 52, 0.42);
+  background: rgba(176, 68, 52, 0.1);
+  color: #7b2f24;
+}
+
+.time-slot-button.conflict {
+  cursor: not-allowed;
+  font-weight: 700;
 }
 
 .calendar-day.active {
