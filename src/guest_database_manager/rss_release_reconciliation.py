@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
 from guest_database_manager.db_connection import connect_database
+from guest_database_manager.database import GuestDatabase
 from guest_database_manager.recommendation_learning import RecommendationLearning
 
 DEFAULT_RSS_URL = "https://anchor.fm/s/261b1464/podcast/rss"
@@ -62,6 +63,32 @@ def _date_distance_days(first: Any, second: Any) -> int | None:
                 datetime.fromisoformat(right.replace("Z", "+00:00")).date()).days)
 
 
+def _duration_seconds(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parts = [int(part) for part in text.split(":")]
+    except ValueError:
+        return None
+    if len(parts) == 1:
+        return parts[0] if parts[0] >= 0 else None
+    if len(parts) not in (2, 3) or any(part < 0 for part in parts):
+        return None
+    total = 0
+    for part in parts:
+        total = total * 60 + part
+    return total
+
+
+def _positive_integer(value: Any) -> int | None:
+    try:
+        number = int(str(value or "").strip())
+    except ValueError:
+        return None
+    return number if number > 0 else None
+
+
 @dataclass(frozen=True)
 class FeedItem:
     key: str
@@ -71,6 +98,12 @@ class FeedItem:
     published_at: str
     link: str
     enclosure_url: str
+    description: str
+    duration_seconds: int | None
+    artwork_url: str
+    season_number: int | None
+    episode_number: int | None
+    feed_position: int
     content_hash: str
 
 
@@ -81,6 +114,7 @@ class RSSReleaseReconciler:
         self.db_path = str(db_path)
         self.feed_url = feed_url.strip() or os.environ.get("MIRROR_TALK_PODCAST_RSS_URL", "").strip() or DEFAULT_RSS_URL
         self.learning = RecommendationLearning(db_path)
+        self.database = GuestDatabase(db_path)
 
     def fetch(self, *, timeout_seconds: float = 15.0) -> bytes:
         request = Request(self.feed_url, headers={"User-Agent": "MirrorTalkReleaseReconciler/1.0"})
@@ -112,7 +146,11 @@ class RSSReleaseReconciler:
             raise RSSReconciliationError("The podcast RSS feed is not valid XML") from exc
         items: list[FeedItem] = []
         seen: set[str] = set()
-        for node in root.findall("./channel/item"):
+        itunes = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
+        content = "{http://purl.org/rss/1.0/modules/content/}"
+        channel_image = root.find(f"./channel/{itunes}image")
+        channel_artwork = str(channel_image.attrib.get("href") or "").strip() if channel_image is not None else ""
+        for feed_position, node in enumerate(root.findall("./channel/item"), start=1):
             def text(name: str) -> str:
                 child = node.find(name)
                 return str(child.text or "").strip() if child is not None else ""
@@ -122,6 +160,14 @@ class RSSReleaseReconciler:
             link = text("link")
             enclosure = node.find("enclosure")
             enclosure_url = str(enclosure.attrib.get("url") or "").strip() if enclosure is not None else ""
+            description = text(f"{content}encoded") or text("description")
+            duration_seconds = _duration_seconds(text(f"{itunes}duration"))
+            item_image = node.find(f"{itunes}image")
+            artwork_url = (
+                str(item_image.attrib.get("href") or "").strip() if item_image is not None else channel_artwork
+            )
+            season_number = _positive_integer(text(f"{itunes}season"))
+            episode_number = _positive_integer(text(f"{itunes}episode"))
             published_at = _iso_datetime(text("pubDate"))
             identity = guid or enclosure_url or link
             if not identity:
@@ -132,9 +178,13 @@ class RSSReleaseReconciler:
             seen.add(key)
             normalized = _normalize_title(title)
             content_hash = hashlib.sha256(
-                f"{identity}\0{normalized}\0{published_at}\0{link}\0{enclosure_url}".encode()
+                f"{identity}\0{normalized}\0{published_at}\0{link}\0{enclosure_url}\0{description}\0"
+                f"{duration_seconds}\0{artwork_url}\0{season_number}\0{episode_number}\0{feed_position}".encode()
             ).hexdigest()
-            items.append(FeedItem(key, guid, title, normalized, published_at, link, enclosure_url, content_hash))
+            items.append(FeedItem(
+                key, guid, title, normalized, published_at, link, enclosure_url, description,
+                duration_seconds, artwork_url, season_number, episode_number, feed_position, content_hash,
+            ))
         if not items:
             raise RSSReconciliationError("The podcast RSS feed contains no episodes")
         return items
@@ -208,10 +258,16 @@ class RSSReleaseReconciler:
             counts[match["status"]] = counts.get(match["status"], 0) + 1
         return {"feed_url": self.feed_url, "item_count": len(items), "counts": counts, "matches": matches}
 
-    def reconcile(self, *, actor: str, payload: bytes | str | None = None) -> dict[str, Any]:
+    def reconcile(
+        self,
+        *,
+        actor: str,
+        payload: bytes | str | None = None,
+        apply_lifecycle: bool = False,
+    ) -> dict[str, Any]:
         started = perf_counter()
         try:
-            result = self._reconcile(actor=actor, payload=payload)
+            result = self._reconcile(actor=actor, payload=payload, apply_lifecycle=apply_lifecycle)
         except Exception as exc:
             self._record_run(
                 actor=actor, status="failed", latency_ms=round((perf_counter() - started) * 1000),
@@ -240,7 +296,13 @@ class RSSReleaseReconciler:
             )
             conn.commit()
 
-    def _reconcile(self, *, actor: str, payload: bytes | str | None = None) -> dict[str, Any]:
+    def _reconcile(
+        self,
+        *,
+        actor: str,
+        payload: bytes | str | None = None,
+        apply_lifecycle: bool = False,
+    ) -> dict[str, Any]:
         preview = self.preview(payload)
         persisted: list[tuple[int, dict[str, Any]]] = []
         fetched_at = _now()
@@ -251,14 +313,19 @@ class RSSReleaseReconciler:
                 conn.execute(
                     """INSERT INTO rss_feed_items
                        (feed_url, item_key, guid, title, normalized_title, published_at, link, enclosure_url,
+                        description, duration_seconds, artwork_url, season_number, episode_number, feed_position,
                         content_hash, first_seen_at, last_seen_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(feed_url, item_key) DO UPDATE SET title=excluded.title,
                          normalized_title=excluded.normalized_title, published_at=excluded.published_at,
                          link=excluded.link, enclosure_url=excluded.enclosure_url,
+                         description=excluded.description, duration_seconds=excluded.duration_seconds,
+                         artwork_url=excluded.artwork_url, season_number=excluded.season_number,
+                         episode_number=excluded.episode_number, feed_position=excluded.feed_position,
                          content_hash=excluded.content_hash, last_seen_at=excluded.last_seen_at""",
                     (self.feed_url, item.key, item.guid, item.title, item.normalized_title, item.published_at,
-                     item.link, item.enclosure_url, item.content_hash, fetched_at, fetched_at),
+                     item.link, item.enclosure_url, item.description, item.duration_seconds, item.artwork_url,
+                     item.season_number, item.episode_number, item.feed_position, item.content_hash, fetched_at, fetched_at),
                 )
                 item_id = int(conn.execute(
                     "SELECT id FROM rss_feed_items WHERE feed_url = ? AND item_key = ?", (self.feed_url, item.key)
@@ -282,10 +349,51 @@ class RSSReleaseReconciler:
         outcomes = 0
         linked_outcomes = 0
         new_outcomes = 0
+        lifecycle_updates = 0
         for item_id, match in persisted:
+            item = match["item"]
+            should_confirm_release = (
+                apply_lifecycle
+                and
+                match.get("episode_id") is not None
+                and match.get("status") == "review_required"
+                and match.get("match_method") == "exact_title"
+                and float(match.get("confidence") or 0) >= 0.99
+                and match.get("reason") == "RSS confirms publication but the episode is not marked released"
+            )
+            should_sync_metadata = apply_lifecycle and match.get("episode_id") is not None and (
+                match.get("status") == "auto_linked" or should_confirm_release
+            )
+            if should_sync_metadata:
+                self.database.confirm_episode_release_from_rss(
+                    int(match["episode_id"]),
+                    published_title=item.title,
+                    published_at=item.published_at,
+                    published_description=item.description,
+                    public_episode_url=item.link,
+                    audio_enclosure_url=item.enclosure_url,
+                    duration_seconds=item.duration_seconds,
+                    artwork_url=item.artwork_url,
+                    season_number=item.season_number,
+                    episode_number=item.episode_number,
+                    feed_position=item.feed_position,
+                    actor=actor,
+                    correlation_id=f"rss:{item.key}",
+                )
+            if should_confirm_release:
+                match["status"] = "auto_linked"
+                match["reason"] = "Canonical RSS feed confirmed and applied the release"
+                lifecycle_updates += 1
+                with connect_database(self.db_path) as conn:
+                    conn.execute(
+                        """UPDATE rss_release_reconciliations
+                           SET status = 'auto_linked', reason = ?, actor = ?, updated_at = CURRENT_TIMESTAMP
+                           WHERE rss_item_id = ?""",
+                        (match["reason"], actor, item_id),
+                    )
+                    conn.commit()
             if match["status"] != "auto_linked":
                 continue
-            item = match["item"]
             with connect_database(self.db_path) as conn:
                 conn.row_factory = __import__("sqlite3").Row
                 existing = conn.execute(
@@ -308,10 +416,15 @@ class RSSReleaseReconciler:
             with connect_database(self.db_path) as conn:
                 conn.execute("UPDATE rss_release_reconciliations SET outcome_id = ? WHERE rss_item_id = ?", (outcome["id"], item_id))
                 conn.commit()
+        final_counts: dict[str, int] = {}
+        for _, match in persisted:
+            status = str(match["status"])
+            final_counts[status] = final_counts.get(status, 0) + 1
         return {
-            "feed_url": self.feed_url, "item_count": preview["item_count"], "counts": preview["counts"],
+            "feed_url": self.feed_url, "item_count": preview["item_count"], "counts": final_counts,
             "outcomes_verified": outcomes, "new_outcomes": new_outcomes, "linked_outcomes": linked_outcomes,
-            "ranking_changed": False, "lifecycle_changed": False,
+            "lifecycle_updates": lifecycle_updates,
+            "ranking_changed": False, "lifecycle_changed": lifecycle_updates > 0,
         }
 
     def status(self) -> dict[str, Any]:
@@ -333,8 +446,26 @@ class RSSReleaseReconciler:
             failures = int(conn.execute(
                 "SELECT COUNT(*) FROM rss_reconciliation_runs WHERE status = 'failed' AND created_at >= datetime('now', '-24 hours')"
             ).fetchone()[0])
+            published = [str(row[0]) for row in conn.execute(
+                "SELECT published_at FROM rss_feed_items WHERE published_at != '' ORDER BY published_at DESC LIMIT 50"
+            ).fetchall()]
+        dates = [datetime.fromisoformat(value.replace("Z", "+00:00")) for value in published]
+        intervals = [(dates[index] - dates[index + 1]).total_seconds() / 86400 for index in range(len(dates) - 1)]
+        ordered = sorted(intervals)
+        median_days = None
+        if ordered:
+            middle = len(ordered) // 2
+            median_days = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+        cadence = {
+            "episodes_analyzed": len(dates),
+            "intervals_analyzed": len(intervals),
+            "median_days_between_releases": round(median_days, 1) if median_days is not None else None,
+            "average_days_between_releases": round(sum(intervals) / len(intervals), 1) if intervals else None,
+            "latest_published_at": published[0] if published else None,
+        }
         return {
             "feed_url": self.feed_url, "items": total, "counts": counts, "latest_fetch_at": latest,
             "review_queue": reviews, "latest_run": dict(latest_run) if latest_run else None,
             "failures_24h": failures,
+            "publishing_cadence": cadence,
         }

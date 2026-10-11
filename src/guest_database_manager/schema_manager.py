@@ -583,6 +583,33 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_039_rss_public_metadata(conn: sqlite3.Connection) -> None:
+        """Store public RSS metadata separately from editorial episode fields."""
+        feed_columns = (
+            ("description", "TEXT NOT NULL DEFAULT ''"),
+            ("duration_seconds", "INTEGER"),
+            ("artwork_url", "TEXT NOT NULL DEFAULT ''"),
+            ("season_number", "INTEGER"),
+            ("episode_number", "INTEGER"),
+            ("feed_position", "INTEGER NOT NULL DEFAULT 0"),
+        )
+        for name, definition in feed_columns:
+            SchemaManager._add_column_if_missing(conn, "rss_feed_items", name, definition)
+        episode_columns = (
+            ("published_description", "TEXT"),
+            ("public_episode_url", "TEXT"),
+            ("audio_enclosure_url", "TEXT"),
+            ("rss_duration_seconds", "INTEGER"),
+            ("rss_artwork_url", "TEXT"),
+            ("rss_season_number", "INTEGER"),
+            ("rss_episode_number", "INTEGER"),
+            ("rss_feed_position", "INTEGER"),
+            ("rss_metadata_synced_at", "TIMESTAMP"),
+        )
+        for name, definition in episode_columns:
+            SchemaManager._add_column_if_missing(conn, "episodes", name, definition)
+
+    @staticmethod
     def _migration_013_ai_analysis_cache(conn: sqlite3.Connection) -> None:
         """Persist completed AI analyses separately from source research data."""
         conn.execute(
@@ -1559,6 +1586,7 @@ class SchemaManager:
             (36, "repair_dashboard_account_events", SchemaManager._migration_036_repair_dashboard_account_events),
             (37, "guest_ai_artifacts", SchemaManager._migration_037_guest_ai_artifacts),
             (38, "booking_conflict_buffer", SchemaManager._migration_038_booking_conflict_buffer),
+            (39, "rss_public_metadata", SchemaManager._migration_039_rss_public_metadata),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

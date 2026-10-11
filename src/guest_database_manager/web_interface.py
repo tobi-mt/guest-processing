@@ -978,9 +978,9 @@ class GuestWebService:
         }
         return status
 
-    def reconcile_rss_releases(self, *, actor: str) -> Dict[str, Any]:
-        """Import only provenance and outcomes; never mutate release lifecycle or ranking."""
-        return self.rss_release_reconciler.reconcile(actor=actor)
+    def reconcile_rss_releases(self, *, actor: str, apply_lifecycle: bool = False) -> Dict[str, Any]:
+        """Reconcile RSS evidence, applying releases only after explicit operator approval."""
+        return self.rss_release_reconciler.reconcile(actor=actor, apply_lifecycle=apply_lifecycle)
 
     def evaluate_recommendation_policy(self, *, actor: str) -> Dict[str, Any]:
         return self.recommendation_learning.evaluate(actor=actor)
@@ -1509,22 +1509,9 @@ class GuestWebService:
             readiness = build_promotion_readiness(episode)
             rss_evidence = rss_release_evidence.get(episode_id)
             if rss_evidence:
-                published_at = _normalize_text(rss_evidence.get("published_at"))
-                add_item(
-                    key=f"episode:{episode_id}:rss-release-review",
-                    domain="episode",
-                    title=title,
-                    next_action="Review RSS-confirmed release",
-                    reason=(
-                        f"The podcast RSS feed shows this episode was published on {published_at}; "
-                        "review the evidence before updating lifecycle status."
-                    ),
-                    href=href,
-                    action_label="Review release evidence",
-                    owner=episode.get("owner"),
-                    score=94,
-                    due_at=published_at,
-                )
+                # A unique episode link in the canonical feed is sufficient to
+                # remove the episode from the operational scheduling queue. Any
+                # lifecycle cleanup remains explicit in RSS reconciliation.
                 continue
             if release_status == "scheduled" and (days_until_release is None or days_until_release <= 14):
                 if readiness.get("blockers"):
@@ -8354,7 +8341,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         actor=actor, cycle_key=_normalize_text(payload.get("cycle_key"))
                     )
                 elif self.path == "/api/recommendation-learning/rss-reconcile":
-                    result = self.service.reconcile_rss_releases(actor=actor)
+                    result = self.service.reconcile_rss_releases(actor=actor, apply_lifecycle=True)
                 else:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
                     return

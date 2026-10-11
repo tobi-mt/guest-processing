@@ -170,6 +170,7 @@ class GuestDatabase:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """SELECT reconciliations.episode_id, reconciliations.status,
+                          reconciliations.match_method,
                           reconciliations.confidence, reconciliations.reason,
                           items.title AS published_title, items.published_at, items.link,
                           reconciliations.updated_at
@@ -1642,7 +1643,109 @@ class GuestDatabase:
                 )
                 changed += 1
             conn.commit()
-            return changed
+        return changed
+
+    def confirm_episode_release_from_rss(
+        self,
+        episode_id: int,
+        *,
+        published_title: str,
+        published_at: str,
+        published_description: str,
+        public_episode_url: str,
+        audio_enclosure_url: str,
+        duration_seconds: int | None,
+        artwork_url: str,
+        season_number: int | None,
+        episode_number: int | None,
+        feed_position: int,
+        actor: str,
+        correlation_id: str,
+    ) -> Dict[str, Any]:
+        """Apply approved public RSS metadata and, when needed, confirm release."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            current_row = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+            if not current_row:
+                raise ValueError("Episode not found")
+            before = dict(current_row)
+            already_released = str(before.get("release_status") or "").strip().lower() == "released"
+            release_status = before.get("release_status")
+            production_status = before.get("production_status")
+            promotion_status = before.get("promotion_status")
+            original_planned_release_date = before.get("original_planned_release_date")
+            if not already_released:
+                release_status = validate_transition("release", before.get("release_status"), "released")
+                production_status = validate_transition("production", before.get("production_status"), "released")
+                promotion_status = validate_transition("promotion", before.get("promotion_status"), "released")
+                original_planned_release_date = before.get("original_planned_release_date") or before.get("release_date")
+            metadata_targets = {
+                "published_title": published_title,
+                "release_date": published_at,
+                "published_description": published_description,
+                "public_episode_url": public_episode_url,
+                "audio_enclosure_url": audio_enclosure_url,
+                "rss_duration_seconds": duration_seconds,
+                "rss_artwork_url": artwork_url,
+                "rss_season_number": season_number,
+                "rss_episode_number": episode_number,
+                "rss_feed_position": feed_position,
+            }
+            if already_released and before.get("rss_metadata_synced_at") and all(
+                before.get(field) == value for field, value in metadata_targets.items()
+            ):
+                return before
+            row_version = int(before.get("row_version") or 1)
+            cursor = conn.execute(
+                """UPDATE episodes
+                   SET published_title = ?, release_date = ?, release_status = ?,
+                       production_status = ?, promotion_status = ?,
+                       original_planned_release_date = ?, published_description = ?,
+                       public_episode_url = ?, audio_enclosure_url = ?, rss_duration_seconds = ?,
+                       rss_artwork_url = ?, rss_season_number = ?, rss_episode_number = ?,
+                       rss_feed_position = ?, rss_metadata_synced_at = CURRENT_TIMESTAMP,
+                       row_version = row_version + 1,
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND row_version = ?""",
+                (
+                    published_title,
+                    published_at,
+                    release_status,
+                    production_status,
+                    promotion_status,
+                    original_planned_release_date,
+                    published_description,
+                    public_episode_url,
+                    audio_enclosure_url,
+                    duration_seconds,
+                    artwork_url,
+                    season_number,
+                    episode_number,
+                    feed_position,
+                    episode_id,
+                    row_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Episode was changed during RSS reconciliation")
+            after = dict(conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone())
+            self._append_audit_event_conn(
+                conn,
+                entity_type="episode",
+                entity_id=episode_id,
+                event_type="rss_metadata_synced" if already_released else "status_changed",
+                actor=actor,
+                source="podcast_rss",
+                reason=(
+                    "Canonical RSS feed metadata was synchronized."
+                    if already_released else "Canonical RSS feed confirmed publication."
+                ),
+                correlation_id=correlation_id,
+                before=before,
+                after=after,
+            )
+            conn.commit()
+            return after
 
     def _find_existing_episode_row(self, conn: sqlite3.Connection, episode_data: Dict[str, Any]) -> Optional[sqlite3.Row]:
         """Find an existing episode using normalized archive/import identity fields."""

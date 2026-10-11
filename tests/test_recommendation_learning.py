@@ -180,13 +180,14 @@ def test_historical_outcome_does_not_link_to_later_observation(temp_db):
     assert outcome["observation_id"] is None
 
 
-def test_rss_reconciliation_auto_links_only_released_unique_episode(temp_db):
+def test_rss_reconciliation_marks_exact_unique_episode_released(temp_db):
     released_id, _ = temp_db.upsert_episode({
         "guest_name": "Released Guest", "episode_title": "A Verified Release",
         "published_title": "A Verified Release", "release_status": "released", "release_date": "2026-09-20",
     })
     pending_id, _ = temp_db.upsert_episode({
         "guest_name": "Pending Guest", "episode_title": "Published But Pending",
+        "working_title": "Editorial working title", "notes": "Private editorial note",
         "release_status": "scheduled", "release_date": "2026-09-21",
     })
     learning = RecommendationLearning(temp_db.db_path)
@@ -196,29 +197,69 @@ def test_rss_reconciliation_auto_links_only_released_unique_episode(temp_db):
             "UPDATE recommendation_observations SET created_at = '2026-09-19 12:00:00' WHERE episode_id = ?",
             (released_id,),
         )
-    feed = """<?xml version="1.0"?><rss><channel>
+    feed = """<?xml version="1.0"?><rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>
+      <itunes:image href="https://example.com/show.jpg"/>
       <item><guid>released-1</guid><title>A Verified Release</title><pubDate>Sun, 20 Sep 2026 12:00:00 GMT</pubDate></item>
-      <item><guid>pending-1</guid><title>Published But Pending</title><pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate></item>
+      <item><guid>pending-1</guid><title>Published But Pending</title><pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+        <description>Public show notes</description><link>https://example.com/pending</link>
+        <enclosure url="https://cdn.example.com/pending.mp3" type="audio/mpeg"/>
+        <itunes:duration>01:02:03</itunes:duration><itunes:image href="https://example.com/pending.jpg"/>
+        <itunes:season>4</itunes:season><itunes:episode>27</itunes:episode>
+      </item>
       <item><guid>unknown-1</guid><title>No System Match</title><pubDate>Tue, 22 Sep 2026 12:00:00 GMT</pubDate></item>
     </channel></rss>"""
 
     reconciler = RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml")
-    result = reconciler.reconcile(actor="operator", payload=feed)
-    repeated = reconciler.reconcile(actor="operator", payload=feed)
+    result = reconciler.reconcile(actor="operator", payload=feed, apply_lifecycle=True)
+    repeated = reconciler.reconcile(actor="operator", payload=feed, apply_lifecycle=True)
     status = reconciler.status()
 
-    assert result["counts"] == {"auto_linked": 1, "review_required": 1, "unmatched": 1}
-    assert result["outcomes_verified"] == result["new_outcomes"] == result["linked_outcomes"] == 1
-    assert repeated["outcomes_verified"] == repeated["linked_outcomes"] == 1
+    assert result["counts"] == {"auto_linked": 2, "unmatched": 1}
+    assert result["lifecycle_changed"] is True
+    assert result["lifecycle_updates"] == 1
+    assert result["outcomes_verified"] == result["new_outcomes"] == 2
+    assert result["linked_outcomes"] == 1
+    assert repeated["outcomes_verified"] == 2
+    assert repeated["linked_outcomes"] == 1
     assert repeated["new_outcomes"] == 0
     assert status["items"] == 3
     assert status["counts"] == result["counts"]
     assert status["latest_run"]["status"] == "completed"
     assert status["failures_24h"] == 0
-    assert status["review_queue"][0]["episode_id"] == pending_id
+    assert status["publishing_cadence"]["episodes_analyzed"] == 3
+    assert status["publishing_cadence"]["median_days_between_releases"] == 1.0
     with sqlite3.connect(temp_db.db_path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM recommendation_outcomes").fetchone()[0] == 1
-        assert conn.execute("SELECT release_status FROM episodes WHERE id = ?", (pending_id,)).fetchone()[0] == "scheduled"
+        conn.row_factory = sqlite3.Row
+        assert conn.execute("SELECT COUNT(*) FROM recommendation_outcomes").fetchone()[0] == 2
+        pending = dict(conn.execute("SELECT * FROM episodes WHERE id = ?", (pending_id,)).fetchone())
+        assert pending["release_status"] == "released"
+        assert pending["production_status"] == "released"
+        assert pending["promotion_status"] == "released"
+        assert pending["published_title"] == "Published But Pending"
+        assert pending["working_title"] == "Editorial working title"
+        assert pending["notes"] == "Private editorial note"
+        assert pending["published_description"] == "Public show notes"
+        assert pending["public_episode_url"] == "https://example.com/pending"
+        assert pending["audio_enclosure_url"] == "https://cdn.example.com/pending.mp3"
+        assert pending["rss_duration_seconds"] == 3723
+        assert pending["rss_artwork_url"] == "https://example.com/pending.jpg"
+        assert pending["rss_season_number"] == 4
+        assert pending["rss_episode_number"] == 27
+        assert pending["rss_feed_position"] == 2
+        assert pending["rss_metadata_synced_at"]
+        assert str(pending["release_date"]).startswith("2026-09-21")
+        audit = conn.execute(
+            """SELECT actor, source, reason, correlation_id FROM audit_events
+               WHERE entity_type = 'episode' AND entity_id = ? AND event_type = 'status_changed'
+               ORDER BY id DESC LIMIT 1""",
+            (pending_id,),
+        ).fetchone()
+        assert tuple(audit)[:3] == (
+            "operator",
+            "podcast_rss",
+            "Canonical RSS feed confirmed publication.",
+        )
+        assert audit["correlation_id"].startswith("rss:")
 
 
 def test_rss_reconciliation_records_safe_failure_metrics(temp_db):
@@ -231,6 +272,27 @@ def test_rss_reconciliation_records_safe_failure_metrics(temp_db):
     assert status["latest_run"]["status"] == "failed"
     assert status["latest_run"]["error_code"] == "RSSReconciliationError"
     assert status["failures_24h"] == 1
+
+
+def test_rss_background_reconciliation_keeps_release_transition_human_approved(temp_db):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": "Approval Guest", "episode_title": "Approval Required Release",
+        "release_status": "scheduled", "release_date": "2026-09-21",
+    })
+    feed = """<?xml version="1.0"?><rss><channel><item>
+      <guid>approval-required</guid><title>Approval Required Release</title>
+      <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+
+    result = RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml").reconcile(
+        actor="rss-release-automation", payload=feed
+    )
+
+    assert result["lifecycle_changed"] is False
+    assert result["counts"] == {"review_required": 1}
+    unchanged = temp_db.get_episode_by_id(episode_id)
+    assert unchanged["release_status"] == "scheduled"
+    assert unchanged["published_description"] is None
 
 
 def test_invalid_persisted_policy_weights_fail_safe(temp_db):

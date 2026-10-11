@@ -590,7 +590,7 @@ def test_action_queue_omits_guest_intake_after_any_downstream_workflow(temp_db):
     assert "Planning Queue Episode" in episode_titles
 
 
-def test_action_queue_replaces_schedule_prompt_with_rss_release_review(temp_db):
+def test_action_queue_omits_episode_with_exact_rss_release_evidence(temp_db):
     service = GuestWebService(temp_db.db_path)
     episode = service.create_episode(
         {
@@ -607,15 +607,12 @@ def test_action_queue_replaces_schedule_prompt_with_rss_release_review(temp_db):
       <link>https://example.com/released-conversation</link>
     </item></channel></rss>"""
     RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml").reconcile(
-        actor="rss-preview", payload=payload
+        actor="rss-preview", payload=payload, apply_lifecycle=True
     )
 
     queue = service._build_action_queue(limit=100)
-    item = next(entry for entry in queue["items"] if entry["key"].startswith(f"episode:{episode['id']}"))
-
-    assert item["next_action"] == "Review RSS-confirmed release"
-    assert item["action_label"] == "Review release evidence"
-    assert "2026-10-09" in item["reason"]
+    assert not any(entry["key"].startswith(f"episode:{episode['id']}") for entry in queue["items"])
+    assert service.database.get_episode_by_id(episode["id"])["release_status"] == "released"
 
 
 def test_episode_governance_metadata_is_validated_and_persisted(temp_db):

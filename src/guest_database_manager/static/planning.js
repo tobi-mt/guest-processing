@@ -133,6 +133,7 @@ function renderLearningStatus(payload) {
   const rss = payload.rss_reconciliation || {};
   const rssCounts = rss.counts || {};
   const rssRun = rss.latest_run || {};
+  const rssCadence = rss.publishing_cadence || {};
   const candidates = (payload.policies || []).filter((policy) => policy.status === "draft");
   const automationLocked = !settings.automation_enabled || Boolean(settings.kill_switch);
   const driftAlert = Boolean(monitoring.alert);
@@ -181,7 +182,7 @@ function renderLearningStatus(payload) {
       <article class="learning-metric-card">
         <span class="learning-card-label">Podcast RSS</span>
         <strong>${Number(rssCounts.auto_linked || 0)} verified</strong>
-        <small>${Number(rss.items || 0)} feed items · ${Number(rssCounts.review_required || 0) + Number(rssCounts.conflict || 0)} need review · ${Number(rssCounts.unmatched || 0)} unmatched · ${Number(rss.failures_24h || 0)} failures/24h · ${rssRun.latency_ms == null ? "waiting" : `${Number(rssRun.latency_ms)} ms`}</small>
+        <small>${Number(rss.items || 0)} feed items · ${Number(rssCounts.review_required || 0) + Number(rssCounts.conflict || 0)} need review · ${Number(rssCounts.unmatched || 0)} unmatched · ${rssCadence.median_days_between_releases == null ? "cadence waiting" : `${Number(rssCadence.median_days_between_releases)} day median cadence`} · ${Number(rss.failures_24h || 0)} failures/24h · ${rssRun.latency_ms == null ? "waiting" : `${Number(rssRun.latency_ms)} ms`}</small>
       </article>
       <article class="learning-metric-card"><span class="learning-card-label">Acceptance</span><strong>${formatRate(kpis.ranking_acceptance_rate)}</strong><small>Human recommendation decisions</small></article>
       <article class="learning-metric-card"><span class="learning-card-label">Release completion</span><strong>${formatRate(kpis.release_completion_rate)}</strong><small>Accepted recommendations released</small></article>
