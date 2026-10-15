@@ -54,7 +54,7 @@ def test_public_intake_http_workflow_serves_page_submits_and_persists(temp_db, m
         submission = requests.post(f"{base_url}/api/intake", json=VALID_SELF_APPLICATION, timeout=5)
 
     assert page.status_code == 200
-    assert 'src="/static/intake.js?v=20260925.2"' in page.text
+    assert 'src="/static/intake.js?v=20261015.1"' in page.text
     assert submission.status_code == 201
     body = submission.json()
     assert body["message"] == "Thank you for applying. Your submission has been received."

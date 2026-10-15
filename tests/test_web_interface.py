@@ -7900,9 +7900,9 @@ def test_operations_list_reports_calendar_sync_enabled(monkeypatch, temp_db):
     assert payload["calendar_sync_enabled"] is True
 
 
-def test_validate_intake_payload_rejects_spam_keywords():
-    """Spammy submissions should be rejected before insertion."""
-    with pytest.raises(WebInterfaceError):
+def test_validate_intake_payload_rejects_correlated_spam_signals():
+    """Repeated spam terms plus promotional language should identify the answer to revise."""
+    with pytest.raises(WebInterfaceError, match=r"review the answer for: background"):
         validate_intake_payload(
             {
                 "background": "I offer premium SEO backlink services for your website.",
@@ -7913,6 +7913,44 @@ def test_validate_intake_payload_rejects_spam_keywords():
                 "additional_info": "Visit http://spam.example and http://spam2.example today.",
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("profession", "background"),
+    [
+        (
+            "Small-business finance adviser",
+            "I help founders understand responsible business loan decisions, cash flow, and the personal pressure of entrepreneurship.",
+        ),
+        (
+            "SEO strategist",
+            "I have spent a decade making search information clearer and want to discuss the ethics and limitations of SEO work.",
+        ),
+        (
+            "Recovery advocate",
+            "My work grew from recovering from casino gambling and helping families discuss shame, betting, and financial repair.",
+        ),
+        (
+            "Financial technology researcher",
+            "I study crypto markets and want to discuss how ordinary people can evaluate risk without hype or easy promises.",
+        ),
+    ],
+)
+def test_validate_intake_payload_allows_legitimate_sensitive_topics(profession, background):
+    """Sensitive topic words are review signals, not automatic rejection reasons."""
+    validate_intake_payload({"profession": profession, "background": background})
+
+
+def test_validate_intake_payload_ignores_inactive_conditional_helper_fields():
+    """Stale browser-only details must not influence canonical-answer spam checks."""
+    validate_intake_payload(
+        {
+            "background": "I am a writer exploring resilience, faith, identity, and how people rebuild after difficult changes.",
+            "faith_detail": {
+                "stale": "Premium SEO backlink services available. Buy now at https://one.example https://two.example"
+            },
+        }
+    )
 
 
 def test_validate_intake_payload_allows_legitimate_profile_links():

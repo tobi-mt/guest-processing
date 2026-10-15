@@ -483,7 +483,7 @@ function focusFieldByName(fieldName) {
 }
 
 function revealServerValidationTarget(errorMessage) {
-  const match = errorMessage.match(/Please (?:provide a more complete answer for|complete the required field):\s*(.+)$/i);
+  const match = errorMessage.match(/Please (?:provide a more complete answer for|complete the required field|review the answer for):\s*([^.;]+)/i);
   if (!match) {
     return false;
   }
@@ -492,6 +492,12 @@ function revealServerValidationTarget(errorMessage) {
   if (normalizedFieldName === "experience") {
     const experienceChoice = form.elements.namedItem("experience_choice");
     return focusFieldByName(experienceChoice?.value === "Yes" ? "experience_detail" : "experience_choice");
+  }
+  if (normalizedFieldName === "additional_public_links") {
+    return focusFieldByName("social_other");
+  }
+  if (normalizedFieldName === "favorite_quote_or_philosophy") {
+    return focusFieldByName("favorite_quote_detail");
   }
   return focusFieldByName(normalizedFieldName);
 }
@@ -556,6 +562,16 @@ form.addEventListener("submit", async (event) => {
   payload.alignment = buildConditionalAnswer("alignment_choice", "alignment_detail");
   payload.favorite_quote = String(form.elements.namedItem("favorite_quote_detail")?.value || "").trim();
   payload.experience = buildConditionalAnswer("experience_choice", "experience_detail");
+  [
+    "faith_choice",
+    "faith_detail",
+    "alignment_choice",
+    "alignment_detail",
+    "experience_choice",
+    "experience_detail",
+    "favorite_quote_detail",
+    "social_other",
+  ].forEach((fieldName) => delete payload[fieldName]);
   submitButton.disabled = true;
   submitButton.textContent = "Submitting...";
   setMessage("Submitting your application...", "pending");

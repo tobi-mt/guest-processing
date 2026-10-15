@@ -240,7 +240,7 @@ MAX_INTAKE_FIELD_LENGTHS = {
     "social_handles": 10_000,
 }
 DEFAULT_MAX_INTAKE_FIELD_LENGTH = 10_000
-SPAM_KEYWORDS = {
+SPAM_REVIEW_TERMS = {
     "seo",
     "casino",
     "crypto",
@@ -249,6 +249,27 @@ SPAM_KEYWORDS = {
     "viagra",
     "betting",
     "loan",
+}
+SPAM_PROMOTIONAL_PATTERNS = (
+    r"\bbuy\s+now\b",
+    r"\bservices?\s+available\b",
+    r"\b(?:premium|cheap|affordable)\s+[a-z0-9 -]{0,40}\bservices?\b",
+    r"\bguaranteed\s+(?:results?|traffic|rankings?|returns?)\b",
+    r"\bvisit\s+https?://",
+)
+INTAKE_FIELD_LABELS = {
+    "social_handles": "additional public links",
+    "favorite_quote": "favorite quote or philosophy",
+}
+INTAKE_BROWSER_HELPER_FIELDS = {
+    "faith_choice",
+    "faith_detail",
+    "alignment_choice",
+    "alignment_detail",
+    "experience_choice",
+    "experience_detail",
+    "favorite_quote_detail",
+    "social_other",
 }
 HOST_NAME_HINTS = (
     "tobi ojekunle",
@@ -573,6 +594,8 @@ def _normalize_episode_release_status(release_date: str, release_status: str) ->
 def validate_intake_payload(payload: Dict[str, str], *, require_required_fields: bool = False) -> None:
     """Reject incomplete, spammy, or low-effort intake submissions."""
     for field_name, raw_value in payload.items():
+        if field_name in INTAKE_BROWSER_HELPER_FIELDS:
+            continue
         if isinstance(raw_value, (dict, list, tuple, set)):
             raise WebInterfaceError(f"Please enter plain text for: {field_name.replace('_', ' ')}")
         value = _normalize_text(raw_value)
@@ -580,10 +603,37 @@ def validate_intake_payload(payload: Dict[str, str], *, require_required_fields:
         if len(value) > max_length:
             raise WebInterfaceError(f"Please shorten: {field_name.replace('_', ' ')}")
 
-    combined_text = " ".join(str(payload.get(field_name, "")) for field_name in payload).lower()
+    # Only canonical answers are relevant here. Browser-only choice/detail fields
+    # may retain stale values after their conditional control is hidden.
+    spam_evidence: list[tuple[str, int, int, int]] = []
+    total_term_hits = 0
+    total_promotional_hits = 0
+    total_urls = 0
+    for field_name in FORM_FIELDS:
+        value = _normalize_text(payload.get(field_name)).casefold()
+        if not value:
+            continue
+        term_hits = sum(len(re.findall(rf"\b{re.escape(term)}\b", value)) for term in SPAM_REVIEW_TERMS)
+        promotional_hits = sum(bool(re.search(pattern, value)) for pattern in SPAM_PROMOTIONAL_PATTERNS)
+        url_count = len(re.findall(r"https?://[^\s]+", value))
+        if term_hits or promotional_hits or url_count:
+            spam_evidence.append((field_name, term_hits, promotional_hits, url_count))
+        total_term_hits += term_hits
+        total_promotional_hits += promotional_hits
+        total_urls += url_count
 
-    if any(keyword in combined_text for keyword in SPAM_KEYWORDS):
-        raise WebInterfaceError("Your submission was flagged as spam.")
+    # Topic words such as "crypto", "loan", or "SEO" are legitimate on their
+    # own. Reject only when repeated keyword evidence is corroborated by overtly
+    # promotional language or a link-heavy pitch.
+    if total_term_hits >= 2 and (total_promotional_hits >= 1 or total_urls >= 2):
+        field_name = max(
+            spam_evidence,
+            key=lambda evidence: (evidence[1] + evidence[2], evidence[3]),
+        )[0]
+        field_label = INTAKE_FIELD_LABELS.get(field_name, field_name.replace("_", " "))
+        raise WebInterfaceError(
+            f"Please review the answer for: {field_label}. It appears unusually promotional; revise it and try again."
+        )
 
     if require_required_fields:
         for field_name in REQUIRED_INTAKE_FIELDS:

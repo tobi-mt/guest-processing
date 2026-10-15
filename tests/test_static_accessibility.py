@@ -105,7 +105,7 @@ def test_intake_continue_uses_immediate_browser_validation_feedback() -> None:
     assert "function showFieldValidation(field, customMessage = \"\")" in javascript
     assert "field.reportValidity();" in javascript
     assert "showFieldValidation(selfAttestationField, errorText);" in javascript
-    assert 'intake.js?v=20260925.2' in (STATIC_ROOT / "intake.html").read_text(encoding="utf-8")
+    assert 'intake.js?v=20261015.1' in (STATIC_ROOT / "intake.html").read_text(encoding="utf-8")
 
 
 def test_intake_attestation_state_is_preserved_and_submitted_explicitly() -> None:
@@ -116,6 +116,21 @@ def test_intake_attestation_state_is_preserved_and_submitted_explicitly() -> Non
     assert 'field.checked = value === true || value === field.value;' in javascript
     assert 'if (!validateSelfAttestation())' in javascript
     assert 'payload.self_attestation = selfAttestationField?.checked ? "yes" : "";' in javascript
+
+
+def test_intake_omits_conditional_helper_fields_from_submission() -> None:
+    """Hidden or stale conditional details must not reach server-side spam validation."""
+    javascript = (STATIC_ROOT / "intake.js").read_text(encoding="utf-8")
+
+    for field_name in (
+        "faith_detail",
+        "alignment_detail",
+        "experience_detail",
+        "favorite_quote_detail",
+        "social_other",
+    ):
+        assert f'"{field_name}",' in javascript
+    assert ".forEach((fieldName) => delete payload[fieldName]);" in javascript
 
 
 def test_intake_redesign_is_three_steps_and_labels_choice_architecture() -> None:
