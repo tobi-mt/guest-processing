@@ -9,7 +9,7 @@ fieldset { border: 0; padding: 0; }
 .time-row input { width: 120px; }
 .rule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .preview { align-self: start; position: sticky; top: 20px; }
-.preview-slots span { padding: 9px 12px; border-radius: 999px; background: rgba(20, 90, 74, .1); color: var(--accent); font-weight: 700; }
+.preview-slots span { padding: 9px 12px; border-radius: 999px; background: rgba(196, 61, 0, .1); color: var(--accent); font-weight: 700; }
 .availability-overview { margin-top: 24px; }
 .overview-head, .overview-stats, .blackout-form { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .legend span { padding: 6px 10px; border-radius: 999px; font-size: .8rem; }

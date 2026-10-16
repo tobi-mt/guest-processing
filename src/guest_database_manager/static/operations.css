@@ -126,8 +126,8 @@
 }
 
 .status-chip.success {
-  color: #145a4a;
-  border-color: rgba(20, 90, 74, 0.28);
+  color: #9f3100;
+  border-color: rgba(196, 61, 0, 0.28);
   background: rgba(223, 242, 234, 0.72);
 }
 
@@ -144,8 +144,8 @@
 }
 
 .operations-card.selected {
-  border-color: rgba(20, 90, 74, 0.22);
-  box-shadow: 0 10px 24px rgba(20, 90, 74, 0.08);
+  border-color: rgba(196, 61, 0, 0.22);
+  box-shadow: 0 10px 24px rgba(196, 61, 0, 0.08);
 }
 
 .recommendation-card {
@@ -184,7 +184,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: rgba(20, 90, 74, 0.08);
+  background: rgba(196, 61, 0, 0.08);
   color: var(--accent);
   font-size: 1.3rem;
   font-weight: 500;
@@ -249,7 +249,7 @@
 }
 
 .export-field-option:hover {
-  border-color: rgba(20, 90, 74, 0.18);
+  border-color: rgba(196, 61, 0, 0.18);
   background: rgba(223, 242, 234, 0.42);
 }
 
@@ -659,7 +659,7 @@
 }
 
 .modal-actions .ghost-button:hover {
-  background: rgba(20, 90, 74, 0.05);
+  background: rgba(196, 61, 0, 0.05);
 }
 
 [data-schedule-modal-message] {
@@ -1004,13 +1004,13 @@
   width: 84%;
   height: 3px;
   border-radius: 999px;
-  background: rgba(20, 90, 74, 0.16);
+  background: rgba(196, 61, 0, 0.16);
 }
 
 .production-stage-marker {
   width: 16px;
   height: 16px;
-  border: 3px solid rgba(20, 90, 74, 0.32);
+  border: 3px solid rgba(196, 61, 0, 0.32);
   border-radius: 999px;
   background: var(--panel-strong);
 }
@@ -1027,14 +1027,14 @@
 
 .production-rail-stage:hover,
 .production-rail-stage.active {
-  background: rgba(20, 90, 74, 0.08);
+  background: rgba(196, 61, 0, 0.08);
   color: var(--accent);
 }
 
 .production-rail-stage.active .production-stage-marker {
   border-color: var(--accent);
   background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(20, 90, 74, 0.12);
+  box-shadow: 0 0 0 4px rgba(196, 61, 0, 0.12);
 }
 
 .production-rail-stage.active strong {
@@ -1052,9 +1052,9 @@
   gap: 1rem;
   margin: 1rem 0 0.75rem;
   padding: 1rem;
-  border: 1px solid rgba(20, 90, 74, 0.18);
+  border: 1px solid rgba(196, 61, 0, 0.18);
   border-radius: 16px;
-  background: rgba(20, 90, 74, 0.055);
+  background: rgba(196, 61, 0, 0.055);
 }
 
 .recommendation-decision h4,
@@ -1260,7 +1260,7 @@
   container-type: inline-size;
   padding: clamp(1.1rem, 2.2vw, 1.55rem);
   background:
-    radial-gradient(circle at 100% 0, rgba(20, 90, 74, 0.09), transparent 42%),
+    radial-gradient(circle at 100% 0, rgba(196, 61, 0, 0.09), transparent 42%),
     linear-gradient(155deg, rgba(255, 253, 249, 0.99), rgba(248, 243, 234, 0.96));
   overflow: visible;
 }
@@ -1326,7 +1326,7 @@
   gap: 1rem;
   min-width: 0;
   padding: 0.95rem 1rem;
-  border: 1px solid rgba(20, 90, 74, 0.13);
+  border: 1px solid rgba(196, 61, 0, 0.13);
   border-radius: 17px;
   background: rgba(255, 255, 255, 0.84);
 }
@@ -1383,7 +1383,7 @@
   display: grid;
   gap: 0.55rem;
   padding: 0.9rem 1rem;
-  border: 1px solid rgba(20, 90, 74, 0.15);
+  border: 1px solid rgba(196, 61, 0, 0.15);
   border-radius: 16px;
   background: rgba(223, 242, 234, 0.3);
 }
@@ -1396,7 +1396,7 @@
 }
 
 .learning-progress span { color: var(--muted); font-size: 0.8rem; }
-.learning-progress-track { height: 10px; overflow: hidden; border-radius: 999px; background: rgba(20, 90, 74, 0.12); }
+.learning-progress-track { height: 10px; overflow: hidden; border-radius: 999px; background: rgba(196, 61, 0, 0.12); }
 .learning-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.2s ease; }
 
 .learning-metric-card strong {
@@ -1431,7 +1431,7 @@
   align-items: start;
   gap: 0.75rem;
   padding: 0.9rem 1rem;
-  border: 1px dashed rgba(20, 90, 74, 0.22);
+  border: 1px dashed rgba(196, 61, 0, 0.22);
   border-radius: 16px;
   background: rgba(223, 242, 234, 0.35);
 }
@@ -1443,7 +1443,7 @@
   height: 30px;
   border-radius: 10px;
   color: var(--accent);
-  background: rgba(20, 90, 74, 0.1);
+  background: rgba(196, 61, 0, 0.1);
   font-weight: 800;
 }
 
@@ -1480,7 +1480,7 @@
   margin: 0.8rem 0 0;
   padding: 0.75rem 0.9rem;
   border-radius: 14px;
-  background: rgba(20, 90, 74, 0.07);
+  background: rgba(196, 61, 0, 0.07);
   font-size: 0.86rem;
   line-height: 1.45;
 }
@@ -1645,9 +1645,9 @@
   gap: 1rem;
   margin-top: 1rem;
   padding: 1rem;
-  border: 1px solid rgba(20, 90, 74, 0.16);
+  border: 1px solid rgba(196, 61, 0, 0.16);
   border-radius: 16px;
-  background: rgba(20, 90, 74, 0.055);
+  background: rgba(196, 61, 0, 0.055);
 }
 
 .episode-next-action.urgent {

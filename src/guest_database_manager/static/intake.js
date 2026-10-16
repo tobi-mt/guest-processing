@@ -376,8 +376,13 @@ function showFieldValidation(field, customMessage = "") {
     field.reportValidity();
   } else {
     field.focus();
-    field.scrollIntoView({ behavior: "smooth", block: "center" });
   }
+  // Native validation may focus a control behind the mobile sticky action bar.
+  // Reposition it after the browser draws its validation bubble so the question
+  // and error remain visible together.
+  window.requestAnimationFrame(() => {
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
   if (customMessage && typeof field.setCustomValidity === "function") {
     field.setCustomValidity("");
   }

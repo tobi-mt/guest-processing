@@ -202,6 +202,8 @@ function selectSlot(slot) {
   renderSelectedSlot(slot);
   renderCalendarMonth();
   renderTimeOptions(selectedDateKey);
+  bookingSubmit.focus({ preventScroll: true });
+  bookingForm.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function renderRescheduleProposal(proposal) {
@@ -266,17 +268,30 @@ function renderTimeOptions(dateKey) {
   const referenceSlot = daySlots[0] || dayConflicts[0];
   intro.innerHTML = `
     <strong>Times for ${formatSlotDay(referenceSlot.start)}</strong>
-    <p>Available times can be selected. Calendar conflicts are shown but cannot be booked.</p>
+    <p>${daySlots.length ? "Choose a time below to continue." : "There are no bookable times on this date. Please choose another date."}</p>
   `;
   bookingTimes.appendChild(intro);
+
+  if (dayConflicts.length) {
+    const notice = document.createElement("p");
+    notice.className = "date-availability-notice";
+    notice.textContent = daySlots.length
+      ? "Some times on this date are unavailable."
+      : "This date is unavailable.";
+    bookingTimes.appendChild(notice);
+  }
 
   daySlots.forEach((slot) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "time-slot-button";
-    button.textContent = `${formatSlotTime(slot.start)} · ${slotTimezone}`;
+    const slotTime = formatSlotTime(slot.start);
+    button.textContent = `Select ${slotTime} · ${slotTimezone}`;
+    button.setAttribute("aria-pressed", "false");
     if (selectedSlot && selectedSlot.start === slot.start) {
       button.classList.add("active");
+      button.textContent = `Selected: ${slotTime} · ${slotTimezone}`;
+      button.setAttribute("aria-pressed", "true");
     }
     button.addEventListener("click", () => {
       selectSlot(slot);
@@ -288,15 +303,12 @@ function renderTimeOptions(dateKey) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "time-slot-button conflict";
-    button.setAttribute("aria-disabled", "true");
-    button.textContent = `${formatSlotTime(slot.start)} · Calendar conflict (±${conflictBufferMinutes} min)`;
-    button.addEventListener("click", () => {
-      setMessage(`That time conflicts with an existing calendar event within the ${conflictBufferMinutes}-minute buffer. Please choose another time.`, "error");
-    });
+    button.disabled = true;
+    button.textContent = `${formatSlotTime(slot.start)} · Unavailable`;
     bookingTimes.appendChild(button);
   });
 
-  bookingForm.classList.remove("hidden");
+  bookingForm.classList.toggle("hidden", !daySlots.length);
 }
 
 function renderCalendarMonth() {
@@ -351,6 +363,16 @@ function renderCalendarMonth() {
         renderSelectedSlot(null);
         renderCalendarMonth();
         renderTimeOptions(dateKey);
+        if (!isAvailable) {
+          setMessage("That date has no bookable times. Please choose one of the available dates.", "error");
+        } else {
+          setMessage("Now choose a time below to activate the booking button.", "success");
+          window.requestAnimationFrame(() => {
+            const firstTime = bookingTimes.querySelector(".time-slot-button:not(:disabled)");
+            firstTime?.focus({ preventScroll: true });
+            bookingTimes.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          });
+        }
       });
     }
     bookingCalendarGrid.appendChild(button);
@@ -362,21 +384,6 @@ function setAvailableSlots(slots, conflicts, timezone, bookingWindow = {}, buffe
   conflictSlots = Array.isArray(conflicts) ? [...conflicts].sort((left, right) => new Date(left.start) - new Date(right.start)) : [];
   slotTimezone = timezone || "Europe/Berlin";
   conflictBufferMinutes = Number(bufferMinutes) || 0;
-  let conflictNotice = document.getElementById("booking-conflict-notice");
-  if (!conflictNotice) {
-    conflictNotice = document.createElement("div");
-    conflictNotice.id = "booking-conflict-notice";
-    conflictNotice.className = "booking-conflict-notice hidden";
-    conflictNotice.setAttribute("role", "alert");
-    bookingAvailability.querySelector(".availability-header").after(conflictNotice);
-  }
-  if (conflictSlots.length) {
-    conflictNotice.textContent = `${conflictSlots.length} time ${conflictSlots.length === 1 ? "is" : "are"} unavailable because of an existing calendar event within the ±${conflictBufferMinutes}-minute safety window. Conflicting times are marked below.`;
-    conflictNotice.classList.remove("hidden");
-  } else {
-    conflictNotice.textContent = "";
-    conflictNotice.classList.add("hidden");
-  }
   availableMonths = [...new Set([...availableSlots, ...conflictSlots].map(slotMonthKey))].sort();
   visibleMonthKey = availableMonths[0] || "";
   selectedDateKey = "";
@@ -401,12 +408,10 @@ function setAvailableSlots(slots, conflicts, timezone, bookingWindow = {}, buffe
     return;
   }
 
-  renderCalendarMonth();
-  const firstAvailableDate = slotLocalDate(availableSlots[0] || conflictSlots[0]);
-  selectedDateKey = firstAvailableDate;
   visibleMonthKey = slotMonthKey(availableSlots[0] || conflictSlots[0]);
   renderCalendarMonth();
-  renderTimeOptions(firstAvailableDate);
+  bookingTimes.innerHTML = "";
+  bookingForm.classList.add("hidden");
 }
 
 async function loadBookingPage() {
@@ -415,6 +420,7 @@ async function loadBookingPage() {
   if (!bookingToken) {
     showInvitationState();
     setMessage("This page is opened through a personal Mirror Talk invitation link. Please use the booking link sent to your email, or reply to Mirror Talk and we’ll send you a fresh one.", "success");
+    document.body.classList.remove("booking-loading");
     return;
   }
 
@@ -469,6 +475,8 @@ async function loadBookingPage() {
   } catch (error) {
     showInvitationState();
     setMessage(error.message, "error");
+  } finally {
+    document.body.classList.remove("booking-loading");
   }
 }
 

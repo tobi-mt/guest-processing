@@ -98,6 +98,30 @@ def test_booking_confirmation_form_stays_hidden_after_a_booking_is_found() -> No
     assert re.search(r"\.booking-form\.hidden\s*\{\s*display:\s*none", styles)
 
 
+def test_booking_slot_selection_is_explicit_and_conflicts_are_contextual() -> None:
+    """Guests should get an obvious selected state without seeing internal calendar details."""
+    javascript = (STATIC_ROOT / "booking.js").read_text(encoding="utf-8")
+    html = (STATIC_ROOT / "booking.html").read_text(encoding="utf-8")
+
+    assert 'button.textContent = `Selected: ${slotTime} · ${slotTimezone}`;' in javascript
+    assert 'bookingSubmit.focus({ preventScroll: true });' in javascript
+    assert 'button.disabled = true;' in javascript
+    assert "existing calendar event" not in javascript
+    assert "safety window" not in javascript
+    assert 'booking.css?v=20261016.9' in html
+    assert 'booking.js?v=20261016.3' in html
+
+
+def test_partner_async_submit_handlers_retain_the_form_reference() -> None:
+    """Async submit completion must not read the browser-cleared event.currentTarget."""
+    javascript = (STATIC_ROOT / "partners.js").read_text(encoding="utf-8")
+    html = (STATIC_ROOT / "partners.html").read_text(encoding="utf-8")
+
+    assert javascript.count("const target = event.currentTarget;") == 2
+    assert "event.currentTarget.reset()" not in javascript
+    assert 'partners.js?v=20261016.1' in html
+
+
 def test_intake_continue_uses_immediate_browser_validation_feedback() -> None:
     """Validation failures must not look like an unresponsive Continue button."""
     javascript = (STATIC_ROOT / "intake.js").read_text(encoding="utf-8")
@@ -105,7 +129,7 @@ def test_intake_continue_uses_immediate_browser_validation_feedback() -> None:
     assert "function showFieldValidation(field, customMessage = \"\")" in javascript
     assert "field.reportValidity();" in javascript
     assert "showFieldValidation(selfAttestationField, errorText);" in javascript
-    assert 'intake.js?v=20261015.1' in (STATIC_ROOT / "intake.html").read_text(encoding="utf-8")
+    assert 'intake.js?v=20261016.1' in (STATIC_ROOT / "intake.html").read_text(encoding="utf-8")
 
 
 def test_intake_attestation_state_is_preserved_and_submitted_explicitly() -> None:
@@ -144,7 +168,7 @@ def test_intake_redesign_is_three_steps_and_labels_choice_architecture() -> None
     assert source.count('class="optional-marker"') >= 6
     assert "Follower count is not part of editorial eligibility" in source
     assert "Boundaries do not count against your application" in source
-    assert 'intake.css?v=20260925.1' in source
+    assert 'intake.css?v=20261016.7' in source
 
 
 def test_intake_preserves_specific_errors_and_debounces_draft_writes() -> None:
@@ -376,7 +400,7 @@ def test_partner_recipient_filter_reveals_actions_and_preserves_selected_recipie
     assert "revealProspect(prospectId)" in javascript
     assert "Continue: ${stageLabel[stage]}" in javascript
     assert "cards.length === 0 || visible !== 0" in javascript
-    assert "partners.js?v=20261007.1" in html
+    assert "partners.js?v=20261016.1" in html
 
 
 def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
@@ -400,7 +424,7 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     for name in ("index.html", "operations.html", "planning.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
         assert 'workspace-shell.js?v=20260927.3' in html
-        assert 'styles.css?v=20261007.1' in html
+        assert 'styles.css?v=20261016.4' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -526,3 +550,22 @@ def test_paginated_workspace_counts_distinguish_matches_from_visible_cards() -> 
     for javascript in (planning, operations):
         assert "visible < matched" in javascript
         assert "Displaying ${visible} right now" in javascript
+
+
+def test_standalone_guest_pages_define_every_css_custom_property_they_use() -> None:
+    """Booking and intake load without the shared stylesheet, so their tokens must be self-contained."""
+    import re
+
+    for filename in ("booking.css", "intake.css"):
+        stylesheet = (STATIC_ROOT / filename).read_text(encoding="utf-8")
+        definitions = set(re.findall(r"(--[\w-]+)\s*:", stylesheet))
+        uses = set(re.findall(r"var\((--[\w-]+)", stylesheet))
+        assert uses <= definitions, f"{filename} has undefined CSS variables: {sorted(uses - definitions)}"
+
+
+def test_brand_stripe_scrolls_with_document_instead_of_covering_content() -> None:
+    for filename in ("styles.css", "booking.css", "intake.css"):
+        stylesheet = (STATIC_ROOT / filename).read_text(encoding="utf-8")
+        body_before = stylesheet.split("body::before", 1)[1].split("}", 1)[0]
+        assert "position: fixed" not in body_before
+        assert "position: absolute" in body_before

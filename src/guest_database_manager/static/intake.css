@@ -1,15 +1,18 @@
 :root {
-  --bg: #f8f1e6;
-  --panel: rgba(255, 251, 245, 0.94);
-  --panel-border: rgba(71, 53, 34, 0.12);
-  --text: #2d2318;
-  --muted: #6a5742;
-  --accent: #0f5d4f;
-  --accent-soft: #d9efe8;
-  --accent-gold: #bd8a2e;
-  --accent-gold-soft: rgba(189, 138, 46, 0.14);
+  --bg: #f2ebe2;
+  --panel: rgba(255, 250, 243, 0.96);
+  --panel-border: rgba(21, 23, 25, 0.13);
+  --text: #151719;
+  --muted: #69584d;
+  --accent: #c43d00;
+  --accent-hover: #9f3100;
+  --accent-soft: #ffeadb;
+  --accent-gold: #f27a18;
+  --accent-gold-soft: rgba(242, 122, 24, 0.14);
   --shadow: 0 24px 70px rgba(46, 31, 16, 0.13);
   --radius: 26px;
+  --font-ui: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif;
+  --font-editorial: Georgia, "Times New Roman", serif;
 }
 
 * {
@@ -19,14 +22,17 @@
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-ui);
   color: var(--text);
   background:
-    radial-gradient(circle at top left, rgba(239, 190, 119, 0.35), transparent 28%),
-    radial-gradient(circle at bottom right, rgba(15, 93, 79, 0.16), transparent 22%),
-    linear-gradient(180deg, #fcf7f0 0%, #f3e8d7 100%);
+    radial-gradient(circle at 8% 0%, rgba(242, 122, 24, 0.24), transparent 28rem),
+    radial-gradient(circle at 96% 12%, rgba(21, 23, 25, 0.16), transparent 32rem),
+    linear-gradient(180deg, #fffaf3 0%, #f3ece3 60%, #e7d9cc 100%);
   overflow-x: hidden;
 }
+
+body::before { content: ""; position: absolute; inset: 0 0 auto; height: 4px; z-index: 10; pointer-events: none; background: linear-gradient(90deg, #151719 0 68%, #f04c00 68%); }
+:where(a, button, input, select, textarea):focus-visible { outline: 3px solid rgba(189, 138, 46, 0.58); outline-offset: 3px; }
 
 .intake-shell {
   width: min(1240px, calc(100vw - 28px));
@@ -51,10 +57,18 @@ body {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  color: #fffaf2;
   background:
-    linear-gradient(180deg, rgba(255, 251, 245, 0.92), rgba(244, 233, 214, 0.9)),
-    linear-gradient(135deg, rgba(15, 93, 79, 0.04), transparent);
+    radial-gradient(circle at 88% 10%, rgba(240, 76, 0, 0.34), transparent 13rem),
+    linear-gradient(155deg, #24201e 0%, #151719 58%, #08090a 100%);
 }
+
+.intake-sidebar .brand-subtitle,
+.intake-sidebar .eyebrow,
+.intake-sidebar .sidebar-copy,
+.intake-sidebar .sidebar-kicker,
+.intake-sidebar li { color: rgba(255, 250, 242, 0.82); }
+.intake-sidebar .sidebar-panel { border-color: rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.08); }
 
 .sidebar-kicker {
   margin: 0 0 14px;
@@ -68,7 +82,8 @@ body {
 .intake-panel h2,
 .form-step h3,
 .sidebar-panel-title {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
+  letter-spacing: -0.025em;
   overflow-wrap: anywhere;
 }
 
@@ -95,7 +110,10 @@ body {
   width: 78px;
   height: 78px;
   object-fit: contain;
-  filter: drop-shadow(0 10px 18px rgba(44, 28, 12, 0.12));
+  padding: 5px;
+  border-radius: 22px;
+  background: rgba(255, 250, 242, 0.94);
+  filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.2));
 }
 
 .brand-copy {
@@ -187,15 +205,15 @@ body {
   background: linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.85));
   color: var(--accent);
   font-weight: 700;
-  border-color: rgba(15, 93, 79, 0.12);
+  border-color: rgba(196, 61, 0, 0.12);
   transform: translateX(4px);
 }
 
 .step-item.completed {
-  background: linear-gradient(135deg, rgba(15, 93, 79, 0.12), rgba(255, 255, 255, 0.85));
+  background: linear-gradient(135deg, rgba(196, 61, 0, 0.12), rgba(255, 255, 255, 0.85));
   color: var(--accent);
   font-weight: 700;
-  border-color: rgba(15, 93, 79, 0.12);
+  border-color: rgba(196, 61, 0, 0.12);
 }
 
 .intake-panel {
@@ -232,7 +250,7 @@ body {
   display: inline-flex;
   padding: 7px 10px;
   border-radius: 999px;
-  background: rgba(15, 93, 79, 0.09);
+  background: rgba(196, 61, 0, 0.09);
   color: var(--accent);
   font-family: "Avenir Next", "Segoe UI", sans-serif;
   font-size: 0.82rem;
@@ -252,8 +270,8 @@ body {
 .privacy-note {
   padding: 14px 16px;
   border-radius: 16px;
-  background: rgba(15, 93, 79, 0.07);
-  border: 1px solid rgba(15, 93, 79, 0.1);
+  background: rgba(196, 61, 0, 0.07);
+  border: 1px solid rgba(196, 61, 0, 0.1);
   font-family: "Avenir Next", "Segoe UI", sans-serif;
 }
 
@@ -288,8 +306,8 @@ body {
   height: 100%;
   width: 33.333%;
   border-radius: inherit;
-  background: linear-gradient(135deg, var(--accent), #15715f);
-  box-shadow: 0 8px 18px rgba(15, 93, 79, 0.18);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 8px 18px rgba(196, 61, 0, 0.18);
   transition: width 220ms ease;
 }
 
@@ -304,8 +322,8 @@ body {
   margin: 10px 0 4px;
   padding: 12px 14px;
   border-radius: 16px;
-  background: rgba(15, 93, 79, 0.07);
-  border: 1px solid rgba(15, 93, 79, 0.10);
+  background: rgba(196, 61, 0, 0.07);
+  border: 1px solid rgba(196, 61, 0, 0.10);
   color: #4d5f56;
   font-family: "Avenir Next", "Segoe UI", sans-serif;
   font-size: 0.94rem;
@@ -314,8 +332,8 @@ body {
 }
 
 .draft-banner.saved {
-  background: rgba(15, 93, 79, 0.12);
-  border-color: rgba(15, 93, 79, 0.18);
+  background: rgba(196, 61, 0, 0.12);
+  border-color: rgba(196, 61, 0, 0.18);
   color: var(--accent);
 }
 
@@ -449,7 +467,7 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 4px rgba(15, 93, 79, 0.10);
+  box-shadow: 0 0 0 4px rgba(196, 61, 0, 0.10);
 }
 
 input.field-error,
@@ -484,7 +502,7 @@ button {
 }
 
 .primary-button {
-  background: linear-gradient(135deg, var(--accent), #15715f);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   color: white;
 }
 
@@ -519,7 +537,7 @@ button {
   padding: 30px;
   border-radius: 24px;
   background:
-    radial-gradient(circle at top right, rgba(15, 93, 79, 0.09), transparent 26%),
+    radial-gradient(circle at top right, rgba(196, 61, 0, 0.09), transparent 26%),
     linear-gradient(180deg, rgba(255, 251, 245, 0.98), rgba(243, 234, 220, 0.95));
   border: 1px solid rgba(71, 53, 34, 0.10);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
@@ -570,7 +588,7 @@ button {
 
 .success-card-featured {
   background:
-    radial-gradient(circle at top right, rgba(15, 93, 79, 0.10), transparent 34%),
+    radial-gradient(circle at top right, rgba(196, 61, 0, 0.10), transparent 34%),
     linear-gradient(180deg, rgba(255, 251, 245, 0.92), rgba(245, 236, 223, 0.92));
 }
 
@@ -586,7 +604,7 @@ button {
   align-items: center;
   padding: 10px 14px;
   border-radius: 999px;
-  background: rgba(15, 93, 79, 0.08);
+  background: rgba(196, 61, 0, 0.08);
   color: var(--accent);
   text-decoration: none;
   font-family: "Avenir Next", "Segoe UI", sans-serif;
@@ -598,8 +616,8 @@ button {
 .success-link:hover,
 .success-link:focus-visible {
   transform: translateY(-1px);
-  background: rgba(15, 93, 79, 0.14);
-  box-shadow: 0 10px 20px rgba(15, 93, 79, 0.10);
+  background: rgba(196, 61, 0, 0.14);
+  box-shadow: 0 10px 20px rgba(196, 61, 0, 0.10);
 }
 
 @keyframes fade-in {
@@ -621,6 +639,28 @@ button {
   .intake-sidebar,
   .intake-panel {
     padding: 22px;
+  }
+
+  .intake-sidebar {
+    gap: 12px;
+  }
+
+  .intake-sidebar .sidebar-copy,
+  .intake-sidebar .sidebar-panel,
+  .intake-sidebar .sidebar-quote {
+    display: none;
+  }
+
+  .intake-sidebar .step-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 2px;
+  }
+
+  .intake-sidebar .step-item {
+    min-width: 0;
+    text-align: center;
   }
 
   .brand-logo {
@@ -717,5 +757,100 @@ button {
 
   .success-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Mobile-first completion support: preserve progress and keep the next action available. */
+@media (min-width: 921px) {
+  .intake-sidebar {
+    position: sticky;
+    top: 18px;
+    align-self: start;
+    max-height: calc(100vh - 36px);
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .intake-panel .brand-lockup.compact { display: none; }
+  .panel-header { gap: 0; }
+  .step-footer {
+    position: sticky;
+    bottom: 8px;
+    z-index: 8;
+    margin-inline: -8px;
+    padding: 12px;
+    border: 1px solid rgba(71, 53, 34, 0.12);
+    border-radius: 20px;
+    background: rgba(255, 251, 245, 0.94);
+    box-shadow: 0 18px 42px rgba(46, 31, 16, 0.16);
+    backdrop-filter: blur(16px);
+  }
+  .step-footer-right { width: 100%; }
+  #next-button,
+  #submit-button { flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+/* Application-first composition: minimize preamble and keep progress in view. */
+@media (min-width: 921px) {
+  .intake-shell {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    align-items: start;
+    gap: 24px;
+    padding-block: 32px 48px;
+  }
+  .intake-panel { order: 1; padding: 34px; }
+  .intake-sidebar { order: 2; padding: 24px; }
+  .intake-sidebar h1 { font-size: clamp(2rem, 3vw, 3rem); line-height: 1.02; }
+  .intake-sidebar .sidebar-panel:nth-of-type(2),
+  .intake-sidebar .sidebar-quote { display: none; }
+  .intake-sidebar .sidebar-panel-copy { color: rgba(255, 250, 242, 0.82); }
+  .intake-sidebar .step-list { margin-top: 4px; }
+}
+
+@media (max-width: 920px) {
+  .intake-sidebar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .intake-sidebar > div:first-child { min-width: 0; }
+  .intake-sidebar .brand-lockup { margin-bottom: 8px; }
+  .intake-sidebar .eyebrow,
+  .intake-sidebar .sidebar-kicker { display: none; }
+  .intake-sidebar .step-list { grid-column: 1 / -1; }
+}
+
+@media (max-width: 640px) {
+  .intake-shell { gap: 10px; }
+  .intake-sidebar {
+    display: block;
+    padding: 14px 16px;
+    border-radius: 0 0 24px 24px;
+  }
+  .intake-sidebar .brand-lockup { margin: 0 0 10px; }
+  .intake-sidebar .brand-logo { width: 48px; height: 48px; border-radius: 15px; }
+  .intake-sidebar .brand-name { font-size: 1.08rem; }
+  .intake-sidebar h1 { margin: 8px 0 12px; font-size: 1.55rem; max-width: none; }
+  .intake-sidebar .step-list { margin: 0; gap: 6px; }
+  .intake-sidebar .step-item { padding: 9px 6px; border-radius: 12px; font-size: .82rem; }
+  .intake-panel { padding: 20px 16px; }
+  .intake-panel h2 { font-size: 1.85rem; }
+  .panel-intro { font-size: .98rem; line-height: 1.48; }
+  .premium-badges { gap: 6px; }
+  .premium-badge { padding: 6px 8px; font-size: .76rem; }
+  .draft-banner { padding: 10px 12px; }
+  .intake-panel > .workflow-note { display: none; }
+  .form-step { padding-top: 8px; }
+  .form-step > h3 { margin-bottom: 0; }
+  .step-footer {
+    position: static;
+    margin-inline: 0;
+    box-shadow: none;
+    backdrop-filter: none;
   }
 }

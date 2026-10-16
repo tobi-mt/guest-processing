@@ -175,4 +175,6 @@ document.getElementById("growth-experiment-form")?.addEventListener("submit", as
   }
 });
 window.addEventListener("growth-intelligence-changed", () => load().catch(() => {}));
-load().catch((error) => { document.getElementById("insights-quality").textContent = error.message; });
+load()
+  .catch((error) => { document.getElementById("insights-quality").textContent = error.message; })
+  .finally(() => { document.body.classList.remove("page-loading"); });

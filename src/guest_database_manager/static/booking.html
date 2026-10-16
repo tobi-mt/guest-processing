@@ -4,9 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Book Your Mirror Talk Conversation</title>
-    <link rel="stylesheet" href="/static/booking.css?v=20261011.1" />
+    <link rel="stylesheet" href="/static/booking.css?v=20261016.9" />
   </head>
-  <body>
+  <body class="booking-loading">
+    <div id="booking-loader" class="booking-loader" role="status" aria-live="polite">
+      <img src="/static/mirror-talk-logo.png" alt="" />
+      <span>Preparing your booking experience…</span>
+    </div>
     <main class="booking-shell">
       <aside class="booking-sidebar">
         <div>
@@ -53,7 +57,7 @@
         <div id="booking-message" class="message" aria-live="polite"></div>
 
         <section id="booking-invitation" class="invitation-panel hidden">
-          <img class="invitation-wordmark" src="/static/mirror-talk-wordmark.svg" alt="Mirror Talk Podcast" />
+          <img class="invitation-wordmark" src="/static/mirror-talk-wordmark.svg?v=20261016.1" alt="Mirror Talk Podcast" />
           <h3>This page opens through your personal Mirror Talk invitation</h3>
           <p>
             If you were invited to book a conversation with Mirror Talk, please use the booking link sent to your email. That personal link lets us reserve a time specifically for you and keep the whole workflow connected.
@@ -73,7 +77,7 @@
                 <div>
                   <p class="step-badge">Step 1</p>
                   <h3>Select one of the available dates</h3>
-                  <p class="availability-copy">Choose the slot that works best for you. The booking button will activate as soon as you pick one.</p>
+                  <p class="availability-copy">First choose an available date, then select a time. We’ll take you straight to the booking button.</p>
                 </div>
               </div>
               <div class="calendar-toolbar">
@@ -145,6 +149,6 @@
       </section>
     </main>
 
-    <script src="/static/booking.js?v=20261011.1" defer></script>
+    <script src="/static/booking.js?v=20261016.3" defer></script>
   </body>
 </html>
