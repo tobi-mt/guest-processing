@@ -2280,3 +2280,30 @@
   .import-history-list article, .outcome-review-row { align-items: flex-start; flex-direction: column; }
   .outcome-review-actions { justify-content: flex-start; width: 100%; }
 }
+/* Dark editorial compatibility layer for operations and planning workspaces. */
+.operations-tool,
+.partner-tool,
+.operations-section,
+.operations-card,
+.operations-preview,
+.mini-card,
+.list-toolbar,
+.production-pipeline-panel,
+.workspace-panel,
+.episode-card,
+.exception-row,
+.learning-card,
+.planning-destination-card,
+.provider-export-card,
+.import-history-list article,
+.outcome-review-row {
+  background: var(--panel-strong);
+  color: var(--text);
+  border-color: var(--border);
+}
+.operations-tool > summary,
+.partner-tool > summary { color: var(--text); }
+.operations-preview table,
+.operations-preview th,
+.operations-preview td { border-color: var(--border); }
+.operations-preview th { color: var(--muted); }

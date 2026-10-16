@@ -158,3 +158,19 @@
 .disclosure-panel>.disclosure-intro,.disclosure-panel>.analytics-connections,.disclosure-panel>.source-coverage,.disclosure-panel>.definition-grid{margin:16px 18px 20px}
 }
 @media(max-width:700px){.source-coverage{grid-template-columns:1fr}.source-column:first-child{grid-column:auto}}
+.total-metric,
+.decision-card,
+.insights-empty,
+.trend-card,
+.provider-export-card,
+.highlight-card,
+.summary-card,
+.platform-overview,
+.platform-card,
+.source-column,
+.source-card,
+.connection-card {
+  background: var(--panel-strong);
+  color: var(--text);
+  border-color: var(--border);
+}

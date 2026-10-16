@@ -217,3 +217,66 @@ def test_reviewed_email_template_variants_are_explicit_and_preserve_required_lin
     assert "https://example.test/book" in acceptance["body"]
     assert "https://example.test/join" in reminder["body"]
     assert {item["id"] for item in manager.template_variants("accepted")} == {"warm", "concise"}
+
+
+def test_email_personalization_uses_bounded_research_topics_without_raw_notes():
+    manager = EmailManager()
+    context = manager.build_personalization_context(
+        {
+            "guest_research": {
+                "likely_topics": ["caregiver resilience", "x" * 200],
+                "summary": "Internal research summary must never be copied into an email.",
+            },
+            "background": "Private intake background must also stay private.",
+        }
+    )
+
+    template = manager.get_acceptance_template(
+        "Amina", booking_url="https://example.test/book", personalization=context
+    )
+
+    assert context == {"topic": "caregiver resilience"}
+    assert "Your perspective on caregiver resilience" in template["body"]
+    assert "Internal research summary" not in template["body"]
+    assert "Private intake background" not in template["body"]
+
+
+def test_personalized_templates_fall_back_cleanly_and_expose_reviewed_variants():
+    manager = EmailManager()
+    context = manager.build_personalization_context(
+        {"topic": "identity and confidence", "guest_research": "not-json"}
+    )
+    confirmation = manager.get_booking_confirmation_template(
+        "Amina",
+        datetime(2026, 8, 20, 10, tzinfo=timezone.utc),
+        "UTC",
+        "https://example.test/join",
+        personalization=context,
+    )
+    concise_release = manager.get_released_episode_template(
+        "Amina",
+        "https://example.test/episode",
+        "https://example.test/files",
+        variant="concise",
+        personalization=context,
+    )
+
+    assert "exploring identity and confidence" in confirmation["body"]
+    assert "identity and confidence" in concise_release["body"]
+    assert {item["id"] for item in manager.template_variants("released_episode")} == {
+        "celebratory", "concise",
+    }
+    assert manager.build_personalization_context({"guest_research": {"cache_status": "failed"}}) == {}
+
+
+def test_html_email_renderer_is_branded_responsive_and_escapes_guest_content():
+    manager = EmailManager()
+    rendered = manager._build_html_body(
+        "Hi Amina,\n\nVisit https://example.test/episode\n\n<script>alert('no')</script>"
+    )
+
+    assert "Mirror Talk" in rendered
+    assert "max-width:640px" in rendered
+    assert 'href="https://example.test/episode"' in rendered
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;" in rendered

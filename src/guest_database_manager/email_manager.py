@@ -5,6 +5,8 @@
 
 import base64
 import html
+import json
+import re
 import smtplib
 import ssl
 from datetime import datetime, timedelta, timezone
@@ -133,6 +135,13 @@ class EmailManager:
         "rejected": (("considered", "Considered and compassionate"), ("concise", "Kind and concise")),
         "reminder": (("gentle", "Gentle confirmation"), ("concise", "Clear and concise")),
         "booking_confirmation": (("warm", "Warm and welcoming"), ("concise", "Clear and concise")),
+        "cancellation": (("thoughtful", "Thoughtful and accountable"), ("concise", "Direct and considerate")),
+        "appreciation": (("reflective", "Reflective and grateful"), ("concise", "Warm and concise")),
+        "intake_confirmation": (("reassuring", "Reassuring and clear"), ("concise", "Clear and concise")),
+        "application_request": (("personal", "Personal invitation"), ("concise", "Clear and concise")),
+        "booking_link": (("helpful", "Helpful and reassuring"), ("concise", "Clear and concise")),
+        "reschedule": (("supportive", "Supportive and flexible"), ("concise", "Clear and concise")),
+        "released_episode": (("celebratory", "Celebratory and collaborative"), ("concise", "Share-ready and concise")),
     }
 
     @classmethod
@@ -149,7 +158,57 @@ class EmailManager:
             raise ValueError(f"Unknown {email_type} email template variant.")
         return selected
 
-    def get_acceptance_template(self, guest_name: str, custom_message: str = "", booking_url: str = "", variant: str = "warm") -> Dict[str, str]:
+    @staticmethod
+    def _safe_personalization_text(value: Any, *, limit: int = 100) -> str:
+        """Return short, single-line copy suitable for reviewed guest email templates."""
+        text = " ".join(str(value or "").split()).strip(" -–—.,")
+        if not text or "http://" in text.lower() or "https://" in text.lower():
+            return ""
+        return text[:limit].rstrip()
+
+    @classmethod
+    def build_personalization_context(cls, guest: Mapping[str, Any]) -> Dict[str, str]:
+        """Derive conservative email context without exposing raw research or inventing claims."""
+        research = guest.get("guest_research") or {}
+        if isinstance(research, str):
+            try:
+                research = json.loads(research)
+            except (TypeError, ValueError):
+                research = {}
+        if not isinstance(research, Mapping) or research.get("cache_status") == "failed":
+            research = {}
+        topics = research.get("likely_topics") or []
+        if not isinstance(topics, list):
+            topics = []
+        topic = next((cls._safe_personalization_text(item, limit=72) for item in topics if cls._safe_personalization_text(item, limit=72)), "")
+        if not topic:
+            topic = cls._safe_personalization_text(
+                guest.get("topic") or guest.get("proposed_topic") or guest.get("category"), limit=72
+            )
+        role = cls._safe_personalization_text(
+            guest.get("job_title") or guest.get("profession") or guest.get("role"), limit=72
+        )
+        organisation = cls._safe_personalization_text(
+            guest.get("company") or guest.get("organization") or guest.get("organisation"), limit=72
+        )
+        return {key: value for key, value in {"topic": topic, "role": role, "organisation": organisation}.items() if value}
+
+    @classmethod
+    def _personalized_topic_line(cls, personalization: Optional[Mapping[str, Any]], *, purpose: str) -> str:
+        topic = cls._safe_personalization_text((personalization or {}).get("topic"), limit=72)
+        if not topic:
+            return ""
+        if purpose == "invitation":
+            return f"Your perspective on {topic} feels especially relevant to the thoughtful conversations we create.\n\n"
+        if purpose == "preparation":
+            return f"We’re especially looking forward to exploring {topic} with you; there is nothing scripted to prepare.\n\n"
+        if purpose == "thanks":
+            return f"Your perspective on {topic} brought something distinctive and valuable to the conversation.\n\n"
+        if purpose == "release":
+            return f"I’m delighted that our conversation around {topic} can now reach the Mirror Talk community.\n\n"
+        return ""
+
+    def get_acceptance_template(self, guest_name: str, custom_message: str = "", booking_url: str = "", variant: str = "warm", personalization: Optional[Mapping[str, Any]] = None) -> Dict[str, str]:
         """Get the email template for guest acceptance.
 
         Args:
@@ -162,11 +221,12 @@ class EmailManager:
         variant = self._template_variant("accepted", variant, "warm")
         subject = "Your Mirror Talk Podcast application has been accepted" if variant == "warm" else "You’re invited to join Mirror Talk Podcast"
         booking_line = booking_url or "https://mirrortalkpodcast.com/be-our-next-guest/"
+        personal_line = self._personalized_topic_line(personalization, purpose="invitation")
 
         if variant == "concise":
             body = f"""Hi {guest_name},
 
-{custom_message + chr(10) + chr(10) if custom_message else ""}Thank you for sharing your story with Mirror Talk. We’d be delighted to welcome you as a guest.
+{custom_message + chr(10) + chr(10) if custom_message else ""}{personal_line}Thank you for sharing your story with Mirror Talk. We’d be delighted to welcome you as a guest.
 
 Please choose a recording time that works for you:
 {booking_line}
@@ -179,6 +239,8 @@ Mirror Talk Podcast"""
             body = f"""Hi {guest_name},
 
 {custom_message}
+
+{personal_line.rstrip()}
 
 We are delighted to let you know that your application to join Mirror Talk Podcast has been accepted.
 
@@ -197,7 +259,7 @@ Mirror Talk Podcast"""
 
 We are delighted to let you know that your application to join Mirror Talk Podcast has been accepted.
 
-We were moved by what you shared, and we believe your voice and lived experience would make for a meaningful conversation with our audience.
+{personal_line}We were moved by what you shared, and we believe your voice and lived experience would make for a meaningful conversation with our audience.
 
 Next steps:
 - Please choose a suitable time for recording here: {booking_line}
@@ -272,7 +334,7 @@ Mirror Talk Podcast"""
         guest_name: str,
         scheduled_for: datetime,
         timezone_label: str,
-        join_url: str, variant: str = "gentle",
+        join_url: str, variant: str = "gentle", personalization: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, str]:
         """Build the weekly confirmation reminder template for an upcoming interview."""
         variant = self._template_variant("reminder", variant, "gentle")
@@ -282,6 +344,7 @@ Mirror Talk Podcast"""
         formatted_time = localized.strftime("%H:%M")
         timezone_display = f"{timezone_label} (your local time)"
         join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
+        preparation_line = self._personalized_topic_line(personalization, purpose="preparation")
 
         body = f"""Hi {guest_name},
 
@@ -294,7 +357,7 @@ When you have a moment, please reply to this email to confirm that the time stil
 We’ll be recording on Riverside FM, and you can join the session here:
 {join_line}
 
-I’m really looking forward to the conversation.
+{preparation_line}I’m really looking forward to the conversation.
 
 Warm regards,
 Tobi Ojekunle
@@ -314,7 +377,7 @@ Please confirm that our Mirror Talk conversation on {formatted_date} at {formatt
 Join us on Riverside FM:
 {join_line}
 
-If you need to change the time, simply reply to this email.
+{preparation_line}If you need to change the time, simply reply to this email.
 
 Warm regards,
 Tobi Ojekunle
@@ -327,8 +390,10 @@ Mirror Talk Podcast"""
         guest_name: str,
         scheduled_for: datetime,
         timezone_label: str,
+        variant: str = "thoughtful",
     ) -> Dict[str, str]:
         """Build a thoughtful cancellation email for an interview that will not go ahead as planned."""
+        variant = self._template_variant("cancellation", variant, "thoughtful")
         localized = self._localize_datetime(scheduled_for, timezone_label)
         subject = f"An update about our Soulful Conversation on {localized.strftime('%A %d %B')}"
         formatted_date = localized.strftime("%A %d %B, %Y")
@@ -349,6 +414,17 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+We need to cancel our Mirror Talk conversation scheduled for {formatted_date} at {formatted_time} {timezone_display}. I’m sorry for the inconvenience.
+
+If you would like to find another time, please reply and we’ll gladly help.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
+
         return {"subject": subject, "body": body}
 
     def get_booking_confirmation_template(
@@ -356,7 +432,7 @@ Mirror Talk Podcast"""
         guest_name: str,
         scheduled_for: datetime,
         timezone_label: str,
-        join_url: str, variant: str = "warm",
+        join_url: str, variant: str = "warm", personalization: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, str]:
         """Build the initial booking confirmation email for a newly scheduled interview."""
         variant = self._template_variant("booking_confirmation", variant, "warm")
@@ -366,6 +442,7 @@ Mirror Talk Podcast"""
         formatted_time = localized.strftime("%H:%M")
         timezone_display = f"{timezone_label} (your local time)"
         join_line = join_url or "https://riverside.fm/studio/soulful-conversations?t=db1988c6212f0c5f39db"
+        preparation_line = self._personalized_topic_line(personalization, purpose="preparation")
 
         body = f"""Hi {guest_name},
 
@@ -376,7 +453,7 @@ Your interview is now scheduled for {formatted_date} at {formatted_time} {timezo
 We’ll be recording on Riverside FM, and you can join the session here:
 {join_line}
 
-If anything changes and you need to reschedule, just reply to this email and we’ll sort it out together.
+{preparation_line}If anything changes and you need to reschedule, just reply to this email and we’ll sort it out together.
 
 Looking forward to the conversation.
 
@@ -391,7 +468,7 @@ Your Soulful Conversation is confirmed for {formatted_date} at {formatted_time} 
 Join the Riverside FM session here:
 {join_line}
 
-We’ve also attached a calendar invitation. If you need to reschedule, please reply to this email.
+{preparation_line}We’ve also attached a calendar invitation. If you need to reschedule, please reply to this email.
 
 Warm regards,
 Tobi Ojekunle
@@ -407,8 +484,10 @@ Mirror Talk Podcast"""
         reschedule_url: str,
         proposed_times: Optional[list[datetime]] = None,
         proposal_mode: str = "open_calendar",
+        variant: str = "supportive",
     ) -> Dict[str, str]:
         """Build the email that invites a guest to choose a new interview time."""
+        variant = self._template_variant("reschedule", variant, "supportive")
         localized = self._localize_datetime(scheduled_for, timezone_label)
         subject = "Choose a new time for your Soulful Conversation"
         formatted_date = localized.strftime("%A %d %B, %Y")
@@ -449,6 +528,20 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+Your previous Mirror Talk slot on {formatted_date} at {formatted_time} {timezone_display} is no longer active.
+{proposal_copy}
+Choose and confirm a new available time here:
+{reschedule_url}
+
+If none of the options work, please reply and we’ll help.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
+
         return {"subject": subject, "body": body}
 
     @staticmethod
@@ -464,15 +557,19 @@ Mirror Talk Podcast"""
         except ZoneInfoNotFoundError:
             return value
 
-    def get_post_interview_appreciation_template(self, guest_name: str) -> Dict[str, str]:
+    def get_post_interview_appreciation_template(self, guest_name: str, variant: str = "reflective", personalization: Optional[Mapping[str, Any]] = None) -> Dict[str, str]:
         """Build a refined thank-you email for guests after recording."""
+        variant = self._template_variant("appreciation", variant, "reflective")
         subject = "Thank you for your Soulful Conversation"
+        thanks_line = self._personalized_topic_line(personalization, purpose="thanks")
 
         body = f"""Hi {guest_name},
 
 Thank you again for joining me on Mirror Talk.
 
 It was a real pleasure to share that conversation with you. I’m genuinely grateful for your openness, your time, and the perspective you brought to the episode.
+
+{thanks_line.rstrip()}
 
 Conversations like this are at the heart of what we hope to create with Mirror Talk, and I truly appreciate the care you brought into it.
 
@@ -494,10 +591,22 @@ Tobi Ojekunle
 Mirror Talk Podcast
 """
 
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+Thank you for joining me on Mirror Talk. {thanks_line}I’m grateful for the care and perspective you brought to our conversation.
+
+We’ll be in touch as the episode moves toward release.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
+
         return {"subject": subject, "body": body}
 
-    def get_intake_confirmation_template(self, guest_name: str) -> Dict[str, str]:
+    def get_intake_confirmation_template(self, guest_name: str, variant: str = "reassuring") -> Dict[str, str]:
         """Build a polished confirmation email after a guest submits the intake form."""
+        variant = self._template_variant("intake_confirmation", variant, "reassuring")
         subject = "We received your Mirror Talk guest application"
 
         body = f"""Hi {guest_name},
@@ -520,6 +629,17 @@ Tobi Ojekunle
 Mirror Talk Podcast
 """
 
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+We’ve received your Mirror Talk guest application. A PDF copy of your answers is attached for your records.
+
+We’ll review your submission carefully and email you if it is a fit for an upcoming conversation.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
+
         return {"subject": subject, "body": body}
 
     def get_personal_application_request_template(
@@ -527,8 +647,10 @@ Mirror Talk Podcast
         guest_name: str,
         intake_url: str,
         agency_name: str = "",
+        variant: str = "personal",
     ) -> Dict[str, str]:
         """Build the email that invites a guest to complete their own personal intake."""
+        variant = self._template_variant("application_request", variant, "personal")
         subject = "Please complete your personal Mirror Talk guest application"
         intro_line = (
             f"{agency_name} shared your details with us and thought you could be a meaningful fit for Mirror Talk."
@@ -550,10 +672,22 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast
 """
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+Please complete your personal Mirror Talk guest application in your own voice:
+{intake_url}
+
+This helps us understand your story directly from you.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
         return {"subject": subject, "body": body}
 
-    def get_booking_link_template(self, guest_name: str, booking_url: str) -> Dict[str, str]:
+    def get_booking_link_template(self, guest_name: str, booking_url: str, variant: str = "helpful") -> Dict[str, str]:
         """Build a polished email for resending a guest's personal booking link."""
+        variant = self._template_variant("booking_link", variant, "helpful")
         subject = "Your personal Mirror Talk booking link"
         body = f"""Hi {guest_name},
 
@@ -570,17 +704,32 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast
 """
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+Choose your Mirror Talk recording time using your personal link:
+{booking_url}
+
+If you need help, reply to this email.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
         return {"subject": subject, "body": body}
 
-    def get_released_episode_template(self, guest_name: str, show_notes_url: str, files_url: str) -> Dict[str, str]:
+    def get_released_episode_template(self, guest_name: str, show_notes_url: str, files_url: str, variant: str = "celebratory", personalization: Optional[Mapping[str, Any]] = None) -> Dict[str, str]:
         """Build a polished release-notification email for a guest."""
+        variant = self._template_variant("released_episode", variant, "celebratory")
         subject = "Your Mirror Talk episode is now live"
+        release_line = self._personalized_topic_line(personalization, purpose="release")
 
         body = f"""Hi {guest_name},
 
 I hope you are doing well.
 
 I’m happy to let you know that your Mirror Talk episode is now live, and I want to thank you again for being part of it.
+
+{release_line.rstrip()}
 
 Here are the links for you:
 - Show notes: {show_notes_url}
@@ -607,6 +756,20 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast
 """
+
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+Your Mirror Talk episode is now live. {release_line}Thank you again for sharing the conversation with us.
+
+- Show notes: {show_notes_url}
+- Files (download link expires in 2 days): {files_url}
+
+If it feels right, we’d love you to share the episode with your community.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
 
         return {"subject": subject, "body": body}
 
@@ -663,7 +826,7 @@ Mirror Talk Podcast
         return self.from_email or ""
 
     def _build_html_body(self, body: str) -> str:
-        """Convert plain text into simple HTML for API-based sends."""
+        """Render safe, responsive Mirror Talk HTML while preserving the plain-text alternative."""
         paragraphs = [segment.strip() for segment in body.split("\n\n") if segment.strip()]
         if not paragraphs:
             return "<p></p>"
@@ -671,8 +834,29 @@ Mirror Talk Podcast
         rendered = []
         for paragraph in paragraphs:
             escaped = html.escape(paragraph).replace("\n", "<br />")
-            rendered.append(f"<p>{escaped}</p>")
-        return "".join(rendered)
+            escaped = re.sub(
+                r"(https://[^\s<]+)",
+                r'<a href="\1" style="color:#d94b12;font-weight:700;overflow-wrap:anywhere">\1</a>',
+                escaped,
+            )
+            rendered.append(f'<p style="margin:0 0 18px;line-height:1.65">{escaped}</p>')
+        content = "".join(rendered)
+        return (
+            '<!doctype html><html><body style="margin:0;background:#f4efe9;color:#241b18;'
+            'font-family:Arial,sans-serif"><div style="display:none;max-height:0;overflow:hidden">'
+            'A message from Mirror Talk Podcast</div><table role="presentation" width="100%" '
+            'cellspacing="0" cellpadding="0" style="background:#f4efe9"><tr><td align="center" '
+            'style="padding:24px 12px"><table role="presentation" width="100%" cellspacing="0" '
+            'cellpadding="0" style="max-width:640px;background:#fffaf3;border:1px solid #e1d6cb;'
+            'border-radius:20px;overflow:hidden"><tr><td style="background:#151219;padding:24px 30px;'
+            'border-top:4px solid #ff6422;color:#fff8ef"><strong style="font-family:Georgia,serif;'
+            'font-size:24px">Mirror Talk</strong><br><span style="color:#ff9a6b;font-size:12px;'
+            'letter-spacing:2px;text-transform:uppercase">Soulful Conversations</span></td></tr>'
+            f'<tr><td style="padding:30px;font-size:16px">{content}</td></tr>'
+            '<tr><td style="padding:18px 30px;background:#211a22;color:#c9bbb0;font-size:12px;'
+            'line-height:1.5">Mirror Talk Podcast · Thoughtful conversations, shared with care.</td>'
+            '</tr></table></td></tr></table></body></html>'
+        )
 
     def _send_via_resend(
         self,
@@ -861,9 +1045,12 @@ Mirror Talk Podcast
         timezone_label: str,
         join_url: str,
         idempotency_key: str = "",
+        personalization: Optional[Mapping[str, Any]] = None,
     ) -> bool:
         """Send the first booking confirmation email after a guest books a slot."""
-        template = self.get_booking_confirmation_template(guest_name, scheduled_for, timezone_label, join_url)
+        template = self.get_booking_confirmation_template(
+            guest_name, scheduled_for, timezone_label, join_url, personalization=personalization
+        )
         invite_attachment = {
             "filename": "mirror-talk-booking.ics",
             "content": self.build_calendar_invite(

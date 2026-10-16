@@ -1,15 +1,16 @@
 :root {
-  --bg: #f2ebe2;
-  --panel: rgba(255, 250, 243, 0.96);
-  --panel-border: rgba(21, 23, 25, 0.13);
-  --text: #151719;
-  --muted: #69584d;
-  --accent: #c43d00;
-  --accent-hover: #9f3100;
-  --accent-soft: #ffeadb;
-  --accent-gold: #f27a18;
-  --accent-gold-soft: rgba(242, 122, 24, 0.14);
-  --shadow: 0 24px 70px rgba(46, 31, 16, 0.13);
+  color-scheme: dark;
+  --bg: #0d0b11;
+  --panel: rgba(24, 20, 27, 0.97);
+  --panel-border: rgba(255, 244, 232, 0.13);
+  --text: #fff8ef;
+  --muted: #c9bbb0;
+  --accent: #ff6422;
+  --accent-hover: #e94d0a;
+  --accent-soft: rgba(255, 100, 34, 0.14);
+  --accent-gold: #e9bd65;
+  --accent-gold-soft: rgba(233, 189, 101, 0.14);
+  --shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
   --radius: 26px;
   --font-ui: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif;
   --font-editorial: Georgia, "Times New Roman", serif;
@@ -25,9 +26,9 @@ body {
   font-family: var(--font-ui);
   color: var(--text);
   background:
-    radial-gradient(circle at 8% 0%, rgba(242, 122, 24, 0.24), transparent 28rem),
-    radial-gradient(circle at 96% 12%, rgba(21, 23, 25, 0.16), transparent 32rem),
-    linear-gradient(180deg, #fffaf3 0%, #f3ece3 60%, #e7d9cc 100%);
+    radial-gradient(circle at 8% 0%, rgba(255, 100, 34, 0.18), transparent 30rem),
+    radial-gradient(circle at 92% 8%, rgba(91, 57, 92, 0.22), transparent 34rem),
+    linear-gradient(180deg, #100d14 0%, #0b0a0f 100%);
   overflow-x: hidden;
 }
 
@@ -794,6 +795,26 @@ button {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+/* Dark editorial surfaces aligned with the public Mirror Talk website. */
+.intake-panel,
+.workflow-note,
+.privacy-note,
+.draft-banner,
+.success-panel,
+.step-footer { background: rgba(27, 23, 31, 0.96); border-color: rgba(255, 244, 232, 0.12); }
+.workflow-note,
+.draft-banner { background: rgba(255, 100, 34, 0.09); }
+.form-step input,
+.form-step select,
+.form-step textarea { background: #151219; color: var(--text); border-color: rgba(255, 244, 232, 0.18); }
+.step-item { color: #c9bbb0; }
+.step-item.active { color: #ff8a55; background: rgba(255, 100, 34, 0.15); border-color: rgba(255, 100, 34, 0.35); }
+.draft-banner { color: #d8cbc0; }
+.premium-badge.warm,
+.secondary-button { color: #f2c46d; }
+.required-marker { color: #ff9a8d; }
+.primary-button { color: #1a0d08; font-weight: 800; }
 
 /* Application-first composition: minimize preamble and keep progress in view. */
 @media (min-width: 921px) {

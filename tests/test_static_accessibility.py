@@ -108,7 +108,7 @@ def test_booking_slot_selection_is_explicit_and_conflicts_are_contextual() -> No
     assert 'button.disabled = true;' in javascript
     assert "existing calendar event" not in javascript
     assert "safety window" not in javascript
-    assert 'booking.css?v=20261016.9' in html
+    assert 'booking.css?v=20261016.11' in html
     assert 'booking.js?v=20261016.3' in html
 
 
@@ -168,7 +168,7 @@ def test_intake_redesign_is_three_steps_and_labels_choice_architecture() -> None
     assert source.count('class="optional-marker"') >= 6
     assert "Follower count is not part of editorial eligibility" in source
     assert "Boundaries do not count against your application" in source
-    assert 'intake.css?v=20261016.7' in source
+    assert 'intake.css?v=20261016.9' in source
 
 
 def test_intake_preserves_specific_errors_and_debounces_draft_writes() -> None:
@@ -340,7 +340,7 @@ def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20261007.2' in html
+    assert 'operations.css?v=20261016.2' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -424,7 +424,7 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     for name in ("index.html", "operations.html", "planning.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
         assert 'workspace-shell.js?v=20260927.3' in html
-        assert 'styles.css?v=20261016.4' in html
+        assert 'styles.css?v=20261016.6' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -484,7 +484,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
     assert "planning.js?v=20261011.1" in html
-    assert "operations.css?v=20261007.2" in html
+    assert "operations.css?v=20261016.2" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript

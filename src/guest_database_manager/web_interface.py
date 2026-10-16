@@ -26,7 +26,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Sequence
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -3594,6 +3594,16 @@ class GuestWebService:
         """Send an approval/decline email and persist the resulting decision."""
         return self.send_guest_decision_email_message(guest_id, status, subject="", body="", custom_message=custom_message)
 
+    def _email_personalization(self, email_manager: Any, record: Mapping[str, Any]) -> Dict[str, str]:
+        """Build bounded, previewable email context for a guest-linked record."""
+        if not hasattr(email_manager, "build_personalization_context"):
+            return {}
+        guest = record
+        guest_id = record.get("guest_id") or record.get("id") if "guest_research" in record else record.get("guest_id")
+        if guest_id and "guest_research" not in record:
+            guest = self.database.get_guest_by_id(int(guest_id)) or record
+        return email_manager.build_personalization_context(guest)
+
     def get_guest_decision_email_template(self, guest_id: int, status: str, variant: str = "") -> Dict[str, Any]:
         """Return the default approval/decline email template for dashboard editing."""
         normalized_status = status.strip().lower()
@@ -3609,6 +3619,9 @@ class GuestWebService:
 
         if normalized_status == "accepted":
             acceptance_kwargs = {"booking_url": self._booking_link_for_guest(guest_id)}
+            personalization = self._email_personalization(email_manager, guest)
+            if personalization:
+                acceptance_kwargs["personalization"] = personalization
             if variant:
                 acceptance_kwargs["variant"] = variant
             try:
@@ -5670,6 +5683,9 @@ class GuestWebService:
             "guest_name": guest_name, "scheduled_for": scheduled_for,
             "timezone_label": timezone_label, "join_url": join_url,
         }
+        personalization = self._email_personalization(email_manager, interview)
+        if personalization:
+            reminder_kwargs["personalization"] = personalization
         if variant:
             reminder_kwargs["variant"] = variant
         try:
@@ -5709,7 +5725,7 @@ class GuestWebService:
             "body": template["body"],
         }
 
-    def preview_interview_appreciation(self, interview_id: int) -> Dict[str, Any]:
+    def preview_interview_appreciation(self, interview_id: int, variant: str = "") -> Dict[str, Any]:
         """Return the post-interview appreciation email template."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -5720,11 +5736,19 @@ class GuestWebService:
             interview.get("title"),
         ) or "Guest"
         email_manager = self._build_email_manager()
-        template = email_manager.get_post_interview_appreciation_template(guest_name=guest_name)
+        appreciation_kwargs: Dict[str, Any] = {"guest_name": guest_name}
+        personalization = self._email_personalization(email_manager, interview)
+        if personalization:
+            appreciation_kwargs["personalization"] = personalization
+        if variant:
+            appreciation_kwargs["variant"] = variant
+        template = email_manager.get_post_interview_appreciation_template(**appreciation_kwargs)
         return {
             "interview": self._serialize_interview_reminder(interview),
             "subject": template["subject"],
             "body": template["body"],
+            "variant": variant or "reflective",
+            "variants": email_manager.template_variants("appreciation") if hasattr(email_manager, "template_variants") else [],
         }
 
     def preview_interview_booking_confirmation(self, interview_id: int, variant: str = "") -> Dict[str, Any]:
@@ -5749,6 +5773,9 @@ class GuestWebService:
             "guest_name": guest_name, "scheduled_for": scheduled_for,
             "timezone_label": timezone_label, "join_url": join_url,
         }
+        personalization = self._email_personalization(email_manager, interview)
+        if personalization:
+            confirmation_kwargs["personalization"] = personalization
         if variant:
             confirmation_kwargs["variant"] = variant
         try:
@@ -6197,7 +6224,7 @@ class GuestWebService:
         )
         return self._serialize_interview_reminder(updated)
 
-    def preview_episode_appreciation(self, episode_id: int) -> Dict[str, Any]:
+    def preview_episode_appreciation(self, episode_id: int, variant: str = "") -> Dict[str, Any]:
         """Return the post-recording appreciation email template from an episode record."""
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
@@ -6208,11 +6235,19 @@ class GuestWebService:
             episode.get("episode_title"),
         ) or "Guest"
         email_manager = self._build_email_manager()
-        template = email_manager.get_post_interview_appreciation_template(guest_name=guest_name)
+        appreciation_kwargs: Dict[str, Any] = {"guest_name": guest_name}
+        personalization = self._email_personalization(email_manager, episode)
+        if personalization:
+            appreciation_kwargs["personalization"] = personalization
+        if variant:
+            appreciation_kwargs["variant"] = variant
+        template = email_manager.get_post_interview_appreciation_template(**appreciation_kwargs)
         return {
             "episode": self._normalize_episode_record(episode),
             "subject": template["subject"],
             "body": template["body"],
+            "variant": variant or "reflective",
+            "variants": email_manager.template_variants("appreciation") if hasattr(email_manager, "template_variants") else [],
         }
 
     def send_episode_appreciation(self, episode_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
@@ -6260,7 +6295,7 @@ class GuestWebService:
             raise WebInterfaceError("Episode not found after appreciation email send.")
         return self._normalize_episode_record(refreshed)
 
-    def preview_episode_release_email(self, episode_id: int) -> Dict[str, Any]:
+    def preview_episode_release_email(self, episode_id: int, variant: str = "") -> Dict[str, Any]:
         """Return the released-episode follow-up email template from an episode record."""
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
@@ -6273,15 +6308,21 @@ class GuestWebService:
         show_notes_url = _normalize_text(episode.get("show_notes_url")) or "[Add show notes link]"
         files_url = _normalize_text(episode.get("release_files_url")) or "[Add files link]"
         email_manager = self._build_email_manager()
-        template = email_manager.get_released_episode_template(
-            guest_name=guest_name,
-            show_notes_url=show_notes_url,
-            files_url=files_url,
-        )
+        release_kwargs: Dict[str, Any] = {
+            "guest_name": guest_name, "show_notes_url": show_notes_url, "files_url": files_url,
+        }
+        personalization = self._email_personalization(email_manager, episode)
+        if personalization:
+            release_kwargs["personalization"] = personalization
+        if variant:
+            release_kwargs["variant"] = variant
+        template = email_manager.get_released_episode_template(**release_kwargs)
         return {
             "episode": self._normalize_episode_record(episode),
             "subject": template["subject"],
             "body": template["body"],
+            "variant": variant or "celebratory",
+            "variants": email_manager.template_variants("released_episode") if hasattr(email_manager, "template_variants") else [],
         }
 
     def send_episode_release_email(self, episode_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
@@ -6973,11 +7014,10 @@ class GuestWebService:
         guest_name = _normalize_text(guest.get("full_name") or guest.get("name")) or "there"
         timezone_label = self._guest_facing_timezone(interview)
         join_url = _normalize_text(interview.get("join_url")) or self._booking_join_url()
+        personalization = self._email_personalization(email_manager, guest)
+        confirmation_kwargs = {"personalization": personalization} if personalization else {}
         template = email_manager.get_booking_confirmation_template(
-            guest_name,
-            scheduled_for,
-            timezone_label,
-            join_url,
+            guest_name, scheduled_for, timezone_label, join_url, **confirmation_kwargs
         )
         invite_attachment = {
             "filename": "mirror-talk-booking.ics",
@@ -6995,6 +7035,7 @@ class GuestWebService:
         if email_manager.is_configured() and not queue_only:
             for attempt in range(1, BOOKING_CONFIRMATION_RETRY_ATTEMPTS + 1):
                 try:
+                    send_kwargs = {"personalization": personalization} if personalization else {}
                     sent = email_manager.send_booking_confirmation_email(
                         guest_name,
                         guest_email,
@@ -7002,6 +7043,7 @@ class GuestWebService:
                         timezone_label,
                         join_url,
                         idempotency_key=idempotency_key,
+                        **send_kwargs,
                     )
                 except Exception as exc:
                     last_error = str(exc).strip() or exc.__class__.__name__
@@ -7980,7 +8022,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                payload = self.service.preview_interview_appreciation(interview_id)
+                payload = self.service.preview_interview_appreciation(
+                    interview_id, self._query_params(self.path).get("variant", "")
+                )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -7999,7 +8043,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                payload = self.service.preview_episode_appreciation(episode_id)
+                payload = self.service.preview_episode_appreciation(
+                    episode_id, self._query_params(self.path).get("variant", "")
+                )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -8018,7 +8064,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                payload = self.service.preview_episode_release_email(episode_id)
+                payload = self.service.preview_episode_release_email(
+                    episode_id, self._query_params(self.path).get("variant", "")
+                )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
