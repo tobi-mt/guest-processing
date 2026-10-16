@@ -101,6 +101,7 @@ let activeEpisodeActionFeedback = { id: null, text: "", tone: "" };
 let visibleRecommendationCount = 6;
 let visibleEpisodeCount = 10;
 let pendingEpisodeIdFromUrl = null;
+let pendingEpisodeActionFromUrl = "";
 let pendingPlanningSuccessMessage = "";
 let activePlanningTab = "release_planning";
 let aiCopilotHydrationInFlight = false;
@@ -1509,6 +1510,47 @@ function renderReleaseComposer(node, episode, preview) {
   });
 }
 
+function renderReleaseHeadsUpComposer(node, episode, preview) {
+  node.classList.remove("hidden");
+  node.innerHTML = `
+    <div class="inline-editor-title">14-day guest heads-up</div>
+    <p class="helper-copy">Approved messages enter the outbox for ${escapeHtml(formatDateTime(preview.send_at))}. They are not sent during this review.</p>
+    <label class="full-width"><span>Subject</span><input data-heads-up-field="subject" type="text" value="${escapeHtml(preview.subject || "")}" /></label>
+    <label class="full-width"><span>Email Body</span><textarea data-heads-up-field="body" rows="12">${escapeHtml(preview.body || "")}</textarea></label>
+    <div class="inline-editor-actions full-width">
+      <button type="button" class="primary-button" data-heads-up-action="approve">Approve and Schedule</button>
+      <button type="button" class="ghost-button" data-heads-up-action="close">Close</button>
+    </div>
+    <p class="message" data-heads-up-message aria-live="polite"></p>`;
+  node.querySelector("[data-heads-up-action='close']").addEventListener("click", () => {
+    node.classList.add("hidden");
+    node.innerHTML = "";
+  });
+  node.querySelector("[data-heads-up-action='approve']").addEventListener("click", async (event) => {
+    if (!confirmCriticalAction(`Approve and schedule the 14-day release heads-up to ${episode.guest_name || episode.guest_email}?`)) return;
+    const button = event.currentTarget;
+    const message = node.querySelector("[data-heads-up-message]");
+    button.disabled = true;
+    button.textContent = "Scheduling...";
+    try {
+      const result = await fetchJSON(`/api/episodes/${episode.id}/schedule-release-heads-up`, {
+        method: "POST",
+        body: JSON.stringify({
+          subject: node.querySelector("[data-heads-up-field='subject']").value,
+          body: node.querySelector("[data-heads-up-field='body']").value,
+        }),
+      });
+      setMessage(message, `Guest heads-up scheduled for ${formatDateTime(result.send_at)}.`, "success");
+      button.textContent = "Scheduled";
+      await refreshPlanningQuietly();
+    } catch (error) {
+      setMessage(message, error.message, "error");
+      button.disabled = false;
+      button.textContent = "Approve and Schedule";
+    }
+  });
+}
+
 function splitRecommendationInsights(reason) {
   const text = String(reason || "").trim();
   if (!text) {
@@ -2211,6 +2253,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     const nextAction = deriveEpisodeNextAction(episode);
     const card = document.createElement("article");
     card.className = "operations-card";
+    card.dataset.episodeId = String(episode.id || "");
     card.innerHTML = `
       <div class="card-header-row">
         <div>
@@ -3321,11 +3364,26 @@ async function applyEpisodeFocusFromUrl() {
   }
   setPlanningTab("release_planning");
   const fullEpisode = await hydrateEpisodeForEditing(episode);
+  if (pendingEpisodeActionFromUrl === "release_heads_up") {
+    const preview = await fetchJSON(`/api/episodes/${episode.id}/release-heads-up-template`);
+    const episodeCard = Array.from(episodeList.querySelectorAll(".operations-card")).find(
+      (card) => String(card.dataset.episodeId || "") === String(episode.id),
+    );
+    if (episodeCard) {
+      renderReleaseHeadsUpComposer(
+        episodeCard.querySelector("[data-episode-release-preview]"), episode, preview,
+      );
+      const disclosure = episodeCard.querySelector("details");
+      if (disclosure) disclosure.open = true;
+      episodeCard.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
   loadEpisodeIntoForm(fullEpisode);
   if (pendingPlanningSuccessMessage) {
     setMessage(episodeMessage, pendingPlanningSuccessMessage, "success");
   }
   pendingEpisodeIdFromUrl = null;
+  pendingEpisodeActionFromUrl = "";
   pendingPlanningSuccessMessage = "";
 }
 
@@ -3632,6 +3690,7 @@ function applyUrlState() {
   const preset = params.get("preset");
   const episodeId = params.get("episode_id");
   const source = params.get("source");
+  const action = params.get("action");
   const tab = params.get("tab");
 
   if (query) {
@@ -3643,6 +3702,8 @@ function applyUrlState() {
   }
   if (episodeId) {
     pendingEpisodeIdFromUrl = episodeId;
+    pendingEpisodeActionFromUrl = action || "";
+    if (action === "release_heads_up") visibleEpisodeCount = Number.MAX_SAFE_INTEGER;
     activeEpisodePreset = "all";
     activePlanningTab = "release_planning";
     pendingPlanningSuccessMessage =

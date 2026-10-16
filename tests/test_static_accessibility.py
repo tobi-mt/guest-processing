@@ -483,11 +483,18 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261011.1" in html
+    assert "planning.js?v=20261016.1" in html
     assert "operations.css?v=20261016.2" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript
+
+
+def test_release_heads_up_is_action_queue_driven_without_a_permanent_card_button() -> None:
+    javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+    assert 'pendingEpisodeActionFromUrl === "release_heads_up"' in javascript
+    assert "/release-heads-up-template" in javascript
+    assert 'data-episode-action="preview-release-heads-up"' not in javascript
 
 
 def test_editorial_mix_fits_its_card_at_narrow_container_widths() -> None:

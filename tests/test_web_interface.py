@@ -435,6 +435,34 @@ def test_unified_action_queue_prioritizes_cross_workspace_next_actions(monkeypat
     assert all("password" not in member for member in members)
 
 
+def test_action_queue_owns_release_heads_up_until_it_is_approved(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {
+            "guest_name": "Heads Up Guest",
+            "guest_email": "heads-up@example.com",
+            "episode_title": "Heads Up Episode",
+            "topic": "Purpose",
+            "category": "Personal growth",
+            "production_status": "ready",
+            "promotion_status": "ready",
+            "release_status": "scheduled",
+            "release_date": (datetime.now() + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M"),
+        }
+    )
+
+    before = service._build_action_queue(limit=100)
+    heads_up = next(item for item in before["items"] if item["key"] == f"episode:{episode['id']}:release-heads-up")
+    assert heads_up["next_action"] == "Review guest release heads-up"
+    assert "action=release_heads_up" in heads_up["href"]
+
+    service.schedule_episode_release_heads_up(episode["id"], actor="producer")
+    after = service._build_action_queue(limit=100)
+
+    assert not any(item["key"] == f"episode:{episode['id']}:release-heads-up" for item in after["items"])
+    assert any(item["key"] == f"episode:{episode['id']}:release" for item in after["items"])
+
+
 def test_using_recommended_slot_records_audited_positive_learning_evidence(temp_db):
     service = GuestWebService(temp_db.db_path)
     episode = service.create_episode({
@@ -7410,6 +7438,167 @@ def test_web_service_can_preview_and_send_released_episode_email(monkeypatch, te
         episode["id"], additional_recipients=["agent@example.org"]
     )
     assert sent_episode["guest_email"] == "jordan@example.com"
+
+
+def test_release_heads_up_requires_approval_and_is_queued_idempotently(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {
+            "guest_name": "Jordan Rivers",
+            "guest_email": "jordan@example.com",
+            "episode_title": "A Meaningful Conversation",
+            "topic": "Purpose",
+            "release_status": "scheduled",
+            "release_date": "2099-12-04",
+        }
+    )
+
+    preview = service.preview_episode_release_heads_up(episode["id"])
+    assert preview["send_at"] == "2099-11-20T08:00:00+00:00"
+    assert "Friday, 04 December 2099" in preview["subject"]
+    assert temp_db.get_email_outbox_count() == 0
+
+    scheduled = service.schedule_episode_release_heads_up(
+        episode["id"], subject="Edited release notice", actor="producer"
+    )
+    repeated = service.schedule_episode_release_heads_up(
+        episode["id"], subject="Edited release notice", actor="producer"
+    )
+
+    assert scheduled["outbox_id"] == repeated["outbox_id"]
+    assert temp_db.get_email_outbox_count() == 1
+    with temp_db._connect() as conn:
+        row = conn.execute(
+            "SELECT email_type, subject, next_attempt_at, correlation_id FROM email_outbox WHERE id = ?",
+            (scheduled["outbox_id"],),
+        ).fetchone()
+    assert tuple(row) == (
+        "episode_release_heads_up", "Edited release notice", "2099-11-20 08:00:00", f"episode:{episode['id']}"
+    )
+    audit = temp_db.list_audit_events("episode", episode["id"])
+    assert audit[0]["event_type"] == "release_heads_up_approved"
+
+
+def test_release_heads_up_is_cancelled_if_release_date_changes(monkeypatch, temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {"guest_name": "Jordan", "guest_email": "jordan@example.com", "episode_title": "Purpose",
+         "release_status": "scheduled", "release_date": "2099-12-04"}
+    )
+    scheduled = service.schedule_episode_release_heads_up(episode["id"])
+    with temp_db._connect() as conn:
+        conn.execute("UPDATE email_outbox SET next_attempt_at = '2000-01-01 00:00:00' WHERE id = ?", (scheduled["outbox_id"],))
+        conn.execute("UPDATE episodes SET release_date = '2099-12-11' WHERE id = ?", (episode["id"],))
+        conn.commit()
+
+    class ConfiguredEmailManager:
+        resend_api_key = "configured"
+        last_error = ""
+        def is_configured(self): return True
+        def send_email(self, *args, **kwargs): raise AssertionError("stale email must not be sent")
+
+    monkeypatch.setattr(service, "_build_email_manager", lambda: ConfiguredEmailManager())
+    result = service.process_pending_email_outbox(worker_id="stale-check")
+
+    assert result["cancelled"] == 1
+    with temp_db._connect() as conn:
+        row = conn.execute("SELECT status, last_error FROM email_outbox WHERE id = ?", (scheduled["outbox_id"],)).fetchone()
+    assert tuple(row) == ("cancelled", "Release date changed after approval.")
+
+
+def test_terminal_release_heads_up_can_be_reapproved_without_creating_a_duplicate(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {"guest_name": "Jordan", "guest_email": "jordan@example.com", "episode_title": "Purpose",
+         "release_status": "scheduled", "release_date": "2099-12-04"}
+    )
+    first = service.schedule_episode_release_heads_up(episode["id"])
+    with temp_db._connect() as conn:
+        conn.execute(
+            "UPDATE email_outbox SET status = 'dead_letter', attempts = 5, last_error = 'provider failed' WHERE id = ?",
+            (first["outbox_id"],),
+        )
+        conn.commit()
+
+    approved = service.schedule_episode_release_heads_up(
+        episode["id"], subject="Reviewed subject", body="Reviewed body", actor="producer"
+    )
+
+    assert approved["outbox_id"] == first["outbox_id"]
+    with temp_db._connect() as conn:
+        row = conn.execute(
+            "SELECT status, attempts, subject, body, last_error FROM email_outbox WHERE id = ?",
+            (first["outbox_id"],),
+        ).fetchone()
+    assert tuple(row) == ("retrying", 0, "Reviewed subject", "Reviewed body", None)
+    assert temp_db.get_email_outbox_count() == 1
+    assert temp_db.list_audit_events("communication", first["outbox_id"])[0]["event_type"] == "terminal_email_reapproved"
+
+
+def test_rescheduling_episode_immediately_invalidates_approved_heads_up(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    original_release = (datetime.now() + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M")
+    changed_release = (datetime.now() + timedelta(days=12)).strftime("%Y-%m-%dT%H:%M")
+    episode = service.create_episode(
+        {"guest_name": "Jordan", "guest_email": "jordan@example.com", "episode_title": "Purpose",
+         "topic": "Purpose", "category": "Personal growth", "production_status": "ready",
+         "promotion_status": "ready", "release_status": "scheduled", "release_date": original_release}
+    )
+    approved = service.schedule_episode_release_heads_up(episode["id"])
+
+    updated = service.update_episode(
+        episode["id"], {"release_date": changed_release, "release_status": "scheduled"}
+    )
+
+    assert updated["release_date"] == changed_release
+    with temp_db._connect() as conn:
+        row = conn.execute(
+            "SELECT status, last_error FROM email_outbox WHERE id = ?", (approved["outbox_id"],)
+        ).fetchone()
+    assert tuple(row) == ("cancelled", "Episode schedule or recipient changed after approval.")
+    queue = service._build_action_queue(limit=100)
+    assert any(item["key"] == f"episode:{episode['id']}:release-heads-up" for item in queue["items"])
+
+
+def test_episode_change_waits_while_release_heads_up_is_sending(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {"guest_name": "Jordan", "guest_email": "jordan@example.com", "episode_title": "Purpose",
+         "release_status": "scheduled", "release_date": "2099-12-04"}
+    )
+    approved = service.schedule_episode_release_heads_up(episode["id"])
+    with temp_db._connect() as conn:
+        conn.execute("UPDATE email_outbox SET status = 'sending' WHERE id = ?", (approved["outbox_id"],))
+        conn.commit()
+
+    with pytest.raises(WebInterfaceError, match="delivery is in progress"):
+        service.update_episode(episode["id"], {"release_date": "2099-12-11"})
+
+    assert temp_db.get_episode_by_id(episode["id"])["release_date"] == "2099-12-04"
+
+
+def test_rss_release_confirmation_invalidates_approved_heads_up(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode(
+        {"guest_name": "Jordan", "guest_email": "jordan@example.com", "episode_title": "Purpose",
+         "release_status": "scheduled", "release_date": "2099-12-04"}
+    )
+    approved = service.schedule_episode_release_heads_up(episode["id"])
+
+    released = temp_db.confirm_episode_release_from_rss(
+        episode["id"], published_title="Purpose", published_at="2099-12-03T08:00:00Z",
+        published_description="Public description", public_episode_url="https://example.com/purpose",
+        audio_enclosure_url="https://example.com/purpose.mp3", duration_seconds=1800,
+        artwork_url="https://example.com/purpose.jpg", season_number=1, episode_number=10,
+        feed_position=1, actor="producer", correlation_id="rss-release-test",
+    )
+
+    assert released["release_status"] == "released"
+    with temp_db._connect() as conn:
+        row = conn.execute(
+            "SELECT status, last_error FROM email_outbox WHERE id = ?", (approved["outbox_id"],)
+        ).fetchone()
+    assert tuple(row) == ("cancelled", "Episode was confirmed released after notice approval.")
 
 
 def test_web_service_can_sync_google_calendar_interviews(monkeypatch, temp_db):

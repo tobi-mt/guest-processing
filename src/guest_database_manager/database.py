@@ -1527,6 +1527,22 @@ class GuestDatabase:
             )
 
             if existing_row:
+                release_notice_facts_changed = any(
+                    str(existing_row[field] or "").strip().casefold()
+                    != str(episode_data.get(field) or "").strip().casefold()
+                    for field in ("release_date", "release_status", "guest_email")
+                )
+                if release_notice_facts_changed:
+                    sending_notice = conn.execute(
+                        """SELECT 1 FROM email_outbox
+                           WHERE correlation_id = ? AND email_type = 'episode_release_heads_up'
+                             AND status = 'sending' LIMIT 1""",
+                        (f"episode:{existing_row['id']}",),
+                    ).fetchone()
+                    if sending_notice:
+                        raise RuntimeError(
+                            "Release heads-up delivery is in progress; retry the episode change shortly"
+                        )
                 cursor = conn.execute(
                     """
                     UPDATE episodes SET
@@ -1544,6 +1560,34 @@ class GuestDatabase:
                 if cursor.rowcount != 1:
                     raise RuntimeError("Episode was changed by another request")
                 updated_row = dict(conn.execute("SELECT * FROM episodes WHERE id = ?", (existing_row["id"],)).fetchone())
+                if release_notice_facts_changed:
+                    stale_notices = conn.execute(
+                        """SELECT * FROM email_outbox
+                           WHERE correlation_id = ? AND email_type = 'episode_release_heads_up'
+                             AND status IN ('pending', 'retrying', 'failed', 'dead_letter')""",
+                        (f"episode:{existing_row['id']}",),
+                    ).fetchall()
+                    for stale_row in stale_notices:
+                        stale_before = dict(stale_row)
+                        conn.execute(
+                            """UPDATE email_outbox
+                               SET status = 'cancelled', last_error = ?, lease_owner = NULL,
+                                   lease_until = NULL, row_version = row_version + 1,
+                                   updated_at = CURRENT_TIMESTAMP
+                               WHERE id = ?""",
+                            ("Episode schedule or recipient changed after approval.", stale_before["id"]),
+                        )
+                        stale_after = dict(conn.execute(
+                            "SELECT * FROM email_outbox WHERE id = ?", (stale_before["id"],)
+                        ).fetchone())
+                        self._append_audit_event_conn(
+                            conn, entity_type="communication", entity_id=stale_before["id"],
+                            event_type="approved_notice_invalidated", actor=str(episode_data.get("actor") or "operator"),
+                            source=str(episode_data.get("source") or "planning"),
+                            reason="Episode schedule or recipient changed after approval.",
+                            correlation_id=str(episode_data.get("correlation_id") or ""),
+                            before=stale_before, after=stale_after,
+                        )
                 event_type = (
                     "status_changed"
                     if (
@@ -1695,6 +1739,22 @@ class GuestDatabase:
                 before.get(field) == value for field, value in metadata_targets.items()
             ):
                 return before
+            release_notice_facts_changed = (
+                str(before.get("release_status") or "").strip().casefold()
+                != str(release_status or "").strip().casefold()
+                or str(before.get("release_date") or "").strip() != str(published_at or "").strip()
+            )
+            if release_notice_facts_changed:
+                sending_notice = conn.execute(
+                    """SELECT 1 FROM email_outbox
+                       WHERE correlation_id = ? AND email_type = 'episode_release_heads_up'
+                         AND status = 'sending' LIMIT 1""",
+                    (f"episode:{episode_id}",),
+                ).fetchone()
+                if sending_notice:
+                    raise RuntimeError(
+                        "Release heads-up delivery is in progress; retry RSS reconciliation shortly"
+                    )
             row_version = int(before.get("row_version") or 1)
             cursor = conn.execute(
                 """UPDATE episodes
@@ -1729,6 +1789,32 @@ class GuestDatabase:
             if cursor.rowcount != 1:
                 raise RuntimeError("Episode was changed during RSS reconciliation")
             after = dict(conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone())
+            if release_notice_facts_changed:
+                stale_notices = conn.execute(
+                    """SELECT * FROM email_outbox
+                       WHERE correlation_id = ? AND email_type = 'episode_release_heads_up'
+                         AND status IN ('pending', 'retrying', 'failed', 'dead_letter')""",
+                    (f"episode:{episode_id}",),
+                ).fetchall()
+                for stale_row in stale_notices:
+                    stale_before = dict(stale_row)
+                    conn.execute(
+                        """UPDATE email_outbox
+                           SET status = 'cancelled', last_error = ?, lease_owner = NULL,
+                               lease_until = NULL, row_version = row_version + 1,
+                               updated_at = CURRENT_TIMESTAMP
+                           WHERE id = ?""",
+                        ("Episode was confirmed released after notice approval.", stale_before["id"]),
+                    )
+                    stale_after = dict(conn.execute(
+                        "SELECT * FROM email_outbox WHERE id = ?", (stale_before["id"],)
+                    ).fetchone())
+                    self._append_audit_event_conn(
+                        conn, entity_type="communication", entity_id=stale_before["id"],
+                        event_type="approved_notice_invalidated", actor=actor,
+                        source="podcast_rss", reason="Episode was confirmed released after notice approval.",
+                        correlation_id=correlation_id, before=stale_before, after=stale_after,
+                    )
             self._append_audit_event_conn(
                 conn,
                 entity_type="episode",
@@ -2217,6 +2303,74 @@ class GuestDatabase:
             )
             conn.commit()
 
+    def cancel_claimed_email_outbox(self, outbox_id: int, *, worker_id: str, reason: str) -> None:
+        """Cancel a leased message whose underlying approved facts are now stale."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            current_row = conn.execute("SELECT * FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()
+            if not current_row:
+                raise ValueError("Outbox message not found")
+            current = dict(current_row)
+            validate_transition("communication", current["status"], "cancelled")
+            cursor = conn.execute(
+                """UPDATE email_outbox
+                   SET status = 'cancelled', last_error = ?, lease_owner = NULL, lease_until = NULL,
+                       row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND status = 'sending' AND lease_owner = ?""",
+                (reason, outbox_id, worker_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Outbox message lease changed before cancellation")
+            updated = dict(conn.execute("SELECT * FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone())
+            self._append_audit_event_conn(
+                conn, entity_type="communication", entity_id=outbox_id,
+                event_type="stale_email_cancelled", actor="system", source="email_outbox",
+                reason=reason, before=current, after=updated,
+            )
+            conn.commit()
+
+    def reactivate_terminal_email_outbox(
+        self,
+        outbox_id: int,
+        *,
+        sent_to: str,
+        subject: str,
+        body: str,
+        provider: str,
+        next_attempt_at: str,
+        actor: str,
+    ) -> Dict[str, Any]:
+        """Reactivate a failed or cancelled message only after explicit operator review."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            current_row = conn.execute("SELECT * FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()
+            if not current_row:
+                raise ValueError("Outbox message not found")
+            current = dict(current_row)
+            if current["status"] not in {"failed", "dead_letter", "cancelled"}:
+                return current
+            validate_transition("communication", current["status"], "retrying")
+            cursor = conn.execute(
+                """UPDATE email_outbox
+                   SET sent_to = ?, subject = ?, body = ?, provider = ?, status = 'retrying',
+                       attempts = 0, next_attempt_at = ?, last_error = NULL, dead_letter_at = NULL,
+                       sent_at = NULL, lease_owner = NULL, lease_until = NULL,
+                       row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND row_version = ?""",
+                (sent_to, subject, body, provider, next_attempt_at, outbox_id, current["row_version"]),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Outbox message changed before reapproval")
+            updated = dict(conn.execute("SELECT * FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone())
+            self._append_audit_event_conn(
+                conn, entity_type="communication", entity_id=outbox_id,
+                event_type="terminal_email_reapproved", actor=actor or "operator", source="planning",
+                reason="Operator reviewed and reapproved the guest release notice.",
+                before=current, after=updated,
+            )
+            conn.commit()
+            return updated
+
     def mark_email_outbox_retry(
         self,
         outbox_id: int,
@@ -2434,6 +2588,22 @@ class GuestDatabase:
                 "SELECT COUNT(*) FROM email_outbox WHERE status IN ('pending', 'retrying')"
             )
             return int(cursor.fetchone()[0])
+
+    def list_release_heads_up_outbox(self) -> Dict[str, Dict[str, Any]]:
+        """Return the latest pre-release notice for each episode correlation key."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT * FROM email_outbox
+                   WHERE email_type = 'episode_release_heads_up'
+                     AND correlation_id LIKE 'episode:%'
+                   ORDER BY id DESC"""
+            ).fetchall()
+        latest: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            item = dict(row)
+            latest.setdefault(str(item.get("correlation_id") or ""), item)
+        return latest
 
     def get_reminder_log(self, interview_id: Optional[int] = None) -> List[Dict]:
         """Return reminder log entries, optionally for a single interview."""

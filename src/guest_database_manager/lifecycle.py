@@ -54,11 +54,11 @@ TRANSITIONS: Mapping[str, Mapping[str, frozenset[str]]] = {
     "communication": {
         "pending": frozenset({"sending", "retrying", "sent", "failed", "dead_letter", "cancelled"}),
         "retrying": frozenset({"sending", "sent", "failed", "dead_letter", "cancelled"}),
-        "sending": frozenset({"sent", "retrying", "failed", "dead_letter"}),
+        "sending": frozenset({"sent", "retrying", "failed", "dead_letter", "cancelled"}),
         "sent": frozenset(),
         "failed": frozenset({"retrying", "cancelled"}),
         "dead_letter": frozenset({"retrying", "cancelled"}),
-        "cancelled": frozenset(),
+        "cancelled": frozenset({"retrying"}),
     },
 }
 

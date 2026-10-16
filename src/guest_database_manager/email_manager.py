@@ -142,6 +142,7 @@ class EmailManager:
         "booking_link": (("helpful", "Helpful and reassuring"), ("concise", "Clear and concise")),
         "reschedule": (("supportive", "Supportive and flexible"), ("concise", "Clear and concise")),
         "released_episode": (("celebratory", "Celebratory and collaborative"), ("concise", "Share-ready and concise")),
+        "release_heads_up": (("warm", "Warm and collaborative"), ("concise", "Clear and concise")),
     }
 
     @classmethod
@@ -771,6 +772,47 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
+        return {"subject": subject, "body": body}
+
+    def get_release_heads_up_template(
+        self,
+        guest_name: str,
+        release_date: str,
+        variant: str = "warm",
+        personalization: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """Build the reviewed pre-release notice sent after operator approval."""
+        variant = self._template_variant("release_heads_up", variant, "warm")
+        subject = f"Your Mirror Talk episode is scheduled for {release_date}"
+        topic_line = self._personalized_topic_line(personalization, purpose="release")
+        if variant == "concise":
+            body = f"""Hi {guest_name},
+
+A quick heads-up: your Mirror Talk episode is scheduled for release on {release_date}.
+
+We’ll send the live link and share-ready files when it is published. If the date creates a conflict, please reply to this email as soon as you can.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
+        else:
+            body = f"""Hi {guest_name},
+
+I hope you are doing well.
+
+I wanted to give you an early heads-up that your Mirror Talk episode is scheduled for release on {release_date}.
+
+{topic_line.rstrip()}
+
+There is nothing you need to do right now. We’ll send the live episode link and share-ready files once it is published, so you can share the conversation with your community if you wish.
+
+If this timing overlaps with another launch or creates a conflict, please reply as soon as you can and we’ll review the plan together.
+
+Thank you again for being part of Mirror Talk.
+
+Warm regards,
+Tobi Ojekunle
+Mirror Talk Podcast"""
         return {"subject": subject, "body": body}
 
     @staticmethod

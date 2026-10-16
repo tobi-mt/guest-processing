@@ -266,6 +266,20 @@ def test_personalized_templates_fall_back_cleanly_and_expose_reviewed_variants()
     assert {item["id"] for item in manager.template_variants("released_episode")} == {
         "celebratory", "concise",
     }
+
+
+def test_release_heads_up_template_sets_expectations_without_claiming_publication():
+    manager = EmailManager()
+
+    template = manager.get_release_heads_up_template(
+        "Jordan", "Friday, 04 December 2026", personalization={"topic": "purpose"}
+    )
+
+    assert template["subject"] == "Your Mirror Talk episode is scheduled for Friday, 04 December 2026"
+    assert "scheduled for release" in template["body"]
+    assert "live episode link" in template["body"]
+    assert "now live" not in template["body"]
+    assert {item["id"] for item in manager.template_variants("release_heads_up")} == {"warm", "concise"}
     assert manager.build_personalization_context({"guest_research": {"cache_status": "failed"}}) == {}
 
 

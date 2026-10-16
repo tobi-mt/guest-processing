@@ -1407,6 +1407,7 @@ class GuestWebService:
         episodes = [self._normalize_episode_record(item) for item in self.database.list_episodes()]
         rss_release_evidence = self.database.list_rss_release_evidence_by_episode()
         latest_applications = self.database.list_latest_guest_applications()
+        release_heads_up_outbox = self.database.list_release_heads_up_outbox()
         reminder_ids = {
             int(item["id"])
             for item in self.get_due_weekly_reminders(reference=reference)
@@ -1579,18 +1580,45 @@ class GuestWebService:
                         due_at=episode.get("release_date"),
                     )
                 else:
-                    add_item(
-                        key=f"episode:{episode_id}:release",
-                        domain="episode",
-                        title=title,
-                        next_action="Verify release execution",
-                        reason="The episode is scheduled and release-ready.",
-                        href=href,
-                        action_label="Open release plan",
-                        owner=episode.get("owner"),
-                        score=82,
-                        due_at=episode.get("release_date"),
+                    heads_up = release_heads_up_outbox.get(f"episode:{episode_id}")
+                    heads_up_matches_release = bool(
+                        heads_up
+                        and _normalize_text(heads_up.get("idempotency_key")).endswith(
+                            f":{_normalize_text(episode.get('release_date'))}"
+                        )
                     )
+                    heads_up_status = _normalize_text((heads_up or {}).get("status")).lower()
+                    if not heads_up_matches_release or heads_up_status in {"failed", "dead_letter", "cancelled"}:
+                        reason = (
+                            "The previous notice needs review before another delivery is approved."
+                            if heads_up_status in {"failed", "dead_letter", "cancelled"}
+                            else "The release is within 14 days and the guest notice has not been approved."
+                        )
+                        add_item(
+                            key=f"episode:{episode_id}:release-heads-up",
+                            domain="episode",
+                            title=title,
+                            next_action="Review guest release heads-up",
+                            reason=reason,
+                            href=f"/planning?{urlencode({'tab': 'release_planning', 'episode_id': episode_id, 'action': 'release_heads_up'})}",
+                            action_label="Review heads-up",
+                            owner=episode.get("owner"),
+                            score=86,
+                            due_at=episode.get("release_date"),
+                        )
+                    else:
+                        add_item(
+                            key=f"episode:{episode_id}:release",
+                            domain="episode",
+                            title=title,
+                            next_action="Verify release execution",
+                            reason="The episode is scheduled, release-ready, and the guest notice is handled.",
+                            href=href,
+                            action_label="Open release plan",
+                            owner=episode.get("owner"),
+                            score=82,
+                            due_at=episode.get("release_date"),
+                        )
             elif production_status == "ready" and release_status != "scheduled":
                 add_item(
                     key=f"episode:{episode_id}:schedule",
@@ -6325,6 +6353,89 @@ class GuestWebService:
             "variants": email_manager.template_variants("released_episode") if hasattr(email_manager, "template_variants") else [],
         }
 
+    def preview_episode_release_heads_up(self, episode_id: int, variant: str = "") -> Dict[str, Any]:
+        """Return the approval-ready email scheduled fourteen days before release."""
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode not found.")
+        release_dt = self._parse_datetime_static(episode.get("release_date"))
+        if not release_dt:
+            raise WebInterfaceError("Add a valid release date before preparing the guest heads-up.")
+        if release_dt <= datetime.now():
+            raise WebInterfaceError("The guest heads-up can only be scheduled for a future release.")
+        guest_name = self._extract_guest_name_from_interview_title(
+            episode.get("guest_name"), episode.get("episode_title")
+        ) or "Guest"
+        manager = self._build_email_manager()
+        kwargs: Dict[str, Any] = {
+            "guest_name": guest_name,
+            "release_date": release_dt.strftime("%A, %d %B %Y"),
+        }
+        personalization = self._email_personalization(manager, episode)
+        if personalization:
+            kwargs["personalization"] = personalization
+        if variant:
+            kwargs["variant"] = variant
+        template = manager.get_release_heads_up_template(**kwargs)
+        scheduled_send_at = self._release_heads_up_send_at(release_dt)
+        effective_send_at = max(scheduled_send_at, datetime.now(timezone.utc).replace(microsecond=0))
+        return {
+            "episode": self._normalize_episode_record(episode),
+            "subject": template["subject"],
+            "body": template["body"],
+            "send_at": effective_send_at.isoformat(),
+            "variant": variant or "warm",
+            "variants": manager.template_variants("release_heads_up") if hasattr(manager, "template_variants") else [],
+        }
+
+    @staticmethod
+    def _release_heads_up_send_at(release_dt: datetime) -> datetime:
+        """Return 09:00 Europe/Berlin fourteen days before release, converted to UTC."""
+        local_release = release_dt.replace(tzinfo=ZoneInfo("Europe/Berlin"))
+        local_send = (local_release - timedelta(days=14)).replace(hour=9, minute=0, second=0, microsecond=0)
+        return local_send.astimezone(timezone.utc)
+
+    def schedule_episode_release_heads_up(
+        self, episode_id: int, subject: str = "", body: str = "", actor: str = "dashboard"
+    ) -> Dict[str, Any]:
+        """Queue an explicitly approved, idempotent pre-release guest email."""
+        episode = self.database.get_episode_by_id(episode_id)
+        if not episode:
+            raise WebInterfaceError("Episode not found.")
+        guest_email = _normalize_text(episode.get("guest_email"))
+        if not guest_email:
+            raise WebInterfaceError("This episode does not have a guest email.")
+        preview = self.preview_episode_release_heads_up(episode_id)
+        send_at = datetime.fromisoformat(preview["send_at"])
+        release_key = _normalize_text(episode.get("release_date"))
+        manager = self._build_email_manager()
+        outbox_id = self.database.enqueue_email_outbox(
+            interview_id=int(episode["interview_id"]) if episode.get("interview_id") else None,
+            email_type="episode_release_heads_up",
+            sent_to=guest_email,
+            subject=subject.strip() or preview["subject"],
+            body=body.strip() or preview["body"],
+            provider="resend" if manager.resend_api_key else "smtp",
+            next_attempt_at=send_at.strftime("%Y-%m-%d %H:%M:%S"),
+            idempotency_key=f"episode_release_heads_up:{episode_id}:{release_key}",
+            correlation_id=f"episode:{episode_id}",
+        )
+        queued = self.database.reactivate_terminal_email_outbox(
+            outbox_id,
+            sent_to=guest_email,
+            subject=subject.strip() or preview["subject"],
+            body=body.strip() or preview["body"],
+            provider="resend" if manager.resend_api_key else "smtp",
+            next_attempt_at=send_at.strftime("%Y-%m-%d %H:%M:%S"),
+            actor=actor,
+        )
+        self.database.append_audit_event(
+            entity_type="episode", entity_id=episode_id, event_type="release_heads_up_approved",
+            actor=actor, source="planning", reason="Operator approved the 14-day guest release notice.",
+            after={"outbox_id": outbox_id, "send_at": preview["send_at"], "release_date": release_key},
+        )
+        return {**preview, "outbox_id": outbox_id, "status": queued["status"]}
+
     def send_episode_release_email(self, episode_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         """Send the released-episode follow-up email from an episode record."""
         episode = self.database.get_episode_by_id(episode_id)
@@ -7133,12 +7244,32 @@ class GuestWebService:
 
         due_entries = self.database.claim_due_email_outbox(worker_id=worker_id, limit=limit)
         results = {
-            "checked": len(due_entries), "sent": 0, "retrying": 0, "failed": 0,
+            "checked": len(due_entries), "sent": 0, "retrying": 0, "failed": 0, "cancelled": 0,
             "recovered_sent": recovered["sent"], "recovered_queued": recovered["queued"],
             "recovered_unavailable": recovered["unavailable"],
         }
 
         for entry in due_entries:
+            if _normalize_text(entry.get("email_type")) == "episode_release_heads_up":
+                correlation_id = _normalize_text(entry.get("correlation_id"))
+                episode_id_text = correlation_id.removeprefix("episode:") if correlation_id.startswith("episode:") else ""
+                episode = self.database.get_episode_by_id(int(episode_id_text)) if episode_id_text.isdigit() else None
+                approved_release_date = _normalize_text(entry.get("idempotency_key")).rsplit(":", 1)[-1]
+                stale_reason = ""
+                if not episode:
+                    stale_reason = "Episode no longer exists."
+                elif _normalize_text(episode.get("release_status")).lower() != "scheduled":
+                    stale_reason = "Episode is no longer scheduled."
+                elif _normalize_text(episode.get("release_date")) != approved_release_date:
+                    stale_reason = "Release date changed after approval."
+                elif _normalize_text(episode.get("guest_email")).casefold() != _normalize_text(entry.get("sent_to")).casefold():
+                    stale_reason = "Guest email changed after approval."
+                if stale_reason:
+                    self.database.cancel_claimed_email_outbox(
+                        int(entry["id"]), worker_id=worker_id, reason=stale_reason
+                    )
+                    results["cancelled"] += 1
+                    continue
             attachments_payload = []
             raw_attachments = entry.get("attachments_json") or ""
             if raw_attachments:
@@ -8071,6 +8202,24 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
 
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if request_path.startswith("/api/episodes/") and request_path.endswith("/release-heads-up-template"):
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            episode_id = self._extract_record_id(request_path[: -len("/release-heads-up-template")], "/api/episodes/")
+            if episode_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                return
+            try:
+                payload = self.service.preview_episode_release_heads_up(
+                    episode_id, self._query_params(self.path).get("variant", "")
+                )
+            except WebInterfaceError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
             self._send_json(HTTPStatus.OK, payload)
             return
 
@@ -9482,6 +9631,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     return
 
                 self._send_json(HTTPStatus.OK, episode)
+                return
+
+            if self.path.endswith("/schedule-release-heads-up"):
+                episode_id = self._extract_record_id(
+                    self.path[: -len("/schedule-release-heads-up")], "/api/episodes/"
+                )
+                if episode_id is None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
+                    return
+                payload = self._read_json_payload()
+                claims = self._session_claims() or {}
+                try:
+                    result = self.service.schedule_episode_release_heads_up(
+                        episode_id, payload.get("subject", ""), payload.get("body", ""),
+                        actor=_normalize_text(claims.get("sub")) or "dashboard",
+                    )
+                except WebInterfaceError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(HTTPStatus.OK, result)
                 return
 
             if self.path.endswith("/send-appreciation"):
