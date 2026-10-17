@@ -12,6 +12,9 @@
   --gold: #e9bd65;
   --gold-soft: rgba(233, 189, 101, 0.14);
   --danger: #ff8172;
+  --surface: var(--panel-strong);
+  --background: var(--bg);
+  --muted-text: var(--muted);
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
   --shadow-hover: 0 24px 62px rgba(0, 0, 0, 0.38);
   --radius: 22px;
@@ -2432,3 +2435,23 @@ button[type="submit"],
 .preset-chip.active,
 .action-filter.active { color: #1a0d08 !important; }
 .action-summary.urgent { color: #ff9a8d; }
+.workspace-tab { background: rgba(255, 255, 255, 0.07); color: #ff9a6b; border-color: rgba(255, 100, 34, 0.35); }
+.workspace-tab.active { background: var(--accent); color: #1a0d08; }
+.premium-badge.warm { background: rgba(233, 189, 101, 0.14); color: #f2c46d; }
+.action-queue-counts .urgent { background: rgba(255, 129, 114, 0.14); color: #ff9a8d; }
+.action-domain.guest { background: rgba(181, 160, 235, 0.14); color: #cbbcff; }
+.action-domain.interview { background: rgba(118, 196, 235, 0.14); color: #9edcff; }
+.action-domain.episode { background: rgba(255, 100, 34, 0.14); color: #ff9a6b; }
+.partner-tool,
+.partner-recipient,
+.recipient-candidate { background: var(--panel-strong); color: var(--text); border-color: var(--border); }
+.secondary-button { background: #3a211b; color: #ffb28d; border-color: rgba(255, 100, 34, 0.38); }
+.dashboard-link:hover { background: var(--accent); color: #1a0d08; }
+.social-chip.ambiguous,
+.insight-stat.skipped { background: rgba(233, 189, 101, 0.14); color: #f2c46d; }
+.guest-production-flow { background: var(--panel-strong); border-color: var(--border); }
+.guest-production-flow > div,
+.guest-production-flow li { color: var(--muted); }
+.guest-production-flow > div strong { color: var(--text); }
+.preset-chip.active,
+.preset-chip.warning-chip.active { color: #1a0d08; }

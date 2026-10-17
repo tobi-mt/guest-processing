@@ -336,11 +336,20 @@ def test_mobile_planning_keeps_calendar_and_workflow_labels_readable() -> None:
     assert "grid-template-columns: 22px 34px minmax(0, 1fr);" in styles
 
 
+def test_planning_episode_modal_uses_dark_readable_surface() -> None:
+    styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
+
+    assert ".modal-content {" in styles
+    assert "background: var(--panel-strong);" in styles
+    assert "color: var(--text);" in styles
+    assert ".episode-detail-grid dd { color: var(--text); }" in styles
+
+
 def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20261016.2' in html
+    assert 'operations.css?v=20261017.2' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -369,8 +378,11 @@ def test_availability_calendar_preserves_week_context_and_accessible_dates() -> 
     assert ".calendar-day.today" in styles
     assert "overflow-x: auto" in styles
     assert "grid-template-columns: repeat(2, 1fr)" not in styles
-    assert "availability.css?v=20260922.1" in html
-    assert "availability.js?v=20261011.1" in html
+    assert "availability.css?v=20261017.2" in html
+    assert "availability.js?v=20261017.1" in html
+    assert "error.message" not in javascript
+    assert "Availability could not be fully loaded" in javascript
+    assert "#calendar-day-dialog" in styles
 
 
 def test_dashboard_renders_release_timing_and_dated_guest_events() -> None:
@@ -424,7 +436,7 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     for name in ("index.html", "operations.html", "planning.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
         assert 'workspace-shell.js?v=20260927.3' in html
-        assert 'styles.css?v=20261016.6' in html
+        assert 'styles.css?v=20261017.2' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -484,7 +496,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
     assert "planning.js?v=20261016.1" in html
-    assert "operations.css?v=20261016.2" in html
+    assert "operations.css?v=20261017.2" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript

@@ -132,6 +132,9 @@
 .connection-status{padding:4px 9px;border-radius:999px;background:#efe8d8;font-size:.7rem;font-weight:800;text-transform:uppercase}
 .connection-status.connected{background:#dff2ea;color:#145a4a}
 .connection-status.error,.connection-status.revoked{background:#f7e4df;color:#873b30}
+.connection-status.disconnected{background:rgba(255,255,255,.08);color:var(--muted)}
+.trend-controls button.active{color:#1a0d08}
+.status-chip.pending{background:rgba(233,189,101,.14);color:#f2c46d;border-color:rgba(233,189,101,.32)}
 .disclosure-panel{padding:0;overflow:hidden}
 .disclosure-panel>summary{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 24px;cursor:pointer;list-style:none}
 .disclosure-panel>summary::-webkit-details-marker{display:none}

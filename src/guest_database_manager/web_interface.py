@@ -4356,8 +4356,11 @@ class GuestWebService:
                         "all_day": bool(event_start.get("date")), "start": event_start.get("date") or event_start.get("dateTime"),
                         "end": event_end.get("date") or event_end.get("dateTime")})
                 status = {"connected": True, "message": "Live Google Calendar read."}
-            except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
-                status = {"connected": False, "message": str(exc)}
+            except GOOGLE_CALENDAR_CLIENT_ERRORS:
+                status = {
+                    "connected": False,
+                    "message": "Google Calendar is temporarily unavailable. Saved availability is still shown.",
+                }
         for item in self.database.list_interviews():
             scheduled = self._parse_datetime(item.get("scheduled_for"))
             if scheduled and start <= scheduled.astimezone(timezone.utc) < end and _normalize_text(item.get("status")).lower() != "cancelled":

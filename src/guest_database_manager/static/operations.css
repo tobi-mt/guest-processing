@@ -2307,3 +2307,19 @@
 .operations-preview th,
 .operations-preview td { border-color: var(--border); }
 .operations-preview th { color: var(--muted); }
+.modal-content {
+  background: var(--panel-strong);
+  color: var(--text);
+  border-color: var(--border);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52);
+}
+.episode-detail-grid div {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: var(--border);
+}
+.episode-detail-grid dt { color: var(--muted); }
+.episode-detail-grid dd { color: var(--text); }
+.status-chip { background: rgba(255, 255, 255, 0.07); color: var(--text); border-color: var(--border); }
+.status-chip.success { background: rgba(255, 100, 34, 0.14); color: #ffb28d; border-color: rgba(255, 100, 34, 0.32); }
+.status-chip.pending { background: rgba(233, 189, 101, 0.14); color: #f2c46d; border-color: rgba(233, 189, 101, 0.32); }
+.status-chip.warning { background: rgba(255, 129, 114, 0.14); color: #ffaaa0; border-color: rgba(255, 129, 114, 0.32); }

@@ -162,4 +162,6 @@ form.onsubmit = async (event) => {
   document.querySelector("#message").textContent = response.ok ? "Availability saved." : data.error;
   if (response.ok) { availability = data; render(); }
 };
-load().catch((error) => { document.querySelector("#message").textContent = error.message; });
+load().catch(() => {
+  document.querySelector("#message").textContent = "Availability could not be fully loaded. Please refresh or try again shortly.";
+});
