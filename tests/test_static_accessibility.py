@@ -108,7 +108,8 @@ def test_booking_slot_selection_is_explicit_and_conflicts_are_contextual() -> No
     assert 'button.disabled = true;' in javascript
     assert "existing calendar event" not in javascript
     assert "safety window" not in javascript
-    assert 'booking.css?v=20261016.11' in html
+    assert 'brand-system.css?v=20261017.1' in html
+    assert 'booking.css?v=20261017.1' in html
     assert 'booking.js?v=20261016.3' in html
 
 
@@ -168,7 +169,8 @@ def test_intake_redesign_is_three_steps_and_labels_choice_architecture() -> None
     assert source.count('class="optional-marker"') >= 6
     assert "Follower count is not part of editorial eligibility" in source
     assert "Boundaries do not count against your application" in source
-    assert 'intake.css?v=20261016.9' in source
+    assert 'brand-system.css?v=20261017.1' in source
+    assert 'intake.css?v=20261017.1' in source
 
 
 def test_intake_preserves_specific_errors_and_debounces_draft_writes() -> None:
@@ -342,14 +344,37 @@ def test_planning_episode_modal_uses_dark_readable_surface() -> None:
     assert ".modal-content {" in styles
     assert "background: var(--panel-strong);" in styles
     assert "color: var(--text);" in styles
-    assert ".episode-detail-grid dd { color: var(--text); }" in styles
+    assert ".episode-detail-grid dd {" in styles
+    assert "color: var(--text);" in styles
+
+
+def test_planning_learning_and_copilot_surfaces_are_dark_at_source() -> None:
+    styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
+
+    assert ".operations-preview.ai-copilot-status.success" in styles
+    assert "background: linear-gradient(145deg, rgba(42, 30, 34, 0.98)" in styles
+    assert ".learning-policy-strip," in styles
+    assert ".learning-metric-grid {" in styles
+    assert ".learning-progress {" in styles
+    assert styles.count("background: var(--panel-strong);") >= 4
+
+
+def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
+    html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
+    styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
+
+    assert "insights.css?v=20261017.4" in html
+    assert ".freshness{" in styles
+    assert "background:rgba(255,255,255,.08);color:var(--text)" in styles
+    assert ".freshness.current{background:rgba(93,205,169,.14);color:#9ee5cd" in styles
+    assert ".freshness.stale{background:rgba(233,189,101,.14);color:#f2c46d" in styles
 
 
 def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20261017.2' in html
+    assert 'operations.css?v=20261017.4' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -436,7 +461,8 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     for name in ("index.html", "operations.html", "planning.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
         assert 'workspace-shell.js?v=20260927.3' in html
-        assert 'styles.css?v=20261017.2' in html
+        assert 'brand-system.css?v=20261017.1' in html
+        assert 'styles.css?v=20261017.5' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -455,6 +481,21 @@ def test_guest_actions_are_grouped_by_user_intent() -> None:
         assert label in html
     assert "guest-action-group-danger" in html
     assert ".guest-action-group > span" in styles
+
+
+def test_dynamic_guest_research_surfaces_use_dark_readable_theme() -> None:
+    styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
+
+    dark_surface_rule = styles[styles.index(".guest-ai-card {") : styles.index(".guest-planning-meta {")]
+    for selector in (
+        ".guest-ai-card",
+        ".guest-promotion-card",
+        ".guest-planning-card",
+    ):
+        assert selector in dark_surface_rule
+    assert "rgba(34, 28, 38, 0.98)" in dark_surface_rule
+    assert ".guest-ai-badge.good" in styles
+    assert ".guest-ai-badge.warning" in styles
 
 
 def test_account_surfaces_have_labeled_fields_and_status_regions() -> None:
@@ -496,7 +537,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
     assert "planning.js?v=20261016.1" in html
-    assert "operations.css?v=20261017.2" in html
+    assert "operations.css?v=20261017.4" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript
@@ -571,14 +612,18 @@ def test_paginated_workspace_counts_distinguish_matches_from_visible_cards() -> 
         assert "Displaying ${visible} right now" in javascript
 
 
-def test_standalone_guest_pages_define_every_css_custom_property_they_use() -> None:
-    """Booking and intake load without the shared stylesheet, so their tokens must be self-contained."""
+def test_standalone_guest_pages_use_the_shared_brand_token_contract() -> None:
+    """Booking and intake must use the same brand tokens as authenticated pages."""
     import re
 
-    for filename in ("booking.css", "intake.css"):
+    brand = (STATIC_ROOT / "brand-system.css").read_text(encoding="utf-8")
+    brand_definitions = set(re.findall(r"(--[\w-]+)\s*:", brand))
+    for filename, html_name in (("booking.css", "booking.html"), ("intake.css", "intake.html")):
         stylesheet = (STATIC_ROOT / filename).read_text(encoding="utf-8")
-        definitions = set(re.findall(r"(--[\w-]+)\s*:", stylesheet))
+        html = (STATIC_ROOT / html_name).read_text(encoding="utf-8")
+        definitions = brand_definitions | set(re.findall(r"(--[\w-]+)\s*:", stylesheet))
         uses = set(re.findall(r"var\((--[\w-]+)", stylesheet))
+        assert 'brand-system.css?v=20261017.1' in html
         assert uses <= definitions, f"{filename} has undefined CSS variables: {sorted(uses - definitions)}"
 
 

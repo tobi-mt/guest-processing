@@ -78,7 +78,7 @@
   padding: 22px;
   border: 1px solid rgba(91, 70, 47, 0.1);
   border-radius: 22px;
-  background: linear-gradient(180deg, rgba(255, 252, 247, 0.95) 0%, rgba(255, 249, 242, 0.9) 100%);
+  background: var(--color-surface-raised);
   box-shadow: var(--shadow);
 }
 
@@ -121,26 +121,26 @@
   font-weight: 700;
   letter-spacing: 0.01em;
   border: 1px solid rgba(91, 70, 47, 0.14);
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--surface-raised);
   color: var(--text);
 }
 
 .status-chip.success {
-  color: #9f3100;
-  border-color: rgba(196, 61, 0, 0.28);
-  background: rgba(223, 242, 234, 0.72);
+  color: var(--color-success);
+  border-color: rgba(93, 205, 169, 0.32);
+  background: var(--color-success-soft);
 }
 
 .status-chip.pending {
-  color: #7a4d18;
-  border-color: rgba(176, 126, 45, 0.32);
-  background: rgba(255, 242, 223, 0.76);
+  color: var(--color-warning);
+  border-color: rgba(233, 189, 101, 0.32);
+  background: var(--color-warning-soft);
 }
 
 .status-chip.warning {
-  color: #9c2f2f;
-  border-color: rgba(156, 47, 47, 0.3);
-  background: rgba(255, 234, 234, 0.8);
+  color: var(--color-danger);
+  border-color: rgba(255, 129, 114, 0.32);
+  background: var(--color-danger-soft);
 }
 
 .operations-card.selected {
@@ -150,13 +150,13 @@
 
 .recommendation-card {
   border-color: rgba(217, 105, 31, 0.16);
-  background: linear-gradient(180deg, rgba(255, 248, 240, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
+  background: linear-gradient(145deg, rgba(255, 100, 34, 0.08), var(--color-surface-raised));
 }
 
 .operations-tool {
   border: 1px solid rgba(91, 70, 47, 0.12);
   border-radius: 22px;
-  background: rgba(255, 253, 249, 0.92);
+  background: var(--color-surface-raised);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -240,7 +240,7 @@
   color: var(--text);
   padding: 10px 12px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.68);
+  background: var(--surface-raised);
   border: 1px solid rgba(91, 70, 47, 0.08);
 }
 
@@ -262,7 +262,7 @@
   padding: 12px 14px;
   border: 1px solid rgba(91, 70, 47, 0.08);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.68);
+  background: var(--surface-raised);
 }
 
 .checkbox-option input {
@@ -273,7 +273,7 @@
   padding: 16px;
   border: 1px solid rgba(91, 70, 47, 0.08);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.64);
+  background: var(--surface-raised);
 }
 
 .outreach-checklist {
@@ -288,7 +288,7 @@
   gap: 10px;
   padding: 12px 14px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--surface-raised);
   border: 1px solid rgba(91, 70, 47, 0.08);
 }
 
@@ -379,18 +379,19 @@
   margin-top: 14px;
   padding: 16px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.62);
-  border: 1px solid rgba(91, 70, 47, 0.10);
+  background: var(--panel-strong);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
 .operations-preview.ai-copilot-status.success {
-  border-color: rgba(50, 122, 88, 0.28);
-  background: rgba(236, 249, 242, 0.92);
+  border-color: rgba(255, 100, 34, 0.34);
+  background: linear-gradient(145deg, rgba(42, 30, 34, 0.98), rgba(24, 20, 27, 0.98));
 }
 
 .operations-preview.ai-copilot-status.warning {
-  border-color: rgba(176, 126, 45, 0.28);
-  background: rgba(255, 247, 232, 0.96);
+  border-color: rgba(233, 189, 101, 0.34);
+  background: linear-gradient(145deg, rgba(43, 35, 31, 0.98), rgba(24, 20, 27, 0.98));
 }
 
 .operations-preview h4,
@@ -413,7 +414,7 @@
 .mini-card {
   padding: 14px 16px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--surface-raised);
   border: 1px solid rgba(91, 70, 47, 0.08);
 }
 
@@ -498,7 +499,7 @@
   padding: 16px;
   border: 1px solid rgba(91, 70, 47, 0.08);
   border-radius: 18px;
-  background: rgba(255, 252, 247, 0.74);
+  background: var(--color-surface-raised);
 }
 
 .toolbar-field {
@@ -588,7 +589,7 @@
 }
 
 .modal-content {
-  background: white;
+  background: var(--surface-raised);
   border-radius: 20px;
   padding: 28px;
   max-width: 400px;
@@ -891,6 +892,7 @@
   padding: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .episode-detail-grid dt {
@@ -903,6 +905,7 @@
 .episode-detail-grid dd {
   margin: 0.3rem 0 0;
   overflow-wrap: anywhere;
+  color: var(--text);
 }
 
 .sync-match-list {
@@ -941,7 +944,7 @@
   padding: 0.9rem;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--surface-raised);
 }
 
 .production-pipeline-heading {
@@ -1312,10 +1315,10 @@
 .learning-loading {
   margin: 0;
   padding: 1rem;
-  border: 1px solid rgba(91, 70, 47, 0.1);
+  border: 1px solid var(--border);
   border-radius: 16px;
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.68);
+  background: var(--panel-strong);
 }
 
 .learning-policy-strip,
@@ -1328,7 +1331,8 @@
   padding: 0.95rem 1rem;
   border: 1px solid rgba(196, 61, 0, 0.13);
   border-radius: 17px;
-  background: rgba(255, 255, 255, 0.84);
+  background: var(--panel-strong);
+  color: var(--text);
 }
 
 .learning-policy-strip > div,
@@ -1358,9 +1362,9 @@
   display: grid;
   gap: 0;
   overflow: hidden;
-  border: 1px solid rgba(91, 70, 47, 0.09);
+  border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.64);
+  background: var(--panel-strong);
 }
 
 .learning-metric-card {
@@ -1376,7 +1380,7 @@
 }
 
 .learning-metric-card + .learning-metric-card {
-  border-top: 1px solid rgba(91, 70, 47, 0.09);
+  border-top: 1px solid var(--border);
 }
 
 .learning-progress {
@@ -1385,7 +1389,7 @@
   padding: 0.9rem 1rem;
   border: 1px solid rgba(196, 61, 0, 0.15);
   border-radius: 16px;
-  background: rgba(223, 242, 234, 0.3);
+  background: rgba(255, 100, 34, 0.07);
 }
 
 .learning-progress > div:first-child {
@@ -1915,7 +1919,7 @@
   padding: 0.65rem;
   border: 1px solid rgba(73, 55, 40, 0.12);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.54);
+  background: var(--surface-raised);
   color: var(--muted);
   font-size: 0.78rem;
 }
@@ -1942,7 +1946,7 @@
   border: 1px solid rgba(73, 55, 40, 0.12);
   border-left: 4px solid #b6874a;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--surface-raised);
 }
 
 .exception-row.critical { border-left-color: #9e3026; }
@@ -2023,7 +2027,7 @@
   padding: 0.75rem;
   border: 1px solid rgba(73, 55, 40, 0.12);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.54);
+  background: var(--surface-raised);
 }
 
 .analytics-preview-row-heading {
@@ -2064,7 +2068,7 @@
   padding: 1rem;
   border: 1px solid rgba(73, 55, 40, 0.12);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--surface-raised);
 }
 
 .comparison-grid {
@@ -2263,7 +2267,7 @@
 }
 .analytics-import-history { margin-top: 1.25rem; }
 .provider-export-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 0.75rem; margin: 1rem 0 1.25rem; }
-.provider-export-card { display: grid; align-content: start; gap: 0.7rem; min-width: 0; padding: 1rem; border: 1px solid var(--border, #dfd7cc); border-radius: 1rem; background: rgba(255,255,255,0.58); }
+.provider-export-card { display: grid; align-content: start; gap: 0.7rem; min-width: 0; padding: 1rem; border: 1px solid var(--border, #dfd7cc); border-radius: 1rem; background: var(--surface-raised); }
 .provider-export-card h3 { margin: 0.35rem 0 0; }
 .provider-export-card p, .provider-export-card ol { margin: 0; color: var(--muted, #796b5c); line-height: 1.5; }
 .provider-export-card ol { padding-left: 1.2rem; }
@@ -2271,7 +2275,7 @@
 .provider-export-actions a, .provider-export-actions button { min-height: 44px; white-space: normal; text-align: center; }
 .analytics-import-history h3, .outcome-review-queue h3 { margin-bottom: 0.7rem; }
 .import-history-list, .outcome-review-queue { display: grid; gap: 0.6rem; }
-.import-history-list article, .outcome-review-row { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: 0.75rem; border: 1px solid var(--border, #dfd7cc); border-radius: 0.85rem; background: rgba(255,255,255,0.58); }
+.import-history-list article, .outcome-review-row { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: 0.75rem; border: 1px solid var(--border, #dfd7cc); border-radius: 0.85rem; background: var(--surface-raised); }
 .import-history-list p, .outcome-review-row p { margin: 0.2rem 0 0; color: var(--muted, #796b5c); overflow-wrap: anywhere; }
 .outcome-review-queue { margin-top: 1rem; }
 .outcome-review-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: flex-end; }
@@ -2280,46 +2284,3 @@
   .import-history-list article, .outcome-review-row { align-items: flex-start; flex-direction: column; }
   .outcome-review-actions { justify-content: flex-start; width: 100%; }
 }
-/* Dark editorial compatibility layer for operations and planning workspaces. */
-.operations-tool,
-.partner-tool,
-.operations-section,
-.operations-card,
-.operations-preview,
-.mini-card,
-.list-toolbar,
-.production-pipeline-panel,
-.workspace-panel,
-.episode-card,
-.exception-row,
-.learning-card,
-.planning-destination-card,
-.provider-export-card,
-.import-history-list article,
-.outcome-review-row {
-  background: var(--panel-strong);
-  color: var(--text);
-  border-color: var(--border);
-}
-.operations-tool > summary,
-.partner-tool > summary { color: var(--text); }
-.operations-preview table,
-.operations-preview th,
-.operations-preview td { border-color: var(--border); }
-.operations-preview th { color: var(--muted); }
-.modal-content {
-  background: var(--panel-strong);
-  color: var(--text);
-  border-color: var(--border);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52);
-}
-.episode-detail-grid div {
-  background: rgba(255, 255, 255, 0.035);
-  border-color: var(--border);
-}
-.episode-detail-grid dt { color: var(--muted); }
-.episode-detail-grid dd { color: var(--text); }
-.status-chip { background: rgba(255, 255, 255, 0.07); color: var(--text); border-color: var(--border); }
-.status-chip.success { background: rgba(255, 100, 34, 0.14); color: #ffb28d; border-color: rgba(255, 100, 34, 0.32); }
-.status-chip.pending { background: rgba(233, 189, 101, 0.14); color: #f2c46d; border-color: rgba(233, 189, 101, 0.32); }
-.status-chip.warning { background: rgba(255, 129, 114, 0.14); color: #ffaaa0; border-color: rgba(255, 129, 114, 0.32); }

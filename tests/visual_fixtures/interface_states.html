@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mirror Talk interface state fixture</title>
+  <link rel="stylesheet" href="../../src/guest_database_manager/static/brand-system.css">
+  <link rel="stylesheet" href="../../src/guest_database_manager/static/styles.css">
+  <link rel="stylesheet" href="../../src/guest_database_manager/static/operations.css">
+  <link rel="stylesheet" href="../../src/guest_database_manager/static/insights.css">
+  <style>
+    body{padding:24px}.fixture{width:min(1180px,100%);margin:auto;display:grid;gap:20px}
+    .fixture-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+    .fixture .panel{padding:20px}.fixture h1,.fixture h2{margin:.2rem 0 1rem}
+    .fixture-actions{display:flex;flex-wrap:wrap;gap:10px}.fixture input{min-height:44px}
+    @media(max-width:700px){body{padding:12px}.fixture-grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<main class="fixture">
+  <header><p class="eyebrow">Visual regression fixture</p><h1>Mirror Talk interface states</h1><p class="guest-summary">Deterministic populated, empty, warning, success, disabled, and interactive states.</p></header>
+  <section class="fixture-grid">
+    <article class="panel"><h2>Controls</h2><div class="fixture-actions"><button class="primary-button">Primary action</button><button class="secondary-button">Secondary</button><button class="ghost-button">Quiet action</button><button disabled>Disabled</button></div><label>Guest name<input value="A thoughtful guest"></label><p class="message error">A clear recovery message.</p><p class="message success">Changes saved successfully.</p></article>
+    <article class="panel"><h2>Status language</h2><div class="fixture-actions"><span class="status-chip success">Ready</span><span class="status-chip pending">Needs review</span><span class="status-chip warning">Attention</span><span class="freshness current">Current</span><span class="freshness stale">Aging</span></div></article>
+    <article class="guest-ai-card"><p class="eyebrow">Guest Copilot Research</p><div class="guest-ai-title-row"><strong>Not researched yet</strong><span class="guest-ai-badge warning">No saved evidence</span></div><p class="guest-ai-copy">Add a website or labelled social profile, then research the guest.</p></article>
+    <article class="guest-ai-card guest-promotion-card"><p class="eyebrow">Promotion intelligence</p><div class="guest-ai-title-row"><strong>Campaign ready</strong><span class="guest-ai-badge good">Strong evidence</span></div><p class="guest-ai-copy">Three verified story angles are ready for human review.</p></article>
+    <section class="learning-status-shell"><div class="learning-policy-strip"><div><span class="learning-card-label">Active policy</span><strong>release-planner-v1</strong></div><span class="status-pill accepted">Shadow safe</span></div><div class="learning-progress"><div><strong>24 linked outcomes</strong><span>30 minimum · 100 credible target</span></div><div class="learning-progress-track"><span style="width:24%"></span></div></div><div class="learning-metric-grid"><article class="learning-metric-card"><span class="learning-card-label">Evidence</span><strong>329</strong><small>116 observations · 24 linked</small></article><article class="learning-metric-card"><span class="learning-card-label">Release completion</span><strong>50%</strong><small>Accepted recommendations released</small></article></div></section>
+    <article class="operations-preview ai-copilot-status success"><p class="eyebrow">AI scheduling copilot</p><p><strong>Status:</strong> active</p><p>Grounded guidance uses current-month context and saved evidence. Human approval remains required.</p><span class="status-chip success">Evidence current</span></article>
+    <article class="operations-preview ai-copilot-status warning"><p class="eyebrow">Limited evidence</p><p>The recommendation remains visible, but cannot be actioned until a source is reviewed.</p><span class="status-chip warning">Review required</span></article>
+    <article class="panel"><h2>Empty and loading states</h2><div class="insights-empty"><strong>Not measured yet</strong><p>Import verified analytics to populate this view.</p></div><div class="skeleton-card" aria-label="Loading example"><span></span><span></span><span></span></div></article>
+  </section>
+</main>
+</body>
+</html>

@@ -188,6 +188,19 @@ class RecommendationLearning:
                     "SELECT outcome_type, COUNT(*) FROM recommendation_outcomes GROUP BY outcome_type"
                 ).fetchall()
             }
+            accepted_episode_count = int(conn.execute(
+                "SELECT COUNT(DISTINCT episode_id) FROM recommendation_outcomes WHERE outcome_type = 'accepted'"
+            ).fetchone()[0])
+            released_accepted_episode_count = int(conn.execute(
+                """SELECT COUNT(DISTINCT accepted.episode_id)
+                   FROM recommendation_outcomes accepted
+                   WHERE accepted.outcome_type = 'accepted'
+                     AND EXISTS (
+                       SELECT 1 FROM recommendation_outcomes released
+                       WHERE released.episode_id = accepted.episode_id
+                         AND released.outcome_type = 'released'
+                     )"""
+            ).fetchone()[0])
             unlinked_outcomes = int(conn.execute(
                 "SELECT COUNT(*) FROM recommendation_outcomes WHERE observation_id IS NULL"
             ).fetchone()[0])
@@ -234,7 +247,6 @@ class RecommendationLearning:
         log_loss = self._log_loss(scored_rows, active_weights or {}) if scored_rows else None
         decisions = outcome_breakdown.get("accepted", 0) + outcome_breakdown.get("rejected", 0)
         accepted = outcome_breakdown.get("accepted", 0)
-        released = outcome_breakdown.get("released", 0)
         latest_run = dict(runs[0]) if runs else None
         latest_run_details = _loads(latest_run.get("details_json"), {}) if latest_run else {}
         return {
@@ -258,7 +270,10 @@ class RecommendationLearning:
             },
             "kpis": {
                 "ranking_acceptance_rate": accepted / decisions if decisions else None,
-                "release_completion_rate": released / accepted if accepted else None,
+                "release_completion_rate": (
+                    released_accepted_episode_count / accepted_episode_count
+                    if accepted_episode_count else None
+                ),
                 "post_release_performance": sum(performance_values) / len(performance_values) if performance_values else None,
                 "log_loss": log_loss,
                 "human_override_rate": outcome_breakdown.get("rejected", 0) / decisions if decisions else None,

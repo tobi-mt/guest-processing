@@ -1,0 +1,74 @@
+:root {
+  color-scheme: dark;
+  --color-canvas: #0d0b11;
+  --color-canvas-top: #100d14;
+  --color-surface: #18141b;
+  --color-surface-raised: #1d1821;
+  --color-surface-interactive: #26202a;
+  --color-surface-hover: #302631;
+  --color-text: #fff8ef;
+  --color-text-muted: #c9bbb0;
+  --color-text-subtle: #aa9a90;
+  --color-border: rgba(255, 244, 232, 0.13);
+  --color-border-strong: rgba(255, 244, 232, 0.24);
+  --color-brand: #ff6422;
+  --color-brand-hover: #ff7a42;
+  --color-brand-ink: #1a0d08;
+  --color-brand-soft: rgba(255, 100, 34, 0.14);
+  --color-gold: #e9bd65;
+  --color-gold-soft: rgba(233, 189, 101, 0.14);
+  --color-success: #9ee5cd;
+  --color-success-soft: rgba(93, 205, 169, 0.14);
+  --color-warning: #f2c46d;
+  --color-warning-soft: rgba(233, 189, 101, 0.14);
+  --color-danger: #ffaaa0;
+  --color-danger-soft: rgba(255, 129, 114, 0.14);
+  --focus-ring: 0 0 0 3px rgba(255, 122, 66, 0.48);
+  --shadow-card: 0 18px 48px rgba(0, 0, 0, 0.28);
+  --shadow-card-hover: 0 24px 62px rgba(0, 0, 0, 0.38);
+  --radius-card: 22px;
+  --radius-control: 14px;
+  --font-ui: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif;
+  --font-editorial: Georgia, "Times New Roman", serif;
+
+  /* Backwards-compatible semantic aliases; components must not define colours. */
+  --bg: var(--color-canvas);
+  --background: var(--color-canvas);
+  --panel: rgba(24, 20, 27, 0.96);
+  --panel-strong: var(--color-surface-raised);
+  --panel-border: var(--color-border);
+  --surface: var(--color-surface-raised);
+  --surface-raised: var(--color-surface-raised);
+  --surface-interactive: var(--color-surface-interactive);
+  --border: var(--color-border);
+  --text: var(--color-text);
+  --muted: var(--color-text-muted);
+  --muted-text: var(--color-text-muted);
+  --accent: var(--color-brand);
+  --accent-hover: var(--color-brand-hover);
+  --accent-soft: var(--color-brand-soft);
+  --accent-gold: var(--color-gold);
+  --accent-gold-soft: var(--color-gold-soft);
+  --gold: var(--color-gold);
+  --gold-soft: var(--color-gold-soft);
+  --danger: var(--color-danger);
+  --shadow: var(--shadow-card);
+  --shadow-hover: var(--shadow-card-hover);
+  --radius: var(--radius-card);
+}
+
+::selection { background: var(--color-brand); color: var(--color-brand-ink); }
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -334,6 +334,26 @@ def test_shadow_cycle_is_idempotent_links_release_and_never_promotes(temp_db):
     assert status["kpis"]["fallback_rate"] == 0.0
 
 
+def test_release_completion_rate_only_compares_accepted_episode_cohort(temp_db):
+    learning = RecommendationLearning(temp_db.db_path)
+    accepted_released, _ = temp_db.upsert_episode({"guest_name": "Released", "episode_title": "Released"})
+    accepted_pending, _ = temp_db.upsert_episode({"guest_name": "Pending", "episode_title": "Pending"})
+    unrelated_released, _ = temp_db.upsert_episode({"guest_name": "Archive", "episode_title": "Archive"})
+
+    for episode_id, outcome_type, key in (
+        (accepted_released, "accepted", "accepted-released"),
+        (accepted_released, "released", "released-after-acceptance"),
+        (accepted_pending, "accepted", "accepted-pending"),
+        (unrelated_released, "released", "historical-release"),
+    ):
+        learning.record_outcome(
+            episode_id, outcome_type=outcome_type, value=None, metadata={}, actor="operator",
+            source="test", occurred_at="2026-10-17T12:00:00Z", idempotency_key=key,
+        )
+
+    assert learning.status()["kpis"]["release_completion_rate"] == 0.5
+
+
 def test_feedback_learning_writes_are_atomic_and_restore_is_not_acceptance(temp_db):
     episode_id, _ = temp_db.upsert_episode({"guest_name": "Atomic Guest", "episode_title": "Atomic"})
     service = GuestWebService(temp_db.db_path)
