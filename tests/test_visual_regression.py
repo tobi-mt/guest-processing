@@ -129,6 +129,24 @@ def test_state_gallery_text_contrast_meets_wcag_aa(fixture):
     assert failures == []
 
 
+def test_button_labels_never_resolve_to_invisible_text():
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as runtime:
+        browser = runtime.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        page.goto(FIXTURES["interface-states"].as_uri(), wait_until="load")
+        failures = page.evaluate("""() => [...document.querySelectorAll('button')].flatMap(button => {
+          if (!button.textContent.trim() || getComputedStyle(button).display === 'none') return [];
+          const style = getComputedStyle(button);
+          const invisible = style.color === style.backgroundColor || style.color === 'transparent' ||
+            style.webkitTextFillColor === 'transparent' || Number(style.opacity) === 0;
+          return invisible ? [{text: button.textContent.trim(), color: style.color,
+            background: style.backgroundColor, fill: style.webkitTextFillColor}] : [];
+        })""")
+        browser.close()
+    assert failures == []
+
+
 def test_primary_page_workflows_fit_mobile_tablet_and_desktop(visual_server):
     playwright = pytest.importorskip("playwright.sync_api")
     with playwright.sync_playwright() as runtime:
@@ -170,6 +188,15 @@ def test_primary_page_workflows_fit_mobile_tablet_and_desktop(visual_server):
                 focused = page.evaluate("document.activeElement !== document.body")
                 if not focused:
                     failures.append(f"{viewport_name} {route}: keyboard focus did not enter the page")
+                invisible_buttons = page.evaluate("""() => [...document.querySelectorAll('button')].flatMap(button => {
+                  const style = getComputedStyle(button);
+                  if (!button.textContent.trim() || style.display === 'none') return [];
+                  return style.color === style.backgroundColor || style.color === 'transparent' ||
+                    style.webkitTextFillColor === 'transparent' || Number(style.opacity) === 0
+                    ? [button.textContent.trim()] : [];
+                })""")
+                if invisible_buttons:
+                    failures.append(f"{viewport_name} {route}: invisible button labels {invisible_buttons}")
         browser.close()
     failures.extend(f"browser console: {error}" for error in console_errors)
     assert failures == []

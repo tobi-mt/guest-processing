@@ -350,7 +350,10 @@
       const button = event.target.closest("[data-outcome]");
       if (!button) return;
       const group = button.closest("[data-episode-id]");
-      button.disabled = true;
+      const message = document.getElementById("outcome-review-message");
+      const buttons = Array.from(group.querySelectorAll("[data-outcome]"));
+      buttons.forEach((candidate) => { candidate.disabled = true; });
+      setMessage(message, "Saving your assessment…", "pending");
       try {
         await request("/api/recommendation-learning/outcomes", {
           method: "POST",
@@ -360,9 +363,10 @@
           }),
         });
         await loadOutcomeReviews();
+        setMessage(message, "Assessment saved. Thank you for reviewing this release.", "success");
       } catch (error) {
-        button.disabled = false;
-        button.title = error.message;
+        buttons.forEach((candidate) => { candidate.disabled = false; });
+        setMessage(message, error.message, "error");
       }
     });
   }

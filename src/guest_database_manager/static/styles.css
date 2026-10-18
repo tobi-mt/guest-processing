@@ -171,13 +171,14 @@ button {
 }
 
 .primary-button,
-button[type="submit"] {
+button[type="submit"]:not(.secondary-button):not(.ghost-button):not(.danger-button) {
   background: var(--accent);
+  color: var(--color-brand-ink);
   box-shadow: 0 10px 24px rgba(196, 61, 0, 0.16);
 }
 
 .primary-button:hover:not(:disabled),
-button[type="submit"]:hover:not(:disabled) {
+button[type="submit"]:not(.secondary-button):not(.ghost-button):not(.danger-button):hover:not(:disabled) {
   background: var(--accent-hover);
   box-shadow: 0 14px 30px rgba(196, 61, 0, 0.22);
   transform: translateY(-1px);

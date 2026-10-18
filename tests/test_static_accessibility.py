@@ -447,7 +447,7 @@ def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
 
     assert 'id="analytics-import-message" class="message" aria-live="polite"' in html
-    assert 'planning-intelligence.js?v=20261007.1' in html
+    assert 'planning-intelligence.js?v=20261018.1' in html
     assert 'return String(value ?? "")' in javascript
     assert "escapeHtml(reach.organic ?? 0)" in javascript
     assert "escapeHtml(reach.paid ?? 0)" in javascript
@@ -464,7 +464,7 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
         assert 'workspace-shell.js?v=20260927.3' in html
         assert 'brand-system.css?v=20261018.1' in html
-        assert 'styles.css?v=20261018.1' in html
+        assert 'styles.css?v=20261018.2' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -527,12 +527,16 @@ def test_guided_import_replaces_raw_json_and_exposes_history_and_reviews() -> No
     assert "Observation JSON" not in html
     assert 'id="analytics-import-history"' in html
     assert 'id="outcome-review-queue"' in planning_html
+    assert 'id="outcome-review-message" class="message" aria-live="polite"' in planning_html
+    assert "planning-intelligence.js?v=20261018.1" in planning_html
     assert "Spotify for Creators" in html
     assert "another host" in html
     assert "Do not import the same reporting period twice" in html
     assert "repeat(auto-fit, minmax(min(100%, 18rem), 1fr))" in styles
     assert "renderImportHistory" in javascript
     assert "renderOutcomeReviews" in javascript
+    assert 'setMessage(message, "Saving your assessment…", "pending")' in javascript
+    assert 'setMessage(message, error.message, "error")' in javascript
     assert "Audience balance" in javascript
     assert "Blockers" in javascript
 
