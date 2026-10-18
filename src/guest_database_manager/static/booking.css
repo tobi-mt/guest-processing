@@ -43,7 +43,7 @@ body::before {
   font-weight: 700;
   background:
     radial-gradient(circle at 50% 35%, rgba(240, 76, 0, 0.18), transparent 18rem),
-    #f2ebe2;
+    var(--color-canvas);
 }
 
 .booking-loader img {
@@ -212,8 +212,8 @@ p { text-wrap: pretty; }
   padding: 18px 20px;
   border-left: 3px solid rgba(189, 138, 46, 0.55);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.38);
-  color: #5e4934;
+  background: var(--color-surface-interactive);
+  color: var(--color-text-muted);
   font-size: 1rem;
   line-height: 1.7;
 }
@@ -245,7 +245,7 @@ p { text-wrap: pretty; }
 }
 
 .premium-badge.warm {
-  color: #7b5318;
+  color: var(--color-warning);
   background: var(--accent-gold-soft);
   border-color: rgba(189, 138, 46, 0.18);
 }
@@ -259,7 +259,7 @@ p { text-wrap: pretty; }
 
 .message.error {
   background: rgba(157, 46, 46, 0.12);
-  color: #7a2222;
+  color: var(--color-danger);
 }
 
 .message.success {
@@ -269,7 +269,7 @@ p { text-wrap: pretty; }
 
 .message.pending {
   background: rgba(151, 104, 33, 0.12);
-  color: #765117;
+  color: var(--color-warning);
 }
 
 .booking-proposal {
@@ -313,9 +313,9 @@ p { text-wrap: pretty; }
   padding: 22px;
   border-radius: 22px;
   background:
-    linear-gradient(135deg, rgba(196, 61, 0, 0.07), rgba(255, 255, 255, 0.84)),
-    linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(244, 233, 214, 0.88));
-  border: 1px solid rgba(196, 61, 0, 0.12);
+    radial-gradient(circle at top right, var(--color-brand-soft), transparent 22rem),
+    linear-gradient(155deg, var(--color-surface-raised), var(--color-surface));
+  border: 1px solid var(--color-border);
 }
 
 .invitation-wordmark {
@@ -559,7 +559,7 @@ p { text-wrap: pretty; }
 .time-slot-button.conflict {
   border-color: rgba(176, 68, 52, 0.42);
   background: rgba(176, 68, 52, 0.1);
-  color: #7b2f24;
+  color: var(--color-danger);
 }
 
 .time-slot-button.conflict {
@@ -576,8 +576,9 @@ p { text-wrap: pretty; }
 .calendar-day.disabled,
 .calendar-day:disabled {
   cursor: not-allowed;
-  color: rgba(106, 87, 66, 0.45);
+  color: var(--color-text-subtle);
   background: var(--surface-raised);
+  opacity: 1;
 }
 
 .calendar-day.empty {
@@ -729,7 +730,7 @@ p { text-wrap: pretty; }
   padding: 12px 18px;
   font: inherit;
   background: var(--accent);
-  color: #fff9f0;
+  color: var(--color-brand-ink);
   cursor: pointer;
 }
 

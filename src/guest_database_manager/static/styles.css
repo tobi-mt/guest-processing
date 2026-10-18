@@ -153,7 +153,7 @@ p {
 }
 
 .dashboard-link:hover {
-  color: #fff;
+  color: var(--color-brand-ink);
   border-color: var(--accent);
   background: var(--accent);
   transform: translateY(-1px);
@@ -242,7 +242,7 @@ textarea:focus {
 
 .social-chip.ambiguous {
   background: rgba(188, 129, 31, 0.12);
-  color: #8a5a00;
+  color: var(--color-warning);
 }
 
 .hidden {
@@ -316,7 +316,7 @@ textarea:focus {
 
 .insight-stat.skipped {
   background: rgba(188, 129, 31, 0.12);
-  color: #8a5a00;
+  color: var(--color-warning);
 }
 
 .insight-stat.neutral {
@@ -432,7 +432,7 @@ p {
 
 .premium-badge.warm {
   background: rgba(188, 129, 31, 0.12);
-  color: #8a5a00;
+  color: var(--color-warning);
 }
 
 .main-grid {
@@ -554,7 +554,7 @@ p {
 
 .workspace-tab.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--color-brand-ink);
 }
 
 .workspace-panel {
@@ -614,7 +614,7 @@ p {
 
 .preset-chip.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--color-brand-ink);
 }
 
 .preset-chip.warning-chip {
@@ -625,7 +625,7 @@ p {
 
 .preset-chip.warning-chip.active {
   background: var(--danger);
-  color: #fff;
+  color: var(--color-brand-ink);
 }
 
 .filter-field {
@@ -684,7 +684,7 @@ p {
 .pitch-variant.is-selected,
 .final-pitch-preview {
   border-color: var(--accent-color, #7257d9);
-  background: color-mix(in srgb, var(--accent-color, #7257d9) 6%, white);
+  background: color-mix(in srgb, var(--accent-color, #7257d9) 14%, var(--color-surface-raised));
 }
 
 .pitch-editor textarea,
@@ -732,7 +732,7 @@ p {
   font-size: 0.8rem;
 }
 
-.source-status.completed { background: #dff3e8; color: #175b3b; }
+.source-status.completed { background: var(--color-success-soft); color: var(--color-success); }
 .source-status.failed { background: var(--color-danger-soft); color: var(--color-danger); }
 .source-status.empty,
 .source-status.skipped { background: rgba(255,255,255,.08); color: var(--color-text-muted); }
@@ -1364,7 +1364,7 @@ button:disabled {
 
 .status-pill.skipped {
   background: rgba(188, 129, 31, 0.16);
-  color: #8a5a00;
+  color: var(--color-warning);
 }
 
 .message {
@@ -1636,7 +1636,7 @@ button:disabled {
 
 .status-badge.warning {
   background: rgba(188, 129, 31, 0.16);
-  color: #8a5a00;
+  color: var(--color-warning);
 }
 
 .status-badge.error {
@@ -1781,7 +1781,7 @@ button:disabled {
 
 .action-queue-counts .urgent {
   background: rgba(153, 62, 51, 0.1);
-  color: #873b32;
+  color: var(--color-danger);
 }
 
 .action-queue-controls {
@@ -1837,8 +1837,8 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.action-domain.guest { background: rgba(100, 79, 153, 0.1); color: #574283; }
-.action-domain.interview { background: rgba(34, 113, 154, 0.1); color: #276c90; }
+.action-domain.guest { background: rgba(164, 139, 225, 0.14); color: #d4c3ff; }
+.action-domain.interview { background: rgba(99, 183, 224, 0.14); color: #a9def8; }
 .action-domain.episode { background: rgba(196, 61, 0, 0.1); color: var(--accent); }
 
 .action-queue-item h3 {
@@ -2361,7 +2361,7 @@ button:active:not(:disabled) {
 .command-actions { grid-column: 3; grid-row: 1 / span 2; display: flex; flex-direction: column; gap: 0.3rem; }
 .command-actions a { color: var(--accent); font-style: normal; font-weight: 700; }
 .command-kind { grid-row: 1 / span 2; align-self: center; padding: 0.25rem 0.45rem; border-radius: 999px; background: var(--color-surface-interactive); font-size: 0.72rem; text-transform: uppercase; }
-.command-empty { padding: 1rem; color: #786858; }
+.command-empty { padding: 1rem; color: var(--color-text-muted); }
 .recent-results { margin-top: 1rem; }
 .recent-results a { display: inline-block; margin: 0 0.5rem 0.4rem 0; color: var(--accent); }
 .briefing-switch, .briefing-counts { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.8rem 0; }

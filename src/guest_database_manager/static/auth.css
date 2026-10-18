@@ -1,0 +1,26 @@
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { min-height:100vh; margin:0; padding:24px; color:var(--color-text); font-family:var(--font-ui); background:radial-gradient(circle at 8% 0%,rgba(255,100,34,.18),transparent 30rem),radial-gradient(circle at 92% 8%,rgba(91,57,92,.22),transparent 34rem),linear-gradient(180deg,var(--color-canvas-top),var(--color-canvas)); }
+body.auth-centered { display:grid; place-items:center; }
+.auth-page { width:min(620px,100%); margin:24px auto 64px; }
+.auth-card,.auth-panel { background:var(--panel); border:1px solid var(--color-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); }
+.auth-card { width:min(440px,100%); padding:30px; }
+.auth-panel { padding:24px; margin:16px 0; }
+.auth-brand { display:flex; align-items:center; gap:12px; margin-bottom:24px; color:var(--color-brand); font-weight:800; }
+.auth-brand img { width:56px; height:56px; padding:4px; border-radius:18px; background:var(--color-surface-raised); box-shadow:0 10px 24px rgba(255,100,34,.16); }
+h1,h2 { font-family:var(--font-editorial); letter-spacing:-.025em; text-wrap:balance; }
+h1 { margin:0 0 10px; font-size:clamp(1.8rem,6vw,2.35rem); line-height:1.05; }
+h2 { margin-top:0; }
+p { color:var(--color-text-muted); line-height:1.55; }
+a { color:var(--color-brand-hover); }
+form,label { display:grid; gap:11px; }
+input,button { min-height:44px; border-radius:var(--radius-control); padding:10px 13px; font:inherit; }
+input { width:100%; border:1px solid var(--color-border-strong); background:var(--color-surface); color:var(--color-text); }
+button { border:0; background:var(--color-brand); color:var(--color-brand-ink); font-weight:800; cursor:pointer; transition:background 160ms ease,transform 160ms ease; }
+button:hover:not(:disabled) { background:var(--color-brand-hover); transform:translateY(-1px); }
+button:disabled { opacity:.6; cursor:not-allowed; }
+.secondary { background:var(--color-surface-interactive); color:var(--color-text); border:1px solid var(--color-border); }
+.message { min-height:1.4rem; margin:6px 0 0; }
+.error { color:var(--color-danger); }
+.secret { display:block; max-width:100%; overflow-wrap:anywhere; background:var(--color-surface-raised); color:var(--color-text); padding:11px; border-radius:10px; }
+@media(max-width:520px) { body{padding:16px}.auth-card,.auth-panel{padding:20px} }

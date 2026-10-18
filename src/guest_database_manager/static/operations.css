@@ -645,7 +645,7 @@
 
 .modal-actions .primary-button {
   background: var(--accent);
-  color: white;
+  color: var(--color-brand-ink);
 }
 
 .modal-actions .primary-button:hover {
@@ -1154,7 +1154,7 @@
 
 .danger-button {
   border-color: rgba(139, 52, 52, 0.36);
-  color: #7f2f2f;
+  color: var(--color-danger);
 }
 
 .rejected-recommendations-panel {
@@ -1263,8 +1263,10 @@
   container-type: inline-size;
   padding: clamp(1.1rem, 2.2vw, 1.55rem);
   background:
-    radial-gradient(circle at 100% 0, rgba(196, 61, 0, 0.09), transparent 42%),
-    linear-gradient(155deg, rgba(255, 253, 249, 0.99), rgba(248, 243, 234, 0.96));
+    radial-gradient(circle at 100% 0, rgba(255, 100, 34, 0.12), transparent 42%),
+    linear-gradient(155deg, var(--color-surface-raised), var(--color-surface));
+  color: var(--color-text);
+  border-color: var(--color-border);
   overflow: visible;
 }
 
@@ -2084,7 +2086,7 @@
   padding: 0.9rem;
   border: 1px solid rgba(73, 55, 40, 0.14);
   border-radius: 16px;
-  background: var(--surface, #fffdf9);
+  background: var(--surface, #1d1821);
 }
 
 .comparison-card h4,
@@ -2103,7 +2105,7 @@
   padding: 0.2rem 0.45rem;
   border-radius: 999px;
   background: var(--accent);
-  color: white;
+  color: var(--color-brand-ink);
   font-size: 0.72rem;
   font-weight: 800;
 }

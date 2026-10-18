@@ -108,8 +108,8 @@ def test_booking_slot_selection_is_explicit_and_conflicts_are_contextual() -> No
     assert 'button.disabled = true;' in javascript
     assert "existing calendar event" not in javascript
     assert "safety window" not in javascript
-    assert 'brand-system.css?v=20261017.1' in html
-    assert 'booking.css?v=20261017.1' in html
+    assert 'brand-system.css?v=20261018.1' in html
+    assert 'booking.css?v=20261018.1' in html
     assert 'booking.js?v=20261016.3' in html
 
 
@@ -169,8 +169,8 @@ def test_intake_redesign_is_three_steps_and_labels_choice_architecture() -> None
     assert source.count('class="optional-marker"') >= 6
     assert "Follower count is not part of editorial eligibility" in source
     assert "Boundaries do not count against your application" in source
-    assert 'brand-system.css?v=20261017.1' in source
-    assert 'intake.css?v=20261017.1' in source
+    assert 'brand-system.css?v=20261018.1' in source
+    assert 'intake.css?v=20261018.1' in source
 
 
 def test_intake_preserves_specific_errors_and_debounces_draft_writes() -> None:
@@ -354,6 +354,8 @@ def test_planning_learning_and_copilot_surfaces_are_dark_at_source() -> None:
     assert ".operations-preview.ai-copilot-status.success" in styles
     assert "background: linear-gradient(145deg, rgba(42, 30, 34, 0.98)" in styles
     assert ".learning-policy-strip," in styles
+    assert ".learning-console {" in styles
+    assert "linear-gradient(155deg, var(--color-surface-raised), var(--color-surface))" in styles
     assert ".learning-metric-grid {" in styles
     assert ".learning-progress {" in styles
     assert styles.count("background: var(--panel-strong);") >= 4
@@ -374,7 +376,7 @@ def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20261017.4' in html
+    assert 'operations.css?v=20261018.1' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -461,8 +463,8 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     for name in ("index.html", "operations.html", "planning.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
         assert 'workspace-shell.js?v=20260927.3' in html
-        assert 'brand-system.css?v=20261017.1' in html
-        assert 'styles.css?v=20261017.5' in html
+        assert 'brand-system.css?v=20261018.1' in html
+        assert 'styles.css?v=20261018.1' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -510,8 +512,11 @@ def test_account_surfaces_have_labeled_fields_and_status_regions() -> None:
     assert 'autocomplete="new-password"' in recovery
     assert 'id="message" aria-live="polite"' in recovery
     login = (STATIC_ROOT / "dashboard-login.html").read_text(encoding="utf-8")
-    assert "[hidden]" in login and "display: none !important" in login
-    assert "[hidden]{display:none!important}" in settings
+    auth_styles = (STATIC_ROOT / "auth.css").read_text(encoding="utf-8")
+    assert 'brand-system.css?v=20261018.1' in login
+    assert 'auth.css?v=20261018.1' in login
+    assert "[hidden]" in auth_styles and "display: none !important" in auth_styles
+    assert 'auth.css?v=20261018.1' in settings
 
 
 def test_guided_import_replaces_raw_json_and_exposes_history_and_reviews() -> None:
@@ -537,7 +542,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
     assert "planning.js?v=20261016.1" in html
-    assert "operations.css?v=20261017.4" in html
+    assert "operations.css?v=20261018.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript
@@ -623,7 +628,7 @@ def test_standalone_guest_pages_use_the_shared_brand_token_contract() -> None:
         html = (STATIC_ROOT / html_name).read_text(encoding="utf-8")
         definitions = brand_definitions | set(re.findall(r"(--[\w-]+)\s*:", stylesheet))
         uses = set(re.findall(r"var\((--[\w-]+)", stylesheet))
-        assert 'brand-system.css?v=20261017.1' in html
+        assert 'brand-system.css?v=20261018.1' in html
         assert uses <= definitions, f"{filename} has undefined CSS variables: {sorted(uses - definitions)}"
 
 
