@@ -171,12 +171,12 @@ DB_COLUMN_MAP: Dict[str, str] = {
 # Email templates
 EMAIL_TEMPLATES = {
     "acceptance": {
-        "subject": "🎉 Welcome to Mirror Talk Podcast! Your Guest Spot is Confirmed",
-        "body_prefix": "Dear {name},\n\nWe are absolutely thrilled to have you as a guest on the Mirror Talk Podcast! ",
+        "subject": "We’d love to welcome you to Mirror Talk",
+        "body_prefix": "Hi {name},\n\nThank you for the care you put into your application. We’d love to welcome you to Mirror Talk as a guest. ",
     },
     "rejection": {
-        "subject": "Thank You for Your Interest in Mirror Talk Podcast",
-        "body_prefix": "Dear {name},\n\nThank you so much for your interest in being a guest on Mirror Talk Podcast. ",
+        "subject": "Thank you for your Mirror Talk application",
+        "body_prefix": "Hi {name},\n\nThank you for trusting us with your story and for taking the time to apply to Mirror Talk. ",
     }
 }
 

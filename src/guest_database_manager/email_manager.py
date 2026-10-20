@@ -197,16 +197,23 @@ class EmailManager:
     @classmethod
     def _personalized_topic_line(cls, personalization: Optional[Mapping[str, Any]], *, purpose: str) -> str:
         topic = cls._safe_personalization_text((personalization or {}).get("topic"), limit=72)
-        if not topic:
-            return ""
-        if purpose == "invitation":
-            return f"Your perspective on {topic} feels especially relevant to the thoughtful conversations we create.\n\n"
-        if purpose == "preparation":
-            return f"We’re especially looking forward to exploring {topic} with you; there is nothing scripted to prepare.\n\n"
-        if purpose == "thanks":
-            return f"Your perspective on {topic} brought something distinctive and valuable to the conversation.\n\n"
-        if purpose == "release":
-            return f"I’m delighted that our conversation around {topic} can now reach the Mirror Talk community.\n\n"
+        role = cls._safe_personalization_text((personalization or {}).get("role"), limit=72)
+        organisation = cls._safe_personalization_text((personalization or {}).get("organisation"), limit=72)
+        if topic:
+            if purpose == "invitation":
+                return f"Your perspective on {topic} feels especially relevant to the thoughtful conversations we create.\n\n"
+            if purpose == "preparation":
+                return f"We’re especially looking forward to exploring {topic} with you; there is nothing scripted to prepare.\n\n"
+            if purpose == "thanks":
+                return f"What you shared about {topic} gave the conversation a perspective only you could bring.\n\n"
+            if purpose == "release":
+                return f"I’m glad our conversation about {topic} can now reach the Mirror Talk community.\n\n"
+        if role and organisation and purpose == "invitation":
+            return f"Your perspective as {role} at {organisation} could bring a valuable dimension to our conversation.\n\n"
+        if role and purpose == "invitation":
+            return f"The perspective you bring through your work as {role} could add real depth to our conversation.\n\n"
+        if organisation and purpose == "invitation":
+            return f"Your work with {organisation} could bring a valuable perspective to our conversation.\n\n"
         return ""
 
     def get_acceptance_template(self, guest_name: str, custom_message: str = "", booking_url: str = "", variant: str = "warm", personalization: Optional[Mapping[str, Any]] = None) -> Dict[str, str]:
@@ -220,7 +227,7 @@ class EmailManager:
             Dictionary with subject and body
         """
         variant = self._template_variant("accepted", variant, "warm")
-        subject = "Your Mirror Talk Podcast application has been accepted" if variant == "warm" else "You’re invited to join Mirror Talk Podcast"
+        subject = "We’d love to welcome you to Mirror Talk" if variant == "warm" else "You’re invited to join Mirror Talk Podcast"
         booking_line = booking_url or "https://mirrortalkpodcast.com/be-our-next-guest/"
         personal_line = self._personalized_topic_line(personalization, purpose="invitation")
 
@@ -243,7 +250,7 @@ Mirror Talk Podcast"""
 
 {personal_line.rstrip()}
 
-We are delighted to let you know that your application to join Mirror Talk Podcast has been accepted.
+We’d love to welcome you to Mirror Talk as a guest.
 
 Your story, perspective, and voice feel like a strong fit for the kind of soulful conversation we want to create for our listeners, and we would love to welcome you onto the show.
 
@@ -258,9 +265,9 @@ Mirror Talk Podcast"""
         else:
             body = f"""Hi {guest_name},
 
-We are delighted to let you know that your application to join Mirror Talk Podcast has been accepted.
+Thank you for the care you put into your application. We’d love to welcome you to Mirror Talk as a guest.
 
-{personal_line}We were moved by what you shared, and we believe your voice and lived experience would make for a meaningful conversation with our audience.
+{personal_line}What you shared feels well aligned with the honest, reflective conversations we create with our guests and listeners.
 
 Next steps:
 - Please choose a suitable time for recording here: {booking_line}
@@ -319,7 +326,7 @@ Thank you for your interest in being a guest on Mirror Talk Podcast and for taki
 
 After careful consideration, we will not be moving forward with your application at this time.
 
-This kind of decision is never a simple one. We receive many strong submissions, and our final choices often come down to fit, timing, and the shape of the conversations we are planning for the season ahead.
+We receive more thoughtful submissions than we can accommodate, and our choices often come down to fit, timing, and the shape of the conversations we are planning for the season ahead.
 
 Please know this does not diminish the value of your story, your work, or your voice. We are grateful that you shared them with us.
 
@@ -349,16 +356,14 @@ Mirror Talk Podcast"""
 
         body = f"""Hi {guest_name},
 
-I hope you are doing well.
-
-I’m writing to gently confirm our upcoming Soulful Conversation on Mirror Talk, scheduled for {formatted_date} at {formatted_time} {timezone_display}.
+I’m looking forward to welcoming you to Mirror Talk. I’m writing to confirm our Soulful Conversation on {formatted_date} at {formatted_time} {timezone_display}.
 
 When you have a moment, please reply to this email to confirm that the time still works for you.
 
 We’ll be recording on Riverside FM, and you can join the session here:
 {join_line}
 
-{preparation_line}I’m really looking forward to the conversation.
+{preparation_line}Thank you, {guest_name}. I’m looking forward to making space for a thoughtful, unhurried conversation with you.
 
 Warm regards,
 Tobi Ojekunle
@@ -403,13 +408,13 @@ Mirror Talk Podcast"""
 
         body = f"""Hi {guest_name},
 
-I wanted to reach out personally with an update about our Soulful Conversation on Mirror Talk, originally scheduled for {formatted_date} at {formatted_time} {timezone_display}.
+I’m sorry to be writing with a change to our Soulful Conversation on Mirror Talk, originally scheduled for {formatted_date} at {formatted_time} {timezone_display}.
 
-Unfortunately, we need to cancel this booking on our side.
+We need to cancel this booking on our side. I know you set aside time for us, and I’m sorry for the disruption this causes.
 
-I’m sorry for the inconvenience, and I truly appreciate your time and willingness to join the podcast.
+Thank you for your understanding and for your willingness to join the podcast.
 
-If you would still be open to the conversation at a later date, please feel free to reply to this email and we’ll gladly find a new time together.
+If you would still be open to the conversation at a later date, please reply to this email and we’ll find a new time together. I completely understand if that is not possible.
 
 Warm regards,
 Tobi Ojekunle
@@ -418,7 +423,7 @@ Mirror Talk Podcast"""
         if variant == "concise":
             body = f"""Hi {guest_name},
 
-We need to cancel our Mirror Talk conversation scheduled for {formatted_date} at {formatted_time} {timezone_display}. I’m sorry for the inconvenience.
+We need to cancel our Mirror Talk conversation scheduled for {formatted_date} at {formatted_time} {timezone_display}. I’m sorry for the disruption, especially after you set aside the time.
 
 If you would like to find another time, please reply and we’ll gladly help.
 
@@ -447,7 +452,7 @@ Mirror Talk Podcast"""
 
         body = f"""Hi {guest_name},
 
-Thank you for booking your Soulful Conversation on Mirror Talk.
+Thank you for making time for a Soulful Conversation on Mirror Talk.
 
 Your interview is now scheduled for {formatted_date} at {formatted_time} {timezone_display}.
 
@@ -456,7 +461,7 @@ We’ll be recording on Riverside FM, and you can join the session here:
 
 {preparation_line}If anything changes and you need to reschedule, just reply to this email and we’ll sort it out together.
 
-Looking forward to the conversation.
+I’m looking forward to meeting you and creating a thoughtful conversation together.
 
 Warm regards,
 Tobi Ojekunle
@@ -512,18 +517,18 @@ Mirror Talk Podcast"""
 
         body = f"""Hi {guest_name},
 
-Thank you again for your willingness to join Mirror Talk.
+Thank you for your patience while we find a time that works for both of us.
 
-Your previous Soulful Conversation slot on {formatted_date} at {formatted_time} {timezone_display} is no longer active.
+Your previous Soulful Conversation slot on {formatted_date} at {formatted_time} {timezone_display} is no longer active, so there is nothing you need to cancel on your side.
 
 You are not currently booked for a new interview time yet.
 {proposal_copy}
-Proposed times remain subject to availability until you confirm a new booking.
+These times remain subject to availability until you confirm a new booking.
 
 You can confirm an offered time if it is still available, or choose another time, using your personal rescheduling link here:
 {reschedule_url}
 
-If the available options still do not work for you, just reply to this email and we’ll gladly find a better time together.
+If none of the options work for you, reply to this email. We’ll find another way forward together, without pressure.
 
 Warm regards,
 Tobi Ojekunle
@@ -532,12 +537,12 @@ Mirror Talk Podcast"""
         if variant == "concise":
             body = f"""Hi {guest_name},
 
-Your previous Mirror Talk slot on {formatted_date} at {formatted_time} {timezone_display} is no longer active.
+Your previous Mirror Talk slot on {formatted_date} at {formatted_time} {timezone_display} is no longer active, so you do not need to cancel it.
 {proposal_copy}
 Choose and confirm a new available time here:
 {reschedule_url}
 
-If none of the options work, please reply and we’ll help.
+If none of the options work, reply and we’ll find another time together.
 
 Warm regards,
 Tobi Ojekunle
@@ -568,13 +573,13 @@ Mirror Talk Podcast"""
 
 Thank you again for joining me on Mirror Talk.
 
-It was a real pleasure to share that conversation with you. I’m genuinely grateful for your openness, your time, and the perspective you brought to the episode.
+It was a real pleasure to share that conversation with you. Thank you for the trust, time, and honesty you brought into the room.
 
 {thanks_line.rstrip()}
 
-Conversations like this are at the heart of what we hope to create with Mirror Talk, and I truly appreciate the care you brought into it.
+Conversations like ours are at the heart of Mirror Talk: a place for people to feel heard, reflect honestly, and leave listeners with something meaningful.
 
-If you’d like to support the podcast in a simple but meaningful way, here are three lovely ways to do that:
+If you’d like to support the podcast, here are a few simple ways to do that:
 - subscribe to Mirror Talk on Spotify:
   https://open.spotify.com/show/0trwqguYCic32smqh3Ny60
 - subscribe to Mirror Talk on Apple Podcasts:
@@ -614,7 +619,9 @@ Mirror Talk Podcast"""
 
 Thank you for taking the time to apply to be a guest on Mirror Talk.
 
-We’ve received your application successfully and will review it with care. If your story feels like a strong fit for an upcoming soulful conversation, we will reach out by email with the next steps.
+We’ve received your application and will give it a thoughtful review. We know that sharing your story takes time and trust, and we appreciate both.
+
+If it feels like a strong fit for an upcoming Soulful Conversation, we’ll reach out by email with the next steps. Because we receive more applications than we can accommodate, we may not be able to invite every applicant onto the show.
 
 For your records, we have attached a PDF copy of the answers you shared.
 
@@ -633,7 +640,7 @@ Mirror Talk Podcast
         if variant == "concise":
             body = f"""Hi {guest_name},
 
-We’ve received your Mirror Talk guest application. A PDF copy of your answers is attached for your records.
+Thank you for trusting us with your story. We’ve received your Mirror Talk guest application, and a PDF copy of your answers is attached for your records.
 
 We’ll review your submission carefully and email you if it is a fit for an upcoming conversation.
 
@@ -667,7 +674,7 @@ To keep Mirror Talk personal and intentional, we ask each guest to complete thei
 Please use your personal application link here:
 {intake_url}
 
-The form is short, thoughtful, and designed to help us understand your story directly from you.
+The form is short and thoughtful. It gives you space to tell us what matters to you in your own words, so any conversation we plan begins with your voice rather than someone else’s summary.
 
 Warm regards,
 Tobi Ojekunle
@@ -679,7 +686,7 @@ Mirror Talk Podcast
 Please complete your personal Mirror Talk guest application in your own voice:
 {intake_url}
 
-This helps us understand your story directly from you.
+This gives us the chance to understand what matters to you, directly in your own words.
 
 Warm regards,
 Tobi Ojekunle
@@ -692,7 +699,7 @@ Mirror Talk Podcast"""
         subject = "Your personal Mirror Talk booking link"
         body = f"""Hi {guest_name},
 
-I’m glad to share your personal Mirror Talk booking link again.
+Here is your personal Mirror Talk booking link, as promised.
 
 You can use it here to choose a time that suits you best:
 {booking_url}
@@ -711,7 +718,7 @@ Mirror Talk Podcast
 Choose your Mirror Talk recording time using your personal link:
 {booking_url}
 
-If you need help, reply to this email.
+If the available times do not work for you, reply to this email and we’ll help find another option.
 
 Warm regards,
 Tobi Ojekunle
@@ -726,9 +733,7 @@ Mirror Talk Podcast"""
 
         body = f"""Hi {guest_name},
 
-I hope you are doing well.
-
-I’m happy to let you know that your Mirror Talk episode is now live, and I want to thank you again for being part of it.
+I’m delighted to let you know that your Mirror Talk episode is now live. Thank you again for trusting me with your story and for being part of this conversation.
 
 {release_line.rstrip()}
 
@@ -738,7 +743,7 @@ Here are the links for you:
 
 When you have a moment, I’d genuinely love to hear what you and your loved ones think of the episode.
 
-If you’d like to support the conversation further, here are three meaningful ways to help:
+If you’d like to help the conversation reach the people who may need it, here are a few meaningful ways:
 - subscribe to Mirror Talk on Spotify:
   https://open.spotify.com/show/0trwqguYCic32smqh3Ny60
 - subscribe to Mirror Talk on Apple Podcasts:
@@ -751,7 +756,7 @@ If you’d like to support the conversation further, here are three meaningful w
 You can also stay connected here:
 https://lnkfi.re/mirrortalk
 
-Thank you again for your presence, your voice, and your contribution to Mirror Talk.
+Thank you again for your presence and your voice. I hope the finished episode feels true to the conversation we shared.
 
 Warm regards,
 Tobi Ojekunle
@@ -788,9 +793,9 @@ Mirror Talk Podcast"""
         if variant == "concise":
             body = f"""Hi {guest_name},
 
-A quick heads-up: your Mirror Talk episode is scheduled for release on {release_date}.
+A quick personal heads-up: your Mirror Talk episode is scheduled for release on {release_date}.
 
-We’ll send the live link and share-ready files when it is published. If the date creates a conflict, please reply to this email as soon as you can.
+We’ll send the live link and share-ready files when it is published. There is nothing you need to do now; if the date creates a conflict, please reply as soon as you can.
 
 Warm regards,
 Tobi Ojekunle
@@ -798,13 +803,11 @@ Mirror Talk Podcast"""
         else:
             body = f"""Hi {guest_name},
 
-I hope you are doing well.
-
-I wanted to give you an early heads-up that your Mirror Talk episode is scheduled for release on {release_date}.
+I wanted you to hear it from me first: your Mirror Talk episode is scheduled for release on {release_date}.
 
 {topic_line.rstrip()}
 
-There is nothing you need to do right now. We’ll send the live episode link and share-ready files once it is published, so you can share the conversation with your community if you wish.
+There is nothing you need to do right now. We’ll send the live episode link and share-ready files once it is published, so you can share the conversation with your community if and when it feels right.
 
 If this timing overlaps with another launch or creates a conflict, please reply as soon as you can and we’ll review the plan together.
 

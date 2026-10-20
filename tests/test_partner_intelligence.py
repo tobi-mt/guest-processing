@@ -175,7 +175,9 @@ def test_pitch_studio_selection_retires_alternatives_and_attributes_outcome(inte
     _add_two_sources(intelligence, prospect["id"])
     intelligence.add_contact_research(prospect["id"], {"contact_name": "Ava", "source_url": "https://hope.example/team", "source_title": "Team", "fact_text": "Ava leads Hope Press's resilience publishing programme."}, actor="tester")
     drafted = intelligence.draft_pitch(prospect["id"], actor="tester", preferences={"template_id": "co_marketing", "tone": "concise"})
-    assert len([item for item in drafted["drafts"] if item["status"] == "draft"]) == 3
+    active_drafts = [item for item in drafted["drafts"] if item["status"] == "draft"]
+    assert len(active_drafts) == 3
+    assert all("Mirror Talk: Soulful Conversations" in item["body"] for item in active_drafts)
 
     chosen_id = drafted["drafts"][0]["id"]
     selected = intelligence.select_draft(chosen_id, actor="editor")

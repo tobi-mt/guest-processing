@@ -161,7 +161,7 @@ class AIAssistant:
         """Generate a personalized acceptance email for a guest."""
         application_context = self._guest_context(guest_data)
         
-        prompt = f"""You are writing a warm, authentic acceptance email for the {podcast_name} podcast.
+        prompt = f"""You are writing a warm, grounded acceptance email from {host_name}, host of {podcast_name}: Soulful Conversations.
 
 Guest application (use only details present here; do not invent achievements or facts):
 {application_context}
@@ -170,16 +170,16 @@ Guest application (use only details present here; do not invent achievements or 
 
 Write a personalized acceptance email that:
 1. Warmly welcomes them as a guest
-2. Shows genuine interest in their background or topics (mention something specific)
-3. Explains what Mirror Talk is about (soulful conversations, faith, purpose, resilience)
-4. Mentions next steps (scheduling, preparation)
-5. Sounds authentic and conversational, not corporate
-6. Keep it concise (2-3 short paragraphs), while including one concrete application detail and why it belongs on Mirror Talk
+2. Uses one concrete application detail to explain why their perspective fits Mirror Talk
+3. Reflects the show's values: presence, honesty, empathy, depth, and human connection
+4. Gives one clear next step for scheduling or preparation
+5. Sounds like one person writing thoughtfully to another, never corporate, effusive, or promotional
+6. Keeps paragraphs short and the whole message easy to scan
 
-The email should feel personal, not templated. Sign it from {host_name}."""
+Do not claim to be moved, inspired, familiar with their work, or emotionally affected unless the supplied application supports that exact claim. Do not repeat sensitive application details merely to appear personal. The email should feel specific, calm, and sincere. Sign it from {host_name}, Mirror Talk."""
         
         messages = [
-            {"role": "system", "content": "You are a warm, thoughtful podcast host writing personal emails to potential guests."},
+            {"role": "system", "content": "You are the thoughtful host of Mirror Talk: Soulful Conversations, writing humane, specific guest communication grounded only in supplied facts."},
             {"role": "user", "content": prompt}
         ]
         
@@ -244,15 +244,14 @@ Podcast: {podcast_name}
 The email should:
 1. Thank them for their interest and time
 2. Politely decline without going into specific reasons
-3. Encourage them to keep sharing their message in other ways
-4. Be warm and respectful, maintaining goodwill
-5. Keep it brief (1-2 short paragraphs)
+3. Explain that fit, timing, and limited programme capacity shape the decision without devaluing their story
+4. Be warm and respectful without consolation clichés or forced encouragement
+5. Keep it brief and easy to scan
 
-DO NOT make false promises like "we'll keep you in mind for the future" unless the host specified that.
-Be honest but kind. Sign from {host_name}."""
+DO NOT make false promises like "we'll keep you in mind for the future" unless the host specified that. Do not disclose the internal reason, diagnose the guest, or imply that their story was inadequate. Be honest but kind. Sign from {host_name}, Mirror Talk."""
         
         messages = [
-            {"role": "system", "content": "You are a compassionate podcast host writing respectful rejection emails."},
+            {"role": "system", "content": "You are the compassionate host of Mirror Talk: Soulful Conversations, writing clear and respectful guest communication."},
             {"role": "user", "content": prompt}
         ]
         
@@ -274,15 +273,15 @@ Context: {context}
 Days Since Last Contact: {days_since_last_contact}
 
 The email should:
-1. Reference the previous interaction
-2. Gently check in on next steps
-3. Be brief and non-pushy
-4. Sound natural and friendly
+1. Reference the previous interaction using only the supplied context
+2. Make the requested next step unmistakably clear
+3. Give the guest an easy, pressure-free way to reply if circumstances changed
+4. Sound natural, warm, and respectful of their time
 
-Keep it to 2-3 sentences."""
+Keep it to one short greeting and 2-3 brief paragraphs. Do not manufacture familiarity, urgency, or guilt."""
         
         messages = [
-            {"role": "system", "content": "You are writing friendly follow-up emails."},
+            {"role": "system", "content": "You are the host of Mirror Talk: Soulful Conversations, writing a considerate follow-up to a guest."},
             {"role": "user", "content": prompt}
         ]
         
@@ -580,28 +579,13 @@ Do not use em dashes."""
         return True
     
     def suggest_email_subject(self, email_type: str, guest_name: str) -> str:
-        """Generate engaging email subject lines."""
+        """Return a calm, clear Mirror Talk subject line without clickbait or random variation."""
         subjects = {
-            "acceptance": [
-                f"Excited to have you on Mirror Talk, {guest_name}! 🎙️",
-                f"Welcome to Mirror Talk, {guest_name}!",
-                f"{guest_name}, let's share your story on Mirror Talk",
-                f"Your Mirror Talk invitation, {guest_name}"
-            ],
-            "rejection": [
-                f"Thank you for your interest, {guest_name}",
-                "Regarding your Mirror Talk application",
-                "Mirror Talk Application Update"
-            ],
-            "follow_up": [
-                f"Following up - Mirror Talk with {guest_name}",
-                "Checking in about our conversation",
-                "Next steps for your Mirror Talk episode"
-            ]
+            "acceptance": f"We’d love to welcome you to Mirror Talk, {guest_name}",
+            "rejection": f"Thank you for your Mirror Talk application, {guest_name}",
+            "follow_up": f"Checking in about our Mirror Talk conversation, {guest_name}",
         }
-        
-        import random
-        return random.choice(subjects.get(email_type, ["Mirror Talk Podcast"]))
+        return subjects.get(email_type, "A note from Mirror Talk")
     
     def analyze_guest_fit(self, guest_data: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze how well a guest fits the podcast using the guest_recommender module."""

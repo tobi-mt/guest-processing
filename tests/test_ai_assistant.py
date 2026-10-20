@@ -271,3 +271,17 @@ def test_reasoning_models_omit_temperature_for_chat_completions(monkeypatch):
     assert assistant._call_openai([{"role": "user", "content": "Hello"}]) == "OK"
     assert "temperature" not in captured["payload"]
     assert captured["timeout"] == (10, 120.0)
+
+
+def test_email_subjects_are_stable_human_and_free_of_clickbait():
+    assistant = AIAssistant()
+
+    acceptance = assistant.suggest_email_subject("acceptance", "Amina")
+    rejection = assistant.suggest_email_subject("rejection", "Amina")
+    follow_up = assistant.suggest_email_subject("follow_up", "Amina")
+
+    assert acceptance == "We’d love to welcome you to Mirror Talk, Amina"
+    assert rejection == "Thank you for your Mirror Talk application, Amina"
+    assert follow_up == "Checking in about our Mirror Talk conversation, Amina"
+    assert "!" not in acceptance
+    assert "🎙️" not in acceptance

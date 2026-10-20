@@ -219,6 +219,35 @@ def test_reviewed_email_template_variants_are_explicit_and_preserve_required_lin
     assert {item["id"] for item in manager.template_variants("accepted")} == {"warm", "concise"}
 
 
+def test_every_guest_email_template_has_a_human_greeting_and_mirror_talk_signature():
+    manager = EmailManager()
+    scheduled = datetime(2026, 8, 20, 10, tzinfo=timezone.utc)
+    templates = [
+        manager.get_acceptance_template("Amina", booking_url="https://example.test/book"),
+        manager.get_rejection_template("Amina"),
+        manager.get_interview_reminder_template("Amina", scheduled, "UTC", "https://example.test/join"),
+        manager.get_interview_cancellation_template("Amina", scheduled, "UTC"),
+        manager.get_booking_confirmation_template("Amina", scheduled, "UTC", "https://example.test/join"),
+        manager.get_reschedule_link_template("Amina", scheduled, "UTC", "https://example.test/reschedule"),
+        manager.get_post_interview_appreciation_template("Amina"),
+        manager.get_intake_confirmation_template("Amina"),
+        manager.get_personal_application_request_template("Amina", "https://example.test/apply"),
+        manager.get_booking_link_template("Amina", "https://example.test/book"),
+        manager.get_released_episode_template(
+            "Amina", "https://example.test/episode", "https://example.test/files"
+        ),
+        manager.get_release_heads_up_template("Amina", "Friday, 04 December 2026"),
+    ]
+
+    assert len(templates) == len(manager.EMAIL_TEMPLATE_VARIANTS)
+    for template in templates:
+        assert template["subject"].strip()
+        assert template["body"].startswith("Hi Amina,\n\n")
+        assert "Mirror Talk" in template["body"]
+        assert "Dear Sir/Madam" not in template["body"]
+        assert "valued guest" not in template["body"].lower()
+
+
 def test_email_personalization_uses_bounded_research_topics_without_raw_notes():
     manager = EmailManager()
     context = manager.build_personalization_context(
@@ -239,6 +268,42 @@ def test_email_personalization_uses_bounded_research_topics_without_raw_notes():
     assert "Your perspective on caregiver resilience" in template["body"]
     assert "Internal research summary" not in template["body"]
     assert "Private intake background" not in template["body"]
+
+
+def test_acceptance_personalization_uses_professional_context_without_overclaiming():
+    manager = EmailManager()
+    context = manager.build_personalization_context(
+        {
+            "profession": "Trauma-informed therapist",
+            "company": "The Listening Room",
+            "guest_research": {"likely_topics": []},
+        }
+    )
+
+    template = manager.get_acceptance_template(
+        "Amina", booking_url="https://example.test/book", personalization=context
+    )
+
+    assert context == {
+        "role": "Trauma-informed therapist",
+        "organisation": "The Listening Room",
+    }
+    assert "Your perspective as Trauma-informed therapist at The Listening Room" in template["body"]
+    assert "We were moved" not in template["body"]
+    assert template["subject"] == "We’d love to welcome you to Mirror Talk"
+
+
+def test_email_personalization_does_not_copy_links_from_profile_fields():
+    manager = EmailManager()
+
+    context = manager.build_personalization_context(
+        {"profession": "https://example.test/profile", "company": "Purpose Studio"}
+    )
+    template = manager.get_acceptance_template("Amina", personalization=context)
+
+    assert context == {"organisation": "Purpose Studio"}
+    assert "Your work with Purpose Studio" in template["body"]
+    assert "example.test/profile" not in template["body"]
 
 
 def test_personalized_templates_fall_back_cleanly_and_expose_reviewed_variants():

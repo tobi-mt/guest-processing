@@ -581,7 +581,7 @@ class PartnerIntelligence:
             f"Mirror Talk: Soulful Conversations creates thoughtful conversations around {themes}. "
             "We believe there may be an audience-first conversation here that gives listeners practical clarity while allowing your work to be understood in depth.\n\n"
             "Would you be open to exploring a 30–45 minute conversation focused on the human problem your work addresses, what is timely now, and the insight you most want people to carry forward?\n\n"
-            "Warmly,\nTobi\nMirror Talk"
+            "Warmly,\nTobi\nMirror Talk: Soulful Conversations"
         )
         strategy_emails = prospect.get("strategy", {}).get("emails") or []
         fallback_angles = (
@@ -609,9 +609,9 @@ class PartnerIntelligence:
             variant_body = (
                 f"Hello {contact_name or 'there'},\n\n{fallback_openings[index]}\n\n"
                 + (f"I also saw that {recipient_hook}.\n\n" if recipient_hook else "")
-                + f"For the {template['name'].lower()} objective, our aim would be to {template['objective'][0].lower() + template['objective'][1:]} "
-                  f"The mutual value is {template['value'][0].lower() + template['value'][1:]}\n\n"
-                + f"{fallback_asks[index]}\n\nWarmly,\nTobi\nMirror Talk"
+                + f"I have {template['name'].lower()} in mind: {template['objective']} "
+                  f"The value, if the fit is genuine, would be {template['value'][0].lower() + template['value'][1:]}\n\n"
+                + f"{fallback_asks[index]}\n\nWarmly,\nTobi\nMirror Talk: Soulful Conversations"
             )
             variants.append((fallback_subjects[index], variant_body, title, rationale))
         if strategy_emails:
