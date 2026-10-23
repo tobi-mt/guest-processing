@@ -192,6 +192,47 @@ def test_resend_receives_provider_idempotency_header(monkeypatch):
     assert captured["headers"]["Idempotency-Key"] == "booking_confirmation:42:2026-08-02"
 
 
+def test_smtp_email_includes_plain_text_and_html_alternatives(monkeypatch):
+    captured = {}
+
+    class SMTP:
+        def __init__(self, server, port):
+            captured["connection"] = (server, port)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def starttls(self, context):
+            return None
+
+        def login(self, username, password):
+            return None
+
+        def send_message(self, message, to_addrs):
+            captured["message"] = message
+            captured["to_addrs"] = to_addrs
+
+    monkeypatch.setattr("guest_database_manager.email_manager.smtplib.SMTP", SMTP)
+    manager = EmailManager()
+    manager.configure_smtp("smtp.example.test", 587, "user", "password", "host@example.com")
+
+    assert manager.send_email(
+        "guest@example.com",
+        "Connect with Mirror Talk",
+        "Listen here:\nhttps://mirrortalkpodcast.com/listen-connect/",
+    )
+
+    alternatives = captured["message"].get_payload()[0]
+    assert alternatives.get_content_subtype() == "alternative"
+    assert [part.get_content_subtype() for part in alternatives.get_payload()] == ["plain", "html"]
+    assert "https://mirrortalkpodcast.com/listen-connect/" in alternatives.get_payload()[0].get_payload(decode=True).decode()
+    html_body = alternatives.get_payload()[1].get_payload(decode=True).decode()
+    assert ">Listen and connect with Mirror Talk</a>" in html_body
+
+
 def test_continuous_worker_starts_processes_and_stops(monkeypatch, temp_db):
     service = GuestWebService(temp_db.db_path)
     processed = Event()
@@ -246,6 +287,20 @@ def test_every_guest_email_template_has_a_human_greeting_and_mirror_talk_signatu
         assert "Mirror Talk" in template["body"]
         assert "Dear Sir/Madam" not in template["body"]
         assert "valued guest" not in template["body"].lower()
+
+
+def test_guest_email_templates_use_the_current_listen_and_connect_link():
+    manager = EmailManager()
+    templates = [
+        manager.get_intake_confirmation_template("Amina"),
+        manager.get_released_episode_template(
+            "Amina", "https://example.test/episode", "https://example.test/files"
+        ),
+    ]
+
+    for template in templates:
+        assert "https://mirrortalkpodcast.com/listen-connect/" in template["body"]
+        assert "https://lnkfi.re/mirrortalk" not in template["body"]
 
 
 def test_email_personalization_uses_bounded_research_topics_without_raw_notes():
@@ -359,3 +414,26 @@ def test_html_email_renderer_is_branded_responsive_and_escapes_guest_content():
     assert 'href="https://example.test/episode"' in rendered
     assert "<script>" not in rendered
     assert "&lt;script&gt;" in rendered
+
+
+def test_html_email_renderer_uses_descriptive_text_for_reviewed_and_contextual_links():
+    manager = EmailManager()
+    rendered = manager._build_html_body(
+        "You can also stay connected here:\n"
+        "https://mirrortalkpodcast.com/listen-connect/\n\n"
+        "- Show notes: https://example.test/episode\n"
+        "- Files (download link expires in 2 days): https://example.test/files"
+    )
+
+    assert ">Listen and connect with Mirror Talk</a>" in rendered
+    assert ">View the episode show notes</a>" in rendered
+    assert ">Download your episode files</a>" in rendered
+    assert "&gt;" not in rendered
+
+
+def test_html_email_renderer_keeps_unknown_link_text_visible():
+    manager = EmailManager()
+
+    rendered = manager._build_html_body("Reference: https://example.test/reference")
+
+    assert ">https://example.test/reference</a>" in rendered

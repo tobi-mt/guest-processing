@@ -627,7 +627,7 @@ For your records, we have attached a PDF copy of the answers you shared.
 
 In the meantime, you are warmly invited to stay connected with Mirror Talk here:
 - Website: https://mirrortalkpodcast.com/
-- Podcast platforms and social links: https://lnkfi.re/mirrortalk
+- Podcast platforms and social links: https://mirrortalkpodcast.com/listen-connect/
 - Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
 
 Thank you again for sharing your story with us.
@@ -754,7 +754,7 @@ If you’d like to help the conversation reach the people who may need it, here 
 - try Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
 
 You can also stay connected here:
-https://lnkfi.re/mirrortalk
+https://mirrortalkpodcast.com/listen-connect/
 
 Thank you again for your presence and your voice. I hope the finished episode feels true to the conversation we shared.
 
@@ -870,6 +870,41 @@ Mirror Talk Podcast"""
             return f"{self.from_name} <{self.from_email}>"
         return self.from_email or ""
 
+    @staticmethod
+    def _html_link_label(url: str, preceding_text: str) -> str:
+        """Return reviewed link text when the destination or nearby copy makes its purpose clear."""
+        normalized_url = html.unescape(url).rstrip(".,)")
+        known_labels = {
+            "https://mirrortalkpodcast.com/": "Visit the Mirror Talk website",
+            "https://mirrortalkpodcast.com/be-our-next-guest/": "Apply to be a Mirror Talk guest",
+            "https://mirrortalkpodcast.com/join-our-family/": "Join the Mirror Talk community",
+            "https://mirrortalkpodcast.com/ask-mirror-talk/": "Try Ask Mirror Talk",
+            "https://mirrortalkpodcast.com/listen-connect/": "Listen and connect with Mirror Talk",
+            "https://open.spotify.com/show/0trwqguYCic32smqh3Ny60": "Listen on Spotify",
+            "https://podcasts.apple.com/podcast/mirror-talk/id1518394292": "Listen on Apple Podcasts",
+            "https://www.youtube.com/@mirrortalkpodcast": "Subscribe on YouTube",
+        }
+        if normalized_url in known_labels:
+            return known_labels[normalized_url]
+
+        context_lines = preceding_text.split("<br />")
+        nearest_context = context_lines[-1]
+        if not nearest_context.strip() and len(context_lines) > 1:
+            nearest_context = context_lines[-2]
+        context = html.unescape(nearest_context).lower()
+        contextual_labels = (
+            (("show notes",), "View the episode show notes"),
+            (("files (download",), "Download your episode files"),
+            (("rescheduling link", "confirm a new available time"), "Choose a new recording time"),
+            (("application link", "guest application"), "Complete your guest application"),
+            (("recording time", "booking link", "suitable time for recording"), "Choose a recording time"),
+            (("riverside", "join the session", "join us"), "Join the Riverside recording"),
+        )
+        for phrases, label in contextual_labels:
+            if any(phrase in context for phrase in phrases):
+                return label
+        return normalized_url
+
     def _build_html_body(self, body: str) -> str:
         """Render safe, responsive Mirror Talk HTML while preserving the plain-text alternative."""
         paragraphs = [segment.strip() for segment in body.split("\n\n") if segment.strip()]
@@ -879,11 +914,20 @@ Mirror Talk Podcast"""
         rendered = []
         for paragraph in paragraphs:
             escaped = html.escape(paragraph).replace("\n", "<br />")
-            escaped = re.sub(
-                r"(https://[^\s<]+)",
-                r'<a href="\1" style="color:#d94b12;font-weight:700;overflow-wrap:anywhere">\1</a>',
-                escaped,
-            )
+
+            def render_link(match: re.Match[str]) -> str:
+                url = match.group(1)
+                trailing_punctuation = ""
+                while url and url[-1] in ".,)":
+                    trailing_punctuation = url[-1] + trailing_punctuation
+                    url = url[:-1]
+                label = html.escape(self._html_link_label(url, match.string[: match.start()]))
+                return (
+                    f'<a href="{url}" style="color:#d94b12;font-weight:700;'
+                    f'overflow-wrap:anywhere">{label}</a>{trailing_punctuation}'
+                )
+
+            escaped = re.sub(r"(https://[^\s<]+)", render_link, escaped)
             rendered.append(f'<p style="margin:0 0 18px;line-height:1.65">{escaped}</p>')
         content = "".join(rendered)
         return (
@@ -1013,8 +1057,9 @@ Mirror Talk Podcast"""
             return sent
 
         try:
-            # Create message
-            msg = MIMEMultipart()
+            # Create a mixed root so attachments remain siblings of the
+            # plain-text and HTML alternatives.
+            msg = MIMEMultipart("mixed")
             msg['From'] = f"{self.from_name} <{self.from_email}>" if self.from_name else self.from_email
             recipients = self._normalize_recipients(to_email)
             msg['To'] = ", ".join(recipients)
@@ -1026,8 +1071,10 @@ Mirror Talk Podcast"""
             if self.cc_email:
                 msg['Cc'] = self.cc_email
 
-            # Attach body
-            msg.attach(MIMEText(body, 'plain'))
+            alternatives = MIMEMultipart("alternative")
+            alternatives.attach(MIMEText(body, "plain", "utf-8"))
+            alternatives.attach(MIMEText(self._build_html_body(body), "html", "utf-8"))
+            msg.attach(alternatives)
             for attachment in attachments or []:
                 part = MIMEApplication(bytes(attachment["content"]), Name=str(attachment["filename"]))
                 part["Content-Disposition"] = f'attachment; filename="{attachment["filename"]}"'
