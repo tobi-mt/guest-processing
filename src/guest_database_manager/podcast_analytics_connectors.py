@@ -26,6 +26,9 @@ TOKEN_KEY_ENV = "MIRROR_TALK_ANALYTICS_TOKEN_ENCRYPTION_KEY"
 GA4_PROPERTY_ENV = "MIRROR_TALK_GA4_PROPERTY_ID"
 PUBLIC_URL_ENV = "MIRROR_TALK_PUBLIC_URL"
 COLLECTOR_TOKEN_ENV = "MIRROR_TALK_ANALYTICS_COLLECTOR_TOKEN"
+OPENPODCAST_TOKEN_ENV = "MIRROR_TALK_OPENPODCAST_TOKEN"
+OPENPODCAST_PODCAST_ID_ENV = "MIRROR_TALK_OPENPODCAST_PODCAST_ID"
+OPENPODCAST_API_BASE = "https://api.openpodcast.dev/analytics/v1"
 LOCAL_COLLECTOR_PROVIDERS = {"spotify", "apple_podcasts"}
 
 GOOGLE_SCOPES = (
@@ -65,6 +68,8 @@ class PodcastAnalyticsConnectors:
             "ga4_property_id": os.environ.get(GA4_PROPERTY_ENV, "").strip().removeprefix("properties/"),
             "public_url": os.environ.get(PUBLIC_URL_ENV, "").strip().rstrip("/"),
             "collector_token": os.environ.get(COLLECTOR_TOKEN_ENV, "").strip(),
+            "openpodcast_token": os.environ.get(OPENPODCAST_TOKEN_ENV, "").strip(),
+            "openpodcast_podcast_id": os.environ.get(OPENPODCAST_PODCAST_ID_ENV, "").strip(),
         }
 
     @classmethod
@@ -114,7 +119,24 @@ class PodcastAnalyticsConnectors:
             })
         for item in collectors.values():
             item["enabled"] = bool(item["enabled"])
+        openpodcast_rows: list[dict[str, Any]] = []
+        with connect_database(self.db_path) as conn:
+            conn.row_factory = __import__("sqlite3").Row
+            openpodcast_rows = [dict(row) for row in conn.execute(
+                """SELECT imported_at, period_end FROM growth_metric_observations
+                   WHERE source_reference LIKE 'openpodcast-api:%'
+                   ORDER BY imported_at DESC, id DESC LIMIT 1"""
+            ).fetchall()]
+        openpodcast_ready = bool(config["openpodcast_token"] and config["openpodcast_podcast_id"].isdigit())
         return {
+            "openpodcast": {
+                "configured": openpodcast_ready,
+                "status": "connected" if openpodcast_rows else "ready" if openpodcast_ready else "not_configured",
+                "podcast_id": config["openpodcast_podcast_id"] if openpodcast_ready else None,
+                "last_success_at": openpodcast_rows[0]["imported_at"] if openpodcast_rows else None,
+                "latest_period_end": openpodcast_rows[0]["period_end"] if openpodcast_rows else None,
+                "required_environment": [OPENPODCAST_TOKEN_ENV, OPENPODCAST_PODCAST_ID_ENV],
+            },
             "google": {
                 "oauth_configured": oauth_ready,
                 "ga4_configured": bool(config["ga4_property_id"]),
@@ -140,6 +162,94 @@ class PodcastAnalyticsConnectors:
                 {"provider": "apple_connect", "reason": "Apple does not provide third-party podcast analytics access."},
             ],
         }
+
+    def sync_openpodcast(self, *, actor: str, start: date | None = None, end: date | None = None) -> dict[str, Any]:
+        """Collect read-only, show-level OpenPodcast evidence without persisting its bearer token."""
+        config = self._config()
+        token = config["openpodcast_token"]
+        podcast_id = config["openpodcast_podcast_id"]
+        if not token or not podcast_id.isdigit():
+            raise AnalyticsConnectorError("OpenPodcast analytics is not configured in production.")
+        end = end or _now().date()
+        start = start or end - timedelta(days=89)
+        if start > end or (end - start).days > 366:
+            raise AnalyticsConnectorError("OpenPodcast sync dates must cover no more than 367 days.")
+
+        payloads = {
+            endpoint: self._get_openpodcast_json(
+                f"{OPENPODCAST_API_BASE}/{podcast_id}/{endpoint}?{urlencode({'start': start.isoformat(), 'end': end.isoformat()})}",
+                token,
+            )
+            for endpoint in ("episodesDailyMetrics", "podcastFollowers", "spotifyImpressionsSources", "spotifyCountries")
+        }
+        try:
+            observations = self._normalize_openpodcast(payloads, start=start, end=end)
+            if not observations:
+                raise AnalyticsConnectorError("OpenPodcast returned no usable analytics for the selected period.")
+            correlation_id = f"openpodcast-{podcast_id}-{start.isoformat()}-{end.isoformat()}"
+            result = self.growth.record_observations(observations, actor=actor, correlation_id=correlation_id)
+        except AnalyticsConnectorError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise AnalyticsConnectorError("OpenPodcast returned analytics values that could not be validated.") from exc
+        with connect_database(self.db_path) as conn:
+            self._audit(
+                conn, "analytics_sync_completed", actor, "Read-only OpenPodcast analytics synchronization",
+                {"provider": "openpodcast", "podcast_id": podcast_id, "period_start": start.isoformat(),
+                 "period_end": end.isoformat(), **result},
+            )
+            conn.commit()
+        return {**result, "status": "completed", "period_start": start.isoformat(), "period_end": end.isoformat()}
+
+    @staticmethod
+    def _normalize_openpodcast(payloads: dict[str, dict[str, Any]], *, start: date, end: date) -> list[dict[str, Any]]:
+        observations: list[dict[str, Any]] = []
+
+        def add(provider: str, metric: str, value: Any, period_start: str, period_end: str, endpoint: str) -> None:
+            if value in (None, ""):
+                return
+            observations.append({
+                "provider": provider, "metric_name": metric, "metric_value": value,
+                "period_start": period_start, "period_end": period_end, "traffic_scope": "all",
+                "source_reference": f"openpodcast-api:{endpoint}",
+            })
+
+        daily: dict[tuple[str, str, str], float] = {}
+        metric_map = {
+            "spotify_streams": ("spotify", "plays"),
+            "spotify_listeners": ("spotify", "unique_listeners"),
+            "apple_plays": ("apple_podcasts", "plays"),
+            "apple_listeners": ("apple_podcasts", "unique_listeners"),
+            "apple_engaged_listeners": ("apple_podcasts", "engaged_listeners"),
+        }
+        for row in payloads.get("episodesDailyMetrics", {}).get("data") or []:
+            day = str(row.get("date") or "")[:10]
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                continue
+            for field, (provider, metric) in metric_map.items():
+                if row.get(field) not in (None, ""):
+                    key = (provider, metric, day)
+                    daily[key] = daily.get(key, 0.0) + float(row[field])
+        for (provider, metric, day), value in daily.items():
+            add(provider, metric, value, day, day, "episodesDailyMetrics")
+
+        for row in payloads.get("podcastFollowers", {}).get("data") or []:
+            day = str(row.get("date") or "")[:10]
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                add("spotify", "followers", row.get("spotify_total_followers"), day, day, "podcastFollowers")
+                add("apple_podcasts", "followers", row.get("apple_total_followers"), day, day, "podcastFollowers")
+        for row in payloads.get("spotifyImpressionsSources", {}).get("data") or []:
+            source = str(row.get("source_id") or "").strip().casefold()
+            metric = {"home": "spotify_home_impressions", "search": "spotify_search_impressions"}.get(source)
+            if metric:
+                add("spotify", metric, row.get("impression_count"), str(row.get("date_start") or start),
+                    str(row.get("date_end") or end), "spotifyImpressionsSources")
+        for row in payloads.get("spotifyCountries", {}).get("data") or []:
+            country = re.sub(r"[^a-z0-9]+", "_", str(row.get("spotify_country_shortcode") or "").casefold()).strip("_")
+            if country:
+                add("spotify", f"country_listeners_{country}", row.get("spotify_listeners"),
+                    start.isoformat(), end.isoformat(), "spotifyCountries")
+        return observations
 
     @staticmethod
     def _local_provider(provider: str) -> str:
@@ -643,11 +753,12 @@ class PodcastAnalyticsConnectors:
 
     @staticmethod
     def _audit(conn: Any, event_type: str, actor: str, reason: str, after: dict[str, Any]) -> None:
+        provider = str(after.get("provider") or "google")
         conn.execute(
             """INSERT INTO audit_events
                (entity_type, entity_id, event_type, actor, source, reason, correlation_id, after_json)
-               VALUES ('analytics_connector', 'google', ?, ?, 'podcast_analytics_connectors', ?, ?, ?)""",
-            (event_type, actor, reason, secrets.token_hex(16), json.dumps(after, sort_keys=True)),
+               VALUES ('analytics_connector', ?, ?, ?, 'podcast_analytics_connectors', ?, ?, ?)""",
+            (provider, event_type, actor, reason, secrets.token_hex(16), json.dumps(after, sort_keys=True)),
         )
 
     @staticmethod
@@ -663,6 +774,22 @@ class PodcastAnalyticsConnectors:
     @staticmethod
     def _get_json(url: str, token: str) -> dict[str, Any]:
         return PodcastAnalyticsConnectors._request_json(url, token)
+
+    @staticmethod
+    def _get_openpodcast_json(url: str, token: str) -> dict[str, Any]:
+        request = Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+        try:
+            with urlopen(request, timeout=25) as response:  # noqa: S310 - fixed OpenPodcast API base
+                payload = json.loads(response.read(2_000_000))
+        except HTTPError as exc:
+            if exc.code in {401, 403}:
+                raise AnalyticsConnectorError("OpenPodcast rejected the configured analytics credential.") from exc
+            raise AnalyticsConnectorError("OpenPodcast analytics could not be synchronized.") from exc
+        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise AnalyticsConnectorError("OpenPodcast analytics could not be synchronized.") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+            raise AnalyticsConnectorError("OpenPodcast returned an unexpected analytics response.")
+        return payload
 
     @staticmethod
     def _request_json(url: str, token: str, *, data: bytes | None = None) -> dict[str, Any]:

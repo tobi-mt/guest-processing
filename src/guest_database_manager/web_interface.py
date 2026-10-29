@@ -906,6 +906,9 @@ class GuestWebService:
             actor=actor, force=force, connection_id=connection_id
         )
 
+    def sync_openpodcast_analytics(self, *, actor: str) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.sync_openpodcast(actor=actor)
+
     def disconnect_google_analytics(self, *, actor: str,
                                     connection_id: int | None = None) -> Dict[str, Any]:
         return self.podcast_analytics_connectors.disconnect_google(
@@ -8603,13 +8606,16 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             return
 
         if self.path in {
+            "/api/analytics-connectors/openpodcast/sync",
             "/api/analytics-connectors/google/connect",
             "/api/analytics-connectors/google/sync",
             "/api/analytics-connectors/local/configure",
         }:
             actor = str((self._session_claims() or {}).get("sub") or "admin")
             try:
-                if self.path.endswith("/local/configure"):
+                if self.path.endswith("/openpodcast/sync"):
+                    result = self.service.sync_openpodcast_analytics(actor=actor)
+                elif self.path.endswith("/local/configure"):
                     payload = self._read_json_payload()
                     result = self.service.configure_local_analytics_collector(
                         _normalize_text(payload.get("provider")),
@@ -9969,7 +9975,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def _required_role_for_request(method: str, path: str) -> str:
         if method == "GET":
             return "viewer"
-        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge", "/api/recommendation-learning/settings", "/api/recommendation-learning/promote", "/api/recommendation-learning/rollback", "/api/recommendation-learning/cycle", "/api/analytics-connectors/google/connect", "/api/analytics-connectors/google/sync", "/api/analytics-connectors/local/configure"}:
+        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge", "/api/recommendation-learning/settings", "/api/recommendation-learning/promote", "/api/recommendation-learning/rollback", "/api/recommendation-learning/cycle", "/api/analytics-connectors/openpodcast/sync", "/api/analytics-connectors/google/connect", "/api/analytics-connectors/google/sync", "/api/analytics-connectors/local/configure"}:
             return "admin"
         return "operator"
 

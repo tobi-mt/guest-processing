@@ -10,6 +10,8 @@ from guest_database_manager.podcast_analytics_connectors import (
     GA4_PROPERTY_ENV,
     GOOGLE_CLIENT_ID_ENV,
     GOOGLE_CLIENT_SECRET_ENV,
+    OPENPODCAST_PODCAST_ID_ENV,
+    OPENPODCAST_TOKEN_ENV,
     TOKEN_KEY_ENV,
     PodcastAnalyticsConnectors,
 )
@@ -81,6 +83,61 @@ def test_local_collector_fails_closed_for_bad_token_and_review_rows(temp_db, mon
             source_reference="apple-episodes.csv",
         )
     assert connectors.status()["local_collectors"]["connections"]["apple_podcasts"]["status"] == "error"
+
+
+def test_openpodcast_sync_normalizes_show_level_daily_evidence_and_is_idempotent(temp_db, monkeypatch):
+    monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, "server-only-openpodcast-token")
+    monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    responses = {
+        "episodesDailyMetrics": {"data": [
+            {"date": "2026-10-01", "spotify_streams": 7, "spotify_listeners": 5,
+             "apple_plays": 4, "apple_listeners": 3, "apple_engaged_listeners": 2},
+            {"date": "2026-10-01", "spotify_streams": 11, "spotify_listeners": 8,
+             "apple_plays": None, "apple_listeners": None, "apple_engaged_listeners": None},
+        ]},
+        "podcastFollowers": {"data": [{"date": "2026-10-01", "spotify_total_followers": 90,
+                                          "apple_total_followers": 40}]},
+        "spotifyImpressionsSources": {"data": [
+            {"date_start": "2026-10-01", "date_end": "2026-10-07", "source_id": "HOME",
+             "impression_count": 120},
+        ]},
+        "spotifyCountries": {"data": [
+            {"spotify_country_shortcode": "DE", "spotify_listeners": "12"},
+        ]},
+    }
+
+    monkeypatch.setattr(
+        connectors, "_get_openpodcast_json",
+        lambda url, _token: responses[next(key for key in responses if f"/{key}?" in url)],
+    )
+    first = connectors.sync_openpodcast(actor="admin", start=__import__("datetime").date(2026, 10, 1),
+                                        end=__import__("datetime").date(2026, 10, 7))
+    second = connectors.sync_openpodcast(actor="admin", start=__import__("datetime").date(2026, 10, 1),
+                                         end=__import__("datetime").date(2026, 10, 7))
+
+    assert first == {"submitted": 9, "inserted": 9, "duplicates": 0, "status": "completed",
+                     "period_start": "2026-10-01", "period_end": "2026-10-07"}
+    assert second["inserted"] == 0
+    assert second["duplicates"] == 9
+    with sqlite3.connect(temp_db.db_path) as conn:
+        spotify_plays = conn.execute(
+            """SELECT metric_value FROM growth_metric_observations
+               WHERE provider='spotify' AND metric_name='plays' AND period_end='2026-10-01'"""
+        ).fetchone()[0]
+    assert spotify_plays == 18
+    status = connectors.status()["openpodcast"]
+    assert status["status"] == "connected"
+    assert status["podcast_id"] == "4501"
+    assert "server-only-openpodcast-token" not in str(status)
+
+
+def test_openpodcast_sync_requires_server_configuration(temp_db):
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+
+    assert connectors.status()["openpodcast"]["status"] == "not_configured"
+    with pytest.raises(AnalyticsConnectorError, match="not configured"):
+        connectors.sync_openpodcast(actor="admin")
 
 
 def test_google_oauth_state_is_hashed_short_lived_and_one_time(temp_db, monkeypatch):
