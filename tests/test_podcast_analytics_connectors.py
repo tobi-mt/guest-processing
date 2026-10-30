@@ -132,12 +132,36 @@ def test_openpodcast_sync_normalizes_show_level_daily_evidence_and_is_idempotent
     assert "server-only-openpodcast-token" not in str(status)
 
 
-def test_openpodcast_sync_requires_server_configuration(temp_db):
+def test_openpodcast_sync_requires_server_configuration(temp_db, monkeypatch):
+    monkeypatch.delenv(OPENPODCAST_TOKEN_ENV, raising=False)
+    monkeypatch.delenv(OPENPODCAST_PODCAST_ID_ENV, raising=False)
     connectors = PodcastAnalyticsConnectors(temp_db.db_path)
 
     assert connectors.status()["openpodcast"]["status"] == "not_configured"
     with pytest.raises(AnalyticsConnectorError, match="not configured"):
         connectors.sync_openpodcast(actor="admin")
+
+
+def test_openpodcast_sync_identifies_failing_endpoint_without_exposing_provider_details(temp_db, monkeypatch):
+    monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, "server-only-openpodcast-token")
+    monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+
+    def provider_response(url, _token):
+        if "/podcastFollowers?" in url:
+            raise AnalyticsConnectorError("upstream response details")
+        return {"data": []}
+
+    monkeypatch.setattr(connectors, "_get_openpodcast_json", provider_response)
+    with pytest.raises(
+        AnalyticsConnectorError,
+        match="endpoint podcastFollowers could not be synchronized",
+    ) as failure:
+        connectors.sync_openpodcast(
+            actor="admin", start=__import__("datetime").date(2026, 10, 1),
+            end=__import__("datetime").date(2026, 10, 30),
+        )
+    assert "upstream response details" not in str(failure.value)
 
 
 def test_google_oauth_state_is_hashed_short_lived_and_one_time(temp_db, monkeypatch):

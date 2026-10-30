@@ -171,17 +171,21 @@ class PodcastAnalyticsConnectors:
         if not token or not podcast_id.isdigit():
             raise AnalyticsConnectorError("OpenPodcast analytics is not configured in production.")
         end = end or _now().date()
-        start = start or end - timedelta(days=89)
+        start = start or end - timedelta(days=29)
         if start > end or (end - start).days > 366:
             raise AnalyticsConnectorError("OpenPodcast sync dates must cover no more than 367 days.")
 
-        payloads = {
-            endpoint: self._get_openpodcast_json(
-                f"{OPENPODCAST_API_BASE}/{podcast_id}/{endpoint}?{urlencode({'start': start.isoformat(), 'end': end.isoformat()})}",
-                token,
-            )
-            for endpoint in ("episodesDailyMetrics", "podcastFollowers", "spotifyImpressionsSources", "spotifyCountries")
-        }
+        payloads: dict[str, dict[str, Any]] = {}
+        for endpoint in ("episodesDailyMetrics", "podcastFollowers", "spotifyImpressionsSources", "spotifyCountries"):
+            try:
+                payloads[endpoint] = self._get_openpodcast_json(
+                    f"{OPENPODCAST_API_BASE}/{podcast_id}/{endpoint}?{urlencode({'start': start.isoformat(), 'end': end.isoformat()})}",
+                    token,
+                )
+            except AnalyticsConnectorError as exc:
+                raise AnalyticsConnectorError(
+                    f"OpenPodcast analytics endpoint {endpoint} could not be synchronized."
+                ) from exc
         try:
             observations = self._normalize_openpodcast(payloads, start=start, end=end)
             if not observations:
@@ -780,7 +784,10 @@ class PodcastAnalyticsConnectors:
         request = Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
         try:
             with urlopen(request, timeout=25) as response:  # noqa: S310 - fixed OpenPodcast API base
-                payload = json.loads(response.read(2_000_000))
+                body = response.read(10_000_001)
+                if len(body) > 10_000_000:
+                    raise AnalyticsConnectorError("OpenPodcast returned an analytics response that is too large.")
+                payload = json.loads(body)
         except HTTPError as exc:
             if exc.code in {401, 403}:
                 raise AnalyticsConnectorError("OpenPodcast rejected the configured analytics credential.") from exc
