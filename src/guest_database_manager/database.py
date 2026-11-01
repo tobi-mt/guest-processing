@@ -1401,6 +1401,10 @@ class GuestDatabase:
 
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
+            # Serialize episode writers so the availability check and schedule
+            # write form one atomic operation.  Without this, two operators can
+            # accept recommendations generated from the same planning snapshot.
+            conn.execute("BEGIN IMMEDIATE")
 
             existing_row = None
             if episode_id:
@@ -1459,6 +1463,28 @@ class GuestDatabase:
 
             if not existing_row:
                 existing_row = self._find_existing_episode_row(conn, episode_data)
+
+            requested_release_status = str(episode_data.get("release_status") or "unplanned").strip().lower()
+            requested_release_date = str(episode_data.get("release_date") or "").strip()
+            if requested_release_status == "scheduled" and requested_release_date:
+                current_episode_id = int(existing_row["id"]) if existing_row else 0
+                occupied = conn.execute(
+                    """SELECT id, guest_name, episode_title, release_date
+                       FROM episodes
+                       WHERE release_status = 'scheduled'
+                         AND date(release_date) = date(?)
+                         AND id <> ?
+                       ORDER BY id
+                       LIMIT 1""",
+                    (requested_release_date, current_episode_id),
+                ).fetchone()
+                if occupied:
+                    occupied_title = str(occupied["episode_title"] or occupied["guest_name"] or "another episode").strip()
+                    occupied_day = str(occupied["release_date"] or requested_release_date).split("T", 1)[0].split(" ", 1)[0]
+                    raise ValueError(
+                        f'Release slot {occupied_day} is already taken by "{occupied_title}". '
+                        "Refresh planning to use the next available recommendation."
+                    )
 
             release_status = validate_state("release", episode_data.get("release_status", "unplanned"))
             production_status = validate_state("production", episode_data.get("production_status", "idea"))

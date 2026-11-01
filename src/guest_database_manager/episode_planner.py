@@ -1207,7 +1207,10 @@ def build_release_recommendations(
         chosen = scored_candidates[0]
         selected.append(chosen)
         remaining = [item for item in remaining if item is not chosen and item.get("id") != chosen.get("id")]
-        reserved_slots.add(slot.replace(second=0, microsecond=0))
+        # Reserved slots are represented by release-day strings throughout the
+        # planner.  Keeping the same representation here ensures every selected
+        # candidate advances to the next genuinely available weekly slot.
+        reserved_slots.add(slot.date().isoformat())
 
         chosen_category = _clean_text(chosen.get("category"))
         if chosen_category:

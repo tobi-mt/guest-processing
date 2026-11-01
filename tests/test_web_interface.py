@@ -4379,6 +4379,74 @@ def test_recommendations_skip_scheduled_release_day_even_when_time_differs(temp_
     assert planning["recommendations"][0]["recommended_release_date"] == expected_slot.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def test_recommendations_assign_each_candidate_a_distinct_available_slot(temp_db):
+    """The ranked queue should be tailored again for each successive weekly slot."""
+    service = GuestWebService(temp_db.db_path)
+    for index, (guest_name, category) in enumerate(
+        (("First Candidate", "Mental Health"), ("Second Candidate", "Faith"), ("Third Candidate", "Leadership")),
+        start=1,
+    ):
+        service.create_episode(
+            {
+                "guest_name": guest_name,
+                "guest_email": f"candidate-{index}@example.com",
+                "episode_title": f"Release Candidate {index}",
+                "topic": f"Distinct topic {index}",
+                "category": category,
+                "interview_date": f"2026-03-0{index}",
+                "release_status": "unplanned",
+                "production_status": "ready",
+                "promotion_status": "ready",
+            }
+        )
+
+    recommendations = service.list_planning()["recommendations"][:3]
+    recommended_dates = [item["recommended_release_date"] for item in recommendations]
+
+    assert len(recommendations) == 3
+    assert len(set(recommended_dates)) == 3
+    assert recommended_dates == sorted(recommended_dates)
+
+
+def test_scheduling_recommendation_rejects_slot_taken_after_recommendations_loaded(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    first = service.create_episode(
+        {
+            "guest_name": "First Scheduler",
+            "episode_title": "First Scheduled Episode",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    second = service.create_episode(
+        {
+            "guest_name": "Stale Recommendation",
+            "episode_title": "Stale Recommended Episode",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    slot = next_release_slot(datetime.now()).strftime("%Y-%m-%dT%H:%M")
+    service.update_episode(
+        first["id"],
+        {**first, "release_status": "scheduled", "release_date": slot, "enforce_readiness": True},
+    )
+
+    with pytest.raises(WebInterfaceError, match="already taken.*Refresh planning"):
+        service.update_episode(
+            second["id"],
+            {**second, "release_status": "scheduled", "release_date": slot, "enforce_readiness": True},
+        )
+
+    unchanged = temp_db.get_episode_by_id(second["id"])
+    assert unchanged["release_status"] == "unplanned"
+    assert not unchanged["release_date"]
+
+    recalculated = service.list_planning()["recommendations"]
+    second_recommendation = next(item for item in recalculated if item["id"] == second["id"])
+    assert second_recommendation["recommended_release_date"] != slot.replace("T", " ") + ":00"
+
+
 def test_released_episode_readiness_does_not_show_early_stage_blockers(temp_db):
     """Released episodes should not be described as too early in production."""
     service = GuestWebService(temp_db.db_path)
@@ -8222,7 +8290,7 @@ def test_validate_intake_payload_rejects_low_effort_answers():
                 "additional_info": "Not detailed",
             }
         )
-def test_operator_schedule_action_enforces_readiness_and_allows_reasoned_asset_override(temp_db):
+def test_operator_schedule_action_enforces_readiness_and_allows_reasoned_override(temp_db):
     service = GuestWebService(temp_db.db_path)
     payload = {
         "guest_name": "Readiness Guest",
@@ -8237,10 +8305,7 @@ def test_operator_schedule_action_enforces_readiness_and_allows_reasoned_asset_o
     with pytest.raises(WebInterfaceError, match="production ready"):
         service.create_episode(payload)
 
-    payload.update(
-        production_status="ready",
-        schedule_override_reason="Sponsor date requires scheduling before final artwork",
-    )
+    payload["schedule_override_reason"] = "Sponsor date requires scheduling before final production and artwork"
     episode = service.create_episode(payload)
     assert episode["release_status"] == "scheduled"
     assert "Sponsor date" in service.database.list_audit_events("episode", episode["id"])[0]["reason"]

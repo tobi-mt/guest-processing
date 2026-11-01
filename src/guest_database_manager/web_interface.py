@@ -4881,15 +4881,15 @@ class GuestWebService:
         parsed_priority_score = _clamp_priority_score(parsed_priority_score)
         if normalized_release_status == "scheduled" and bool(payload.get("enforce_readiness")):
             missing = []
+            schedule_override_reason = _normalize_text(payload.get("schedule_override_reason"))
             if not normalized_release_date:
                 missing.append("release date")
             if not _normalize_text(payload.get("guest_name")):
                 missing.append("guest name")
             if not _normalize_text(payload.get("episode_title")):
                 missing.append("episode title")
-            if normalized_production_status not in {"ready", "released"}:
-                missing.append("production ready")
-            schedule_override_reason = _normalize_text(payload.get("schedule_override_reason"))
+            if normalized_production_status not in {"ready", "released"} and not schedule_override_reason:
+                missing.append("production ready or an override reason")
             if normalized_promotion_status != "ready" and not schedule_override_reason:
                 missing.append("promotion ready or an override reason")
             if missing:

@@ -376,7 +376,7 @@ def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20261018.1' in html
+    assert 'operations.css?v=20261101.1' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -545,8 +545,8 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261016.1" in html
-    assert "operations.css?v=20261018.1" in html
+    assert "planning.js?v=20261101.2" in html
+    assert "operations.css?v=20261101.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript

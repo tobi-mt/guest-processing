@@ -1084,6 +1084,19 @@
   gap: 0.6rem;
 }
 
+.recommendation-schedule-override {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(196, 61, 0, 0.22);
+  border-radius: 0.75rem;
+  background: rgba(196, 61, 0, 0.045);
+}
+
+.recommendation-schedule-override label,
+.recommendation-schedule-override textarea {
+  width: 100%;
+}
+
 .recommendation-evidence {
   margin-top: 0.75rem;
   border-top: 1px solid rgba(73, 55, 40, 0.12);

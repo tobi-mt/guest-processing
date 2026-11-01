@@ -2778,6 +2778,8 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
     const signals = deriveRecommendationSignals(episode);
     const insights = splitRecommendationInsights(episode.recommendation_reason);
     const episodeNumberLabel = getEpisodeNumberLabel(episode, episodeNumberMap);
+    const needsScheduleOverride = !["ready", "released"].includes(normalizeText(episode.production_status))
+      || normalizeText(episode.promotion_status) !== "ready";
     const card = document.createElement("article");
     card.className = "operations-card recommendation-card";
     card.innerHTML = `
@@ -2803,6 +2805,15 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
           <button type="button" class="secondary-button" data-recommendation-action="edit">Review in editor</button>
         </div>
       </div>
+      ${needsScheduleOverride ? `
+        <div class="recommendation-schedule-override">
+          <label>
+            <span>Scheduling override reason</span>
+            <textarea data-recommendation-override-reason rows="2" maxlength="500" placeholder="Explain why this episode should be scheduled before production and promotion are ready."></textarea>
+          </label>
+          <p class="field-hint">Required for this episode. The reason is recorded in its audit history.</p>
+        </div>
+      ` : ""}
       ${signals.length ? `<div class="signal-list">${signals.map((signal) => `<span class="signal-chip ${signal.tone}">${signal.label}</span>`).join("")}</div>` : ""}
       <details class="recommendation-evidence">
         <summary>Why this recommendation</summary>
@@ -2881,7 +2892,17 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
     const clearAngleButton = card.querySelector("[data-recommendation-action='clear-angle']");
     const rejectRecommendationForm = card.querySelector(".recommendation-reject-form");
     const actionFeedbackNode = card.querySelector(".card-action-feedback");
+    const scheduleOverrideInput = card.querySelector("[data-recommendation-override-reason]");
     scheduleButton.addEventListener("click", async () => {
+      const scheduleOverrideReason = String(scheduleOverrideInput?.value || "").trim();
+      if (needsScheduleOverride && !scheduleOverrideReason) {
+        const message = "Enter a scheduling override reason before using this recommended slot.";
+        activeEpisodeActionFeedback = { id: episode.id, text: message, tone: "error" };
+        actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeEpisodeActionFeedback);
+        setMessage(episodeMessage, message, "error");
+        scheduleOverrideInput?.focus();
+        return;
+      }
       scheduleButton.disabled = true;
       scheduleButton.textContent = "Scheduling...";
       activeEpisodeActionFeedback = {
@@ -2896,6 +2917,7 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
           release_date: formatDateForDateTimeInput(episode.recommended_release_date),
           release_status: "scheduled",
           enforce_readiness: true,
+          schedule_override_reason: scheduleOverrideReason,
           priority_score: clampPriorityScore(
             episode.priority_score,
             suggestPriorityScoreForEpisode({
@@ -2944,6 +2966,10 @@ function renderRecommendations(recommendations, totalCount, episodeNumberMap) {
         setMessage(episodeMessage, error.message, "error");
         scheduleButton.disabled = false;
         scheduleButton.textContent = "Use Recommended Slot";
+        // The recommendation may have gone stale because another episode took
+        // the slot. Refresh in the background so every card is reassigned to the
+        // current set of available dates while preserving the visible error.
+        refreshPlanningQuietly();
       }
     });
     editButton.addEventListener("click", async () => {
