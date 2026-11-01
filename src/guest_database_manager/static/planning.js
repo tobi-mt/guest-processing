@@ -2064,7 +2064,7 @@ function filterEpisodes(episodes) {
 function filterRecommendations(recommendations) {
   const searchTerm = normalizeText(recommendationSearchInput.value);
   const category = recommendationCategoryFilter.value;
-  const sortMode = recommendationSort.value || "score";
+  const sortMode = recommendationSort.value || "recommended_date";
 
   const filtered = recommendations.filter((episode) => {
     // IMPORTANT: Exclude released episodes from Scheduling Intelligence

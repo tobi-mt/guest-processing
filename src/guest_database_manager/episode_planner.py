@@ -17,6 +17,10 @@ from guest_database_manager.production_governance import (
     classify_focus,
     flagship_eligibility,
 )
+from guest_database_manager.openai_scheduling_copilot import build_month_context
+
+
+RECOMMENDATION_HORIZON_WEEKS = 12
 
 
 def _clean_text(value: Any) -> str:
@@ -425,8 +429,25 @@ def _month_theme_score(episode: Dict[str, Any], slot_date: datetime) -> tuple[fl
         if _clean_text(item)
     )
     haystack = " ".join([title, topic, category, notes, recommendation_reason, research_topics, research_signals])
-    keywords = SEASONAL_THEME_KEYWORDS.get(slot_date.month, ())
-    matched = [keyword for keyword in keywords if keyword in haystack]
+    month_context = build_month_context(slot_date)
+    context_phrases = [
+        _clean_text(month_context.get("theme")),
+        *[_clean_text(item) for item in month_context.get("timely_signals", [])],
+        *[_clean_text(item) for item in month_context.get("observances", [])],
+        *[_clean_text(item) for item in month_context.get("christian_moments", [])],
+    ]
+    context_stopwords = {
+        "after", "awareness", "centered", "conversation", "depth", "into", "meaningful",
+        "month", "momentum", "season", "seasonal", "stories", "through", "transition",
+    }
+    context_keywords = {
+        token
+        for phrase in context_phrases
+        for token in re.findall(r"[a-z0-9']+", phrase.casefold())
+        if len(token) >= 4 and token not in context_stopwords
+    }
+    keywords = tuple(dict.fromkeys((*SEASONAL_THEME_KEYWORDS.get(slot_date.month, ()), *sorted(context_keywords))))
+    matched = [keyword for keyword in keywords if re.search(rf"\b{re.escape(keyword)}\b", haystack)]
     if saved_window:
         saved_signals = [
             _clean_text(item) for item in saved_window.get("matched_signals", []) if _clean_text(item)
@@ -981,9 +1002,9 @@ def build_release_recommendations(
     episodes: Iterable[Dict[str, Any]],
     *,
     reference: datetime,
-    limit: int = 5,
+    limit: int = RECOMMENDATION_HORIZON_WEEKS,
 ) -> List[Dict[str, Any]]:
-    """Recommend the next episodes to release based on Mirror Talk history."""
+    """Fill each open slot in the 12-week horizon after scoring every candidate for that date."""
     episodes = list(episodes)
     released_history = [
         episode for episode in episodes
@@ -1022,7 +1043,7 @@ def build_release_recommendations(
             category_counts[category] = category_counts.get(category, 0) + 1
 
     base_ranked: List[Dict[str, Any]] = []
-    for episode in queue:
+    for candidate_index, episode in enumerate(queue):
         base_score, reasons = _base_episode_score(
             episode,
             reference=reference,
@@ -1031,10 +1052,13 @@ def build_release_recommendations(
             recent_categories=recent_categories,
         )
         enriched = dict(episode)
+        enriched["_recommendation_candidate_key"] = candidate_index
         enriched["base_priority_score"] = round(base_score, 1)
         enriched["base_recommendation_reasons"] = list(dict.fromkeys(reasons))
         base_ranked.append(enriched)
 
+    first_horizon_slot = next_release_slot(reference)
+    horizon_end = first_horizon_slot + timedelta(weeks=RECOMMENDATION_HORIZON_WEEKS - 1)
     slot = _next_available_release_slot(reference, reserved_slots)
     selected: List[Dict[str, Any]] = []
     remaining = list(base_ranked)
@@ -1045,7 +1069,7 @@ def build_release_recommendations(
         if _clean_text(item.get("guest_name"))
     ]
 
-    while remaining and len(selected) < limit:
+    while remaining and len(selected) < limit and slot <= horizon_end:
         scored_candidates: List[Dict[str, Any]] = []
         for episode in remaining:
             score = float(episode.get("base_priority_score") or 0)
@@ -1204,9 +1228,32 @@ def build_release_recommendations(
             )
         )
 
-        chosen = scored_candidates[0]
+        chosen_source = scored_candidates[0]
+        chosen = dict(chosen_source)
+        chosen_key = chosen.pop("_recommendation_candidate_key")
+        runner_up_score = (
+            float(scored_candidates[1].get("priority_score") or 0)
+            if len(scored_candidates) > 1
+            else None
+        )
+        chosen["slot_evaluation"] = {
+            "evaluated_candidate_count": len(scored_candidates),
+            "selected_rank": 1,
+            "runner_up_score": runner_up_score,
+            "score_margin": (
+                round(float(chosen.get("priority_score") or 0) - runner_up_score, 1)
+                if runner_up_score is not None
+                else None
+            ),
+            "horizon_start": first_horizon_slot.date().isoformat(),
+            "horizon_end": horizon_end.date().isoformat(),
+            "method": "All eligible unscheduled episodes were rescored for this specific release date.",
+        }
         selected.append(chosen)
-        remaining = [item for item in remaining if item is not chosen and item.get("id") != chosen.get("id")]
+        remaining = [
+            item for item in remaining
+            if item.get("_recommendation_candidate_key") != chosen_key
+        ]
         # Reserved slots are represented by release-day strings throughout the
         # planner.  Keeping the same representation here ensures every selected
         # candidate advances to the next genuinely available weekly slot.

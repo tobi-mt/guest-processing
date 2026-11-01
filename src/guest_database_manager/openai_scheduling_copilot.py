@@ -181,18 +181,18 @@ class OpenAISchedulingCopilot:
                 "current_month_context": month_context,
                 "recommendations": [],
             }
-        recommendations = recommendations[:MAX_RECOMMENDATIONS]
+        analysis_candidates = recommendations[:MAX_RECOMMENDATIONS]
 
         prompt_payload = {
             "reference_date": reference.strftime("%Y-%m-%d"),
             "current_month_context": month_context,
-            "recommendations": [self._serialize_candidate(item) for item in recommendations],
+            "recommendations": [self._serialize_candidate(item) for item in analysis_candidates],
             "recent_releases": [self._serialize_release(item) for item in list(released_history)[:MAX_RECENT_RELEASES]],
         }
         result = self._call_openai(prompt_payload)
         analyses = result.get("analyses", [])
         analysis_by_id = {int(item["id"]): item for item in analyses if str(item.get("id", "")).isdigit()}
-        fallback_analyses = self._build_grounded_fallback_analyses(recommendations, month_context)
+        fallback_analyses = self._build_grounded_fallback_analyses(analysis_candidates, month_context)
 
         enriched: list[Dict[str, Any]] = []
         for recommendation in recommendations:
@@ -227,31 +227,32 @@ class OpenAISchedulingCopilot:
 
         enriched.sort(
             key=lambda item: (
-                -float(item.get("priority_score") or 0),
                 str(item.get("recommended_release_date") or ""),
+                -float(item.get("priority_score") or 0),
                 str(item.get("guest_name") or ""),
             )
         )
         enriched_count = sum(1 for item in enriched if item.get("ai_copilot"))
-        model_analysis_count = sum(1 for item in recommendations if analysis_by_id.get(int(item.get("id") or 0)))
+        model_analysis_count = sum(1 for item in analysis_candidates if analysis_by_id.get(int(item.get("id") or 0)))
         fallback_analysis_count = max(0, enriched_count - model_analysis_count)
+        reviewed_count = len(analysis_candidates)
         if enriched_count:
             status = "active"
             if fallback_analysis_count > 0 and model_analysis_count > 0:
                 message = (
-                    f"AI copilot enriched {enriched_count}/{len(recommendations)} top recommendation{'s' if len(recommendations) != 1 else ''}; "
+                    f"AI copilot enriched {enriched_count}/{reviewed_count} reviewed recommendation{'s' if reviewed_count != 1 else ''}; "
                     f"{model_analysis_count} with OpenAI analysis, {fallback_analysis_count} with grounded fallback. "
                     f"Only top {MAX_RECOMMENDATIONS} candidates get AI enrichment to manage API costs."
                 )
             elif fallback_analysis_count > 0:
                 message = (
-                    f"AI copilot provided grounded fallback guidance for {fallback_analysis_count}/{len(recommendations)} researched recommendation"
+                    f"AI copilot provided grounded fallback guidance for {fallback_analysis_count}/{reviewed_count} researched recommendation"
                     f"{'s' if fallback_analysis_count != 1 else ''} using current-month context and saved evidence. "
                     f"Limit: {MAX_RECOMMENDATIONS} candidates for cost efficiency."
                 )
             else:
                 message = (
-                    f"AI copilot enriched {enriched_count}/{len(recommendations)} top recommendation{'s' if len(recommendations) != 1 else ''} "
+                    f"AI copilot enriched {enriched_count}/{reviewed_count} reviewed recommendation{'s' if reviewed_count != 1 else ''} "
                     f"with monthly themes and timing insights. Limited to {MAX_RECOMMENDATIONS} candidates to manage OpenAI API costs."
                 )
         elif result.get("status") == "fallback":

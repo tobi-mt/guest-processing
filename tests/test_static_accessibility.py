@@ -545,10 +545,21 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261101.2" in html
+    assert "planning.js?v=20261101.3" in html
     assert "operations.css?v=20261101.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
+
+
+def test_recommendations_default_to_chronological_release_slot_order() -> None:
+    html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+    sort_start = html.index('<select id="recommendation-sort">')
+    sort_end = html.index("</select>", sort_start)
+    sort_markup = html[sort_start:sort_end]
+
+    assert sort_markup.index('value="recommended_date"') < sort_markup.index('value="score"')
+    assert 'recommendationSort.value || "recommended_date"' in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript
 
 

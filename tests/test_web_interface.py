@@ -1423,6 +1423,40 @@ def test_openai_scheduling_copilot_builds_grounded_fallback_when_model_returns_n
     assert result["recommendations"][0]["ai_copilot"]["alignment_score"] >= 58
 
 
+def test_openai_copilot_preserves_unreviewed_horizon_recommendations():
+    copilot = OpenAISchedulingCopilot(api_key="test", model="gpt-5", live_month_signals_enabled=False)
+    recommendations = [
+        {
+            "id": index,
+            "guest_name": f"Guest {index}",
+            "episode_title": f"Episode {index}",
+            "topic": "healing and purpose",
+            "recommended_release_date": f"2026-05-{index + 4:02d} 05:00:00",
+            "priority_score": 100 - index,
+            "production_status": "ready",
+            "promotion_status": "ready",
+            "why_now": [],
+            "watchouts": [],
+        }
+        for index in range(1, 7)
+    ]
+    captured = {}
+
+    def fake_call(payload):
+        captured["reviewed_ids"] = [item["id"] for item in payload["recommendations"]]
+        return {"status": "active", "analyses": []}
+
+    copilot._call_openai = fake_call  # type: ignore[method-assign]
+    result = copilot.enrich_recommendations(
+        recommendations,
+        reference=datetime(2026, 5, 1),
+        released_history=[],
+    )
+
+    assert captured["reviewed_ids"] == [1, 2, 3, 4]
+    assert {item["id"] for item in result["recommendations"]} == {1, 2, 3, 4, 5, 6}
+
+
 def test_openai_scheduling_copilot_adds_cached_live_month_signals(monkeypatch):
     """The scheduling copilot should merge cached live month headlines into the month context."""
     captured = {}
@@ -4406,6 +4440,83 @@ def test_recommendations_assign_each_candidate_a_distinct_available_slot(temp_db
     assert len(recommendations) == 3
     assert len(set(recommended_dates)) == 3
     assert recommended_dates == sorted(recommended_dates)
+
+
+def test_recommendations_fill_every_open_date_in_twelve_week_horizon():
+    reference = datetime(2026, 10, 25, 12, 0, 0)
+    first_slot = next_release_slot(reference)
+    reserved_offsets = {2, 7}
+    episodes = [
+        {
+            "id": 100 + offset,
+            "guest_name": f"Scheduled Guest {offset}",
+            "episode_title": f"Scheduled Episode {offset}",
+            "release_status": "scheduled",
+            "release_date": (first_slot + timedelta(weeks=offset)).strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        for offset in reserved_offsets
+    ]
+    episodes.extend(
+        {
+            "id": index,
+            "guest_name": f"Available Guest {index}",
+            "episode_title": f"Available Episode {index}",
+            "topic": f"Purpose and healing story {index}",
+            "category": "Personal Development",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+        for index in range(1, 13)
+    )
+
+    recommendations = build_release_recommendations(episodes, reference=reference)
+    recommended_days = {item["recommended_release_date"][:10] for item in recommendations}
+    expected_open_days = {
+        (first_slot + timedelta(weeks=offset)).date().isoformat()
+        for offset in range(12)
+        if offset not in reserved_offsets
+    }
+
+    assert recommended_days == expected_open_days
+    assert len(recommendations) == 10
+    assert recommendations[0]["slot_evaluation"]["evaluated_candidate_count"] == 12
+    assert recommendations[-1]["slot_evaluation"]["evaluated_candidate_count"] == 3
+    assert all(
+        item["slot_evaluation"]["method"].startswith("All eligible unscheduled episodes")
+        for item in recommendations
+    )
+
+
+def test_each_release_date_rescores_all_candidates_for_that_month_theme():
+    recommendations = build_release_recommendations(
+        [
+            {
+                "id": 1,
+                "guest_name": "Gratitude Guest",
+                "episode_title": "Gratitude and Community Service",
+                "topic": "thankfulness, giving, service and community care",
+                "category": "Community",
+                "production_status": "ready",
+                "promotion_status": "ready",
+            },
+            {
+                "id": 2,
+                "guest_name": "Advent Guest",
+                "episode_title": "Advent Hope and Peace",
+                "topic": "faith, hope, rest and year-end reflection",
+                "category": "Faith",
+                "production_status": "ready",
+                "promotion_status": "ready",
+            },
+        ],
+        reference=datetime(2026, 11, 22, 12, 0, 0),
+    )
+
+    assert [item["id"] for item in recommendations] == [1, 2]
+    assert recommendations[0]["seasonal_fit"]["month"] == "November"
+    assert recommendations[1]["seasonal_fit"]["month"] == "December"
+    assert recommendations[0]["slot_evaluation"]["evaluated_candidate_count"] == 2
+    assert recommendations[1]["slot_evaluation"]["evaluated_candidate_count"] == 1
 
 
 def test_scheduling_recommendation_rejects_slot_taken_after_recommendations_loaded(temp_db):
