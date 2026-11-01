@@ -841,6 +841,7 @@ function renderAiCopilotStatus(statusPayload) {
   const liveUpdatedAt = monthContext?.live_signals_updated_at ? formatDateTime(monthContext.live_signals_updated_at) : "";
   const diagnostics = statusPayload?.diagnostics || {};
   const filteredOut = Number(diagnostics.filtered_out_candidates || 0);
+  const trustExcluded = Number(diagnostics.trust_excluded_candidates || 0);
   const trusted = Number(diagnostics.trusted_recommendations || diagnostics.candidate_count || 0);
   const humanSuppressed = Number(diagnostics.human_suppressed_candidates || 0);
   aiCopilotStatus.className = `operations-preview ai-copilot-status ${tone}`.trim();
@@ -852,6 +853,7 @@ function renderAiCopilotStatus(statusPayload) {
     ${monthContext?.month_label ? `<p><strong>Current month lens:</strong> ${escapeHtml(monthContext.month_label)} · ${escapeHtml(monthContext.theme || "")}</p>` : ""}
     ${observances.length ? `<p><strong>Editorial observances:</strong> ${observances.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}
     ${filteredOut ? `<p><strong>Recommendation safeguards:</strong> ${escapeHtml(String(trusted))} trusted recommendation${trusted === 1 ? "" : "s"} shown · ${escapeHtml(String(filteredOut))} stale or mismatched candidate${filteredOut === 1 ? "" : "s"} filtered out.</p>` : ""}
+    ${trustExcluded ? `<p><strong>Identity safeguards:</strong> ${escapeHtml(String(trustExcluded))} candidate${trustExcluded === 1 ? " was" : "s were"} excluded before slot assignment, and the remaining episodes were recalculated across every open date.</p>` : ""}
     ${humanSuppressed ? `<p><strong>Editorial feedback:</strong> ${escapeHtml(String(humanSuppressed))} rejected candidate${humanSuppressed === 1 ? " is" : "s are"} suppressed from ranking, research, and AI review.</p>` : ""}
     ${liveHeadlines.length ? `<div class="insight-stack"><strong class="insight-label">Live web signals${liveSource ? ` · ${escapeHtml(liveSource)}` : ""}</strong><ul>${liveHeadlines.map((item) => `<li>${escapeHtml(item.title || item)}</li>`).join("")}</ul>${liveUpdatedAt ? `<p class="inline-muted">Updated ${escapeHtml(liveUpdatedAt)}</p>` : ""}</div>` : ""}
     ${christianMoments.length ? `<p><strong>Faith calendar:</strong> ${christianMoments.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}</p>` : ""}

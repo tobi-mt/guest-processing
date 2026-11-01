@@ -2895,6 +2895,49 @@ def test_imported_queue_rows_generate_release_recommendations_without_guest_prof
     assert planning["ai_copilot_status"]["diagnostics"]["trusted_recommendations"] == 1
 
 
+def test_untrusted_top_candidate_is_removed_before_slot_assignment(temp_db):
+    """Identity safeguards must trigger a recalculation, not leave the first open date blank."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_guest({"full_name": "Known Guest", "email": "shared@example.com"})
+    service.create_episode(
+        {
+            "guest_name": "AAA Wrong Guest",
+            "guest_email": "shared@example.com",
+            "episode_title": "Gratitude Service and Community Care",
+            "topic": "gratitude giving service legacy impact",
+            "category": "Community",
+            "production_status": "ready",
+            "promotion_status": "ready",
+        }
+    )
+    safe_ids = []
+    for index in range(5):
+        safe = service.create_episode(
+            {
+                "guest_name": f"Safe Standalone Guest {index}",
+                "guest_email": f"safe-standalone-{index}@example.com",
+                "episode_title": f"A Safe Available Conversation {index}",
+                "topic": f"purpose and personal growth {index}",
+                "category": "Personal Development",
+                "production_status": "ready",
+                "promotion_status": "ready",
+            }
+        )
+        safe_ids.append(safe["id"])
+
+    planning = service.list_planning(force_refresh=True)
+    first_slot = next_release_slot(datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+
+    recommended_ids = {item["id"] for item in planning["recommendations"]}
+    recommended_dates = {item["recommended_release_date"] for item in planning["recommendations"]}
+    fifth_open_slot = next_release_slot(datetime.now()) + timedelta(weeks=4)
+
+    assert recommended_ids == set(safe_ids)
+    assert planning["recommendations"][0]["recommended_release_date"] == first_slot
+    assert fifth_open_slot.strftime("%Y-%m-%d %H:%M:%S") in recommended_dates
+    assert planning["ai_copilot_status"]["diagnostics"]["trust_excluded_candidates"] == 1
+
+
 def test_ai_scheduling_copilot_receives_imported_queue_candidates(monkeypatch, temp_db):
     """AI scheduling should not report no_candidates for trusted standalone queue rows."""
     service = GuestWebService(temp_db.db_path)

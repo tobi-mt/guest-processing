@@ -1881,8 +1881,11 @@ class GuestWebService:
             
             enriched_episodes.append(enriched)
         
+        trusted_planning_episodes, trust_excluded_count = self._trusted_recommendation_planning_inputs(
+            enriched_episodes, guest_indexes
+        )
         recommendations = apply_active_policy(
-            self.db_path, build_release_recommendations(enriched_episodes, reference=datetime.now())
+            self.db_path, build_release_recommendations(trusted_planning_episodes, reference=datetime.now())
         )
         
         filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
@@ -1895,6 +1898,7 @@ class GuestWebService:
             "base_candidates": len(recommendations),
             "trusted_recommendations": len(filtered_recommendations),
             "filtered_out_candidates": max(len(recommendations) - len(filtered_recommendations), 0),
+            "trust_excluded_candidates": trust_excluded_count,
             "human_suppressed_candidates": len(rejected_recommendations),
         }
         
@@ -1956,8 +1960,11 @@ class GuestWebService:
             
             enriched_episodes.append(enriched)
 
+        trusted_planning_episodes, _trust_excluded_count = self._trusted_recommendation_planning_inputs(
+            enriched_episodes, guest_indexes
+        )
         recommendations = apply_active_policy(
-            self.db_path, build_release_recommendations(enriched_episodes, reference=datetime.now())
+            self.db_path, build_release_recommendations(trusted_planning_episodes, reference=datetime.now())
         )
         
         filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
@@ -1984,8 +1991,11 @@ class GuestWebService:
                     if previous_updated_at != _normalize_text(auto_research.get("updated_at")) or previous_mode != _normalize_text(auto_research.get("research_mode")):
                         auto_researched_count += 1
             if auto_researched_count:
+                trusted_planning_episodes, _trust_excluded_count = self._trusted_recommendation_planning_inputs(
+                    enriched_episodes, guest_indexes
+                )
                 recommendations = apply_active_policy(
-                    self.db_path, build_release_recommendations(enriched_episodes, reference=datetime.now())
+                    self.db_path, build_release_recommendations(trusted_planning_episodes, reference=datetime.now())
                 )
                 filtered_recommendations = self._filter_trusted_recommendations(recommendations, guest_indexes)
         
@@ -2037,6 +2047,32 @@ class GuestWebService:
             if self._is_trusted_standalone_recommendation(recommendation, guest_indexes):
                 filtered.append(dict(recommendation))
         return filtered
+
+    def _trusted_recommendation_planning_inputs(
+        self,
+        episodes: Iterable[Dict[str, Any]],
+        guest_indexes: Dict[str, Any],
+    ) -> tuple[list[Dict[str, Any]], int]:
+        """Filter open candidates before slot assignment so trust checks cannot create date gaps."""
+        trusted: list[Dict[str, Any]] = []
+        excluded = 0
+        for episode in episodes:
+            release_status = _normalize_text(episode.get("release_status")).lower()
+            if release_status in {"released", "scheduled"}:
+                trusted.append(dict(episode))
+                continue
+
+            matched_guest = self._find_matching_guest_strict(episode, guest_indexes)
+            if matched_guest:
+                trusted_episode = dict(episode)
+                trusted_episode["guest_name"] = matched_guest.get("full_name") or matched_guest.get("name")
+                trusted.append(trusted_episode)
+                continue
+            if self._is_trusted_standalone_recommendation(episode, guest_indexes):
+                trusted.append(dict(episode))
+                continue
+            excluded += 1
+        return trusted, excluded
 
     def _is_trusted_standalone_recommendation(
         self,
