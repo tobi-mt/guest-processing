@@ -5423,6 +5423,56 @@ def test_web_service_can_return_email_template(monkeypatch, temp_db):
     assert rejection_template["subject"] == "Declined"
 
 
+def test_smart_email_pipeline_tailors_from_approved_template_and_preserves_links(monkeypatch, temp_db):
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Amina Hart", "email": "amina@example.com", "profession": "Author"})
+    captured = {}
+
+    class Assistant:
+        def tailor_email_draft(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "subject": "A thoughtful next step",
+                "body": "Hi Amina,\n\nYour work as an author fits this conversation.\nhttps://example.com/book\n\nTobi",
+            }
+
+    monkeypatch.setattr(service, "_get_ai_assistant", lambda: Assistant())
+    result = service._smart_email_draft(
+        email_type="accepted",
+        record=guest,
+        template={"subject": "Welcome", "body": "Hi Amina\nhttps://example.com/book"},
+        operational_context={"booking_url": "https://example.com/book"},
+        tailor=True,
+        representative_copied=True,
+    )
+
+    assert result["tailored"] is True
+    assert result["draft_source"] == "ai_tailored_from_approved_template"
+    assert captured["representative_copied"] is True
+    assert captured["base_subject"] == "Welcome"
+
+
+def test_smart_email_pipeline_falls_back_when_tailoring_drops_required_link(monkeypatch, temp_db):
+    service = GuestWebService(temp_db.db_path)
+
+    class Assistant:
+        def tailor_email_draft(self, **kwargs):
+            return {"subject": "Changed", "body": "The required booking link was removed."}
+
+    monkeypatch.setattr(service, "_get_ai_assistant", lambda: Assistant())
+    result = service._smart_email_draft(
+        email_type="booking_confirmation",
+        record={"guest_name": "Amina"},
+        template={"subject": "Booked", "body": "Join at https://example.com/studio"},
+        tailor=True,
+    )
+
+    assert result["subject"] == "Booked"
+    assert result["body"] == "Join at https://example.com/studio"
+    assert result["tailored"] is False
+    assert "safety validation" in result["tailoring_notice"]
+
+
 def test_acceptance_template_uses_guest_booking_link(monkeypatch, temp_db):
     """Accepted-guest email previews should include the guest-specific booking link."""
 
@@ -6472,8 +6522,8 @@ def test_web_service_can_send_custom_email_body(monkeypatch, temp_db):
     assert updated_guest["email_status"] == "accepted"
 
 
-def test_web_service_can_send_custom_email_to_additional_recipients(monkeypatch, temp_db):
-    """The dashboard composer can add validated, deduplicated To recipients."""
+def test_web_service_can_send_custom_email_with_cc_recipients(monkeypatch, temp_db):
+    """The dashboard composer keeps the guest in To and representatives in CC."""
 
     class StubEmailManager:
         def __init__(self):
@@ -6485,8 +6535,9 @@ def test_web_service_can_send_custom_email_to_additional_recipients(monkeypatch,
         def is_configured(self):
             return self.configured
 
-        def send_email(self, to_email, subject, body, idempotency_key=""):
-            assert to_email == ["amina@example.com", "producer@example.com", "agent@example.org"]
+        def send_email(self, to_email, subject, body, idempotency_key="", cc_emails=None):
+            assert to_email == "amina@example.com"
+            assert cc_emails == ["producer@example.com", "agent@example.org"]
             return True
 
     monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
@@ -7573,8 +7624,9 @@ def test_web_service_can_preview_and_send_episode_appreciation(monkeypatch, temp
             assert guest_name == "Natalie Bouchard"
             return {"subject": "Thank You", "body": "We appreciate you."}
 
-        def send_email(self, to_email, subject, body, idempotency_key=""):
-            assert to_email == ["natalie@example.com", "producer@example.com"]
+        def send_email(self, to_email, subject, body, idempotency_key="", cc_emails=None):
+            assert to_email == "natalie@example.com"
+            assert cc_emails == ["producer@example.com"]
             assert subject == "Thank You"
             assert "appreciate" in body.lower()
             return True
@@ -7626,8 +7678,9 @@ def test_web_service_can_preview_and_send_released_episode_email(monkeypatch, te
             assert files_url == "https://downloads.mirrortalkpodcast.com/jordan-rivers"
             return {"subject": "Your Mirror Talk episode is now live", "body": "Show notes and files are ready."}
 
-        def send_email(self, to_email, subject, body, idempotency_key=""):
-            assert to_email == ["jordan@example.com", "agent@example.org"]
+        def send_email(self, to_email, subject, body, idempotency_key="", cc_emails=None):
+            assert to_email == "jordan@example.com"
+            assert cc_emails == ["agent@example.org"]
             assert subject == "Your Mirror Talk episode is now live"
             assert "files" in body.lower()
             return True

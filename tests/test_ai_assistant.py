@@ -109,6 +109,62 @@ def test_questions_receive_full_application_context(monkeypatch):
     assert "Message they want listeners to take away" in captured["prompt"]
 
 
+def test_email_research_context_is_allowlisted_and_more_discreet_with_representative():
+    guest = _guest()
+    guest["guest_research"] = {
+        "summary": "A verified public profile about caregiver advocacy.",
+        "likely_topics": ["Caregiving", "Boundaries"],
+        "fit_score": 9,
+        "concerns": ["INTERNAL CONCERN MUST NOT APPEAR"],
+        "sources": [{"title": "Avery Stone profile", "description": "Public work supporting caregivers."}],
+        "cache_status": "ready",
+    }
+
+    normal = AIAssistant._email_research_context(
+        guest, email_type="accepted", representative_copied=False,
+    )
+    copied = AIAssistant._email_research_context(
+        guest, email_type="accepted", representative_copied=True,
+    )
+
+    assert "Caregiving, Boundaries" in normal
+    assert "verified public profile" in normal
+    assert "Public work supporting caregivers" in normal
+    assert "fit_score" not in normal
+    assert "INTERNAL CONCERN" not in normal
+    assert "verified public profile" not in copied
+    assert "Public work supporting caregivers" not in copied
+    assert "Avery Stone profile" in copied
+
+
+def test_tailored_email_prompt_receives_intake_and_allowlisted_research(monkeypatch):
+    guest = _guest()
+    guest["guest_research"] = {
+        "summary": "A verified public profile about caregiver advocacy.",
+        "likely_topics": ["Caregiving"],
+        "sources": [{"title": "Avery Stone profile"}],
+    }
+    assistant = AIAssistant(api_key="test")
+    captured = {}
+
+    def fake_call(messages, **kwargs):
+        captured["prompt"] = messages[-1]["content"]
+        return json.dumps({"subject": "Welcome", "body": "Book here: https://example.com/book"})
+
+    monkeypatch.setattr(assistant, "_call_openai", fake_call)
+    result = assistant.tailor_email_draft(
+        email_type="accepted",
+        guest_data=guest,
+        base_subject="Welcome",
+        base_body="Book here: https://example.com/book",
+    )
+
+    assert result["subject"] == "Welcome"
+    assert "Why they want to appear" in captured["prompt"]
+    assert "verified public profile" in captured["prompt"]
+    assert "Public sources reviewed: Avery Stone profile" in captured["prompt"]
+
+
 def test_manuscript_uses_intake_and_research_and_enforces_structure(monkeypatch):
     guest = _guest()
     guest["guest_research"] = {"summary": "A verified public profile about caregiver advocacy."}

@@ -954,6 +954,7 @@ Mirror Talk Podcast"""
         body: str,
         attachments: Optional[Sequence[Dict[str, object]]] = None,
         idempotency_key: str = "",
+        cc_emails: Optional[Sequence[str]] = None,
     ) -> bool:
         """Send an email through the Resend HTTPS API."""
         if not self.resend_api_key or not self.from_email:
@@ -968,8 +969,9 @@ Mirror Talk Podcast"""
             "text": body,
             "html": self._build_html_body(body),
         }
-        if self.cc_email:
-            payload["cc"] = [self.cc_email]
+        cc_recipients = self._resolve_cc_recipients(recipients, cc_emails)
+        if cc_recipients:
+            payload["cc"] = cc_recipients
         if attachments:
             payload["attachments"] = [
                 {
@@ -1027,6 +1029,7 @@ Mirror Talk Podcast"""
         body: str,
         attachments: Optional[Sequence[Dict[str, object]]] = None,
         idempotency_key: str = "",
+        cc_emails: Optional[Sequence[str]] = None,
     ) -> bool:
         """Send an email.
 
@@ -1051,6 +1054,7 @@ Mirror Talk Podcast"""
                 body,
                 attachments=attachments,
                 idempotency_key=idempotency_key,
+                cc_emails=cc_emails,
             )
             if not sent:
                 self._report_send_failure(self.last_error)
@@ -1062,14 +1066,15 @@ Mirror Talk Podcast"""
             msg = MIMEMultipart("mixed")
             msg['From'] = f"{self.from_name} <{self.from_email}>" if self.from_name else self.from_email
             recipients = self._normalize_recipients(to_email)
+            cc_recipients = self._resolve_cc_recipients(recipients, cc_emails)
             msg['To'] = ", ".join(recipients)
             msg['Subject'] = subject
             if idempotency_key:
                 # Resend's SMTP gateway honors this header. Other SMTP servers
                 # preserve it for traceability even when they cannot deduplicate.
                 msg['Resend-Idempotency-Key'] = idempotency_key[:256]
-            if self.cc_email:
-                msg['Cc'] = self.cc_email
+            if cc_recipients:
+                msg['Cc'] = ", ".join(cc_recipients)
 
             alternatives = MIMEMultipart("alternative")
             alternatives.attach(MIMEText(body, "plain", "utf-8"))
@@ -1087,8 +1092,7 @@ Mirror Talk Podcast"""
                 server.starttls(context=context)
                 server.login(self.username, self.password)
                 envelope_recipients = list(recipients)
-                if self.cc_email:
-                    envelope_recipients.append(self.cc_email)
+                envelope_recipients.extend(cc_recipients)
                 server.send_message(msg, to_addrs=envelope_recipients)
 
             return True
@@ -1114,6 +1118,25 @@ Mirror Talk Podcast"""
         if not recipients:
             raise ValueError("At least one recipient email address is required.")
         return recipients
+
+    def _resolve_cc_recipients(
+        self,
+        primary_recipients: Sequence[str],
+        cc_emails: Optional[Sequence[str]],
+    ) -> list[str]:
+        """Combine the configured archive CC with reviewed CCs, excluding primary recipients."""
+        raw_cc = list(cc_emails or [])
+        if self.cc_email:
+            raw_cc.append(self.cc_email)
+        primary = {recipient.casefold() for recipient in primary_recipients}
+        resolved: list[str] = []
+        seen = set(primary)
+        for recipient in self._normalize_recipients(raw_cc) if raw_cc else []:
+            normalized = recipient.casefold()
+            if normalized not in seen:
+                resolved.append(recipient)
+                seen.add(normalized)
+        return resolved
 
     def send_acceptance_email(self, guest_name: str, to_email: str, custom_message: str = "", booking_url: str = "", idempotency_key: str = "") -> bool:
         """Send acceptance email to a guest.

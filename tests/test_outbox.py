@@ -181,15 +181,20 @@ def test_resend_receives_provider_idempotency_header(monkeypatch):
 
     monkeypatch.setattr("guest_database_manager.email_manager.requests.post", fake_post)
     manager = EmailManager()
-    manager.configure_resend(api_key="resend-key", from_email="host@example.com")
+    manager.configure_resend(
+        api_key="resend-key", from_email="host@example.com", cc_email="archive@example.com"
+    )
 
     assert manager.send_email(
         "guest@example.com",
         "Subject",
         "Body",
         idempotency_key="booking_confirmation:42:2026-08-02",
+        cc_emails=["agent@example.com", "GUEST@example.com"],
     )
     assert captured["headers"]["Idempotency-Key"] == "booking_confirmation:42:2026-08-02"
+    assert captured["json"]["to"] == ["guest@example.com"]
+    assert captured["json"]["cc"] == ["agent@example.com", "archive@example.com"]
 
 
 def test_smtp_email_includes_plain_text_and_html_alternatives(monkeypatch):
@@ -217,14 +222,20 @@ def test_smtp_email_includes_plain_text_and_html_alternatives(monkeypatch):
 
     monkeypatch.setattr("guest_database_manager.email_manager.smtplib.SMTP", SMTP)
     manager = EmailManager()
-    manager.configure_smtp("smtp.example.test", 587, "user", "password", "host@example.com")
+    manager.configure_smtp(
+        "smtp.example.test", 587, "user", "password", "host@example.com", cc_email="archive@example.com"
+    )
 
     assert manager.send_email(
         "guest@example.com",
         "Connect with Mirror Talk",
         "Listen here:\nhttps://mirrortalkpodcast.com/listen-connect/",
+        cc_emails=["agent@example.com", "GUEST@example.com", "archive@example.com"],
     )
 
+    assert captured["message"]["To"] == "guest@example.com"
+    assert captured["message"]["Cc"] == "agent@example.com, archive@example.com"
+    assert captured["to_addrs"] == ["guest@example.com", "agent@example.com", "archive@example.com"]
     alternatives = captured["message"].get_payload()[0]
     assert alternatives.get_content_subtype() == "alternative"
     assert [part.get_content_subtype() for part in alternatives.get_payload()] == ["plain", "html"]

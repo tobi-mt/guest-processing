@@ -1446,9 +1446,9 @@ function renderReleaseComposer(node, episode, preview) {
   node.innerHTML = `
     <div class="inline-editor-title">Release Email</div>
     <label class="full-width">
-      <span>Additional recipients <small>(optional)</small></span>
+      <span>CC representatives <small>(optional)</small></span>
       <input data-release-field="additionalRecipients" type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" />
-      <small>Separate multiple email addresses with commas.</small>
+      <small>The guest remains in To. Everyone copied here can see the email exchange.</small>
     </label>
     <label class="full-width">
       <span>Subject</span>
@@ -1459,6 +1459,7 @@ function renderReleaseComposer(node, episode, preview) {
       <textarea data-release-field="body" rows="12">${escapeHtml(preview.body || "")}</textarea>
     </label>
     <div class="inline-editor-actions full-width">
+      <button type="button" class="secondary-button" data-release-composer-action="tailor">Tailor with AI</button>
       <button type="button" class="primary-button" data-release-composer-action="send">Send Edited Release Email</button>
       <button type="button" class="ghost-button" data-release-composer-action="close">Close</button>
     </div>
@@ -1469,12 +1470,29 @@ function renderReleaseComposer(node, episode, preview) {
   const bodyField = node.querySelector("[data-release-field='body']");
   const additionalRecipientsField = node.querySelector("[data-release-field='additionalRecipients']");
   const sendButton = node.querySelector("[data-release-composer-action='send']");
+  const tailorButton = node.querySelector("[data-release-composer-action='tailor']");
   const closeButton = node.querySelector("[data-release-composer-action='close']");
   const messageNode = node.querySelector("[data-release-composer-message]");
 
   closeButton.addEventListener("click", () => {
     node.classList.add("hidden");
     node.innerHTML = "";
+  });
+
+  tailorButton.addEventListener("click", async () => {
+    tailorButton.disabled = true;
+    tailorButton.textContent = "Tailoring…";
+    try {
+      const tailored = await fetchJSON(`/api/episodes/${episode.id}/release-email-template?tailor=true`);
+      subjectField.value = tailored.subject || subjectField.value;
+      bodyField.value = tailored.body || bodyField.value;
+      setMessage(messageNode, tailored.tailoring_notice || "Review the tailored draft before sending.", tailored.tailored ? "success" : "pending");
+    } catch (error) {
+      setMessage(messageNode, error.message, "error");
+    } finally {
+      tailorButton.disabled = false;
+      tailorButton.textContent = "Tailor with AI";
+    }
   });
 
   sendButton.addEventListener("click", async () => {
@@ -1520,6 +1538,7 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
     <label class="full-width"><span>Subject</span><input data-heads-up-field="subject" type="text" value="${escapeHtml(preview.subject || "")}" /></label>
     <label class="full-width"><span>Email Body</span><textarea data-heads-up-field="body" rows="12">${escapeHtml(preview.body || "")}</textarea></label>
     <div class="inline-editor-actions full-width">
+      <button type="button" class="secondary-button" data-heads-up-action="tailor">Tailor with AI</button>
       <button type="button" class="primary-button" data-heads-up-action="approve">Approve and Schedule</button>
       <button type="button" class="ghost-button" data-heads-up-action="close">Close</button>
     </div>
@@ -1527,6 +1546,23 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
   node.querySelector("[data-heads-up-action='close']").addEventListener("click", () => {
     node.classList.add("hidden");
     node.innerHTML = "";
+  });
+  node.querySelector("[data-heads-up-action='tailor']").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const message = node.querySelector("[data-heads-up-message]");
+    button.disabled = true;
+    button.textContent = "Tailoring…";
+    try {
+      const tailored = await fetchJSON(`/api/episodes/${episode.id}/release-heads-up-template?tailor=true`);
+      node.querySelector("[data-heads-up-field='subject']").value = tailored.subject;
+      node.querySelector("[data-heads-up-field='body']").value = tailored.body;
+      setMessage(message, tailored.tailoring_notice || "Review the tailored draft before scheduling.", tailored.tailored ? "success" : "pending");
+    } catch (error) {
+      setMessage(message, error.message, "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = "Tailor with AI";
+    }
   });
   node.querySelector("[data-heads-up-action='approve']").addEventListener("click", async (event) => {
     if (!confirmCriticalAction(`Approve and schedule the 14-day release heads-up to ${episode.guest_name || episode.guest_email}?`)) return;
@@ -2517,15 +2553,30 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
           const preview = await fetchJSON(`/api/episodes/${episode.id}/appreciation-template`);
           appreciationPreviewNode.classList.remove("hidden");
           appreciationPreviewNode.innerHTML = `
-            <h4>${escapeHtml(preview.subject)}</h4>
+            <label class="full-width"><span>Subject</span><input data-appreciation-subject value="${escapeHtml(preview.subject)}" /></label>
             <p>To: ${renderLinkedValue(episode.guest_email)}</p>
             <label class="full-width">
-              <span>Additional recipients <small>(optional)</small></span>
+              <span>CC representatives <small>(optional)</small></span>
               <input data-appreciation-additional-recipients type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" />
-              <small>Separate multiple email addresses with commas, then use Send Thank You.</small>
+              <small>The guest remains in To. Everyone copied here can see the email exchange.</small>
             </label>
-            <pre>${escapeHtml(preview.body)}</pre>
+            <label class="full-width"><span>Email Body</span><textarea data-appreciation-body rows="12">${escapeHtml(preview.body)}</textarea></label>
+            <button type="button" class="secondary-button" data-tailor-appreciation>Tailor with AI</button>
+            <small data-appreciation-tailoring-notice>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>
           `;
+          appreciationPreviewNode.querySelector("[data-tailor-appreciation]")?.addEventListener("click", async (event) => {
+            event.currentTarget.disabled = true;
+            try {
+              const tailored = await fetchJSON(`/api/episodes/${episode.id}/appreciation-template?tailor=true`);
+              appreciationPreviewNode.querySelector("[data-appreciation-subject]").value = tailored.subject;
+              appreciationPreviewNode.querySelector("[data-appreciation-body]").value = tailored.body;
+              appreciationPreviewNode.querySelector("[data-appreciation-tailoring-notice]").textContent = tailored.tailoring_notice || "Review before sending.";
+            } catch (error) {
+              setMessage(episodeMessage, error.message, "error");
+            } finally {
+              event.currentTarget.disabled = false;
+            }
+          });
           releasePreviewNode.classList.add("hidden");
           releasePreviewNode.innerHTML = "";
           activeEpisodeActionFeedback = {
@@ -2554,7 +2605,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
           .split(",")
           .map((email) => email.trim())
           .filter(Boolean);
-        if (!confirmCriticalAction(`Send the thank-you email to ${episode.guest_name || episode.guest_email || "this guest"}${additionalRecipients.length ? ` and ${additionalRecipients.length} additional recipient${additionalRecipients.length === 1 ? "" : "s"}` : ""} now?`)) {
+        if (!confirmCriticalAction(`Send the thank-you email to ${episode.guest_name || episode.guest_email || "this guest"}${additionalRecipients.length ? ` with ${additionalRecipients.length} representative${additionalRecipients.length === 1 ? "" : "s"} in CC` : ""} now?`)) {
           return;
         }
 
@@ -2569,7 +2620,11 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
         try {
           await fetchJSON(`/api/episodes/${episode.id}/send-appreciation`, {
             method: "POST",
-            body: JSON.stringify({ additional_recipients: additionalRecipients }),
+            body: JSON.stringify({
+              subject: appreciationPreviewNode.querySelector("[data-appreciation-subject]")?.value || "",
+              body: appreciationPreviewNode.querySelector("[data-appreciation-body]")?.value || "",
+              additional_recipients: additionalRecipients,
+            }),
           });
           sendAppreciationButton.disabled = false;
           sendAppreciationButton.textContent = "Send Thank You";

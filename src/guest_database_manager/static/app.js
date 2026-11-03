@@ -1343,9 +1343,9 @@ function renderGuests(payload) {
           <p class="composer-meta">${guest.email || "No email address"}</p>
         </div>
         <label class="composer-field">
-          <span>Additional recipients <small>(optional)</small></span>
+          <span>CC representatives <small>(optional)</small></span>
           <input type="text" data-composer-field="additionalRecipients" value="${escapeHtml(activeEmailComposer.additionalRecipients || "")}" placeholder="name@example.com, other@example.com" inputmode="email" autocomplete="off" />
-          <small>Separate multiple email addresses with commas.</small>
+          <small>The guest remains the primary recipient. Everyone copied here can see the email exchange.</small>
         </label>
         <label class="composer-field">
           <span>Approved tone</span>
@@ -1361,6 +1361,12 @@ function renderGuests(payload) {
           <span>Email Body</span>
           <textarea rows="12" data-composer-field="body">${escapeHtml(activeEmailComposer.body)}</textarea>
         </label>
+        <div class="composer-actions">
+          <button type="button" data-composer-action="tailor" class="secondary-button small-button" ${!aiEnabled || activeEmailComposer.sending || activeEmailComposer.tailoring ? "disabled" : ""}>
+            ${activeEmailComposer.tailoring ? "Tailoring…" : "Tailor with AI"}
+          </button>
+          <small>${escapeHtml(activeEmailComposer.tailoringNotice || "Starts from the approved template and preserves required links and next steps.")}</small>
+        </div>
         ${composerFeedbackMarkup(activeEmailComposer.feedback)}
         <div class="composer-actions">
           <button type="button" data-composer-action="send" class="primary-button small-button" ${activeEmailComposer.sending ? "disabled" : ""}>
@@ -1394,6 +1400,28 @@ function renderGuests(payload) {
         renderGuests(latestPayload);
       });
 
+      composer.querySelector("[data-composer-action='tailor']").addEventListener("click", async () => {
+        activeEmailComposer.tailoring = true;
+        activeEmailComposer.tailoringNotice = "Preparing a source-grounded draft…";
+        renderGuests(latestPayload);
+        try {
+          const template = await fetchTemplate(`/api/guests/${guest.id}/email-template`, {
+            status: activeEmailComposer.status,
+            variant: activeEmailComposer.variant,
+            tailor: true,
+            representative_copied: Boolean((activeEmailComposer.additionalRecipients || "").trim()),
+          });
+          activeEmailComposer.subject = template.subject || activeEmailComposer.subject;
+          activeEmailComposer.body = template.body || activeEmailComposer.body;
+          activeEmailComposer.tailoringNotice = template.tailoring_notice || "Draft tailored. Review it before sending.";
+        } catch (error) {
+          activeEmailComposer.tailoringNotice = error.message;
+        } finally {
+          activeEmailComposer.tailoring = false;
+          renderGuests(latestPayload);
+        }
+      });
+
       composer.querySelector("[data-composer-action='send']").addEventListener("click", async () => {
         const guestLabel = guest.full_name || "guest";
         const additionalRecipients = (activeEmailComposer.additionalRecipients || "")
@@ -1401,7 +1429,7 @@ function renderGuests(payload) {
           .map((email) => email.trim())
           .filter(Boolean);
         const recipientCount = 1 + additionalRecipients.length;
-        if (!confirmCriticalAction(`Send this ${activeEmailComposer.status === "accepted" ? "approval" : "decline"} email to ${guestLabel}${recipientCount > 1 ? ` and ${recipientCount - 1} additional recipient${recipientCount === 2 ? "" : "s"}` : ""}?`)) {
+        if (!confirmCriticalAction(`Send this ${activeEmailComposer.status === "accepted" ? "approval" : "decline"} email to ${guestLabel}${recipientCount > 1 ? ` with ${recipientCount - 1} representative${recipientCount === 2 ? "" : "s"} in CC` : ""}?`)) {
           return;
         }
         activeEmailComposer.sending = true;
@@ -1637,15 +1665,35 @@ function renderGuests(payload) {
               body: templateData.body || "",
               variant: templateData.variant || "",
               variants: templateData.variants || [],
-              additionalRecipients: "",
+              additionalRecipients: decision === "accepted" && guest.submission_meta?.mode === "agency_referral"
+                ? (guest.submission_meta.agency_email || "")
+                : "",
+              tailoring: false,
+              tailoringNotice: "",
               sending: false,
               feedback: null,
             };
             renderGuests(latestPayload);
           } else if (action === "ai_email_draft") {
-            // AI Email Draft Generation
-            const emailType = guest.email_status === "accepted" ? "acceptance" : "acceptance";
-            await generateAIEmailDraft(guest.id, emailType);
+            const decision = guest.email_status === "rejected" ? "rejected" : "accepted";
+            const templateData = await fetchTemplate(`/api/guests/${guest.id}/email-template`, {
+              status: decision,
+              tailor: true,
+            });
+            activeEmailComposer = {
+              guestId: guest.id,
+              status: decision,
+              subject: templateData.subject || "",
+              body: templateData.body || "",
+              variant: templateData.variant || "",
+              variants: templateData.variants || [],
+              additionalRecipients: "",
+              tailoring: false,
+              tailoringNotice: templateData.tailoring_notice || "Review the tailored draft before sending.",
+              sending: false,
+              feedback: null,
+            };
+            renderGuests(latestPayload);
           } else if (action === "ai_manuscript") {
             await generateInterviewManuscript(guest.id, guest.full_name || "Guest", button);
           } else if (action === "ai_analysis") {

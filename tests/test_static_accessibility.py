@@ -215,7 +215,7 @@ def test_weekly_confirmations_uses_one_empty_state_message() -> None:
     javascript = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
 
     assert javascript.count("No reminder emails are due for this week.") == 1
-    assert "operations.js?v=20261008.1" in html
+    assert "operations.js?v=20261103.2" in html
 
 
 def test_routine_creation_forms_hide_optional_fields_and_offer_safe_defaults() -> None:
@@ -545,7 +545,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261101.4" in html
+    assert "planning.js?v=20261103.2" in html
     assert "operations.css?v=20261101.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript

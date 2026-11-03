@@ -3671,7 +3671,80 @@ class GuestWebService:
             guest = self.database.get_guest_by_id(int(guest_id)) or record
         return email_manager.build_personalization_context(guest)
 
-    def get_guest_decision_email_template(self, guest_id: int, status: str, variant: str = "") -> Dict[str, Any]:
+    def _smart_email_draft(
+        self,
+        *,
+        email_type: str,
+        record: Mapping[str, Any],
+        template: Mapping[str, Any],
+        operational_context: Optional[Mapping[str, Any]] = None,
+        tailor: bool = False,
+        representative_copied: bool = False,
+    ) -> Dict[str, Any]:
+        """Return one validated draft contract with an explainable deterministic fallback."""
+        subject = _normalize_text(template.get("subject"))
+        body = str(template.get("body") or "").strip()
+        result = {
+            **dict(template),
+            "subject": subject,
+            "body": body,
+            "draft_source": "approved_template",
+            "tailored": False,
+            "tailoring_notice": "",
+        }
+        if not tailor:
+            return result
+
+        assistant = self._get_ai_assistant()
+        if not assistant or not hasattr(assistant, "tailor_email_draft"):
+            result["tailoring_notice"] = "AI tailoring is unavailable; the approved template is shown."
+            return result
+
+        guest: Mapping[str, Any] = record
+        guest_id = record.get("guest_id")
+        if guest_id:
+            guest = self.database.get_guest_by_id(int(guest_id)) or record
+        try:
+            tailored = assistant.tailor_email_draft(
+                email_type=email_type,
+                guest_data=dict(guest),
+                base_subject=subject,
+                base_body=body,
+                operational_context=dict(operational_context or {}),
+                representative_copied=representative_copied,
+            )
+        except Exception:
+            tailored = None
+        if not tailored:
+            result["tailoring_notice"] = "Tailoring could not be completed; the approved template is shown."
+            return result
+
+        tailored_subject = _normalize_text(tailored.get("subject"))
+        tailored_body = str(tailored.get("body") or "").strip()
+        required_urls = set(re.findall(r"https?://[^\s<>]+", body))
+        missing_urls = [url for url in required_urls if url not in tailored_body]
+        if (
+            not tailored_subject
+            or not tailored_body
+            or len(tailored_subject) > 200
+            or len(tailored_body) > 12000
+            or missing_urls
+        ):
+            result["tailoring_notice"] = "Tailoring failed safety validation; the approved template is shown."
+            return result
+        result.update(
+            subject=tailored_subject,
+            body=tailored_body,
+            draft_source="ai_tailored_from_approved_template",
+            tailored=True,
+            tailoring_notice="Review the tailored draft before sending.",
+        )
+        return result
+
+    def get_guest_decision_email_template(
+        self, guest_id: int, status: str, variant: str = "", *, tailor: bool = False,
+        representative_copied: bool = False,
+    ) -> Dict[str, Any]:
         """Return the default approval/decline email template for dashboard editing."""
         normalized_status = status.strip().lower()
         if normalized_status not in {"accepted", "rejected"}:
@@ -3701,7 +3774,15 @@ class GuestWebService:
             except ValueError as exc:
                 raise WebInterfaceError(str(exc)) from exc
         variants = email_manager.template_variants(normalized_status) if hasattr(email_manager, "template_variants") else []
-        return {**template, "variant": variant or ("warm" if normalized_status == "accepted" else "considered"), "variants": variants}
+        draft = self._smart_email_draft(
+            email_type=normalized_status,
+            record=guest,
+            template=template,
+            operational_context={"decision": normalized_status, "booking_url": self._booking_link_for_guest(guest_id)},
+            tailor=tailor,
+            representative_copied=representative_copied,
+        )
+        return {**draft, "variant": variant or ("warm" if normalized_status == "accepted" else "considered"), "variants": variants}
 
     def send_guest_decision_email_message(
         self,
@@ -3725,7 +3806,7 @@ class GuestWebService:
         if not guest_email:
             raise WebInterfaceError("This guest does not have an email address.")
 
-        recipients = self._resolve_email_recipients(guest_email, additional_recipients)
+        cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
 
         email_manager = self._build_email_manager()
         if not email_manager.is_configured():
@@ -3740,8 +3821,13 @@ class GuestWebService:
         body = body.strip()
 
         if subject and body:
-            send_target = recipients if len(recipients) > 1 else guest_email
-            sent = email_manager.send_email(send_target, subject, body, idempotency_key=decision_key)
+            sent = email_manager.send_email(
+                guest_email,
+                subject,
+                body,
+                idempotency_key=decision_key,
+                **({"cc_emails": cc_recipients} if cc_recipients else {}),
+            )
         else:
             if normalized_status == "accepted":
                 sent = email_manager.send_acceptance_email(
@@ -5734,7 +5820,7 @@ class GuestWebService:
 
         return sorted(interviews, key=sort_key)
 
-    def preview_interview_reminder(self, interview_id: int, variant: str = "") -> Dict[str, Any]:
+    def preview_interview_reminder(self, interview_id: int, variant: str = "", *, tailor: bool = False) -> Dict[str, Any]:
         """Return the reminder email template for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -5762,15 +5848,19 @@ class GuestWebService:
             template = email_manager.get_interview_reminder_template(**reminder_kwargs)
         except ValueError as exc:
             raise WebInterfaceError(str(exc)) from exc
+        draft = self._smart_email_draft(
+            email_type="reminder", record=interview, template=template,
+            operational_context={"scheduled_for": scheduled_for.isoformat(), "timezone": timezone_label, "join_url": join_url},
+            tailor=tailor,
+        )
         return {
             "interview": self._serialize_interview_reminder(interview),
-            "subject": template["subject"],
-            "body": template["body"],
+            **draft,
             "variant": variant or "gentle",
             "variants": email_manager.template_variants("reminder") if hasattr(email_manager, "template_variants") else [],
         }
 
-    def preview_interview_cancellation(self, interview_id: int) -> Dict[str, Any]:
+    def preview_interview_cancellation(self, interview_id: int, *, tailor: bool = False) -> Dict[str, Any]:
         """Return the cancellation email template for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -5789,13 +5879,17 @@ class GuestWebService:
             scheduled_for=scheduled_for,
             timezone_label=timezone_label,
         )
+        draft = self._smart_email_draft(
+            email_type="cancellation", record=interview, template=template,
+            operational_context={"scheduled_for": scheduled_for.isoformat(), "timezone": timezone_label},
+            tailor=tailor,
+        )
         return {
             "interview": self._serialize_interview_reminder(interview),
-            "subject": template["subject"],
-            "body": template["body"],
+            **draft,
         }
 
-    def preview_interview_appreciation(self, interview_id: int, variant: str = "") -> Dict[str, Any]:
+    def preview_interview_appreciation(self, interview_id: int, variant: str = "", *, tailor: bool = False) -> Dict[str, Any]:
         """Return the post-interview appreciation email template."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -5813,15 +5907,19 @@ class GuestWebService:
         if variant:
             appreciation_kwargs["variant"] = variant
         template = email_manager.get_post_interview_appreciation_template(**appreciation_kwargs)
+        draft = self._smart_email_draft(
+            email_type="appreciation", record=interview, template=template, tailor=tailor,
+        )
         return {
             "interview": self._serialize_interview_reminder(interview),
-            "subject": template["subject"],
-            "body": template["body"],
+            **draft,
             "variant": variant or "reflective",
             "variants": email_manager.template_variants("appreciation") if hasattr(email_manager, "template_variants") else [],
         }
 
-    def preview_interview_booking_confirmation(self, interview_id: int, variant: str = "") -> Dict[str, Any]:
+    def preview_interview_booking_confirmation(
+        self, interview_id: int, variant: str = "", *, tailor: bool = False,
+    ) -> Dict[str, Any]:
         """Return the booking confirmation email template for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -5852,10 +5950,14 @@ class GuestWebService:
             template = email_manager.get_booking_confirmation_template(**confirmation_kwargs)
         except ValueError as exc:
             raise WebInterfaceError(str(exc)) from exc
+        draft = self._smart_email_draft(
+            email_type="booking_confirmation", record=interview, template=template,
+            operational_context={"scheduled_for": scheduled_for.isoformat(), "timezone": timezone_label, "join_url": join_url},
+            tailor=tailor,
+        )
         return {
             "interview": self._serialize_interview_reminder(interview),
-            "subject": template["subject"],
-            "body": template["body"],
+            **draft,
             "variant": variant or "warm",
             "variants": email_manager.template_variants("booking_confirmation") if hasattr(email_manager, "template_variants") else [],
         }
@@ -5916,6 +6018,8 @@ class GuestWebService:
         proposal_mode: str = "open_calendar",
         proposed_times: Any = None,
         proposal_timezone: str = "",
+        *,
+        tailor: bool = False,
     ) -> Dict[str, Any]:
         """Return the reschedule-link email template for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
@@ -5948,10 +6052,17 @@ class GuestWebService:
                 proposed_times=proposal["parsed_times"],
                 proposal_mode=proposal["mode"],
             )
+        draft = self._smart_email_draft(
+            email_type="reschedule", record=interview, template=template,
+            operational_context={
+                "scheduled_for": scheduled_for.isoformat(), "timezone": timezone_label,
+                "reschedule_url": reschedule_url, "proposal": proposal["proposed_times"],
+            },
+            tailor=tailor,
+        )
         return {
             "interview": self._serialize_interview_reminder(interview),
-            "subject": template["subject"],
-            "body": template["body"],
+            **draft,
             "reschedule_url": reschedule_url,
             "proposal": {key: proposal[key] for key in ("mode", "timezone", "proposed_times")},
         }
@@ -6042,11 +6153,12 @@ class GuestWebService:
         preview = self.preview_interview_appreciation(interview_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        recipients = self._resolve_email_recipients(guest_email, additional_recipients)
+        cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
 
         sent = email_manager.send_email(
-            recipients if len(recipients) > 1 else guest_email, resolved_subject, resolved_body,
+            guest_email, resolved_subject, resolved_body,
             idempotency_key=f"interview_appreciation:{interview_id}",
+            **({"cc_emails": cc_recipients} if cc_recipients else {}),
         )
         if not sent:
             error_detail = (email_manager.last_error or "").strip()
@@ -6294,7 +6406,7 @@ class GuestWebService:
         )
         return self._serialize_interview_reminder(updated)
 
-    def preview_episode_appreciation(self, episode_id: int, variant: str = "") -> Dict[str, Any]:
+    def preview_episode_appreciation(self, episode_id: int, variant: str = "", *, tailor: bool = False) -> Dict[str, Any]:
         """Return the post-recording appreciation email template from an episode record."""
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
@@ -6312,10 +6424,12 @@ class GuestWebService:
         if variant:
             appreciation_kwargs["variant"] = variant
         template = email_manager.get_post_interview_appreciation_template(**appreciation_kwargs)
+        draft = self._smart_email_draft(
+            email_type="appreciation", record=episode, template=template, tailor=tailor,
+        )
         return {
             "episode": self._normalize_episode_record(episode),
-            "subject": template["subject"],
-            "body": template["body"],
+            **draft,
             "variant": variant or "reflective",
             "variants": email_manager.template_variants("appreciation") if hasattr(email_manager, "template_variants") else [],
         }
@@ -6337,11 +6451,12 @@ class GuestWebService:
         preview = self.preview_episode_appreciation(episode_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        recipients = self._resolve_email_recipients(guest_email, additional_recipients)
+        cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
 
         sent = email_manager.send_email(
-            recipients if len(recipients) > 1 else guest_email, resolved_subject, resolved_body,
+            guest_email, resolved_subject, resolved_body,
             idempotency_key=f"episode_appreciation:{episode_id}",
+            **({"cc_emails": cc_recipients} if cc_recipients else {}),
         )
         if not sent:
             error_detail = (email_manager.last_error or "").strip()
@@ -6365,7 +6480,7 @@ class GuestWebService:
             raise WebInterfaceError("Episode not found after appreciation email send.")
         return self._normalize_episode_record(refreshed)
 
-    def preview_episode_release_email(self, episode_id: int, variant: str = "") -> Dict[str, Any]:
+    def preview_episode_release_email(self, episode_id: int, variant: str = "", *, tailor: bool = False) -> Dict[str, Any]:
         """Return the released-episode follow-up email template from an episode record."""
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
@@ -6387,15 +6502,18 @@ class GuestWebService:
         if variant:
             release_kwargs["variant"] = variant
         template = email_manager.get_released_episode_template(**release_kwargs)
+        draft = self._smart_email_draft(
+            email_type="released_episode", record=episode, template=template,
+            operational_context={"show_notes_url": show_notes_url, "files_url": files_url}, tailor=tailor,
+        )
         return {
             "episode": self._normalize_episode_record(episode),
-            "subject": template["subject"],
-            "body": template["body"],
+            **draft,
             "variant": variant or "celebratory",
             "variants": email_manager.template_variants("released_episode") if hasattr(email_manager, "template_variants") else [],
         }
 
-    def preview_episode_release_heads_up(self, episode_id: int, variant: str = "") -> Dict[str, Any]:
+    def preview_episode_release_heads_up(self, episode_id: int, variant: str = "", *, tailor: bool = False) -> Dict[str, Any]:
         """Return the approval-ready email scheduled fourteen days before release."""
         episode = self.database.get_episode_by_id(episode_id)
         if not episode:
@@ -6421,10 +6539,14 @@ class GuestWebService:
         template = manager.get_release_heads_up_template(**kwargs)
         scheduled_send_at = self._release_heads_up_send_at(release_dt)
         effective_send_at = max(scheduled_send_at, datetime.now(timezone.utc).replace(microsecond=0))
+        draft = self._smart_email_draft(
+            email_type="release_heads_up", record=episode, template=template,
+            operational_context={"release_date": release_dt.isoformat(), "send_at": effective_send_at.isoformat()},
+            tailor=tailor,
+        )
         return {
             "episode": self._normalize_episode_record(episode),
-            "subject": template["subject"],
-            "body": template["body"],
+            **draft,
             "send_at": effective_send_at.isoformat(),
             "variant": variant or "warm",
             "variants": manager.template_variants("release_heads_up") if hasattr(manager, "template_variants") else [],
@@ -6499,11 +6621,12 @@ class GuestWebService:
         preview = self.preview_episode_release_email(episode_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        recipients = self._resolve_email_recipients(guest_email, additional_recipients)
+        cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
 
         sent = email_manager.send_email(
-            recipients if len(recipients) > 1 else guest_email, resolved_subject, resolved_body,
+            guest_email, resolved_subject, resolved_body,
             idempotency_key=f"episode_release:{episode_id}:{_normalize_text(episode.get('release_date'))}",
+            **({"cc_emails": cc_recipients} if cc_recipients else {}),
         )
         if not sent:
             error_detail = (email_manager.last_error or "").strip()
@@ -8112,7 +8235,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                payload = self.service.preview_interview_reminder(interview_id, self._query_params(self.path).get("variant", ""))
+                query = self._query_params(self.path)
+                payload = self.service.preview_interview_reminder(
+                    interview_id, query.get("variant", ""), tailor=query.get("tailor", "").lower() == "true"
+                )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -8131,7 +8257,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                payload = self.service.preview_interview_booking_confirmation(interview_id, self._query_params(self.path).get("variant", ""))
+                query = self._query_params(self.path)
+                payload = self.service.preview_interview_booking_confirmation(
+                    interview_id, query.get("variant", ""), tailor=query.get("tailor", "").lower() == "true"
+                )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -8157,6 +8286,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     query.get("mode", "open_calendar"),
                     proposed_times,
                     query.get("timezone", ""),
+                    tailor=query.get("tailor", "").lower() == "true",
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -8176,7 +8306,10 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                payload = self.service.preview_interview_cancellation(interview_id)
+                query = self._query_params(self.path)
+                payload = self.service.preview_interview_cancellation(
+                    interview_id, tailor=query.get("tailor", "").lower() == "true"
+                )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -8195,8 +8328,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
+                query = self._query_params(self.path)
                 payload = self.service.preview_interview_appreciation(
-                    interview_id, self._query_params(self.path).get("variant", "")
+                    interview_id, query.get("variant", ""), tailor=query.get("tailor", "").lower() == "true"
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -8216,8 +8350,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
+                query = self._query_params(self.path)
                 payload = self.service.preview_episode_appreciation(
-                    episode_id, self._query_params(self.path).get("variant", "")
+                    episode_id, query.get("variant", ""), tailor=query.get("tailor", "").lower() == "true"
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -8237,8 +8372,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
+                query = self._query_params(self.path)
                 payload = self.service.preview_episode_release_email(
-                    episode_id, self._query_params(self.path).get("variant", "")
+                    episode_id, query.get("variant", ""), tailor=query.get("tailor", "").lower() == "true"
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -8256,8 +8392,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid episode id"})
                 return
             try:
+                query = self._query_params(self.path)
                 payload = self.service.preview_episode_release_heads_up(
-                    episode_id, self._query_params(self.path).get("variant", "")
+                    episode_id, query.get("variant", ""), tailor=query.get("tailor", "").lower() == "true"
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -9428,7 +9565,13 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
             payload = self._read_json_payload()
             try:
-                template = self.service.get_guest_decision_email_template(guest_id, payload.get("status", ""), payload.get("variant", ""))
+                template = self.service.get_guest_decision_email_template(
+                    guest_id,
+                    payload.get("status", ""),
+                    payload.get("variant", ""),
+                    tailor=bool(payload.get("tailor")),
+                    representative_copied=bool(payload.get("representative_copied")),
+                )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
