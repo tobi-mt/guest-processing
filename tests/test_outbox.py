@@ -294,7 +294,11 @@ def test_every_guest_email_template_has_a_human_greeting_and_mirror_talk_signatu
     assert len(templates) == len(manager.EMAIL_TEMPLATE_VARIANTS)
     for template in templates:
         assert template["subject"].strip()
+        assert template["subject"] == " ".join(template["subject"].split())
         assert template["body"].startswith("Hi Amina,\n\n")
+        assert template["body"] == template["body"].strip()
+        assert "\n\n\n" not in template["body"]
+        assert not any(line.endswith(" ") for line in template["body"].splitlines())
         assert "Mirror Talk" in template["body"]
         assert "Dear Sir/Madam" not in template["body"]
         assert "valued guest" not in template["body"].lower()
@@ -439,6 +443,23 @@ def test_html_email_renderer_uses_descriptive_text_for_reviewed_and_contextual_l
     assert ">Listen and connect with Mirror Talk</a>" in rendered
     assert ">View the episode show notes</a>" in rendered
     assert ">Download your episode files</a>" in rendered
+
+
+def test_html_email_renderer_uses_semantic_lists_and_safe_clickable_links():
+    manager = EmailManager()
+    rendered = manager._build_html_body(
+        "Recording details:\n"
+        "- Date: Friday, 04 December 2026\n"
+        "- Join the Riverside session: https://example.test/studio?guest=1&source=email"
+    )
+
+    assert '<ul style="' in rendered
+    assert rendered.count("<li ") == 2
+    assert "Recording details:" in rendered
+    assert 'href="https://example.test/studio?guest=1&amp;source=email"' in rendered
+    assert 'target="_blank"' in rendered
+    assert 'rel="noopener noreferrer"' in rendered
+    assert ">Join the Riverside recording</a>" in rendered
     assert "&gt;" not in rendered
 
 

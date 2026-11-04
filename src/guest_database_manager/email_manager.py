@@ -216,6 +216,14 @@ class EmailManager:
             return f"Your work with {organisation} could bring a valuable perspective to our conversation.\n\n"
         return ""
 
+    @staticmethod
+    def _finalize_template(subject: str, body: str) -> Dict[str, str]:
+        """Normalize plain-text layout once so all providers and HTML alternatives agree."""
+        normalized_lines = [line.rstrip() for line in str(body or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+        normalized_body = "\n".join(normalized_lines).strip()
+        normalized_body = re.sub(r"\n{3,}", "\n\n", normalized_body)
+        return {"subject": " ".join(str(subject or "").split()).strip(), "body": normalized_body}
+
     def get_acceptance_template(self, guest_name: str, custom_message: str = "", booking_url: str = "", variant: str = "warm", personalization: Optional[Mapping[str, Any]] = None) -> Dict[str, str]:
         """Get the email template for guest acceptance.
 
@@ -278,7 +286,7 @@ Thank you for trusting us with your story. We are genuinely looking forward to h
 Warmly,
 Mirror Talk Podcast"""
 
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_rejection_template(self, guest_name: str, custom_message: str = "", variant: str = "considered") -> Dict[str, str]:
         """Get the email template for guest rejection.
@@ -335,7 +343,7 @@ Thank you again for considering Mirror Talk, and we wish you every success in th
 Warmly,
 Mirror Talk Podcast"""
 
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_interview_reminder_template(
         self,
@@ -356,12 +364,15 @@ Mirror Talk Podcast"""
 
         body = f"""Hi {guest_name},
 
-I’m looking forward to welcoming you to Mirror Talk. I’m writing to confirm our Soulful Conversation on {formatted_date} at {formatted_time} {timezone_display}.
+I’m looking forward to welcoming you to Mirror Talk. I’m writing to confirm our upcoming Soulful Conversation.
+
+Recording details:
+- Date: {formatted_date}
+- Time: {formatted_time}
+- Time zone: {timezone_display}
+- Join the Riverside session: {join_line}
 
 When you have a moment, please reply to this email to confirm that the time still works for you.
-
-We’ll be recording on Riverside FM, and you can join the session here:
-{join_line}
 
 {preparation_line}Thank you, {guest_name}. I’m looking forward to making space for a thoughtful, unhurried conversation with you.
 
@@ -378,10 +389,13 @@ https://mirrortalkpodcast.com/ask-mirror-talk/
         if variant == "concise":
             body = f"""Hi {guest_name},
 
-Please confirm that our Mirror Talk conversation on {formatted_date} at {formatted_time} {timezone_display} still works for you.
+Please confirm that our Mirror Talk conversation still works for you.
 
-Join us on Riverside FM:
-{join_line}
+Recording details:
+- Date: {formatted_date}
+- Time: {formatted_time}
+- Time zone: {timezone_display}
+- Join the Riverside session: {join_line}
 
 {preparation_line}If you need to change the time, simply reply to this email.
 
@@ -389,7 +403,7 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_interview_cancellation_template(
         self,
@@ -431,7 +445,7 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_booking_confirmation_template(
         self,
@@ -454,10 +468,13 @@ Mirror Talk Podcast"""
 
 Thank you for making time for a Soulful Conversation on Mirror Talk.
 
-Your interview is now scheduled for {formatted_date} at {formatted_time} {timezone_display}.
+Your interview is confirmed.
 
-We’ll be recording on Riverside FM, and you can join the session here:
-{join_line}
+Recording details:
+- Date: {formatted_date}
+- Time: {formatted_time}
+- Time zone: {timezone_display}
+- Join the Riverside session: {join_line}
 
 {preparation_line}If anything changes and you need to reschedule, just reply to this email and we’ll sort it out together.
 
@@ -469,10 +486,13 @@ Mirror Talk Podcast"""
         if variant == "concise":
             body = f"""Hi {guest_name},
 
-Your Soulful Conversation is confirmed for {formatted_date} at {formatted_time} {timezone_display}.
+Your Soulful Conversation is confirmed.
 
-Join the Riverside FM session here:
-{join_line}
+Recording details:
+- Date: {formatted_date}
+- Time: {formatted_time}
+- Time zone: {timezone_display}
+- Join the Riverside session: {join_line}
 
 {preparation_line}We’ve also attached a calendar invitation. If you need to reschedule, please reply to this email.
 
@@ -480,7 +500,7 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_reschedule_link_template(
         self,
@@ -548,7 +568,7 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     @staticmethod
     def _localize_datetime(value: datetime, timezone_label: str) -> datetime:
@@ -580,12 +600,10 @@ It was a real pleasure to share that conversation with you. Thank you for the tr
 Conversations like ours are at the heart of Mirror Talk: a place for people to feel heard, reflect honestly, and leave listeners with something meaningful.
 
 If you’d like to support the podcast, here are a few simple ways to do that:
-- subscribe to Mirror Talk on Spotify:
-  https://open.spotify.com/show/0trwqguYCic32smqh3Ny60
-- subscribe to Mirror Talk on Apple Podcasts:
-  https://podcasts.apple.com/podcast/mirror-talk/id1518394292
-- share the show or your episode with someone who would genuinely enjoy it
-- explore our new AI experience, Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
+- Subscribe on Spotify: https://open.spotify.com/show/0trwqguYCic32smqh3Ny60
+- Subscribe on Apple Podcasts: https://podcasts.apple.com/podcast/mirror-talk/id1518394292
+- Share the show or your episode with someone who would genuinely enjoy it
+- Explore Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
 
 You can also stay connected with the wider Mirror Talk community here:
 https://mirrortalkpodcast.com/join-our-family/
@@ -608,7 +626,7 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_intake_confirmation_template(self, guest_name: str, variant: str = "reassuring") -> Dict[str, str]:
         """Build a polished confirmation email after a guest submits the intake form."""
@@ -648,7 +666,7 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_personal_application_request_template(
         self,
@@ -691,7 +709,7 @@ This gives us the chance to understand what matters to you, directly in your own
 Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_booking_link_template(self, guest_name: str, booking_url: str, variant: str = "helpful") -> Dict[str, str]:
         """Build a polished email for resending a guest's personal booking link."""
@@ -723,7 +741,7 @@ If the available times do not work for you, reply to this email and we’ll help
 Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_released_episode_template(self, guest_name: str, show_notes_url: str, files_url: str, variant: str = "celebratory", personalization: Optional[Mapping[str, Any]] = None) -> Dict[str, str]:
         """Build a polished release-notification email for a guest."""
@@ -744,14 +762,11 @@ Here are the links for you:
 When you have a moment, I’d genuinely love to hear what you and your loved ones think of the episode.
 
 If you’d like to help the conversation reach the people who may need it, here are a few meaningful ways:
-- subscribe to Mirror Talk on Spotify:
-  https://open.spotify.com/show/0trwqguYCic32smqh3Ny60
-- subscribe to Mirror Talk on Apple Podcasts:
-  https://podcasts.apple.com/podcast/mirror-talk/id1518394292
-- subscribe on YouTube:
-  https://www.youtube.com/@mirrortalkpodcast
-- share the episode with people who would truly appreciate it
-- try Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
+- Subscribe on Spotify: https://open.spotify.com/show/0trwqguYCic32smqh3Ny60
+- Subscribe on Apple Podcasts: https://podcasts.apple.com/podcast/mirror-talk/id1518394292
+- Subscribe on YouTube: https://www.youtube.com/@mirrortalkpodcast
+- Share the episode with people who would truly appreciate it
+- Try Ask Mirror Talk: https://mirrortalkpodcast.com/ask-mirror-talk/
 
 You can also stay connected here:
 https://mirrortalkpodcast.com/listen-connect/
@@ -777,7 +792,7 @@ Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
 
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     def get_release_heads_up_template(
         self,
@@ -816,7 +831,7 @@ Thank you again for being part of Mirror Talk.
 Warm regards,
 Tobi Ojekunle
 Mirror Talk Podcast"""
-        return {"subject": subject, "body": body}
+        return self._finalize_template(subject, body)
 
     @staticmethod
     def build_calendar_invite(
@@ -907,13 +922,13 @@ Mirror Talk Podcast"""
 
     def _build_html_body(self, body: str) -> str:
         """Render safe, responsive Mirror Talk HTML while preserving the plain-text alternative."""
-        paragraphs = [segment.strip() for segment in body.split("\n\n") if segment.strip()]
+        normalized_body = self._finalize_template("", body)["body"]
+        paragraphs = [segment.strip() for segment in normalized_body.split("\n\n") if segment.strip()]
         if not paragraphs:
             return "<p></p>"
 
-        rendered = []
-        for paragraph in paragraphs:
-            escaped = html.escape(paragraph).replace("\n", "<br />")
+        def linkify(value: str) -> str:
+            escaped = html.escape(value)
 
             def render_link(match: re.Match[str]) -> str:
                 url = match.group(1)
@@ -922,12 +937,32 @@ Mirror Talk Podcast"""
                     trailing_punctuation = url[-1] + trailing_punctuation
                     url = url[:-1]
                 label = html.escape(self._html_link_label(url, match.string[: match.start()]))
+                safe_url = html.escape(html.unescape(url), quote=True)
                 return (
-                    f'<a href="{url}" style="color:#d94b12;font-weight:700;'
-                    f'overflow-wrap:anywhere">{label}</a>{trailing_punctuation}'
+                    f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer" '
+                    f'style="color:#b53b0b;font-weight:700;text-decoration:underline;'
+                    f'text-underline-offset:2px;overflow-wrap:anywhere">{label}</a>{trailing_punctuation}'
                 )
 
-            escaped = re.sub(r"(https://[^\s<]+)", render_link, escaped)
+            return re.sub(r"(https?://[^\s<]+)", render_link, escaped)
+
+        rendered = []
+        for paragraph in paragraphs:
+            lines = [line.strip() for line in paragraph.split("\n") if line.strip()]
+            list_start = next((index for index, line in enumerate(lines) if line.startswith("- ")), None)
+            if list_start is not None and all(line.startswith("- ") for line in lines[list_start:]):
+                if list_start:
+                    intro = "<br />".join(linkify(line) for line in lines[:list_start])
+                    rendered.append(f'<p style="margin:0 0 10px;line-height:1.65">{intro}</p>')
+                items = "".join(
+                    f'<li style="margin:0 0 9px;padding-left:3px;line-height:1.55">{linkify(line[2:].strip())}</li>'
+                    for line in lines[list_start:]
+                )
+                rendered.append(
+                    f'<ul style="margin:0 0 20px;padding-left:23px">{items}</ul>'
+                )
+                continue
+            escaped = "<br />".join(linkify(line) for line in lines)
             rendered.append(f'<p style="margin:0 0 18px;line-height:1.65">{escaped}</p>')
         content = "".join(rendered)
         return (

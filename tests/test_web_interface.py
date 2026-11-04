@@ -6429,7 +6429,9 @@ def test_booking_confirmation_email_formats_time_in_booking_timezone():
     )
 
     assert "Your Soulful Conversation is booked for Friday 10 April" == template["subject"]
-    assert "Friday 10 April, 2026 at 01:30 Europe/Berlin (your local time)." in template["body"]
+    assert "- Date: Friday 10 April, 2026" in template["body"]
+    assert "- Time: 01:30" in template["body"]
+    assert "- Time zone: Europe/Berlin (your local time)" in template["body"]
 
 
 def test_google_calendar_event_creation_requests_attendee_updates(monkeypatch):
