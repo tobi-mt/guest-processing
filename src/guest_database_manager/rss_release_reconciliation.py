@@ -23,6 +23,7 @@ from guest_database_manager.recommendation_learning import RecommendationLearnin
 
 DEFAULT_RSS_URL = "https://anchor.fm/s/261b1464/podcast/rss"
 MAX_FEED_BYTES = 8 * 1024 * 1024
+AUTO_RELEASE_MAX_DATE_DISTANCE_DAYS = 3
 
 
 class RSSReconciliationError(ValueError):
@@ -252,7 +253,21 @@ class RSSReleaseReconciler:
             matches.append({
                 "item": item, "episode_id": episode_id, "status": status, "match_method": method,
                 "confidence": round(confidence, 4), "date_distance_days": distance, "reason": reason,
+                "episode_release_status": (
+                    str(by_id[episode_id].get("release_status") or "").strip().casefold()
+                    if episode_id else ""
+                ),
             })
+        episode_match_counts: dict[int, int] = {}
+        for match in matches:
+            if match["episode_id"] is not None:
+                episode_id = int(match["episode_id"])
+                episode_match_counts[episode_id] = episode_match_counts.get(episode_id, 0) + 1
+        for match in matches:
+            episode_id = match["episode_id"]
+            if episode_id is not None and episode_match_counts[int(episode_id)] > 1:
+                match["status"] = "conflict"
+                match["reason"] = "More than one feed item maps to the same episode"
         counts: dict[str, int] = {}
         for match in matches:
             counts[match["status"]] = counts.get(match["status"], 0) + 1
@@ -359,6 +374,9 @@ class RSSReleaseReconciler:
                 and match.get("status") == "review_required"
                 and match.get("match_method") == "exact_title"
                 and float(match.get("confidence") or 0) >= 0.99
+                and match.get("episode_release_status") == "scheduled"
+                and match.get("date_distance_days") is not None
+                and int(match["date_distance_days"]) <= AUTO_RELEASE_MAX_DATE_DISTANCE_DAYS
                 and match.get("reason") == "RSS confirms publication but the episode is not marked released"
             )
             should_sync_metadata = apply_lifecycle and match.get("episode_id") is not None and (

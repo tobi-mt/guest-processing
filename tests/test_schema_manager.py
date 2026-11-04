@@ -18,7 +18,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+    assert _versions(db_path) == list(range(1, 41))
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
@@ -60,6 +60,9 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
         "transcript_synced_at",
         "transcript_match_method",
         "transcript_match_score",
+        "transcript_content_hash",
+        "transcript_source_version",
+        "transcript_source_approved_at",
         "content_class",
         "format_type",
         "primary_pillar",
@@ -137,6 +140,39 @@ def test_shadow_learning_migration_rolls_back_ddl_on_failure(monkeypatch, tmp_pa
         versions = [row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")]
     assert "recommendation_learning_runs" not in tables
     assert 28 not in versions
+
+
+def test_transcript_automation_migration_rolls_back_on_failure(monkeypatch, tmp_path):
+    db_path = tmp_path / "transcript-automation-rollback.db"
+    SchemaManager.create_tables(str(db_path))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_episodes_transcript_source")
+        for column in (
+            "transcript_source_approved_at",
+            "transcript_source_version",
+            "transcript_content_hash",
+        ):
+            conn.execute(f"ALTER TABLE episodes DROP COLUMN {column}")
+        conn.execute("DELETE FROM schema_migrations WHERE version = 40")
+
+    original = SchemaManager._migration_040_transcript_automation_governance
+
+    def fail_after_ddl(conn):
+        original(conn)
+        raise RuntimeError("stop after transcript automation DDL")
+
+    monkeypatch.setattr(SchemaManager, "_migration_040_transcript_automation_governance", fail_after_ddl)
+    with pytest.raises(RuntimeError, match="transcript automation DDL"):
+        SchemaManager.create_tables(str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(episodes)")}
+        index = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_episodes_transcript_source'"
+        ).fetchone()
+    assert "transcript_content_hash" not in columns
+    assert index is None
+    assert 40 not in _versions(db_path)
 
 
 def test_migrations_backfill_representative_legacy_guest(tmp_path):

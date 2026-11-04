@@ -626,7 +626,8 @@ def test_action_queue_omits_episode_with_exact_rss_release_evidence(temp_db):
             "episode_title": "A Released Conversation",
             "production_status": "ready",
             "promotion_status": "ready",
-            "release_status": "unplanned",
+            "release_status": "scheduled",
+            "release_date": "2026-10-09T03:00:00Z",
         }
     )
     payload = """<?xml version="1.0"?><rss><channel><item>
@@ -5012,6 +5013,81 @@ def test_web_service_reports_ambiguous_ask_matches(monkeypatch, temp_db):
     assert len(ambiguous["candidates"]) == 2
     assert {candidate["id"] for candidate in ambiguous["candidates"]} == {81, 82}
     assert all(candidate["method"] == "guest_title" for candidate in ambiguous["candidates"])
+
+
+def test_ask_sync_keeps_duplicate_exact_titles_for_review(monkeypatch, temp_db):
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def export_episodes(self, **kwargs):
+            return [
+                {"id": 201, "title": "A Shared Title", "transcript_text": "First transcript."},
+                {"id": 202, "title": "A Shared Title", "transcript_text": "Second transcript."},
+            ]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode({"guest_name": "Shared", "episode_title": "A Shared Title"})
+
+    result = service.sync_ask_mirror_talk_transcripts()
+
+    assert result["updated"] == 0
+    assert result["skipped_ambiguous"] == 1
+    assert {item["id"] for item in result["ambiguous_matches"][0]["candidates"]} == {201, 202}
+    assert not service.database.get_episode_by_id(episode["id"])["transcript_text"]
+
+
+def test_approved_transcript_source_is_imported_automatically_when_available(monkeypatch, temp_db):
+    remote = {
+        "id": 301,
+        "title": "Approved Transcript Episode",
+        "published_at": "2026-10-02T12:00:00Z",
+        "transcript_text": "",
+        "updated_at": "v1",
+    }
+
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def export_episodes(self, **kwargs):
+            return [dict(remote)]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode({
+        "guest_name": "Approved Guest", "episode_title": "Approved Transcript Episode",
+        "published_title": "Approved Transcript Episode", "release_status": "released",
+        "production_status": "released", "promotion_status": "ready",
+    })
+    preview = service.sync_ask_mirror_talk_transcripts(preview_only=True)
+    proposal = preview["proposed_matches"][0]
+    service.sync_ask_mirror_talk_transcripts(approved_matches=[{
+        "local_episode_id": episode["id"],
+        "remote_episode_ref": proposal["remote_episode"]["ref"],
+    }])
+
+    remote["transcript_text"] = "The newly available approved transcript."
+    remote["updated_at"] = "v2"
+    result = service.sync_ask_mirror_talk_transcripts(
+        approved_sources_only=True, actor="transcript-sync-automation"
+    )
+    updated = service.database.get_episode_by_id(episode["id"])
+
+    assert result["updated_transcript"] == 1
+    assert updated["transcript_text"] == remote["transcript_text"]
+    assert updated["transcript_source_id"] == "301"
+    assert updated["transcript_source_approved_at"]
+    assert updated["transcript_content_hash"]
+    assert updated["transcript_source_version"] == "v2"
+    assert service.database.list_audit_events("episode", episode["id"])[0]["actor"] == "transcript-sync-automation"
 
 
 def test_web_service_does_not_match_different_guest_on_shared_first_name(monkeypatch, temp_db):

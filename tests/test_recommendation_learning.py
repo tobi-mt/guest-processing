@@ -234,7 +234,7 @@ def test_rss_reconciliation_marks_exact_unique_episode_released(temp_db):
         pending = dict(conn.execute("SELECT * FROM episodes WHERE id = ?", (pending_id,)).fetchone())
         assert pending["release_status"] == "released"
         assert pending["production_status"] == "released"
-        assert pending["promotion_status"] == "released"
+        assert pending["promotion_status"] == "unknown"
         assert pending["published_title"] == "Published But Pending"
         assert pending["working_title"] == "Editorial working title"
         assert pending["notes"] == "Private editorial note"
@@ -293,6 +293,46 @@ def test_rss_background_reconciliation_keeps_release_transition_human_approved(t
     unchanged = temp_db.get_episode_by_id(episode_id)
     assert unchanged["release_status"] == "scheduled"
     assert unchanged["published_description"] is None
+
+
+def test_rss_automatic_release_requires_close_planned_date(temp_db):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": "Date Guard Guest", "episode_title": "Date Guard Release",
+        "release_status": "scheduled", "release_date": "2026-09-01",
+    })
+    feed = """<?xml version="1.0"?><rss><channel><item>
+      <guid>date-guard</guid><title>Date Guard Release</title>
+      <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+
+    result = RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml").reconcile(
+        actor="rss-release-automation", payload=feed, apply_lifecycle=True
+    )
+
+    assert result["lifecycle_updates"] == 0
+    assert result["counts"] == {"review_required": 1}
+    assert temp_db.get_episode_by_id(episode_id)["release_status"] == "scheduled"
+
+
+def test_rss_automatic_release_rejects_multiple_feed_items_for_one_episode(temp_db):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": "Conflict Guest", "episode_title": "One Canonical Episode",
+        "release_status": "scheduled", "release_date": "2026-09-21",
+    })
+    feed = """<?xml version="1.0"?><rss><channel>
+      <item><guid>conflict-a</guid><title>One Canonical Episode</title>
+        <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate></item>
+      <item><guid>conflict-b</guid><title>One Canonical Episode</title>
+        <pubDate>Mon, 21 Sep 2026 13:00:00 GMT</pubDate></item>
+    </channel></rss>"""
+
+    result = RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml").reconcile(
+        actor="rss-release-automation", payload=feed, apply_lifecycle=True
+    )
+
+    assert result["lifecycle_updates"] == 0
+    assert result["counts"] == {"conflict": 2}
+    assert temp_db.get_episode_by_id(episode_id)["release_status"] == "scheduled"
 
 
 def test_invalid_persisted_policy_weights_fail_safe(temp_db):

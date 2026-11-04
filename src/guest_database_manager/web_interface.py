@@ -142,6 +142,9 @@ GOOGLE_CALENDAR_DAYS_AHEAD_ENV_VAR = "MIRROR_TALK_GOOGLE_CALENDAR_DAYS_AHEAD"
 ASK_MIRROR_TALK_BASE_URL_ENV_VAR = "MIRROR_TALK_ASK_BASE_URL"
 ASK_MIRROR_TALK_USERNAME_ENV_VAR = "MIRROR_TALK_ASK_USERNAME"
 ASK_MIRROR_TALK_PASSWORD_ENV_VAR = "MIRROR_TALK_ASK_PASSWORD"
+RSS_AUTO_RELEASE_ENABLED_ENV_VAR = "MIRROR_TALK_RSS_AUTO_RELEASE_ENABLED"
+TRANSCRIPT_AUTO_SYNC_ENABLED_ENV_VAR = "MIRROR_TALK_TRANSCRIPT_AUTO_SYNC_ENABLED"
+TRANSCRIPT_AUTO_SYNC_INTERVAL_ENV_VAR = "MIRROR_TALK_TRANSCRIPT_AUTO_SYNC_INTERVAL_SECONDS"
 OPENAI_API_KEY_ENV_VAR = "MIRROR_TALK_OPENAI_API_KEY"
 OPENAI_MODEL_ENV_VAR = "MIRROR_TALK_OPENAI_MODEL"
 OPENAI_TIMEOUT_ENV_VAR = "MIRROR_TALK_OPENAI_TIMEOUT_SECONDS"
@@ -851,6 +854,8 @@ class GuestWebService:
     _outbox_thread: Optional[Thread] = field(default=None, init=False, repr=False)
     _learning_stop: Optional[Event] = field(default=None, init=False, repr=False)
     _learning_thread: Optional[Thread] = field(default=None, init=False, repr=False)
+    _transcript_stop: Optional[Event] = field(default=None, init=False, repr=False)
+    _transcript_thread: Optional[Thread] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.database = GuestDatabase(self.db_path)
@@ -1028,6 +1033,15 @@ class GuestWebService:
             "worker_running": bool(self._learning_thread and self._learning_thread.is_alive()),
             "promotion_automation_enabled": bool(status.get("settings", {}).get("automation_enabled")),
             "kill_switch": bool(status.get("settings", {}).get("kill_switch", 1)),
+            "rss_auto_release_enabled": os.environ.get(
+                RSS_AUTO_RELEASE_ENABLED_ENV_VAR, "true"
+            ).strip().lower() == "true",
+            "transcript_auto_sync_enabled": os.environ.get(
+                TRANSCRIPT_AUTO_SYNC_ENABLED_ENV_VAR, "true"
+            ).strip().lower() == "true",
+            "transcript_worker_running": bool(
+                self._transcript_thread and self._transcript_thread.is_alive()
+            ),
         }
         return status
 
@@ -1218,7 +1232,12 @@ class GuestWebService:
             assert self._learning_stop is not None
             while not self._learning_stop.is_set():
                 try:
-                    self.reconcile_rss_releases(actor="rss-release-automation")
+                    auto_release = os.environ.get(
+                        RSS_AUTO_RELEASE_ENABLED_ENV_VAR, "true"
+                    ).strip().lower() == "true"
+                    self.reconcile_rss_releases(
+                        actor="rss-release-automation", apply_lifecycle=auto_release
+                    )
                 except Exception:
                     logger.exception("RSS release reconciliation cycle failed")
                 try:
@@ -1246,6 +1265,42 @@ class GuestWebService:
             self._learning_stop.set()
         if self._learning_thread and self._learning_thread.is_alive():
             self._learning_thread.join(timeout=max(0.0, float(timeout_seconds)))
+
+    def start_transcript_worker(self, *, interval_seconds: float | None = None) -> None:
+        """Poll for transcripts and import only previously approved source links."""
+        if os.environ.get(TRANSCRIPT_AUTO_SYNC_ENABLED_ENV_VAR, "true").strip().lower() != "true":
+            return
+        if self._build_ask_mirror_talk_client() is None:
+            return
+        if self._transcript_thread and self._transcript_thread.is_alive():
+            return
+        raw_interval = os.environ.get(TRANSCRIPT_AUTO_SYNC_INTERVAL_ENV_VAR, "900")
+        interval = interval_seconds if interval_seconds is not None else float(raw_interval)
+        self._transcript_stop = Event()
+
+        def run() -> None:
+            assert self._transcript_stop is not None
+            while not self._transcript_stop.is_set():
+                try:
+                    self.sync_ask_mirror_talk_transcripts(
+                        overwrite_existing=False,
+                        approved_sources_only=True,
+                        actor="transcript-sync-automation",
+                    )
+                except Exception:
+                    logger.exception("Approved transcript synchronization cycle failed")
+                self._transcript_stop.wait(max(60.0, float(interval)))
+
+        self._transcript_thread = Thread(
+            target=run, name="approved-transcript-sync", daemon=True
+        )
+        self._transcript_thread.start()
+
+    def stop_transcript_worker(self, *, timeout_seconds: float = 5.0) -> None:
+        if self._transcript_stop:
+            self._transcript_stop.set()
+        if self._transcript_thread and self._transcript_thread.is_alive():
+            self._transcript_thread.join(timeout=max(0.0, float(timeout_seconds)))
 
     @staticmethod
     def _payload_cache_ttl(cache_key: str) -> float:
@@ -5449,6 +5504,8 @@ class GuestWebService:
         search: str = "",
         preview_only: bool = False,
         approved_matches: Optional[list[Dict[str, Any]]] = None,
+        approved_sources_only: bool = False,
+        actor: str = "operator",
     ) -> Dict[str, Any]:
         """Preview or apply lossless transcript matches from Ask Mirror Talk."""
         client = self._build_ask_mirror_talk_client()
@@ -5462,14 +5519,17 @@ class GuestWebService:
 
         # Build indexes for O(1) lookups instead of O(n*m) nested loops
         # With 528 local episodes and 1000 remote episodes, this reduces from 528,000 to ~1,528 operations
-        remote_by_title_key: Dict[str, Dict[str, Any]] = {}
+        remote_by_title_key: Dict[str, list[Dict[str, Any]]] = {}
+        remote_by_id: Dict[str, list[Dict[str, Any]]] = {}
         remote_with_guest_tokens: Dict[str, list[Dict[str, Any]]] = {}
         
         for remote_episode in remote_episodes:
             # Index by normalized title for exact matches
             title_key = self._episode_match_key(remote_episode.get("title"))
             if title_key:
-                remote_by_title_key[title_key] = remote_episode
+                remote_by_title_key.setdefault(title_key, []).append(remote_episode)
+            if remote_episode.get("id") is not None:
+                remote_by_id.setdefault(str(remote_episode["id"]), []).append(remote_episode)
             
             # Index by person tokens in title and description for guest name matching
             remote_title_tokens = set(self._word_tokens(remote_episode.get("title")))
@@ -5513,12 +5573,47 @@ class GuestWebService:
                 continue
 
             candidates: list[tuple[int, str, Dict[str, Any]]] = []
+
+            if approved_sources_only:
+                approved_source_id = _normalize_text(episode.get("transcript_source_id"))
+                if (
+                    _normalize_text(episode.get("release_status")).lower() != "released"
+                    or not episode.get("transcript_source_approved_at")
+                    or not approved_source_id
+                    or _normalize_text(episode.get("transcript_text"))
+                ):
+                    continue
+                approved_remote = remote_by_id.get(approved_source_id, [])
+                if len(approved_remote) == 1:
+                    candidates.append((1000, "approved_source_id", approved_remote[0]))
+                else:
+                    continue
             
             # Fast exact title match lookup O(1)
-            if local_title_key and local_title_key in remote_by_title_key:
-                remote_episode = remote_by_title_key[local_title_key]
-                if remote_episode.get("id") not in used_remote_ids:
-                    candidates.append((1000, "title", remote_episode))
+            if not candidates and local_title_key and local_title_key in remote_by_title_key:
+                exact_matches = [
+                    item for item in remote_by_title_key[local_title_key]
+                    if item.get("id") not in used_remote_ids
+                ]
+                if len(exact_matches) == 1:
+                    candidates.append((1000, "title", exact_matches[0]))
+                elif len(exact_matches) > 1:
+                    skipped_ambiguous += 1
+                    ambiguous_matches.append(
+                        {
+                            "local_episode": {
+                                "id": episode.get("id"),
+                                "title": _normalize_text(episode.get("episode_title")),
+                                "guest_name": _normalize_text(episode.get("guest_name")),
+                                "release_date": _normalize_text(episode.get("release_date")),
+                            },
+                            "candidates": [
+                                self._summarize_ask_match_candidate(episode, item, 1000, "title")
+                                for item in exact_matches[:2]
+                            ],
+                        }
+                    )
+                    continue
             
             # Fast guest name token lookup - only check episodes with matching tokens
             if guest_tokens and not candidates:
@@ -5611,36 +5706,40 @@ class GuestWebService:
             if approved_matches is not None and (int(episode["id"]), remote_reference) not in approved_keys:
                 skipped_unapproved += 1
                 continue
+            approved_key = (int(episode["id"]), remote_reference) in approved_keys
 
-            if not should_update_transcript and not should_update_title:
+            if not should_update_transcript and not should_update_title and not approved_key:
                 if transcript_exists and transcript_text:
                     skipped_existing += 1
                 elif not transcript_text and not should_update_title:
                     skipped_without_remote_transcript += 1
                 continue
 
-            payload: Dict[str, Any] = {
-                "source_type": _normalize_text(episode.get("source_type")) or "ask_mirror_talk_sync",
-                "source_file_name": _normalize_text(episode.get("source_file_name")) or "Ask Mirror Talk",
-            }
             if should_update_transcript:
-                payload["transcript_text"] = transcript_text
-                payload["transcript_synced_at"] = datetime.now(timezone.utc).isoformat()
                 updated_transcript += 1
             elif not transcript_text:
                 skipped_without_remote_transcript += 1
             if should_update_title:
-                payload["published_title"] = remote_title
                 if not should_update_transcript:
                     updated_title_only += 1
-            payload["transcript_source_id"] = remote_reference
-            payload["transcript_match_method"] = best_method
-            payload["transcript_match_score"] = best_score
-
-            self.update_episode(
-                episode["id"],
-                payload,
-            )
+            try:
+                self.database.synchronize_episode_transcript(
+                    int(episode["id"]),
+                    transcript_text=transcript_text if should_update_transcript else "",
+                    source_id=remote_reference,
+                    source_version=_normalize_text(
+                        remote_episode.get("transcript_updated_at") or remote_episode.get("updated_at")
+                    ),
+                    match_method=best_method,
+                    match_score=best_score,
+                    published_title=remote_title if should_update_title and not approved_sources_only else "",
+                    approve_source=approved_key and remote_episode.get("id") is not None,
+                    overwrite_existing=overwrite_existing,
+                    actor=actor,
+                    correlation_id=f"ask-transcript:{remote_reference}:{episode['id']}",
+                )
+            except (ValueError, RuntimeError) as exc:
+                raise WebInterfaceError(str(exc)) from exc
             updated += 1
             updated_titles.append(remote_title or _normalize_text(episode.get("episode_title")))
 
@@ -9281,6 +9380,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         if isinstance(payload.get("approved_matches"), list)
                         else None
                     ),
+                    actor=str((self._session_claims() or {}).get("sub") or "operator"),
                 )
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -10399,6 +10499,7 @@ def run_web_interface(
     server = create_web_server(host=host, port=port, db_path=db_path)
     GuestWebRequestHandler.service.start_outbox_worker()
     GuestWebRequestHandler.service.start_learning_worker()
+    GuestWebRequestHandler.service.start_transcript_worker()
     url = f"http://{host}:{port}"
     print(f"🌐 Starting direct web interface at {url}")
     print(f"🗄️ Using database: {Path(db_path)}")
@@ -10413,4 +10514,5 @@ def run_web_interface(
     finally:
         GuestWebRequestHandler.service.stop_outbox_worker()
         GuestWebRequestHandler.service.stop_learning_worker()
+        GuestWebRequestHandler.service.stop_transcript_worker()
         server.server_close()

@@ -131,6 +131,9 @@ class SchemaManager:
             transcript_synced_at TIMESTAMP,
             transcript_match_method TEXT,
             transcript_match_score INTEGER,
+            transcript_content_hash TEXT,
+            transcript_source_version TEXT,
+            transcript_source_approved_at TIMESTAMP,
             outreach_plan TEXT,
             ai_monthly_angle_state TEXT,
             ai_monthly_angle_theme TEXT,
@@ -288,6 +291,9 @@ class SchemaManager:
         ("transcript_synced_at", "TIMESTAMP"),
         ("transcript_match_method", "TEXT"),
         ("transcript_match_score", "INTEGER"),
+        ("transcript_content_hash", "TEXT"),
+        ("transcript_source_version", "TEXT"),
+        ("transcript_source_approved_at", "TIMESTAMP"),
         ("outreach_plan", "TEXT"),
         ("ai_monthly_angle_state", "TEXT"),
         ("ai_monthly_angle_theme", "TEXT"),
@@ -1147,6 +1153,20 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_040_transcript_automation_governance(conn: sqlite3.Connection) -> None:
+        """Track approved transcript identities and immutable content provenance."""
+        for name, declaration in (
+            ("transcript_content_hash", "TEXT"),
+            ("transcript_source_version", "TEXT"),
+            ("transcript_source_approved_at", "TIMESTAMP"),
+        ):
+            SchemaManager._add_column_if_missing(conn, "episodes", name, declaration)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodes_transcript_source "
+            "ON episodes(transcript_source_id, transcript_source_approved_at)"
+        )
+
+    @staticmethod
     def _migration_027_structured_governance_controls(conn: sqlite3.Connection) -> None:
         """Create auditable readiness and exception records without enabling automation."""
         SchemaManager._add_column_if_missing(conn, "episodes", "format_type", "TEXT")
@@ -1587,6 +1607,7 @@ class SchemaManager:
             (37, "guest_ai_artifacts", SchemaManager._migration_037_guest_ai_artifacts),
             (38, "booking_conflict_buffer", SchemaManager._migration_038_booking_conflict_buffer),
             (39, "rss_public_metadata", SchemaManager._migration_039_rss_public_metadata),
+            (40, "transcript_automation_governance", SchemaManager._migration_040_transcript_automation_governance),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -1747,7 +1748,8 @@ class GuestDatabase:
             if not already_released:
                 release_status = validate_transition("release", before.get("release_status"), "released")
                 production_status = validate_transition("production", before.get("production_status"), "released")
-                promotion_status = validate_transition("promotion", before.get("promotion_status"), "released")
+                # The authoritative feed proves publication and completion of production,
+                # but it does not prove that the promotion workflow was completed.
                 original_planned_release_date = before.get("original_planned_release_date") or before.get("release_date")
             metadata_targets = {
                 "published_title": published_title,
@@ -1855,6 +1857,73 @@ class GuestDatabase:
                 correlation_id=correlation_id,
                 before=before,
                 after=after,
+            )
+            conn.commit()
+            return after
+
+    def synchronize_episode_transcript(
+        self,
+        episode_id: int,
+        *,
+        transcript_text: str,
+        source_id: str,
+        source_version: str = "",
+        match_method: str,
+        match_score: int,
+        published_title: str = "",
+        approve_source: bool = False,
+        overwrite_existing: bool = False,
+        actor: str,
+        correlation_id: str,
+    ) -> Dict[str, Any]:
+        """Persist transcript provenance atomically without touching editorial fields."""
+        normalized_text = str(transcript_text or "").strip()
+        normalized_source_id = str(source_id or "").strip()
+        if not normalized_source_id:
+            raise ValueError("Transcript source identity is required")
+        content_hash = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest() if normalized_text else ""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            current_row = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+            if not current_row:
+                raise ValueError("Episode not found")
+            before = dict(current_row)
+            existing_text = str(before.get("transcript_text") or "").strip()
+            existing_source = str(before.get("transcript_source_id") or "").strip()
+            if existing_text and normalized_text and not overwrite_existing and existing_text != normalized_text:
+                raise ValueError("Existing transcript is preserved; explicit overwrite approval is required")
+            if existing_source and existing_source != normalized_source_id:
+                raise ValueError("Transcript source identity changed and requires review")
+            next_text = normalized_text or existing_text
+            next_hash = content_hash or str(before.get("transcript_content_hash") or "")
+            approved_at = before.get("transcript_source_approved_at")
+            if approve_source and not approved_at:
+                approved_at = datetime.now(timezone.utc).isoformat()
+            row_version = int(before.get("row_version") or 1)
+            cursor = conn.execute(
+                """UPDATE episodes
+                   SET transcript_text = ?, transcript_source_id = ?, transcript_synced_at = CURRENT_TIMESTAMP,
+                       transcript_match_method = ?, transcript_match_score = ?, transcript_content_hash = ?,
+                       transcript_source_version = ?, transcript_source_approved_at = ?,
+                       published_title = CASE WHEN TRIM(?) <> '' THEN ? ELSE published_title END,
+                       row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND row_version = ?""",
+                (
+                    next_text, normalized_source_id, match_method, int(match_score or 0), next_hash,
+                    str(source_version or "").strip(), approved_at, published_title, published_title,
+                    episode_id, row_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Episode was changed during transcript synchronization")
+            after = dict(conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone())
+            event_type = "transcript_source_approved" if approve_source and not before.get(
+                "transcript_source_approved_at"
+            ) else "transcript_synced"
+            self._append_audit_event_conn(
+                conn, entity_type="episode", entity_id=episode_id, event_type=event_type,
+                actor=actor, source="ask_mirror_talk", reason="Transcript provenance synchronized.",
+                correlation_id=correlation_id, before=before, after=after,
             )
             conn.commit()
             return after
