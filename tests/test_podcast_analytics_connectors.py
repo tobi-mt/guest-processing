@@ -85,6 +85,21 @@ def test_local_collector_fails_closed_for_bad_token_and_review_rows(temp_db, mon
     assert connectors.status()["local_collectors"]["connections"]["apple_podcasts"]["status"] == "error"
 
 
+def test_local_collector_reports_stale_when_heartbeat_stops(temp_db, monkeypatch):
+    token = "collector-token-with-at-least-thirty-two-characters"
+    monkeypatch.setenv(COLLECTOR_TOKEN_ENV, token)
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    connectors.set_local_collector("spotify", enabled=True, actor="admin")
+    with sqlite3.connect(temp_db.db_path) as conn:
+        conn.execute(
+            """UPDATE analytics_browser_collectors
+               SET status = 'connected', last_seen_at = '2026-01-01T00:00:00Z'
+               WHERE provider = 'spotify'"""
+        )
+
+    assert connectors.status()["local_collectors"]["connections"]["spotify"]["status"] == "stale"
+
+
 def test_openpodcast_sync_normalizes_show_level_daily_evidence_and_is_idempotent(temp_db, monkeypatch):
     monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, "server-only-openpodcast-token")
     monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
@@ -162,6 +177,32 @@ def test_openpodcast_sync_identifies_failing_endpoint_without_exposing_provider_
             end=__import__("datetime").date(2026, 10, 30),
         )
     assert "upstream response details" not in str(failure.value)
+    status = connectors.status()["openpodcast"]
+    assert status["status"] == "error"
+    assert status["last_error_code"] == "endpoint_failed:podcastFollowers"
+    assert status["last_error_at"]
+    assert "upstream response details" not in str(status)
+
+
+def test_openpodcast_rejected_credential_is_reported_without_exposing_it(temp_db, monkeypatch):
+    token = "server-only-openpodcast-token"
+    monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, token)
+    monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    monkeypatch.setattr(
+        connectors, "_get_openpodcast_json",
+        lambda *_args: (_ for _ in ()).throw(
+            AnalyticsConnectorError("OpenPodcast rejected the configured analytics credential.")
+        ),
+    )
+
+    with pytest.raises(AnalyticsConnectorError, match="episodesDailyMetrics"):
+        connectors.sync_openpodcast(actor="admin")
+
+    status = connectors.status()["openpodcast"]
+    assert status["status"] == "error"
+    assert status["last_error_code"] == "credential_rejected"
+    assert token not in str(status)
 
 
 def test_google_oauth_state_is_hashed_short_lived_and_one_time(temp_db, monkeypatch):

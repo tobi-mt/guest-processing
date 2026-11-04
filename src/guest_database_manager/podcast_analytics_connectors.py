@@ -30,6 +30,7 @@ OPENPODCAST_TOKEN_ENV = "MIRROR_TALK_OPENPODCAST_TOKEN"
 OPENPODCAST_PODCAST_ID_ENV = "MIRROR_TALK_OPENPODCAST_PODCAST_ID"
 OPENPODCAST_API_BASE = "https://api.openpodcast.dev/analytics/v1"
 LOCAL_COLLECTOR_PROVIDERS = {"spotify", "apple_podcasts"}
+LOCAL_COLLECTOR_STALE_AFTER = timedelta(days=2)
 
 GOOGLE_SCOPES = (
     "openid",
@@ -50,6 +51,17 @@ def _now() -> datetime:
 
 def _iso(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
 class PodcastAnalyticsConnectors:
@@ -104,6 +116,12 @@ class PodcastAnalyticsConnectors:
                           last_error_code, last_error_at, consecutive_failures, updated_at
                    FROM analytics_browser_collectors ORDER BY provider"""
             ).fetchall()
+            openpodcast_event = conn.execute(
+                """SELECT event_type, after_json, created_at FROM audit_events
+                   WHERE entity_type = 'analytics_connector' AND entity_id = 'openpodcast'
+                     AND event_type IN ('analytics_sync_completed', 'analytics_sync_failed')
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
         connections = [dict(row) for row in rows]
         for connection in connections:
             connection["scopes"] = json.loads(connection.pop("scopes_json") or "[]")
@@ -119,6 +137,12 @@ class PodcastAnalyticsConnectors:
             })
         for item in collectors.values():
             item["enabled"] = bool(item["enabled"])
+            last_seen = _parse_datetime(item.get("last_seen_at"))
+            if (
+                item["enabled"] and item.get("status") == "connected" and last_seen
+                and _now() - last_seen > LOCAL_COLLECTOR_STALE_AFTER
+            ):
+                item["status"] = "stale"
         openpodcast_rows: list[dict[str, Any]] = []
         with connect_database(self.db_path) as conn:
             conn.row_factory = __import__("sqlite3").Row
@@ -128,13 +152,22 @@ class PodcastAnalyticsConnectors:
                    ORDER BY imported_at DESC, id DESC LIMIT 1"""
             ).fetchall()]
         openpodcast_ready = bool(config["openpodcast_token"] and config["openpodcast_podcast_id"].isdigit())
+        openpodcast_event_details = json.loads(openpodcast_event["after_json"] or "{}") if openpodcast_event else {}
+        openpodcast_status = "connected" if openpodcast_rows else "ready" if openpodcast_ready else "not_configured"
+        if openpodcast_event and openpodcast_event["event_type"] == "analytics_sync_failed":
+            openpodcast_status = "error"
         return {
             "openpodcast": {
                 "configured": openpodcast_ready,
-                "status": "connected" if openpodcast_rows else "ready" if openpodcast_ready else "not_configured",
+                "status": openpodcast_status,
                 "podcast_id": config["openpodcast_podcast_id"] if openpodcast_ready else None,
                 "last_success_at": openpodcast_rows[0]["imported_at"] if openpodcast_rows else None,
                 "latest_period_end": openpodcast_rows[0]["period_end"] if openpodcast_rows else None,
+                "last_error_code": openpodcast_event_details.get("error_code", ""),
+                "last_error_at": (
+                    openpodcast_event["created_at"]
+                    if openpodcast_event and openpodcast_event["event_type"] == "analytics_sync_failed" else None
+                ),
                 "required_environment": [OPENPODCAST_TOKEN_ENV, OPENPODCAST_PODCAST_ID_ENV],
             },
             "google": {
@@ -183,6 +216,18 @@ class PodcastAnalyticsConnectors:
                     token,
                 )
             except AnalyticsConnectorError as exc:
+                error_code = (
+                    "credential_rejected"
+                    if "credential" in str(exc).casefold() else f"endpoint_failed:{endpoint}"
+                )
+                with connect_database(self.db_path) as conn:
+                    self._audit(
+                        conn, "analytics_sync_failed", actor,
+                        "OpenPodcast analytics synchronization failed",
+                        {"provider": "openpodcast", "podcast_id": podcast_id,
+                         "endpoint": endpoint, "error_code": error_code},
+                    )
+                    conn.commit()
                 raise AnalyticsConnectorError(
                     f"OpenPodcast analytics endpoint {endpoint} could not be synchronized."
                 ) from exc

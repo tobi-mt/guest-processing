@@ -9304,8 +9304,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             except WebInterfaceError as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
-            except Exception as exc:
-                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Backup generation failed: {exc}"})
+            except Exception:
+                logger.exception("System backup generation failed")
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "Backup generation failed. Please try again or contact an administrator."},
+                )
                 return
 
             self._send_file(HTTPStatus.OK, content, filename=filename, content_type=content_type)
@@ -9746,8 +9750,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
-                except Exception as exc:  # pragma: no cover - defensive API guard
-                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Google Calendar removal failed: {exc}"})
+                except Exception:  # pragma: no cover - defensive API guard
+                    logger.exception("Google Calendar removal failed for interview_id=%s", interview_id)
+                    self._send_json(
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                        {"error": "Google Calendar removal failed. Please try again or contact an administrator."},
+                    )
                     return
 
                 self._send_json(HTTPStatus.OK, interview)

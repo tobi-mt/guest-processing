@@ -17,6 +17,7 @@ from guest_database_manager.web_interface import (
     DASHBOARD_USERNAME_ENV_VAR,
     DASHBOARD_USERS_ENV_VAR,
     DEPLOYMENT_ENV_VAR,
+    GuestWebService,
     PUBLIC_URL_ENV_VAR,
     GuestThreadingHTTPServer,
     create_web_server,
@@ -94,6 +95,31 @@ def test_login_issues_signed_session_and_security_headers(monkeypatch, temp_db):
         assert response.headers["X-Frame-Options"] == "DENY"
         assert response.headers["X-Content-Type-Options"] == "nosniff"
         assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+
+
+def test_backup_failure_does_not_expose_internal_exception(monkeypatch, temp_db):
+    configure_auth(monkeypatch)
+    secret_detail = "database path /private/production.db"
+
+    def fail_backup(_service):
+        raise RuntimeError(secret_detail)
+
+    monkeypatch.setattr(GuestWebService, "export_system_backup", fail_backup)
+    with running_server(temp_db.db_path) as base_url:
+        session = requests.Session()
+        assert login(session, base_url).status_code == 200
+        response = session.post(
+            f"{base_url}/api/system/backup",
+            json={},
+            headers={"X-CSRF-Token": session.cookies["dashboard_csrf"]},
+            timeout=5,
+        )
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "error": "Backup generation failed. Please try again or contact an administrator."
+        }
+        assert secret_detail not in response.text
 
 
 def test_login_rejects_scheme_relative_redirect(monkeypatch, temp_db):
