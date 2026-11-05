@@ -1140,7 +1140,8 @@ function renderInterviews(interviews, totalCount) {
         : "";
       reminderPreviewNode.classList.remove("hidden");
       const additionalCc = kind === "booking" ? bookingAdditionalCc : reminderAdditionalCc;
-      reminderPreviewNode.innerHTML = `${select}<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>Automatic CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<label class="composer-field"><span>Additional CC</span><input type="text" inputmode="email" autocomplete="off" data-additional-cc="${kind}" value="${escapeHtml(additionalCc)}" placeholder="name@example.com, other@example.com" /><small>Optional. Separate multiple addresses with commas.</small></label><pre>${escapeHtml(preview.body)}</pre><div class="inline-editor-actions"><button type="button" class="secondary-button" data-tailor-template="${kind}" ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small></div>`;
+      const tailoringStatus = preview.tailored ? `AI tailoring complete. ${preview.tailoring_notice || "Review the updated draft."}` : (preview.tailoring_notice || "Starts from the approved template; review before sending.");
+      reminderPreviewNode.innerHTML = `${select}<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>Automatic CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<label class="composer-field"><span>Additional CC</span><input type="text" inputmode="email" autocomplete="off" data-additional-cc="${kind}" value="${escapeHtml(additionalCc)}" placeholder="name@example.com, other@example.com" /><small>Optional. Separate multiple addresses with commas.</small></label><pre>${escapeHtml(preview.body)}</pre><div class="inline-editor-actions"><button type="button" class="secondary-button" data-tailor-template="${kind}" ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small data-tailor-status aria-live="polite" class="${preview.tailored ? "success" : ""}">${escapeHtml(tailoringStatus)}</small></div>`;
       reminderPreviewNode.querySelector("[data-additional-cc]")?.addEventListener("input", (event) => {
         if (kind === "booking") bookingAdditionalCc = event.target.value;
         else reminderAdditionalCc = event.target.value;
@@ -1160,7 +1161,11 @@ function renderInterviews(interviews, totalCount) {
       reminderPreviewNode.querySelector("[data-tailor-template]")?.addEventListener("click", async (event) => {
         const selectedKind = event.currentTarget.dataset.tailorTemplate;
         const endpoint = selectedKind === "booking" ? "booking-confirmation-template" : "reminder-template";
-        event.currentTarget.disabled = true;
+        const button = event.currentTarget;
+        const status = reminderPreviewNode.querySelector("[data-tailor-status]");
+        button.disabled = true;
+        button.textContent = "Tailoring…";
+        if (status) { status.textContent = "AI tailoring is working…"; status.className = "pending"; }
         try {
           const updated = await fetchJSON(`/api/interviews/${interview.id}/${endpoint}?variant=${encodeURIComponent(preview.variant || "")}&tailor=true`);
           if (selectedKind === "booking") bookingTemplatePreview = updated;
@@ -1168,7 +1173,9 @@ function renderInterviews(interviews, totalCount) {
           renderTemplatePreview(updated, selectedKind);
         } catch (error) {
           setMessage(interviewMessage, error.message, "error");
-          event.currentTarget.disabled = false;
+          button.disabled = false;
+          button.textContent = "Retry AI tailoring";
+          if (status) { status.textContent = `AI tailoring failed: ${error.message}. The current draft was not replaced.`; status.className = "error"; }
         }
       });
     };
@@ -1376,12 +1383,20 @@ function renderInterviews(interviews, totalCount) {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/reschedule-template?${params}`);
           reminderPreviewNode.dataset.rescheduleSubject = preview.subject || "";
           reminderPreviewNode.dataset.rescheduleBody = preview.body || "";
-          emailPreviewNode.innerHTML = `<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>Automatic CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<label class="composer-field"><span>Additional CC</span><input type="text" inputmode="email" autocomplete="off" data-reschedule-additional-cc value="${escapeHtml(rescheduleAdditionalCc)}" placeholder="name@example.com, other@example.com" /><small>Optional. Separate multiple addresses with commas.</small></label><pre>${escapeHtml(preview.body)}</pre><button type="button" class="secondary-button" data-tailor-reschedule ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>`;
+          emailPreviewNode.innerHTML = `<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>Automatic CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<label class="composer-field"><span>Additional CC</span><input type="text" inputmode="email" autocomplete="off" data-reschedule-additional-cc value="${escapeHtml(rescheduleAdditionalCc)}" placeholder="name@example.com, other@example.com" /><small>Optional. Separate multiple addresses with commas.</small></label><pre>${escapeHtml(preview.body)}</pre><button type="button" class="secondary-button" data-tailor-reschedule ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small data-reschedule-tailor-status aria-live="polite" class="${preview.tailored ? "success" : ""}">${escapeHtml(preview.tailored ? `AI tailoring complete. ${preview.tailoring_notice || "Review the updated draft."}` : (preview.tailoring_notice || "Starts from the approved template; review before sending."))}</small>`;
           emailPreviewNode.querySelector("[data-reschedule-additional-cc]")?.addEventListener("input", (event) => {
             rescheduleAdditionalCc = event.target.value;
           });
-          emailPreviewNode.querySelector("[data-tailor-reschedule]")?.addEventListener("click", async () => {
-            try { await fetchPreview(true); } catch (error) { setMessage(interviewMessage, error.message, "error"); }
+          emailPreviewNode.querySelector("[data-tailor-reschedule]")?.addEventListener("click", async (event) => {
+            const button = event.currentTarget;
+            const status = emailPreviewNode.querySelector("[data-reschedule-tailor-status]");
+            button.disabled = true; button.textContent = "Tailoring…";
+            if (status) { status.textContent = "AI tailoring is working…"; status.className = "pending"; }
+            try { await fetchPreview(true); } catch (error) {
+              button.disabled = false; button.textContent = "Retry AI tailoring";
+              if (status) { status.textContent = `AI tailoring failed: ${error.message}. The current draft was not replaced.`; status.className = "error"; }
+              setMessage(interviewMessage, error.message, "error");
+            }
           });
           return { preview, proposal };
         };
@@ -1566,17 +1581,28 @@ function renderInterviews(interviews, totalCount) {
             <label class="composer-field"><span>Additional CC</span><input type="text" inputmode="email" autocomplete="off" data-cancellation-additional-cc value="${escapeHtml(cancellationAdditionalCc)}" placeholder="name@example.com, other@example.com" /><small>Optional. Separate multiple addresses with commas.</small></label>
             <pre>${escapeHtml(preview.body)}</pre>
             <button type="button" class="secondary-button" data-tailor-cancellation ${aiEnabled ? "" : "disabled"}>Tailor with AI</button>
-            <small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>
+            <small data-cancellation-tailor-status aria-live="polite">${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>
           `;
           reminderPreviewNode.querySelector("[data-cancellation-additional-cc]")?.addEventListener("input", (event) => {
             cancellationAdditionalCc = event.target.value;
           });
-          reminderPreviewNode.querySelector("[data-tailor-cancellation]")?.addEventListener("click", async () => {
-            const tailored = await fetchJSON(`/api/interviews/${interview.id}/cancellation-template?tailor=true`);
-            cancellationTemplatePreview = tailored;
-            reminderPreviewNode.querySelector("h4").textContent = tailored.subject;
-            reminderPreviewNode.querySelector("pre").textContent = tailored.body;
-            reminderPreviewNode.querySelector("small").textContent = tailored.tailoring_notice || "Review before sending.";
+          reminderPreviewNode.querySelector("[data-tailor-cancellation]")?.addEventListener("click", async (event) => {
+            const button = event.currentTarget;
+            const status = reminderPreviewNode.querySelector("[data-cancellation-tailor-status]");
+            button.disabled = true; button.textContent = "Tailoring…";
+            status.textContent = "AI tailoring is working…"; status.className = "pending";
+            try {
+              const tailored = await fetchJSON(`/api/interviews/${interview.id}/cancellation-template?tailor=true`);
+              cancellationTemplatePreview = tailored;
+              reminderPreviewNode.querySelector("h4").textContent = tailored.subject;
+              reminderPreviewNode.querySelector("pre").textContent = tailored.body;
+              status.textContent = tailored.tailored ? `AI tailoring complete. ${tailored.tailoring_notice || "Review the updated draft."}` : (tailored.tailoring_notice || "AI did not return a tailored draft.");
+              status.className = tailored.tailored ? "success" : "pending";
+              button.disabled = false; button.textContent = "Tailor again with AI";
+            } catch (error) {
+              status.textContent = `AI tailoring failed: ${error.message}. The current draft was not replaced.`; status.className = "error";
+              button.disabled = false; button.textContent = "Retry AI tailoring";
+            }
           });
           activeInterviewActionFeedback = { id: interview.id, text: `Cancellation preview ready for ${interview.guest_name || "guest"}.`, tone: "success" };
           actionFeedbackNode.innerHTML = actionFeedbackMarkup(activeInterviewActionFeedback);

@@ -1403,6 +1403,7 @@ function renderGuests(payload) {
       composer.querySelector("[data-composer-action='tailor']").addEventListener("click", async () => {
         activeEmailComposer.tailoring = true;
         activeEmailComposer.tailoringNotice = "Preparing a source-grounded draft…";
+        activeEmailComposer.feedback = { text: "AI tailoring is working…", tone: "pending" };
         renderGuests(latestPayload);
         try {
           const template = await fetchTemplate(`/api/guests/${guest.id}/email-template`, {
@@ -1414,8 +1415,12 @@ function renderGuests(payload) {
           activeEmailComposer.subject = template.subject || activeEmailComposer.subject;
           activeEmailComposer.body = template.body || activeEmailComposer.body;
           activeEmailComposer.tailoringNotice = template.tailoring_notice || "Draft tailored. Review it before sending.";
+          activeEmailComposer.feedback = template.tailored
+            ? { text: "AI tailoring complete. Review the updated subject and body before sending.", tone: "success" }
+            : { text: template.tailoring_notice || "AI did not return a tailored draft. The approved template is still in place.", tone: "pending" };
         } catch (error) {
           activeEmailComposer.tailoringNotice = error.message;
+          activeEmailComposer.feedback = { text: `AI tailoring failed: ${error.message}. Your current draft was not replaced.`, tone: "error" };
         } finally {
           activeEmailComposer.tailoring = false;
           renderGuests(latestPayload);

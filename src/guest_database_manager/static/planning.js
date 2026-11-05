@@ -1482,13 +1482,14 @@ function renderReleaseComposer(node, episode, preview) {
   tailorButton.addEventListener("click", async () => {
     tailorButton.disabled = true;
     tailorButton.textContent = "Tailoring…";
+    setMessage(messageNode, "AI tailoring is working…", "pending");
     try {
       const tailored = await fetchJSON(`/api/episodes/${episode.id}/release-email-template?tailor=true`);
       subjectField.value = tailored.subject || subjectField.value;
       bodyField.value = tailored.body || bodyField.value;
-      setMessage(messageNode, tailored.tailoring_notice || "Review the tailored draft before sending.", tailored.tailored ? "success" : "pending");
+      setMessage(messageNode, tailored.tailored ? `AI tailoring complete. ${tailored.tailoring_notice || "Review the updated draft before sending."}` : (tailored.tailoring_notice || "AI did not return a tailored draft. The approved template is still in place."), tailored.tailored ? "success" : "pending");
     } catch (error) {
-      setMessage(messageNode, error.message, "error");
+      setMessage(messageNode, `AI tailoring failed: ${error.message}. The current draft was not replaced.`, "error");
     } finally {
       tailorButton.disabled = false;
       tailorButton.textContent = "Tailor with AI";
@@ -1554,13 +1555,14 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
     const message = node.querySelector("[data-heads-up-message]");
     button.disabled = true;
     button.textContent = "Tailoring…";
+    setMessage(message, "AI tailoring is working…", "pending");
     try {
       const tailored = await fetchJSON(`/api/episodes/${episode.id}/release-heads-up-template?tailor=true`);
       node.querySelector("[data-heads-up-field='subject']").value = tailored.subject;
       node.querySelector("[data-heads-up-field='body']").value = tailored.body;
-      setMessage(message, tailored.tailoring_notice || "Review the tailored draft before scheduling.", tailored.tailored ? "success" : "pending");
+      setMessage(message, tailored.tailored ? `AI tailoring complete. ${tailored.tailoring_notice || "Review the updated draft before scheduling."}` : (tailored.tailoring_notice || "AI did not return a tailored draft. The approved template is still in place."), tailored.tailored ? "success" : "pending");
     } catch (error) {
-      setMessage(message, error.message, "error");
+      setMessage(message, `AI tailoring failed: ${error.message}. The current draft was not replaced.`, "error");
     } finally {
       button.disabled = false;
       button.textContent = "Tailor with AI";
@@ -2565,19 +2567,29 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
             </label>
             <label class="full-width"><span>Email Body</span><textarea data-appreciation-body rows="12">${escapeHtml(preview.body)}</textarea></label>
             <button type="button" class="secondary-button" data-tailor-appreciation>Tailor with AI</button>
-            <small data-appreciation-tailoring-notice>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>
+            <small data-appreciation-tailoring-notice aria-live="polite">${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>
           `;
           appreciationPreviewNode.querySelector("[data-tailor-appreciation]")?.addEventListener("click", async (event) => {
-            event.currentTarget.disabled = true;
+            const button = event.currentTarget;
+            const notice = appreciationPreviewNode.querySelector("[data-appreciation-tailoring-notice]");
+            button.disabled = true;
+            button.textContent = "Tailoring…";
+            notice.textContent = "AI tailoring is working…";
+            notice.className = "pending";
             try {
               const tailored = await fetchJSON(`/api/episodes/${episode.id}/appreciation-template?tailor=true`);
               appreciationPreviewNode.querySelector("[data-appreciation-subject]").value = tailored.subject;
               appreciationPreviewNode.querySelector("[data-appreciation-body]").value = tailored.body;
-              appreciationPreviewNode.querySelector("[data-appreciation-tailoring-notice]").textContent = tailored.tailoring_notice || "Review before sending.";
+              notice.textContent = tailored.tailored ? `AI tailoring complete. ${tailored.tailoring_notice || "Review the updated draft before sending."}` : (tailored.tailoring_notice || "AI did not return a tailored draft.");
+              notice.className = tailored.tailored ? "success" : "pending";
+              button.textContent = "Tailor again with AI";
             } catch (error) {
+              notice.textContent = `AI tailoring failed: ${error.message}. The current draft was not replaced.`;
+              notice.className = "error";
+              button.textContent = "Retry AI tailoring";
               setMessage(episodeMessage, error.message, "error");
             } finally {
-              event.currentTarget.disabled = false;
+              button.disabled = false;
             }
           });
           releasePreviewNode.classList.add("hidden");

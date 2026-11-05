@@ -215,7 +215,20 @@ def test_weekly_confirmations_uses_one_empty_state_message() -> None:
     javascript = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
 
     assert javascript.count("No reminder emails are due for this week.") == 1
-    assert "operations.js?v=20261105.3" in html
+    assert "operations.js?v=20261105.4" in html
+
+
+def test_ai_email_tailoring_exposes_working_success_and_failure_feedback() -> None:
+    dashboard = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
+    operations = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
+    planning = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+
+    for source in (dashboard, operations, planning):
+        assert "AI tailoring is working" in source
+        assert "AI tailoring complete" in source
+        assert "AI tailoring failed" in source
+    assert 'aria-live="polite"' in operations
+    assert 'aria-live="polite"' in planning
 
 
 def test_routine_creation_forms_hide_optional_fields_and_offer_safe_defaults() -> None:
@@ -545,7 +558,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261105.3" in html
+    assert "planning.js?v=20261105.4" in html
     assert "operations.css?v=20261101.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
