@@ -26,6 +26,7 @@ const workspaceActionQueue = document.getElementById("workspace-action-queue");
 const operationsTeamMembers = document.getElementById("operations-team-members");
 const outboxHealth = document.getElementById("outbox-health");
 const outboxFailures = document.getElementById("outbox-failures");
+const outboxDeliveries = document.getElementById("outbox-deliveries");
 const outboxMessage = document.getElementById("outbox-message");
 const operationsMetrics = document.getElementById("operations-metrics");
 const operationsTabButtons = Array.from(document.querySelectorAll("[data-operations-tab]"));
@@ -553,6 +554,7 @@ function renderOutboxConsole() {
   const outbox = latestOperationsPayload.outbox || {};
   const health = outbox.health || {};
   const failures = outbox.failures || [];
+  const deliveries = outbox.deliveries || [];
   const pending = Number(health.pending || 0) + Number(health.retrying || 0);
   const terminal = Number(health.dead_letter || 0) + Number(health.failed || 0) + Number(health.preflight_failed || 0);
 
@@ -567,19 +569,35 @@ function renderOutboxConsole() {
 
   if (!failures.length) {
     outboxFailures.innerHTML = `<div class="insight-stack"><strong class="insight-label">No terminal delivery failures</strong><p>The worker has no messages waiting for manual recovery.</p></div>`;
-    return;
+  } else {
+    outboxFailures.innerHTML = failures.map((item) => `
+      <article class="mini-card outbox-failure-card">
+        <div>
+          <strong>${escapeHtml(item.email_type || "Email delivery")}</strong>
+          <p>${escapeHtml(item.sent_to || "Recipient unavailable")} · ${escapeHtml(item.failure_source === "preflight" ? "needs recipient details" : (item.status || "failed"))}</p>
+          <p>${escapeHtml(item.last_error || "No provider error was recorded.")}</p>
+          <small>Attempts: ${Number(item.attempts || 0)} / ${Number(item.max_attempts || 0)} · Correlation: ${escapeHtml(item.correlation_id || "not set")}</small>
+        </div>
+        ${item.status === "dead_letter" && item.failure_source !== "preflight" ? `<button type="button" class="secondary-button" data-outbox-retry="${Number(item.id)}">Retry reviewed item</button>` : ""}
+      </article>
+    `).join("");
   }
-  outboxFailures.innerHTML = failures.map((item) => `
-    <article class="mini-card outbox-failure-card">
-      <div>
-        <strong>${escapeHtml(item.email_type || "Email delivery")}</strong>
-        <p>${escapeHtml(item.sent_to || "Recipient unavailable")} · ${escapeHtml(item.failure_source === "preflight" ? "needs recipient details" : (item.status || "failed"))}</p>
-        <p>${escapeHtml(item.last_error || "No provider error was recorded.")}</p>
-        <small>Attempts: ${Number(item.attempts || 0)} / ${Number(item.max_attempts || 0)} · Correlation: ${escapeHtml(item.correlation_id || "not set")}</small>
-      </div>
-      ${item.status === "dead_letter" && item.failure_source !== "preflight" ? `<button type="button" class="secondary-button" data-outbox-retry="${Number(item.id)}">Retry reviewed item</button>` : ""}
-    </article>
-  `).join("");
+
+  if (outboxDeliveries) {
+    outboxDeliveries.innerHTML = deliveries.length ? `
+      <div class="section-heading"><p class="eyebrow">Recent messages</p><h3>Provider delivery status</h3></div>
+      ${deliveries.map((item) => `
+        <article class="mini-card outbox-failure-card">
+          <div>
+            <strong>${escapeHtml(item.subject || item.email_type || "Email")}</strong>
+            <p>${escapeHtml(item.sent_to || "Recipient unavailable")} · Queue: ${escapeHtml(item.status || "queued")} · Delivery: ${escapeHtml(item.delivery_status || "queued")}</p>
+            <small>Provider ID: ${escapeHtml(item.provider_message_id || "awaiting provider acceptance")}${item.last_event_at ? ` · Updated: ${escapeHtml(item.last_event_at)}` : ""}</small>
+            ${item.delivery_detail ? `<p>${escapeHtml(item.delivery_detail)}</p>` : ""}
+          </div>
+        </article>
+      `).join("")}
+    ` : "";
+  }
 
   outboxFailures.querySelectorAll("[data-outbox-retry]").forEach((button) => {
     button.addEventListener("click", async () => {

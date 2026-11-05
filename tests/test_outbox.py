@@ -2,12 +2,16 @@
 
 from threading import Event
 from datetime import datetime, timezone
+import base64
+import hashlib
+import hmac
+import json
 
 import pytest
 
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.email_manager import EmailManager
-from guest_database_manager.web_interface import GuestWebService
+from guest_database_manager.web_interface import GuestWebService, verify_resend_webhook_signature
 
 
 def _enqueue(db: GuestDatabase, key: str = "booking:1") -> int:
@@ -175,6 +179,10 @@ def test_resend_receives_provider_idempotency_header(monkeypatch):
     class Response:
         ok = True
 
+        @staticmethod
+        def json():
+            return {"id": "resend-email-123"}
+
     def fake_post(url, **kwargs):
         captured.update(kwargs)
         return Response()
@@ -195,6 +203,71 @@ def test_resend_receives_provider_idempotency_header(monkeypatch):
     assert captured["headers"]["Idempotency-Key"] == "booking_confirmation:42:2026-08-02"
     assert captured["json"]["to"] == ["guest@example.com"]
     assert captured["json"]["cc"] == ["agent@example.com", "archive@example.com"]
+    assert manager.last_provider_message_id == "resend-email-123"
+
+
+def test_archive_copy_is_hidden_in_bcc_for_resend(monkeypatch):
+    captured = {}
+
+    class Response:
+        ok = True
+
+        @staticmethod
+        def json():
+            return {"id": "email-archive-test"}
+
+    monkeypatch.setattr(
+        "guest_database_manager.email_manager.requests.post",
+        lambda url, **kwargs: captured.update(kwargs) or Response(),
+    )
+    manager = EmailManager()
+    manager.configure_resend(
+        api_key="resend-key", from_email="host@example.com",
+        bcc_email="archive@example.com",
+    )
+
+    assert manager.send_email("guest@example.com", "Subject", "Body")
+    assert captured["json"]["bcc"] == ["archive@example.com"]
+    assert "cc" not in captured["json"]
+
+
+def test_resend_webhook_signature_and_delivery_event_are_idempotent(temp_db):
+    outbox_id = _enqueue(temp_db, "delivery-observability")
+    with temp_db._connect() as conn:
+        conn.execute("UPDATE email_outbox SET provider = 'resend' WHERE id = ?", (outbox_id,))
+    temp_db.claim_due_email_outbox(worker_id="worker")
+    temp_db.mark_email_outbox_sent(
+        outbox_id, worker_id="worker", provider_message_id="email-provider-123"
+    )
+    payload = json.dumps({
+        "type": "email.delivered",
+        "created_at": "2026-11-05T12:00:00Z",
+        "data": {"email_id": "email-provider-123", "to": ["guest@example.com"]},
+    }, separators=(",", ":")).encode()
+    secret_bytes = b"webhook-secret"
+    secret = "whsec_" + base64.b64encode(secret_bytes).decode()
+    timestamp = 1_762_344_000
+    message_id = "msg_webhook_123"
+    signature = base64.b64encode(hmac.new(
+        secret_bytes, f"{message_id}.{timestamp}.".encode() + payload, hashlib.sha256
+    ).digest()).decode()
+    headers = {
+        "svix-id": message_id,
+        "svix-timestamp": str(timestamp),
+        "svix-signature": f"v1,{signature}",
+    }
+
+    assert verify_resend_webhook_signature(payload, headers, secret, now=timestamp)
+    service = GuestWebService(temp_db.db_path)
+    event = json.loads(payload)
+    first = service.record_resend_webhook(event, provider_event_id=message_id)
+    second = service.record_resend_webhook(event, provider_event_id=message_id)
+
+    assert first == {"duplicate": False, "matched": True, "delivery_status": "delivered"}
+    assert second == {"duplicate": True, "matched": True, "delivery_status": "delivered"}
+    row = temp_db.get_email_outbox_by_id(outbox_id)
+    assert row["delivery_status"] == "delivered"
+    assert row["delivered_at"] == "2026-11-05T12:00:00Z"
 
 
 def test_smtp_email_includes_plain_text_and_html_alternatives(monkeypatch):

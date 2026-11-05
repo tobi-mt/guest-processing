@@ -12,6 +12,15 @@
   Production startup intentionally fails closed when these are missing or weak.
 - Confirm dashboard credentials/roles, Resend key, sender domain,
   calendar service account, and public URLs are environment variables—not files.
+- Configure the Resend webhook endpoint as
+  `https://<public-host>/api/webhooks/resend` for `email.sent`, `email.delivered`,
+  `email.delivery_delayed`, `email.bounced`, and `email.complained`. Store its
+  `whsec_...` value in `MIRROR_TALK_RESEND_WEBHOOK_SECRET`.
+- Optionally set `MIRROR_TALK_ARCHIVE_BCC_EMAIL` to a restricted internal mailbox.
+  This archive recipient is sent as BCC and is not disclosed to guests or CC recipients.
+- In Resend Domains, confirm the exact domain used by `MIRROR_TALK_FROM_EMAIL` is
+  verified and its SPF and DKIM records are green. Confirm a public DMARC TXT record
+  exists at `_dmarc.<sending-domain>` (or is inherited from the organizational domain).
 - Use the persisted Accounts interface for all teammates. Keep the legacy credential
   variables only long enough to bootstrap `mt_admin`, verify its `super_admin` role,
   and set a strong password in Account settings. Remove multi-user JSON credentials
@@ -31,6 +40,9 @@
 - Dashboard, Operations, and Planning load with non-zero data or a truthful empty state.
 - A dry-run calendar read creates no interview changes.
 - A test outbox item is claimed once and records its attempt.
+- A Resend test message records its provider ID, then changes from `accepted` to
+  `delivered` after the signed webhook arrives. Replay the webhook and confirm it is
+  idempotent. Verify delayed, bounced, and complained test events appear in Operations.
 - Static versioned assets are cacheable; private JSON is `no-store`.
 - Viewer accounts can read but not write; operators can update workflows; only
   admins can delete, import/export backups, or merge guest identities; only super

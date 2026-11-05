@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import mimetypes
@@ -15,7 +16,7 @@ import webbrowser
 import zipfile
 from csv import DictWriter
 from base64 import b64decode, b64encode
-from time import monotonic, sleep
+from time import monotonic, time
 from threading import Event, Thread
 from email.parser import BytesParser
 from email.policy import default
@@ -46,6 +47,7 @@ from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.db_connection import connect_database
 from guest_database_manager.email_manager import EmailManager
+EMAIL_TEMPLATE_MANAGER_CLASS = EmailManager
 from guest_database_manager.exception_center import build_exception_center
 from guest_database_manager.episode_planner import (
     build_episode_copy_assist,
@@ -59,6 +61,7 @@ from guest_database_manager.guest_recommender import (
     evaluate_guest_recommendations,
 )
 from guest_database_manager.growth_intelligence import GrowthIntelligence, GrowthIntelligenceError
+from guest_database_manager.intake_receipt_pdf import build_intake_receipt_pdf
 from guest_database_manager.guest_research import (
     build_release_timing_recommendation,
     research_guest_from_google_search,
@@ -129,6 +132,8 @@ EMAIL_RESEND_API_KEY_ENV_VAR = "MIRROR_TALK_RESEND_API_KEY"
 EMAIL_FROM_ENV_VAR = "MIRROR_TALK_FROM_EMAIL"
 EMAIL_FROM_NAME_ENV_VAR = "MIRROR_TALK_FROM_NAME"
 EMAIL_CC_ENV_VAR = "MIRROR_TALK_CC_EMAIL"
+EMAIL_ARCHIVE_BCC_ENV_VAR = "MIRROR_TALK_ARCHIVE_BCC_EMAIL"
+EMAIL_RESEND_WEBHOOK_SECRET_ENV_VAR = "MIRROR_TALK_RESEND_WEBHOOK_SECRET"
 GOOGLE_CLIENT_ID_ENV_VAR = "MIRROR_TALK_GOOGLE_CLIENT_ID"
 GOOGLE_CLIENT_SECRET_ENV_VAR = "MIRROR_TALK_GOOGLE_CLIENT_SECRET"
 GOOGLE_REFRESH_TOKEN_ENV_VAR = "MIRROR_TALK_GOOGLE_REFRESH_TOKEN"
@@ -480,6 +485,28 @@ def _normalize_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def verify_resend_webhook_signature(
+    payload: bytes, headers: Mapping[str, str], secret: str, *, now: Optional[int] = None
+) -> bool:
+    """Verify Resend's Svix signature against the untouched request body."""
+    message_id = _normalize_text(headers.get("svix-id") or headers.get("Svix-Id"))
+    timestamp_text = _normalize_text(headers.get("svix-timestamp") or headers.get("Svix-Timestamp"))
+    signature_header = _normalize_text(headers.get("svix-signature") or headers.get("Svix-Signature"))
+    if not message_id or not timestamp_text or not signature_header or not secret.startswith("whsec_"):
+        return False
+    try:
+        timestamp = int(timestamp_text)
+        secret_bytes = b64decode(secret.removeprefix("whsec_") + "===")
+    except (TypeError, ValueError):
+        return False
+    if abs((int(time()) if now is None else int(now)) - timestamp) > 300:
+        return False
+    signed = f"{message_id}.{timestamp_text}.".encode("utf-8") + payload
+    expected = b64encode(hmac.new(secret_bytes, signed, hashlib.sha256).digest()).decode("ascii")
+    candidates = [part.removeprefix("v1,") for part in signature_header.split() if part.startswith("v1,")]
+    return any(hmac.compare_digest(candidate, expected) for candidate in candidates)
 
 
 def _is_valid_email_address(value: Any) -> bool:
@@ -1869,6 +1896,7 @@ class GuestWebService:
             "outbox": {
                 "health": outbox_health,
                 "failures": self.database.list_email_outbox_failures() + preflight_failures,
+                "deliveries": self.database.list_recent_email_deliveries(),
             },
             "operational_metrics": build_operational_metrics(self.db_path),
             "action_queue": self._build_action_queue(),
@@ -1887,6 +1915,37 @@ class GuestWebService:
             "status": result["status"],
             "next_attempt_at": result["next_attempt_at"],
         }
+
+    def record_resend_webhook(self, payload: Mapping[str, Any], *, provider_event_id: str) -> Dict[str, Any]:
+        """Persist one verified Resend delivery event without storing message content."""
+        event_type = _normalize_text(payload.get("type"))
+        allowed = {
+            "email.sent", "email.delivered", "email.delivery_delayed",
+            "email.bounced", "email.complained",
+        }
+        if event_type not in allowed:
+            return {"ignored": True}
+        data = payload.get("data") if isinstance(payload.get("data"), Mapping) else {}
+        provider_message_id = _normalize_text(data.get("email_id") or data.get("id"))
+        event_at = _normalize_text(payload.get("created_at") or data.get("created_at"))
+        if not provider_event_id or not provider_message_id or not event_at:
+            raise WebInterfaceError("Incomplete Resend webhook event.")
+        recipients = data.get("to") if isinstance(data.get("to"), list) else []
+        recipient = _normalize_text(recipients[0]) if recipients else ""
+        detail = ""
+        for detail_key in ("bounce", "delivery_delayed", "complaint"):
+            detail_payload = data.get(detail_key)
+            if isinstance(detail_payload, Mapping):
+                detail = _normalize_text(detail_payload.get("message") or detail_payload.get("type"))
+                if detail:
+                    break
+        result = self.database.record_email_delivery_event(
+            provider="resend", provider_event_id=provider_event_id,
+            provider_message_id=provider_message_id, event_type=event_type,
+            recipient=recipient, detail=detail, event_at=event_at,
+        )
+        self._invalidate_payload_cache("operations")
+        return result
 
     def _attach_recommendation_feedback(self, episodes: list[Dict[str, Any]]) -> None:
         """Annotate episode candidates with their latest reversible editorial decision."""
@@ -3875,33 +3934,23 @@ class GuestWebService:
         subject = subject.strip()
         body = body.strip()
 
-        if subject and body:
-            sent = email_manager.send_email(
-                guest_email,
-                subject,
-                body,
-                idempotency_key=decision_key,
-                **({"cc_emails": cc_recipients} if cc_recipients else {}),
+        if not subject or not body:
+            template_manager = self._template_capable_manager(email_manager, "get_acceptance_template")
+            template = (
+                template_manager.get_acceptance_template(
+                    guest_name, custom_message, booking_url=self._booking_link_for_guest(guest_id)
+                )
+                if normalized_status == "accepted"
+                else template_manager.get_rejection_template(guest_name, custom_message)
             )
-        else:
-            if normalized_status == "accepted":
-                sent = email_manager.send_acceptance_email(
-                    guest_name,
-                    guest_email,
-                    custom_message,
-                    booking_url=self._booking_link_for_guest(guest_id),
-                    idempotency_key=decision_key,
-                )
-            else:
-                sent = email_manager.send_rejection_email(
-                    guest_name, guest_email, custom_message, idempotency_key=decision_key
-                )
+            subject = subject or template["subject"]
+            body = body or template["body"]
 
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The email could not be sent: {error_detail}")
-            raise WebInterfaceError("The email could not be sent. Please check the server email configuration.")
+        outbox_id = self._queue_approved_email(
+            email_type=f"guest_decision_{normalized_status}", sent_to=guest_email,
+            subject=subject, body=body, idempotency_key=decision_key,
+            correlation_id=f"guest:{guest_id}", cc_recipients=cc_recipients,
+        )
 
         if normalized_status == "accepted":
             self.database.accept_guest_with_email(guest_id, custom_message)
@@ -3912,7 +3961,39 @@ class GuestWebService:
         updated_guest = self.database.get_guest_by_id(guest_id)
         if not updated_guest:
             raise WebInterfaceError("Guest not found after email send.")
-        return serialize_guest(updated_guest)
+        result = serialize_guest(updated_guest)
+        result["email_delivery"] = self.database.get_email_outbox_by_id(outbox_id)
+        return result
+
+    def _queue_approved_email(
+        self, *, email_type: str, sent_to: str, subject: str, body: str,
+        idempotency_key: str, correlation_id: str = "", interview_id: Optional[int] = None,
+        attachments: Optional[Sequence[Dict[str, object]]] = None,
+        cc_recipients: Optional[Sequence[str]] = None,
+    ) -> int:
+        """Persist an approved message before attempting its external side effect."""
+        manager = self._build_email_manager()
+        provider = "resend" if manager.resend_api_key else "smtp"
+        attachments_json = ""
+        if attachments:
+            attachments_json = json.dumps([
+                {"filename": str(item["filename"]),
+                 "content_b64": b64encode(bytes(item["content"])).decode("ascii")}
+                for item in attachments
+            ], ensure_ascii=False, separators=(",", ":"))
+        outbox_id = self.database.enqueue_email_outbox(
+            interview_id=interview_id, email_type=email_type, sent_to=sent_to,
+            subject=subject, body=body, attachments_json=attachments_json,
+            provider=provider, max_attempts=BOOKING_CONFIRMATION_OUTBOX_MAX_ATTEMPTS,
+            idempotency_key=idempotency_key, correlation_id=correlation_id,
+            cc_recipients=cc_recipients,
+        )
+        # Keep the UI responsive while still making the first attempt immediately.
+        self.process_pending_email_outbox(
+            limit=1, worker_id=f"request-{secrets.token_hex(6)}", outbox_id=outbox_id
+        )
+        self._invalidate_payload_cache("operations")
+        return outbox_id
 
     @staticmethod
     def _resolve_email_recipients(
@@ -6130,8 +6211,7 @@ class GuestWebService:
             raise WebInterfaceError("Interview date is invalid or missing.")
 
         guest_name = self._extract_guest_name_from_interview_title(
-            interview.get("guest_name"),
-            interview.get("title"),
+            interview.get("guest_name"), interview.get("title")
         ) or "Guest"
         proposal = self._normalize_reschedule_proposal(
             mode=proposal_mode,
@@ -6140,7 +6220,6 @@ class GuestWebService:
         )
         timezone_label = proposal["timezone"]
         reschedule_url = self._reschedule_link_for_interview(interview_id)
-
         email_manager = self._build_email_manager()
         template_kwargs = dict(guest_name=guest_name, scheduled_for=scheduled_for, timezone_label=timezone_label, reschedule_url=reschedule_url)
         if proposal["mode"] == "open_calendar":
@@ -6184,22 +6263,19 @@ class GuestWebService:
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
 
-        sent = email_manager.send_email(
-            guest_email, resolved_subject, resolved_body,
+        outbox_id = self._queue_approved_email(
+            email_type="weekly_confirmation", sent_to=guest_email,
+            subject=resolved_subject, body=resolved_body,
             idempotency_key=f"weekly_reminder:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
+            correlation_id=f"interview:{interview_id}", interview_id=interview_id,
         )
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The reminder email could not be sent: {error_detail}")
-            raise WebInterfaceError("The reminder email could not be sent.")
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
         self.database.log_reminder(
             interview_id=interview_id,
             reminder_type="weekly_confirmation",
             sent_to=guest_email,
-            status="sent",
+            status=(self.database.get_email_outbox_by_id(outbox_id) or {}).get("status", "queued"),
             provider=provider,
             notes=resolved_subject,
         )
@@ -6254,23 +6330,20 @@ class GuestWebService:
         resolved_body = body.strip() or preview["body"]
         cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
 
-        sent = email_manager.send_email(
-            guest_email, resolved_subject, resolved_body,
+        self._queue_approved_email(
+            email_type="post_interview_appreciation", sent_to=guest_email,
+            subject=resolved_subject, body=resolved_body,
             idempotency_key=f"interview_appreciation:{interview_id}",
-            **({"cc_emails": cc_recipients} if cc_recipients else {}),
+            correlation_id=f"interview:{interview_id}", interview_id=interview_id,
+            cc_recipients=cc_recipients,
         )
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The appreciation email could not be sent: {error_detail}")
-            raise WebInterfaceError("The appreciation email could not be sent.")
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
         self.database.log_interview_email(
             interview_id=interview_id,
             email_type="post_interview_appreciation",
             sent_to=guest_email,
-            status="sent",
+            status="queued",
             provider=provider,
             notes=resolved_subject,
         )
@@ -6308,45 +6381,27 @@ class GuestWebService:
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
 
-        if subject.strip() or body.strip():
-            invite_attachment = {
-                "filename": "mirror-talk-booking.ics",
-                "content": email_manager.build_calendar_invite(
-                    guest_name=guest_name,
-                    scheduled_for=scheduled_for,
-                    timezone_label=timezone_label,
-                    join_url=join_url,
-                ),
-            }
-            sent = email_manager.send_email(
-                guest_email,
-                resolved_subject,
-                resolved_body,
-                attachments=[invite_attachment],
-                idempotency_key=f"booking_confirmation:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
-            )
-        else:
-            sent = email_manager.send_booking_confirmation_email(
-                guest_name,
-                guest_email,
-                scheduled_for,
-                timezone_label,
-                join_url,
-                idempotency_key=f"booking_confirmation:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
-            )
-
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The booking confirmation email could not be sent: {error_detail}")
-            raise WebInterfaceError("The booking confirmation email could not be sent.")
+        invite_builder = self._template_capable_manager(email_manager, "build_calendar_invite")
+        invite_attachment = {
+            "filename": "mirror-talk-booking.ics",
+            "content": invite_builder.build_calendar_invite(
+                guest_name=guest_name, scheduled_for=scheduled_for,
+                timezone_label=timezone_label, join_url=join_url,
+            ),
+        }
+        self._queue_approved_email(
+            email_type="booking_confirmation", sent_to=guest_email,
+            subject=resolved_subject, body=resolved_body, attachments=[invite_attachment],
+            idempotency_key=f"booking_confirmation:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
+            correlation_id=f"interview:{interview_id}", interview_id=interview_id,
+        )
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
         self.database.log_interview_email(
             interview_id=interview_id,
             email_type="booking_confirmation",
             sent_to=guest_email,
-            status="sent",
+            status="queued",
             provider=provider,
             notes=resolved_subject,
         )
@@ -6378,18 +6433,12 @@ class GuestWebService:
         if not scheduled_for:
             raise WebInterfaceError("Interview date is invalid or missing.")
 
-        guest_name = self._extract_guest_name_from_interview_title(
-            interview.get("guest_name"),
-            interview.get("title"),
-        ) or "Guest"
         proposal = self._normalize_reschedule_proposal(
             mode=proposal_mode,
             proposed_times=proposed_times,
             timezone_name=proposal_timezone or interview.get("guest_timezone") or interview.get("timezone"),
         )
         timezone_label = proposal["timezone"]
-        reschedule_url = self._reschedule_link_for_interview(interview_id)
-
         email_manager = self._build_email_manager()
         if not email_manager.is_configured():
             raise WebInterfaceError("Dashboard email is not configured on the server.")
@@ -6405,33 +6454,18 @@ class GuestWebService:
             sort_keys=True,
         ).encode("utf-8")).hexdigest()[:20]
         idempotency_key = f"reschedule_link:{interview_id}:{proposal_fingerprint}"
-        if subject.strip() or body.strip() or proposal["mode"] != "open_calendar":
-            sent = email_manager.send_email(
-                guest_email, resolved_subject, resolved_body,
-                idempotency_key=idempotency_key,
-            )
-        else:
-            sent = email_manager.send_reschedule_link_email(
-                guest_name,
-                guest_email,
-                scheduled_for,
-                timezone_label,
-                reschedule_url,
-                idempotency_key=idempotency_key,
-            )
-
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The reschedule email could not be sent: {error_detail}")
-            raise WebInterfaceError("The reschedule email could not be sent.")
+        self._queue_approved_email(
+            email_type="reschedule_link", sent_to=guest_email,
+            subject=resolved_subject, body=resolved_body, idempotency_key=idempotency_key,
+            correlation_id=f"interview:{interview_id}", interview_id=interview_id,
+        )
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
         self.database.log_interview_email(
             interview_id=interview_id,
             email_type="reschedule_link",
             sent_to=guest_email,
-            status="sent",
+            status="queued",
             provider=provider,
             notes=resolved_subject,
         )
@@ -6473,22 +6507,19 @@ class GuestWebService:
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
 
-        sent = email_manager.send_email(
-            guest_email, resolved_subject, resolved_body,
+        self._queue_approved_email(
+            email_type="interview_cancellation", sent_to=guest_email,
+            subject=resolved_subject, body=resolved_body,
             idempotency_key=f"interview_cancellation:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
+            correlation_id=f"interview:{interview_id}", interview_id=interview_id,
         )
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The cancellation email could not be sent: {error_detail}")
-            raise WebInterfaceError("The cancellation email could not be sent.")
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
         self.database.log_interview_email(
             interview_id=interview_id,
             email_type="interview_cancellation",
             sent_to=guest_email,
-            status="sent",
+            status="queued",
             provider=provider,
             notes=resolved_subject,
         )
@@ -6552,16 +6583,14 @@ class GuestWebService:
         resolved_body = body.strip() or preview["body"]
         cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
 
-        sent = email_manager.send_email(
-            guest_email, resolved_subject, resolved_body,
+        self._queue_approved_email(
+            email_type="episode_appreciation", sent_to=guest_email,
+            subject=resolved_subject, body=resolved_body,
             idempotency_key=f"episode_appreciation:{episode_id}",
-            **({"cc_emails": cc_recipients} if cc_recipients else {}),
+            correlation_id=f"episode:{episode_id}",
+            interview_id=int(episode["interview_id"]) if episode.get("interview_id") else None,
+            cc_recipients=cc_recipients,
         )
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The appreciation email could not be sent: {error_detail}")
-            raise WebInterfaceError("The appreciation email could not be sent.")
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
         linked_interview_id = episode.get("interview_id")
@@ -6570,7 +6599,7 @@ class GuestWebService:
                 interview_id=int(linked_interview_id),
                 email_type="post_interview_appreciation",
                 sent_to=guest_email,
-                status="sent",
+                status="queued",
                 provider=provider,
                 notes=resolved_subject,
             )
@@ -6722,16 +6751,14 @@ class GuestWebService:
         resolved_body = body.strip() or preview["body"]
         cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
 
-        sent = email_manager.send_email(
-            guest_email, resolved_subject, resolved_body,
+        self._queue_approved_email(
+            email_type="released_episode_follow_up", sent_to=guest_email,
+            subject=resolved_subject, body=resolved_body,
             idempotency_key=f"episode_release:{episode_id}:{_normalize_text(episode.get('release_date'))}",
-            **({"cc_emails": cc_recipients} if cc_recipients else {}),
+            correlation_id=f"episode:{episode_id}",
+            interview_id=int(episode["interview_id"]) if episode.get("interview_id") else None,
+            cc_recipients=cc_recipients,
         )
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The release email could not be sent: {error_detail}")
-            raise WebInterfaceError("The release email could not be sent.")
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
         linked_interview_id = episode.get("interview_id")
@@ -6740,7 +6767,7 @@ class GuestWebService:
                 interview_id=int(linked_interview_id),
                 email_type="released_episode_follow_up",
                 sent_to=guest_email,
-                status="sent",
+                status="queued",
                 provider=provider,
                 notes=resolved_subject,
             )
@@ -7095,6 +7122,7 @@ class GuestWebService:
         from_email = os.environ.get(EMAIL_FROM_ENV_VAR, "").strip()
         from_name = os.environ.get(EMAIL_FROM_NAME_ENV_VAR, "Mirror Talk Podcast").strip()
         cc_email = os.environ.get(EMAIL_CC_ENV_VAR, "podcast.mirrortalk@gmail.com").strip()
+        archive_bcc_email = os.environ.get(EMAIL_ARCHIVE_BCC_ENV_VAR, "").strip()
 
         if resend_api_key and from_email:
             email_manager.configure_resend(
@@ -7102,6 +7130,7 @@ class GuestWebService:
                 from_email=from_email,
                 from_name=from_name,
                 cc_email=cc_email,
+                bcc_email=archive_bcc_email,
             )
             return email_manager
 
@@ -7120,9 +7149,15 @@ class GuestWebService:
                 from_email=from_email,
                 from_name=from_name,
                 cc_email=cc_email,
+                bcc_email=archive_bcc_email,
             )
 
         return email_manager
+
+    @staticmethod
+    def _template_capable_manager(manager: Any, method_name: str) -> Any:
+        """Keep template rendering independent from provider test doubles and adapters."""
+        return manager if hasattr(manager, method_name) else EMAIL_TEMPLATE_MANAGER_CLASS()
 
     @staticmethod
     def _booking_base_url() -> str:
@@ -7247,15 +7282,16 @@ class GuestWebService:
         guest_name = _normalize_text(guest.get("full_name")) or "there"
         applications = self.database.list_guest_applications(int(guest["id"])) if guest.get("id") else []
         effect_id = applications[0]["id"] if applications else guest.get("id") or guest_email
-        try:
-            email_manager.send_intake_confirmation_email(
-                guest_name,
-                guest_email,
-                intake_submission=guest,
-                idempotency_key=f"intake_confirmation:{effect_id}",
-            )
-        except Exception:
-            return
+        template_manager = self._template_capable_manager(email_manager, "get_intake_confirmation_template")
+        template = template_manager.get_intake_confirmation_template(guest_name)
+        self._queue_approved_email(
+            email_type="intake_confirmation", sent_to=guest_email,
+            subject=template["subject"], body=template["body"],
+            idempotency_key=f"intake_confirmation:{effect_id}",
+            correlation_id=f"guest:{guest.get('id') or effect_id}",
+            attachments=[{"filename": "mirror-talk-application.pdf",
+                          "content": build_intake_receipt_pdf(guest)}],
+        )
 
     def _send_guest_self_application_request_email(
         self,
@@ -7270,16 +7306,15 @@ class GuestWebService:
         email_manager = self._build_email_manager()
         if not email_manager.is_configured():
             return
-        try:
-            email_manager.send_personal_application_request_email(
-                guest_name,
-                guest_email,
-                intake_url,
-                agency_name,
-                idempotency_key=f"personal_application_request:{guest_email}:{intake_url}",
-            )
-        except Exception:
-            return
+        template_manager = self._template_capable_manager(email_manager, "get_personal_application_request_template")
+        template = template_manager.get_personal_application_request_template(
+            guest_name, intake_url, agency_name
+        )
+        self._queue_approved_email(
+            email_type="personal_application_request", sent_to=guest_email,
+            subject=template["subject"], body=template["body"],
+            idempotency_key=f"personal_application_request:{guest_email}:{intake_url}",
+        )
 
     def resend_guest_personal_application_email(self, guest_id: int) -> Dict[str, Any]:
         """Resend the guest-owned intake invitation for an agency referral."""
@@ -7302,23 +7337,16 @@ class GuestWebService:
             raise WebInterfaceError("Dashboard email is not configured on the server.")
 
         intake_url = self._public_intake_link(guest_name, guest_email)
-        try:
-            sent = email_manager.send_personal_application_request_email(
-                guest_name,
-                guest_email,
-                intake_url,
-                agency_name,
-                idempotency_key=f"personal_application_resend:{guest_id}:{secrets.token_hex(8)}",
-            )
-        except Exception as exc:
-            error_detail = str(exc).strip()
-            raise WebInterfaceError(error_detail or "The personal application email could not be sent.") from exc
-
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The personal application email could not be sent: {error_detail}")
-            raise WebInterfaceError("The personal application email could not be sent.")
+        template_manager = self._template_capable_manager(email_manager, "get_personal_application_request_template")
+        template = template_manager.get_personal_application_request_template(
+            guest_name, intake_url, agency_name
+        )
+        self._queue_approved_email(
+            email_type="personal_application_request", sent_to=guest_email,
+            subject=template["subject"], body=template["body"],
+            idempotency_key=f"personal_application_resend:{guest_id}:{secrets.token_hex(8)}",
+            correlation_id=f"guest:{guest_id}",
+        )
 
         refreshed = self.database.get_guest_by_id(guest_id)
         if not refreshed:
@@ -7345,20 +7373,14 @@ class GuestWebService:
 
         guest_name = _normalize_text(guest.get("full_name")) or "there"
         booking_url = self._booking_link_for_guest(guest_id)
-        try:
-            sent = email_manager.send_booking_link_email(
-                guest_name, guest_email, booking_url,
-                idempotency_key=f"booking_link_resend:{guest_id}:{secrets.token_hex(8)}",
-            )
-        except Exception as exc:
-            error_detail = str(exc).strip()
-            raise WebInterfaceError(error_detail or "The booking link email could not be sent.") from exc
-
-        if not sent:
-            error_detail = (email_manager.last_error or "").strip()
-            if error_detail:
-                raise WebInterfaceError(f"The booking link email could not be sent: {error_detail}")
-            raise WebInterfaceError("The booking link email could not be sent.")
+        template_manager = self._template_capable_manager(email_manager, "get_booking_link_template")
+        template = template_manager.get_booking_link_template(guest_name, booking_url)
+        self._queue_approved_email(
+            email_type="booking_link", sent_to=guest_email,
+            subject=template["subject"], body=template["body"],
+            idempotency_key=f"booking_link_resend:{guest_id}:{secrets.token_hex(8)}",
+            correlation_id=f"guest:{guest_id}",
+        )
 
         refreshed = self.database.get_guest_by_id(guest_id)
         if not refreshed:
@@ -7404,48 +7426,7 @@ class GuestWebService:
             ),
         }
 
-        sent = False
-        last_error = ""
         idempotency_key = f"booking_confirmation:{interview.get('id')}:{scheduled_for.isoformat()}"
-        if email_manager.is_configured() and not queue_only:
-            for attempt in range(1, BOOKING_CONFIRMATION_RETRY_ATTEMPTS + 1):
-                try:
-                    send_kwargs = {"personalization": personalization} if personalization else {}
-                    sent = email_manager.send_booking_confirmation_email(
-                        guest_name,
-                        guest_email,
-                        scheduled_for,
-                        timezone_label,
-                        join_url,
-                        idempotency_key=idempotency_key,
-                        **send_kwargs,
-                    )
-                except Exception as exc:
-                    last_error = str(exc).strip() or exc.__class__.__name__
-                    sent = False
-                else:
-                    last_error = (email_manager.last_error or "").strip()
-                if sent:
-                    break
-                if attempt < BOOKING_CONFIRMATION_RETRY_ATTEMPTS:
-                    delay_index = min(attempt - 1, len(BOOKING_CONFIRMATION_RETRY_DELAYS_SECONDS) - 1)
-                    sleep(BOOKING_CONFIRMATION_RETRY_DELAYS_SECONDS[delay_index])
-
-        if sent:
-            provider = "resend" if email_manager.resend_api_key else "smtp"
-            self.database.log_interview_email(
-                interview_id=int(interview["id"]),
-                email_type="booking_confirmation",
-                sent_to=guest_email,
-                status="sent",
-                provider=provider,
-                notes=template["subject"],
-            )
-            return {
-                "status": "sent",
-                "message": "Your confirmation email and calendar invite have been accepted for delivery.",
-            }
-
         attachments_json = json.dumps(
             [
                 {
@@ -7456,10 +7437,7 @@ class GuestWebService:
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        retry_delay = 0 if queue_only else BOOKING_CONFIRMATION_OUTBOX_RETRY_DELAY_MINUTES
-        next_attempt_at = (datetime.now(timezone.utc) + timedelta(minutes=retry_delay)).replace(
-            microsecond=0
-        ).strftime("%Y-%m-%d %H:%M:%S")
+        next_attempt_at = datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
         provider = "resend" if email_manager.resend_api_key else "smtp"
         outbox_id = self.database.enqueue_email_outbox(
             interview_id=int(interview["id"]),
@@ -7471,9 +7449,8 @@ class GuestWebService:
             provider=provider,
             max_attempts=BOOKING_CONFIRMATION_OUTBOX_MAX_ATTEMPTS,
             next_attempt_at=next_attempt_at,
-            status="retrying" if email_manager.is_configured() else "pending",
-            last_error=last_error,
-            idempotency_key=f"booking_confirmation:{interview['id']}:{scheduled_for.isoformat()}",
+            status="pending",
+            idempotency_key=idempotency_key,
             correlation_id=f"interview:{interview['id']}",
         )
         self.database.log_interview_email(
@@ -7482,14 +7459,26 @@ class GuestWebService:
             sent_to=guest_email,
             status="queued",
             provider=provider,
-            notes=f"{template['subject']} | outbox:{outbox_id} | {last_error}".strip(),
+            notes=f"{template['subject']} | outbox:{outbox_id}",
         )
+        if email_manager.is_configured() and not queue_only:
+            self.process_pending_email_outbox(
+                limit=1, worker_id=f"booking-{secrets.token_hex(6)}", outbox_id=outbox_id
+            )
+        queued = self.database.get_email_outbox_by_id(outbox_id) or {}
+        accepted = queued.get("status") == "sent"
         return {
-            "status": "queued",
-            "message": "Your booking is confirmed. We are preparing your confirmation email and calendar invite now.",
+            "status": "sent" if accepted else "queued",
+            "message": (
+                "Your confirmation email and calendar invite have been accepted for delivery."
+                if accepted else
+                "Your booking is confirmed. We are preparing your confirmation email and calendar invite now."
+            ),
         }
 
-    def process_pending_email_outbox(self, *, limit: int = 10, worker_id: str = "") -> Dict[str, int]:
+    def process_pending_email_outbox(
+        self, *, limit: int = 10, worker_id: str = "", outbox_id: Optional[int] = None
+    ) -> Dict[str, int]:
         """Retry queued emails and deliver any whose next attempt is due."""
         worker_id = worker_id or f"manual-{secrets.token_hex(6)}"
         run_id = self.database.start_automation_run("email_outbox", worker_id=worker_id)
@@ -7500,13 +7489,17 @@ class GuestWebService:
             return result
 
         recovered = {"sent": 0, "queued": 0, "unavailable": 0}
-        for interview in self.database.list_public_bookings_missing_confirmation(limit=limit):
+        for interview in ([] if outbox_id is not None else self.database.list_public_bookings_missing_confirmation(limit=limit)):
             guest = self.database.get_guest_by_id(int(interview["guest_id"])) if interview.get("guest_id") else {}
             delivery = self._send_booking_confirmation_email(guest or {}, interview, queue_only=True)
             status = _normalize_text(delivery.get("status")) or "unavailable"
             recovered[status] = recovered.get(status, 0) + 1
 
-        due_entries = self.database.claim_due_email_outbox(worker_id=worker_id, limit=limit)
+        due_entries = (
+            self.database.claim_email_outbox_by_id(outbox_id, worker_id=worker_id)
+            if outbox_id is not None else
+            self.database.claim_due_email_outbox(worker_id=worker_id, limit=limit)
+        )
         results = {
             "checked": len(due_entries), "sent": 0, "retrying": 0, "failed": 0, "cancelled": 0,
             "recovered_sent": recovered["sent"], "recovered_queued": recovered["queued"],
@@ -7554,24 +7547,41 @@ class GuestWebService:
                     )
 
             try:
+                cc_recipients = []
+                if entry.get("cc_json"):
+                    try:
+                        decoded_cc = json.loads(entry["cc_json"])
+                        if isinstance(decoded_cc, list):
+                            cc_recipients = [_normalize_text(item) for item in decoded_cc if _normalize_text(item)]
+                    except (TypeError, ValueError):
+                        cc_recipients = []
+                send_options: Dict[str, Any] = {
+                    "idempotency_key": _normalize_text(entry.get("idempotency_key"))
+                }
+                if attachments_payload:
+                    send_options["attachments"] = attachments_payload
+                if cc_recipients:
+                    send_options["cc_emails"] = cc_recipients
                 sent = email_manager.send_email(
                     _normalize_text(entry.get("sent_to")),
                     _normalize_text(entry.get("subject")),
                     _normalize_text(entry.get("body")),
-                    attachments=attachments_payload or None,
-                    idempotency_key=_normalize_text(entry.get("idempotency_key")),
+                    **send_options,
                 )
             except Exception as exc:
                 sent = False
                 error_detail = str(exc).strip() or exc.__class__.__name__
             else:
-                error_detail = (email_manager.last_error or "").strip()
+                error_detail = _normalize_text(getattr(email_manager, "last_error", ""))
 
             attempts = int(entry.get("attempts") or 0) + 1
             max_attempts = int(entry.get("max_attempts") or BOOKING_CONFIRMATION_OUTBOX_MAX_ATTEMPTS)
 
             if sent:
-                self.database.mark_email_outbox_sent(int(entry["id"]), worker_id=worker_id)
+                self.database.mark_email_outbox_sent(
+                    int(entry["id"]), worker_id=worker_id,
+                    provider_message_id=_normalize_text(getattr(email_manager, "last_provider_message_id", "")),
+                )
                 provider = "resend" if email_manager.resend_api_key else "smtp"
                 if entry.get("interview_id"):
                     self.database.log_interview_email(
@@ -8649,6 +8659,35 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if urlsplit(self.path).path == "/api/webhooks/resend":
+            secret = os.environ.get(EMAIL_RESEND_WEBHOOK_SECRET_ENV_VAR, "").strip()
+            if not secret:
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Webhook is not configured"})
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+            except (TypeError, ValueError):
+                content_length = -1
+            if content_length <= 0 or content_length > 1_000_000:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid webhook payload"})
+                return
+            raw_payload = self.rfile.read(content_length)
+            if not verify_resend_webhook_signature(raw_payload, self.headers, secret):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid webhook signature"})
+                return
+            try:
+                payload = json.loads(raw_payload.decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError
+                result = self.service.record_resend_webhook(
+                    payload, provider_event_id=_normalize_text(self.headers.get("svix-id"))
+                )
+            except (UnicodeDecodeError, ValueError, WebInterfaceError):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid webhook event"})
+                return
+            self._send_json(HTTPStatus.OK, {"ok": True, **result})
+            return
+
         if self.path == "/api/account-recovery":
             client = self._client_identity()
             if not self.__class__._recovery_limiter.is_allowed(client):

@@ -215,7 +215,7 @@ def test_weekly_confirmations_uses_one_empty_state_message() -> None:
     javascript = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
 
     assert javascript.count("No reminder emails are due for this week.") == 1
-    assert "operations.js?v=20261103.2" in html
+    assert "operations.js?v=20261105.1" in html
 
 
 def test_routine_creation_forms_hide_optional_fields_and_offer_safe_defaults() -> None:

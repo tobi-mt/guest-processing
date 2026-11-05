@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from json import dumps, loads
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 from uuid import uuid4
 
 try:
@@ -337,6 +337,7 @@ class GuestDatabase:
         source: str = "application",
         reason: str = "",
         correlation_id: str = "",
+        cc_recipients: Optional[Sequence[str]] = None,
         before: Any = None,
         after: Any = None,
     ) -> int:
@@ -2264,6 +2265,7 @@ class GuestDatabase:
         last_error: str = "",
         idempotency_key: str = "",
         correlation_id: str = "",
+        cc_recipients: Optional[Sequence[str]] = None,
     ) -> int:
         """Store an email for later retry when delivery is temporarily unavailable."""
         status = validate_state("communication", status)
@@ -2274,8 +2276,8 @@ class GuestDatabase:
                 INSERT INTO email_outbox (
                     interview_id, email_type, sent_to, subject, body, attachments_json,
                     provider, status, attempts, max_attempts, next_attempt_at, last_error,
-                    idempotency_key, correlation_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    idempotency_key, correlation_id, cc_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT(idempotency_key) DO NOTHING
                 """,
                 (
@@ -2293,6 +2295,7 @@ class GuestDatabase:
                     last_error or "",
                     idempotency_key,
                     correlation_id or None,
+                    dumps(list(cc_recipients or []), ensure_ascii=False) if cc_recipients else None,
                 ),
             )
             if cursor.rowcount == 0:
@@ -2351,6 +2354,34 @@ class GuestDatabase:
             conn.commit()
             return claimed
 
+    def claim_email_outbox_by_id(
+        self, outbox_id: int, *, worker_id: str, lease_seconds: int = 120
+    ) -> List[Dict]:
+        """Atomically lease one due message for an immediate request-triggered attempt."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()
+            if not row or row["status"] not in {"pending", "retrying"}:
+                conn.commit()
+                return []
+            if row["next_attempt_at"] and str(row["next_attempt_at"]) > datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"):
+                conn.commit()
+                return []
+            validate_transition("communication", row["status"], "sending")
+            cursor = conn.execute(
+                """UPDATE email_outbox
+                   SET status = 'sending', lease_owner = ?, lease_until = datetime('now', ?),
+                       row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND row_version = ? AND status IN ('pending', 'retrying')""",
+                (worker_id, f"+{max(1, int(lease_seconds))} seconds", outbox_id, row["row_version"]),
+            )
+            claimed = []
+            if cursor.rowcount == 1:
+                claimed.append(dict(conn.execute("SELECT * FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()))
+            conn.commit()
+            return claimed
+
     def get_due_email_outbox(self, limit: int = 20) -> List[Dict]:
         """Return queued emails that are ready for another delivery attempt."""
         with self._connect() as conn:
@@ -2368,7 +2399,15 @@ class GuestDatabase:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def mark_email_outbox_sent(self, outbox_id: int, *, worker_id: str = "") -> None:
+    def get_email_outbox_by_id(self, outbox_id: int) -> Optional[Dict]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()
+            return dict(row) if row else None
+
+    def mark_email_outbox_sent(
+        self, outbox_id: int, *, worker_id: str = "", provider_message_id: str = ""
+    ) -> None:
         """Mark a queued email as delivered."""
         with self._connect() as conn:
             current = conn.execute("SELECT status FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()
@@ -2382,13 +2421,16 @@ class GuestDatabase:
                     attempts = attempts + 1,
                     last_error = NULL,
                     sent_at = CURRENT_TIMESTAMP,
+                    provider_message_id = NULLIF(?, ''),
+                    delivery_status = 'accepted',
+                    last_event_at = CURRENT_TIMESTAMP,
                     lease_owner = NULL,
                     lease_until = NULL,
                     row_version = row_version + 1,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND (? = '' OR lease_owner = ?)
                 """,
-                (outbox_id, worker_id, worker_id),
+                (provider_message_id, outbox_id, worker_id, worker_id),
             )
             attempt_number = int(conn.execute("SELECT attempts FROM email_outbox WHERE id = ?", (outbox_id,)).fetchone()[0])
             conn.execute(
@@ -2397,6 +2439,58 @@ class GuestDatabase:
                 (outbox_id, attempt_number, worker_id or None),
             )
             conn.commit()
+
+    def record_email_delivery_event(
+        self, *, provider: str, provider_event_id: str, provider_message_id: str,
+        event_type: str, recipient: str = "", detail: str = "", event_at: str,
+    ) -> Dict[str, Any]:
+        """Idempotently record a verified provider event and update its outbox message."""
+        status_by_event = {
+            "email.sent": "accepted",
+            "email.delivered": "delivered",
+            "email.delivery_delayed": "delayed",
+            "email.bounced": "bounced",
+            "email.complained": "complained",
+        }
+        delivery_status = status_by_event.get(event_type)
+        if not delivery_status:
+            raise ValueError("Unsupported email delivery event")
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """INSERT INTO email_delivery_events
+                   (provider, provider_event_id, provider_message_id, event_type,
+                    recipient, detail, event_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(provider, provider_event_id) DO NOTHING""",
+                (provider, provider_event_id, provider_message_id, event_type,
+                 recipient or None, detail or None, event_at),
+            )
+            matched = conn.execute(
+                "SELECT id, sent_to, delivery_status FROM email_outbox WHERE provider = ? AND provider_message_id = ?",
+                (provider, provider_message_id),
+            ).fetchone()
+            primary_event = bool(
+                matched and (not recipient or str(matched["sent_to"]).casefold() == recipient.casefold())
+            )
+            rank = {"queued": 0, "accepted": 1, "delayed": 2, "delivered": 3,
+                    "bounced": 4, "complained": 5}
+            should_advance = bool(
+                primary_event
+                and rank.get(delivery_status, 0) >= rank.get(str(matched["delivery_status"]), 0)
+            )
+            if cursor.rowcount and should_advance:
+                conn.execute(
+                    """UPDATE email_outbox
+                       SET delivery_status = ?, delivery_detail = NULLIF(?, ''),
+                           delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE delivered_at END,
+                           last_event_at = ?, updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (delivery_status, detail, delivery_status, event_at, event_at, matched[0]),
+                )
+            conn.commit()
+            return {"duplicate": cursor.rowcount == 0, "matched": bool(matched),
+                    "delivery_status": delivery_status}
 
     def cancel_claimed_email_outbox(self, outbox_id: int, *, worker_id: str, reason: str) -> None:
         """Cancel a leased message whose underlying approved facts are now stale."""
@@ -2530,6 +2624,20 @@ class GuestDatabase:
                    FROM email_outbox
                    WHERE status IN ('failed', 'dead_letter')
                    ORDER BY COALESCE(dead_letter_at, updated_at) DESC, id DESC LIMIT ?""",
+                (max(1, int(limit)),),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_recent_email_deliveries(self, limit: int = 50) -> List[Dict]:
+        """Return message metadata and real provider delivery state for Operations."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT id, email_type, sent_to, subject, provider, status, delivery_status,
+                          provider_message_id, delivery_detail, attempts, created_at, sent_at,
+                          delivered_at, last_event_at
+                   FROM email_outbox
+                   ORDER BY COALESCE(last_event_at, updated_at, created_at) DESC, id DESC LIMIT ?""",
                 (max(1, int(limit)),),
             ).fetchall()
             return [dict(row) for row in rows]

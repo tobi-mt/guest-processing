@@ -49,8 +49,10 @@ class EmailManager:
         self.from_email: Optional[str] = None
         self.from_name: Optional[str] = None
         self.cc_email: Optional[str] = None
+        self.bcc_email: Optional[str] = None
         self.resend_api_key: Optional[str] = None
         self.last_error: str = ""
+        self.last_provider_message_id: str = ""
 
         # Initialize config manager for persistent settings
         self.config_manager = ConfigManager()
@@ -67,6 +69,7 @@ class EmailManager:
         from_email: str,
         from_name: str = "",
         cc_email: str = "",
+        bcc_email: str = "",
     ) -> None:
         """Configure SMTP settings.
 
@@ -85,14 +88,19 @@ class EmailManager:
         self.from_email = from_email
         self.from_name = from_name
         self.cc_email = cc_email or None
+        self.bcc_email = bcc_email or None
         self.resend_api_key = None
 
-    def configure_resend(self, api_key: str, from_email: str, from_name: str = "", cc_email: str = "") -> None:
+    def configure_resend(
+        self, api_key: str, from_email: str, from_name: str = "", cc_email: str = "",
+        bcc_email: str = "",
+    ) -> None:
         """Configure Resend API delivery."""
         self.resend_api_key = api_key
         self.from_email = from_email
         self.from_name = from_name
         self.cc_email = cc_email or None
+        self.bcc_email = bcc_email or None
         self.smtp_server = None
         self.smtp_port = None
         self.username = None
@@ -1007,6 +1015,9 @@ Mirror Talk Podcast"""
         cc_recipients = self._resolve_cc_recipients(recipients, cc_emails)
         if cc_recipients:
             payload["cc"] = cc_recipients
+        bcc_recipients = self._resolve_bcc_recipients(recipients, cc_recipients)
+        if bcc_recipients:
+            payload["bcc"] = bcc_recipients
         if attachments:
             payload["attachments"] = [
                 {
@@ -1036,6 +1047,13 @@ Mirror Talk Podcast"""
 
         if response.ok:
             self.last_error = ""
+            try:
+                response_payload = response.json()
+            except (AttributeError, ValueError):
+                response_payload = {}
+            self.last_provider_message_id = str(
+                response_payload.get("id") if isinstance(response_payload, dict) else ""
+            ).strip()
             return True
 
         error_message = ""
@@ -1077,6 +1095,7 @@ Mirror Talk Podcast"""
             True if email sent successfully, False otherwise
         """
         self.last_error = ""
+        self.last_provider_message_id = ""
 
         if not self.is_configured():
             self.last_error = "Email not configured. Please configure SMTP settings first."
@@ -1110,6 +1129,7 @@ Mirror Talk Podcast"""
                 msg['Resend-Idempotency-Key'] = idempotency_key[:256]
             if cc_recipients:
                 msg['Cc'] = ", ".join(cc_recipients)
+            bcc_recipients = self._resolve_bcc_recipients(recipients, cc_recipients)
 
             alternatives = MIMEMultipart("alternative")
             alternatives.attach(MIMEText(body, "plain", "utf-8"))
@@ -1128,6 +1148,7 @@ Mirror Talk Podcast"""
                 server.login(self.username, self.password)
                 envelope_recipients = list(recipients)
                 envelope_recipients.extend(cc_recipients)
+                envelope_recipients.extend(bcc_recipients)
                 server.send_message(msg, to_addrs=envelope_recipients)
 
             return True
@@ -1153,6 +1174,16 @@ Mirror Talk Podcast"""
         if not recipients:
             raise ValueError("At least one recipient email address is required.")
         return recipients
+
+    def _resolve_bcc_recipients(
+        self, primary_recipients: Sequence[str], cc_recipients: Sequence[str]
+    ) -> list[str]:
+        """Return the optional archive recipient without exposing it in message headers."""
+        archive = str(self.bcc_email or "").strip()
+        visible = {item.casefold() for item in [*primary_recipients, *cc_recipients]}
+        if not archive or archive.casefold() in visible:
+            return []
+        return [archive]
 
     def _resolve_cc_recipients(
         self,

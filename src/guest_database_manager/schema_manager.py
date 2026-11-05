@@ -1563,6 +1563,37 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_041_email_delivery_observability(conn: sqlite3.Connection) -> None:
+        """Track provider acceptance separately from recipient-server delivery."""
+        for name, declaration in (
+            ("provider_message_id", "TEXT"),
+            ("delivery_status", "TEXT NOT NULL DEFAULT 'queued'"),
+            ("delivery_detail", "TEXT"),
+            ("delivered_at", "TIMESTAMP"),
+            ("last_event_at", "TIMESTAMP"),
+            ("cc_json", "TEXT"),
+        ):
+            SchemaManager._add_column_if_missing(conn, "email_outbox", name, declaration)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_email_outbox_provider_message "
+            "ON email_outbox(provider, provider_message_id)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS email_delivery_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                provider_event_id TEXT NOT NULL,
+                provider_message_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                recipient TEXT,
+                detail TEXT,
+                event_at TIMESTAMP NOT NULL,
+                received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(provider, provider_event_id)
+            )"""
+        )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1608,6 +1639,7 @@ class SchemaManager:
             (38, "booking_conflict_buffer", SchemaManager._migration_038_booking_conflict_buffer),
             (39, "rss_public_metadata", SchemaManager._migration_039_rss_public_metadata),
             (40, "transcript_automation_governance", SchemaManager._migration_040_transcript_automation_governance),
+            (41, "email_delivery_observability", SchemaManager._migration_041_email_delivery_observability),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

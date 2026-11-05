@@ -2020,12 +2020,15 @@ def test_agency_referral_sends_personal_application_link(monkeypatch, temp_db):
 
     assert created_guest["original_file_name"] == AGENCY_REFERRAL_SOURCE_NAME
     assert created_guest["submission_mode"] == "agency_referral"
-    assert sent["guest_name"] == "Amar Dhall"
-    assert sent["to_email"] == "amar@example.com"
-    assert sent["agency_name"] == "Bright Talent Agency"
-    assert "full_name=Amar+Dhall" in sent["intake_url"]
-    assert "email=amar%40example.com" in sent["intake_url"]
-    assert sent["intake_url"].startswith("https://guest-processing-production.up.railway.app/intake?")
+    with temp_db._connect() as conn:
+        queued = conn.execute(
+            "SELECT sent_to, subject, body FROM email_outbox ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert queued[0] == "amar@example.com"
+    assert "personal Mirror Talk guest application" in queued[1]
+    assert "Bright Talent Agency" in queued[2]
+    assert "full_name=Amar+Dhall" in queued[2]
+    assert "email=amar%40example.com" in queued[2]
 
 
 def test_agency_referral_rejects_malformed_optional_agency_email(temp_db):
@@ -2146,10 +2149,13 @@ def test_resend_guest_personal_application_email(monkeypatch, temp_db):
     resent_guest = service.resend_guest_personal_application_email(created_guest["id"])
 
     assert resent_guest["id"] == created_guest["id"]
-    assert sent["guest_name"] == "Dhruva Gulur"
-    assert sent["to_email"] == "dhruva@dhruvamd.com"
-    assert sent["agency_name"] == "Kay Villanueva"
-    assert sent["intake_url"].startswith("https://guest-processing-production.up.railway.app/intake?")
+    with temp_db._connect() as conn:
+        queued = conn.execute(
+            "SELECT sent_to, body FROM email_outbox ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert queued[0] == "dhruva@dhruvamd.com"
+    assert "Kay Villanueva" in queued[1]
+    assert "https://guest-processing-production.up.railway.app/intake?" in queued[1]
 
 
 def test_resend_guest_personal_application_email_requires_agency_referral(monkeypatch, temp_db):
@@ -2210,9 +2216,12 @@ def test_resend_guest_booking_link(monkeypatch, temp_db):
     resent_guest = service.resend_guest_booking_link(guest["id"])
 
     assert resent_guest["id"] == guest["id"]
-    assert sent["guest_name"] == "David Strickel"
-    assert sent["to_email"] == "david@example.com"
-    assert sent["booking_url"].startswith("https://guest-processing-production.up.railway.app/book?token=")
+    with temp_db._connect() as conn:
+        queued = conn.execute(
+            "SELECT sent_to, body FROM email_outbox ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert queued[0] == "david@example.com"
+    assert "https://guest-processing-production.up.railway.app/book?token=" in queued[1]
 
 
 def test_resend_guest_booking_link_requires_accepted_status(monkeypatch, temp_db):
@@ -6018,7 +6027,6 @@ def test_public_booking_queues_confirmation_email_after_retry_failure(monkeypatc
             "slots": [{"start": scheduled_for, "end": scheduled_for, "timezone": "Europe/Berlin"}],
         },
     )
-    monkeypatch.setattr("guest_database_manager.web_interface.sleep", lambda *_: None)
 
     class StubCalendarClient:
         def create_event_from_interview(self, interview):
@@ -6101,7 +6109,6 @@ def test_public_booking_retries_confirmation_email_successfully(monkeypatch, tem
             "slots": [{"start": scheduled_for, "end": scheduled_for, "timezone": "Europe/Berlin"}],
         },
     )
-    monkeypatch.setattr("guest_database_manager.web_interface.sleep", lambda *_: None)
 
     class StubCalendarClient:
         def create_event_from_interview(self, interview):
@@ -6143,17 +6150,17 @@ def test_public_booking_retries_confirmation_email_successfully(monkeypatch, tem
     assert saved is not None
     assert saved["confirmation_status"] == "confirmed"
     assert interview["booking_confirmation"] == {
-        "status": "sent",
-        "message": "Your confirmation email and calendar invite have been accepted for delivery.",
+        "status": "queued",
+        "message": "Your booking is confirmed. We are preparing your confirmation email and calendar invite now.",
     }
 
     with sqlite3.connect(temp_db.db_path) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT COUNT(*) FROM email_outbox").fetchone()
-        assert row[0] == 0
+        assert row[0] == 1
 
     log_entries = temp_db.get_reminder_log(interview["id"])
-    assert any(entry["reminder_type"] == "booking_confirmation" and entry["status"] == "sent" for entry in log_entries)
+    assert any(entry["reminder_type"] == "booking_confirmation" and entry["status"] == "queued" for entry in log_entries)
 
 
 def test_pending_booking_confirmation_outbox_can_be_drained(monkeypatch, temp_db):
