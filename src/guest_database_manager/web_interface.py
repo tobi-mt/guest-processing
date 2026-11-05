@@ -6308,7 +6308,7 @@ class GuestWebService:
             "proposal": {key: proposal[key] for key in ("mode", "timezone", "proposed_times")},
         }
 
-    def send_interview_reminder(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+    def send_interview_reminder(self, interview_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         """Send a weekly confirmation reminder for an interview and log it."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -6325,9 +6325,10 @@ class GuestWebService:
         preview = self.preview_interview_reminder(interview_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        cc_recipients = self._representative_cc_for_record(
-            interview, email_type="reminder"
-        )
+        cc_recipients = self._resolve_email_recipients(
+            guest_email,
+            [*self._representative_cc_for_record(interview, email_type="reminder"), *(additional_recipients or [])],
+        )[1:]
 
         outbox_id = self._queue_approved_email(
             email_type="weekly_confirmation", sent_to=guest_email,
@@ -6422,7 +6423,7 @@ class GuestWebService:
             raise WebInterfaceError("Interview not found after appreciation email send.")
         return self._serialize_interview_reminder(refreshed)
 
-    def send_interview_booking_confirmation(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+    def send_interview_booking_confirmation(self, interview_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         """Send the booking confirmation email and calendar invite for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -6450,9 +6451,10 @@ class GuestWebService:
         preview = self.preview_interview_booking_confirmation(interview_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        cc_recipients = self._representative_cc_for_record(
-            interview, email_type="booking_confirmation"
-        )
+        cc_recipients = self._resolve_email_recipients(
+            guest_email,
+            [*self._representative_cc_for_record(interview, email_type="booking_confirmation"), *(additional_recipients or [])],
+        )[1:]
 
         invite_builder = self._template_capable_manager(email_manager, "build_calendar_invite")
         invite_attachment = {
@@ -6493,6 +6495,7 @@ class GuestWebService:
         proposed_times: Any = None,
         proposal_timezone: str = "",
         actor: str = "operator",
+        additional_recipients: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """Send a personal reschedule link for an interview."""
         interview = self.database.get_interview_by_id(interview_id)
@@ -6522,9 +6525,10 @@ class GuestWebService:
         )
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        cc_recipients = self._representative_cc_for_record(
-            interview, email_type="reschedule"
-        )
+        cc_recipients = self._resolve_email_recipients(
+            guest_email,
+            [*self._representative_cc_for_record(interview, email_type="reschedule"), *(additional_recipients or [])],
+        )[1:]
 
         proposal_fingerprint = hashlib.sha256(json.dumps(
             {"mode": proposal["mode"], "times": proposal["proposed_times"], "subject": resolved_subject, "body": resolved_body},
@@ -6567,7 +6571,7 @@ class GuestWebService:
         serialized["reschedule_proposal"] = saved_proposal
         return serialized
 
-    def send_interview_cancellation(self, interview_id: int, subject: str = "", body: str = "") -> Dict[str, Any]:
+    def send_interview_cancellation(self, interview_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         """Send a cancellation email for an interview and mark it cancelled."""
         interview = self.database.get_interview_by_id(interview_id)
         if not interview:
@@ -6584,9 +6588,10 @@ class GuestWebService:
         preview = self.preview_interview_cancellation(interview_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        cc_recipients = self._representative_cc_for_record(
-            interview, email_type="cancellation"
-        )
+        cc_recipients = self._resolve_email_recipients(
+            guest_email,
+            [*self._representative_cc_for_record(interview, email_type="cancellation"), *(additional_recipients or [])],
+        )[1:]
 
         self._queue_approved_email(
             email_type="interview_cancellation", sent_to=guest_email,
@@ -6773,7 +6778,8 @@ class GuestWebService:
         return local_send.astimezone(timezone.utc)
 
     def schedule_episode_release_heads_up(
-        self, episode_id: int, subject: str = "", body: str = "", actor: str = "dashboard"
+        self, episode_id: int, subject: str = "", body: str = "", actor: str = "dashboard",
+        additional_recipients: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """Queue an explicitly approved, idempotent pre-release guest email."""
         episode = self.database.get_episode_by_id(episode_id)
@@ -6786,9 +6792,10 @@ class GuestWebService:
         send_at = datetime.fromisoformat(preview["send_at"])
         release_key = _normalize_text(episode.get("release_date"))
         manager = self._build_email_manager()
-        cc_recipients = self._representative_cc_for_record(
-            episode, email_type="release_heads_up"
-        )
+        cc_recipients = self._resolve_email_recipients(
+            guest_email,
+            [*self._representative_cc_for_record(episode, email_type="release_heads_up"), *(additional_recipients or [])],
+        )[1:]
         outbox_id = self.database.enqueue_email_outbox(
             interview_id=int(episode["interview_id"]) if episode.get("interview_id") else None,
             email_type="episode_release_heads_up",
@@ -9914,6 +9921,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         interview_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),
+                        payload.get("additional_recipients") or [],
                     )
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -9934,6 +9942,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         interview_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),
+                        payload.get("additional_recipients") or [],
                     )
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -9958,6 +9967,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         payload.get("proposed_times", []),
                         payload.get("proposal_timezone", ""),
                         actor=str((self._session_claims() or {}).get("sub") or "operator"),
+                        additional_recipients=payload.get("additional_recipients") or [],
                     )
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -9978,6 +9988,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         interview_id,
                         payload.get("subject", ""),
                         payload.get("body", ""),
+                        payload.get("additional_recipients") or [],
                     )
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -10083,6 +10094,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                     result = self.service.schedule_episode_release_heads_up(
                         episode_id, payload.get("subject", ""), payload.get("body", ""),
                         actor=_normalize_text(claims.get("sub")) or "dashboard",
+                        additional_recipients=payload.get("additional_recipients") or [],
                     )
                 except WebInterfaceError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

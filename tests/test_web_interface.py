@@ -7452,10 +7452,11 @@ def test_web_service_can_preview_and_send_weekly_interview_reminders(monkeypatch
             assert timezone_label == "America/Toronto"
             return {"subject": "Reminder Subject", "body": f"Join here: {join_url}"}
 
-        def send_email(self, to_email, subject, body, idempotency_key=""):
+        def send_email(self, to_email, subject, body, idempotency_key="", cc_emails=None):
             assert to_email == "jordan@example.com"
             assert subject == "Reminder Subject"
             assert "riverside.fm" in body
+            assert cc_emails == ["producer@example.com"]
             return True
 
     monkeypatch.setattr("guest_database_manager.web_interface.EmailManager", StubEmailManager)
@@ -7480,8 +7481,16 @@ def test_web_service_can_preview_and_send_weekly_interview_reminders(monkeypatch
     preview = service.preview_interview_reminder(interview["id"])
     assert preview["subject"] == "Reminder Subject"
 
-    sent_interview = service.send_interview_reminder(interview["id"])
+    sent_interview = service.send_interview_reminder(
+        interview["id"], additional_recipients=["producer@example.com"]
+    )
     assert sent_interview["reminder_status"] == "sent"
+    with temp_db._connect() as conn:
+        queued_cc = conn.execute(
+            "SELECT cc_json FROM email_outbox WHERE interview_id = ? AND email_type = 'weekly_confirmation'",
+            (interview["id"],),
+        ).fetchone()[0]
+    assert json.loads(queued_cc) == ["producer@example.com"]
 
     weekly_result = service.send_due_weekly_reminders(reference=__import__("datetime").datetime(2026, 3, 30), dry_run=True)
     assert weekly_result["count"] == 0
@@ -7646,9 +7655,17 @@ def test_web_service_can_preview_and_send_booking_confirmation(monkeypatch, temp
     assert preview["subject"] == "Your Soulful Conversation is booked"
     assert preview["body"] == "Here is your confirmation."
 
-    sent_interview = service.send_interview_booking_confirmation(interview["id"])
+    sent_interview = service.send_interview_booking_confirmation(
+        interview["id"], additional_recipients=["producer@example.com"]
+    )
     assert sent_interview["guest_email"] == "jordan@example.com"
     assert sent_interview["reminder_status"] == "not_scheduled"
+    with temp_db._connect() as conn:
+        queued_cc = conn.execute(
+            "SELECT cc_json FROM email_outbox WHERE interview_id = ? AND email_type = 'booking_confirmation'",
+            (interview["id"],),
+        ).fetchone()[0]
+    assert json.loads(queued_cc) == ["producer@example.com"]
 
     log_entries = temp_db.get_reminder_log(interview["id"])
     assert any(entry["reminder_type"] == "booking_confirmation" for entry in log_entries)

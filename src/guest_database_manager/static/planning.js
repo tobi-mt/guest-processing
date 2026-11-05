@@ -1535,7 +1535,8 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
   node.innerHTML = `
     <div class="inline-editor-title">14-day guest heads-up</div>
     <p class="helper-copy">Approved messages enter the outbox for ${escapeHtml(formatDateTime(preview.send_at))}. They are not sent during this review.</p>
-    ${(preview.cc_recipients || []).length ? `<p class="helper-copy"><strong>CC:</strong> ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}
+    ${(preview.cc_recipients || []).length ? `<p class="helper-copy"><strong>Automatic CC:</strong> ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}
+    <label class="full-width"><span>Additional CC</span><input data-heads-up-field="additionalRecipients" type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" /></label>
     <label class="full-width"><span>Subject</span><input data-heads-up-field="subject" type="text" value="${escapeHtml(preview.subject || "")}" /></label>
     <label class="full-width"><span>Email Body</span><textarea data-heads-up-field="body" rows="12">${escapeHtml(preview.body || "")}</textarea></label>
     <div class="inline-editor-actions full-width">
@@ -1577,6 +1578,7 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
         body: JSON.stringify({
           subject: node.querySelector("[data-heads-up-field='subject']").value,
           body: node.querySelector("[data-heads-up-field='body']").value,
+          additional_recipients: node.querySelector("[data-heads-up-field='additionalRecipients']").value.split(",").map((email) => email.trim()).filter(Boolean),
         }),
       });
       setMessage(message, `Guest heads-up scheduled for ${formatDateTime(result.send_at)}.`, "success");

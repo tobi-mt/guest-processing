@@ -1129,13 +1129,22 @@ function renderInterviews(interviews, totalCount) {
     let bookingTemplatePreview = null;
     let reminderTemplatePreview = null;
     let cancellationTemplatePreview = null;
+    let bookingAdditionalCc = "";
+    let reminderAdditionalCc = "";
+    let rescheduleAdditionalCc = "";
+    let cancellationAdditionalCc = "";
 
     const renderTemplatePreview = (preview, kind) => {
       const select = (preview.variants || []).length
         ? `<label class="composer-field"><span>Approved tone</span><select data-template-kind="${kind}">${preview.variants.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === preview.variant ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select></label>`
         : "";
       reminderPreviewNode.classList.remove("hidden");
-      reminderPreviewNode.innerHTML = `${select}<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<pre>${escapeHtml(preview.body)}</pre><div class="inline-editor-actions"><button type="button" class="secondary-button" data-tailor-template="${kind}" ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small></div>`;
+      const additionalCc = kind === "booking" ? bookingAdditionalCc : reminderAdditionalCc;
+      reminderPreviewNode.innerHTML = `${select}<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>Automatic CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<label class="composer-field"><span>Additional CC</span><input type="text" inputmode="email" autocomplete="off" data-additional-cc="${kind}" value="${escapeHtml(additionalCc)}" placeholder="name@example.com, other@example.com" /><small>Optional. Separate multiple addresses with commas.</small></label><pre>${escapeHtml(preview.body)}</pre><div class="inline-editor-actions"><button type="button" class="secondary-button" data-tailor-template="${kind}" ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small></div>`;
+      reminderPreviewNode.querySelector("[data-additional-cc]")?.addEventListener("input", (event) => {
+        if (kind === "booking") bookingAdditionalCc = event.target.value;
+        else reminderAdditionalCc = event.target.value;
+      });
       reminderPreviewNode.querySelector("[data-template-kind]")?.addEventListener("change", async (event) => {
         const selectedKind = event.target.dataset.templateKind;
         const endpoint = selectedKind === "booking" ? "booking-confirmation-template" : "reminder-template";
@@ -1367,7 +1376,10 @@ function renderInterviews(interviews, totalCount) {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/reschedule-template?${params}`);
           reminderPreviewNode.dataset.rescheduleSubject = preview.subject || "";
           reminderPreviewNode.dataset.rescheduleBody = preview.body || "";
-          emailPreviewNode.innerHTML = `<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<pre>${escapeHtml(preview.body)}</pre><button type="button" class="secondary-button" data-tailor-reschedule ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>`;
+          emailPreviewNode.innerHTML = `<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>Automatic CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<label class="composer-field"><span>Additional CC</span><input type="text" inputmode="email" autocomplete="off" data-reschedule-additional-cc value="${escapeHtml(rescheduleAdditionalCc)}" placeholder="name@example.com, other@example.com" /><small>Optional. Separate multiple addresses with commas.</small></label><pre>${escapeHtml(preview.body)}</pre><button type="button" class="secondary-button" data-tailor-reschedule ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>`;
+          emailPreviewNode.querySelector("[data-reschedule-additional-cc]")?.addEventListener("input", (event) => {
+            rescheduleAdditionalCc = event.target.value;
+          });
           emailPreviewNode.querySelector("[data-tailor-reschedule]")?.addEventListener("click", async () => {
             try { await fetchPreview(true); } catch (error) { setMessage(interviewMessage, error.message, "error"); }
           });
@@ -1392,7 +1404,7 @@ function renderInterviews(interviews, totalCount) {
             if (!confirmCriticalAction(`Send these rescheduling details to ${interview.guest_name || interview.guest_email} now?`)) return;
             button.disabled = true;
             button.textContent = "Sending...";
-            await fetchJSON(`/api/interviews/${interview.id}/send-reschedule-link`, { method: "POST", body: JSON.stringify({ ...proposal, subject: preview.subject, body: preview.body }) });
+            await fetchJSON(`/api/interviews/${interview.id}/send-reschedule-link`, { method: "POST", body: JSON.stringify({ ...proposal, subject: preview.subject, body: preview.body, additional_recipients: rescheduleAdditionalCc.split(",").map((email) => email.trim()).filter(Boolean) }) });
             emailPreviewNode.innerHTML = `<p class="composer-feedback success">Rescheduling email sent. The proposed times are recorded, but the interview remains unchanged until the guest confirms.</p>`;
             setMessage(interviewMessage, `Rescheduling email sent to ${interview.guest_name || interview.guest_email}.`, "success");
             await loadOperations();
@@ -1449,7 +1461,10 @@ function renderInterviews(interviews, totalCount) {
         try {
           await fetchJSON(`/api/interviews/${interview.id}/send-booking-confirmation`, {
             method: "POST",
-            body: JSON.stringify(bookingTemplatePreview ? { subject: bookingTemplatePreview.subject, body: bookingTemplatePreview.body } : {}),
+            body: JSON.stringify({
+              ...(bookingTemplatePreview ? { subject: bookingTemplatePreview.subject, body: bookingTemplatePreview.body } : {}),
+              additional_recipients: bookingAdditionalCc.split(",").map((email) => email.trim()).filter(Boolean),
+            }),
           });
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Booking confirmation sent to ${escapeHtml(interview.guest_name || interview.guest_email)}, including the calendar invite.</p>`;
@@ -1509,7 +1524,10 @@ function renderInterviews(interviews, totalCount) {
         try {
           await fetchJSON(`/api/interviews/${interview.id}/send-reminder`, {
             method: "POST",
-            body: JSON.stringify(reminderTemplatePreview ? { subject: reminderTemplatePreview.subject, body: reminderTemplatePreview.body } : {}),
+            body: JSON.stringify({
+              ...(reminderTemplatePreview ? { subject: reminderTemplatePreview.subject, body: reminderTemplatePreview.body } : {}),
+              additional_recipients: reminderAdditionalCc.split(",").map((email) => email.trim()).filter(Boolean),
+            }),
           });
           reminderPreviewNode.classList.remove("hidden");
           reminderPreviewNode.innerHTML = `<p class="composer-feedback success">Reminder sent to ${escapeHtml(interview.guest_name || interview.guest_email)}.</p>`;
@@ -1544,11 +1562,15 @@ function renderInterviews(interviews, totalCount) {
           reminderPreviewNode.innerHTML = `
             <h4>${escapeHtml(preview.subject)}</h4>
             <p>To: ${renderLinkedValue(interview.guest_email)}</p>
-            ${(preview.cc_recipients || []).length ? `<p>CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}
+            ${(preview.cc_recipients || []).length ? `<p>Automatic CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}
+            <label class="composer-field"><span>Additional CC</span><input type="text" inputmode="email" autocomplete="off" data-cancellation-additional-cc value="${escapeHtml(cancellationAdditionalCc)}" placeholder="name@example.com, other@example.com" /><small>Optional. Separate multiple addresses with commas.</small></label>
             <pre>${escapeHtml(preview.body)}</pre>
             <button type="button" class="secondary-button" data-tailor-cancellation ${aiEnabled ? "" : "disabled"}>Tailor with AI</button>
             <small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>
           `;
+          reminderPreviewNode.querySelector("[data-cancellation-additional-cc]")?.addEventListener("input", (event) => {
+            cancellationAdditionalCc = event.target.value;
+          });
           reminderPreviewNode.querySelector("[data-tailor-cancellation]")?.addEventListener("click", async () => {
             const tailored = await fetchJSON(`/api/interviews/${interview.id}/cancellation-template?tailor=true`);
             cancellationTemplatePreview = tailored;
@@ -1589,6 +1611,7 @@ function renderInterviews(interviews, totalCount) {
             body: JSON.stringify({
               subject: cancellationTemplatePreview?.subject || "",
               body: cancellationTemplatePreview?.body || "",
+              additional_recipients: cancellationAdditionalCc.split(",").map((email) => email.trim()).filter(Boolean),
             }),
           });
           reminderPreviewNode.classList.remove("hidden");
@@ -1769,6 +1792,8 @@ function renderReminderCandidates(interviews, totalCount) {
     const markConfirmedButton = card.querySelector("[data-reminder-action='mark-confirmed']");
     const previewButton = card.querySelector("[data-reminder-action='preview']");
     const sendButton = card.querySelector("[data-reminder-action='send']");
+    let reminderPreview = null;
+    let additionalCc = "";
 
     markConfirmedButton.addEventListener("click", async () => {
       markConfirmedButton.disabled = true;
@@ -1790,13 +1815,19 @@ function renderReminderCandidates(interviews, totalCount) {
     previewButton.addEventListener("click", async () => {
       try {
         const preview = await fetchJSON(`/api/interviews/${interview.id}/reminder-template`);
+        reminderPreview = preview;
         card.classList.add("selected");
         previewPanel.classList.remove("hidden");
         previewPanel.innerHTML = `
           <h4>${escapeHtml(preview.subject)}</h4>
           <p>To: ${renderLinkedValue(interview.guest_email, "No email address")}</p>
+          ${(preview.cc_recipients || []).length ? `<p>Automatic CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}
+          <label class="composer-field"><span>Additional CC</span><input type="text" inputmode="email" autocomplete="off" data-reminder-additional-cc placeholder="name@example.com, other@example.com" /><small>Optional. Separate multiple addresses with commas.</small></label>
           <pre>${escapeHtml(preview.body)}</pre>
         `;
+        previewPanel.querySelector("[data-reminder-additional-cc]")?.addEventListener("input", (event) => {
+          additionalCc = event.target.value;
+        });
       } catch (error) {
         setMessage(reminderMessage, error.message, "error");
       }
@@ -1809,7 +1840,10 @@ function renderReminderCandidates(interviews, totalCount) {
       try {
         await fetchJSON(`/api/interviews/${interview.id}/send-reminder`, {
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({
+            ...(reminderPreview ? { subject: reminderPreview.subject, body: reminderPreview.body } : {}),
+            additional_recipients: additionalCc.split(",").map((email) => email.trim()).filter(Boolean),
+          }),
         });
         setMessage(reminderMessage, `Reminder sent to ${interview.guest_name}.`, "success");
         await loadOperations();
