@@ -1227,6 +1227,7 @@ Mirror Talk Podcast"""
         join_url: str,
         idempotency_key: str = "",
         personalization: Optional[Mapping[str, Any]] = None,
+        cc_emails: Optional[Sequence[str]] = None,
     ) -> bool:
         """Send the first booking confirmation email after a guest books a slot."""
         template = self.get_booking_confirmation_template(
@@ -1241,7 +1242,18 @@ Mirror Talk Podcast"""
                 join_url=join_url,
             ),
         }
-        return self.send_email(to_email, template["subject"], template["body"], attachments=[invite_attachment], idempotency_key=idempotency_key)
+        send_options: Dict[str, Any] = {
+            "attachments": [invite_attachment],
+            "idempotency_key": idempotency_key,
+        }
+        if cc_emails:
+            send_options["cc_emails"] = cc_emails
+        return self.send_email(
+            to_email,
+            template["subject"],
+            template["body"],
+            **send_options,
+        )
 
     def send_rejection_email(self, guest_name: str, to_email: str, custom_message: str = "", idempotency_key: str = "") -> bool:
         """Send rejection email to a guest.

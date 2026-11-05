@@ -6002,6 +6002,118 @@ def test_unavailable_booking_confirmation_is_visible_in_delivery_health(temp_db)
     assert "missing guest email address" in failure["last_error"]
 
 
+def test_agency_representative_is_snapshotted_in_booking_confirmation_outbox(monkeypatch, temp_db):
+    """A referral representative must remain in CC for immediate delivery and later retries."""
+    service = GuestWebService(temp_db.db_path)
+    monkeypatch.setattr(service, "_send_guest_self_application_request_email", lambda *args, **kwargs: None)
+    referred = service.create_intake_submission(
+        {
+            "application_role": "on_behalf",
+            "agency_name": "Bright Talent Agency",
+            "agency_email": "agent@brighttalent.example",
+            "represented_guest_name": "Amar Dhall",
+            "represented_guest_email": "amar@example.com",
+        }
+    )
+    interview = service.create_interview(
+        {
+            "guest_id": referred["id"],
+            "guest_name": "Amar Dhall",
+            "guest_email": "amar@example.com",
+            "scheduled_for": "2026-12-10T17:00:00+00:00",
+            "timezone": "Europe/Berlin",
+            "status": "scheduled",
+        }
+    )
+
+    delivery = service._send_booking_confirmation_email(referred, interview, queue_only=True)
+
+    assert delivery["status"] == "queued"
+    with temp_db._connect() as conn:
+        row = conn.execute(
+            "SELECT sent_to, cc_json FROM email_outbox WHERE interview_id = ? AND email_type = 'booking_confirmation'",
+            (interview["id"],),
+        ).fetchone()
+    assert row[0] == "amar@example.com"
+    assert json.loads(row[1]) == ["agent@brighttalent.example"]
+
+
+def test_representative_cc_policy_covers_coordination_routes_but_excludes_sensitive_email(monkeypatch, temp_db):
+    service = GuestWebService(temp_db.db_path)
+    monkeypatch.setattr(service, "_send_guest_self_application_request_email", lambda *args, **kwargs: None)
+    guest = service.create_intake_submission(
+        {
+            "application_role": "on_behalf",
+            "agency_name": "Bright Talent Agency",
+            "agency_email": "agent@brighttalent.example",
+            "represented_guest_name": "Amar Dhall",
+            "represented_guest_email": "amar@example.com",
+        }
+    )
+    interview = service.create_interview(
+        {
+            "guest_id": guest["id"], "guest_name": "Amar Dhall", "guest_email": "amar@example.com",
+            "scheduled_for": "2026-12-10T17:00:00+00:00", "timezone": "Europe/Berlin",
+        }
+    )
+    episode = service.create_episode(
+        {
+            "interview_id": interview["id"], "guest_name": "Amar Dhall",
+            "guest_email": "amar@example.com", "episode_title": "A thoughtful conversation",
+        }
+    )
+
+    expected = ["agent@brighttalent.example"]
+    for email_type in (
+        "accepted", "application_request", "booking_link", "booking_confirmation",
+        "reminder", "reschedule", "cancellation",
+        "appreciation", "released_episode", "release_heads_up",
+    ):
+        assert service._representative_cc_for_record(interview, email_type=email_type) == expected
+        assert service._representative_cc_for_record(episode, email_type=email_type) == expected
+
+    assert service._representative_cc_recipients(guest, email_type="intake_confirmation") == []
+    assert service._representative_cc_recipients(guest, email_type="rejected") == []
+
+
+def test_representative_contact_survives_guest_personal_intake(monkeypatch, temp_db):
+    """Replacing the referral payload with the guest's intake must not erase the agent relationship."""
+    service = GuestWebService(temp_db.db_path)
+    monkeypatch.setattr(service, "_send_guest_self_application_request_email", lambda *args, **kwargs: None)
+    monkeypatch.setattr(service, "_send_intake_confirmation_email", lambda *args, **kwargs: None)
+    referred = service.create_intake_submission(
+        {
+            "application_role": "on_behalf",
+            "agency_name": "Bright Talent Agency",
+            "agency_email": "agent@brighttalent.example",
+            "represented_guest_name": "Amar Dhall",
+            "represented_guest_email": "amar@example.com",
+        }
+    )
+
+    completed = service.create_intake_submission(
+        {
+            **SELF_INTAKE_DEFAULTS,
+            "full_name": "Amar Dhall",
+            "email": "amar@example.com",
+            "background": "I help leaders build resilient, thoughtful organizations through research and coaching.",
+            "profession": "Author, researcher, and leadership coach working with purpose-driven teams.",
+            "passionate_topics": "Resilience, leadership, purpose, and sustainable personal growth.",
+            "message": "Small intentional practices can create lasting change in people and organizations.",
+        }
+    )
+
+    assert completed["id"] == referred["id"]
+    assert completed["original_file_name"] == INTAKE_SOURCE_NAME
+    assert service._representative_cc_recipients(completed, email_type="booking_confirmation") == [
+        "agent@brighttalent.example"
+    ]
+    contacts = temp_db.list_guest_communication_contacts(referred["id"])
+    assert [(contact["name"], contact["email"]) for contact in contacts] == [
+        ("Bright Talent Agency", "agent@brighttalent.example")
+    ]
+
+
 def test_public_booking_queues_confirmation_email_after_retry_failure(monkeypatch, temp_db):
     """Public bookings should still succeed if the confirmation email has to be queued after retries."""
     service = GuestWebService(temp_db.db_path)

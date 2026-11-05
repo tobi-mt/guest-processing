@@ -3668,11 +3668,19 @@ class GuestWebService:
             },
             source_name=AGENCY_REFERRAL_SOURCE_NAME,
         )
+        if agency_email:
+            self.database.upsert_guest_communication_contact(
+                int(guest["id"]),
+                email=agency_email,
+                name=agency_name,
+                source="agency_referral",
+            )
         self._send_guest_self_application_request_email(
             guest_name,
             guest_email,
             self._public_intake_link(guest_name, guest_email),
             agency_name,
+            agency_email,
         )
         response = dict(guest)
         response["submission_mode"] = "agency_referral"
@@ -3785,6 +3793,52 @@ class GuestWebService:
             guest = self.database.get_guest_by_id(int(guest_id)) or record
         return email_manager.build_personalization_context(guest)
 
+    def _representative_cc_recipients(
+        self, guest: Mapping[str, Any], *, email_type: str,
+    ) -> list[str]:
+        """Return the stored referral representative for appropriate coordination emails only."""
+        coordination_types = {
+            "accepted", "application_request", "booking_link", "booking_confirmation",
+            "reminder", "reschedule", "cancellation",
+            "appreciation", "released_episode", "release_heads_up",
+        }
+        if email_type not in coordination_types:
+            return []
+        guest_email = _normalize_text(guest.get("email"))
+        recipients: list[str] = []
+        guest_id = guest.get("id") or guest.get("guest_id")
+        if guest_id:
+            for contact in self.database.list_guest_communication_contacts(int(guest_id)):
+                representative_email = _normalize_text(contact.get("email"))
+                if contact.get("role") != "representative" or contact.get("cc_policy") != "coordination":
+                    continue
+                if _is_valid_email_address(representative_email) and representative_email.casefold() != guest_email.casefold():
+                    recipients.append(representative_email)
+        if recipients:
+            return self._resolve_email_recipients(guest_email, recipients)[1:]
+
+        # Compatibility fallback for an unmigrated in-memory guest payload.
+        meta = _build_submission_meta(dict(guest)) or {}
+        representative_email = _normalize_text(meta.get("agency_email")) if meta.get("mode") == "agency_referral" else ""
+        if _is_valid_email_address(representative_email) and representative_email.casefold() != guest_email.casefold():
+            return [representative_email]
+        return []
+
+    def _representative_cc_for_record(
+        self, record: Mapping[str, Any], *, email_type: str,
+    ) -> list[str]:
+        """Resolve a representative only through an explicit guest link or guest record."""
+        guest: Mapping[str, Any] = record
+        if not record.get("original_data"):
+            guest_id = record.get("guest_id")
+            if not guest_id and record.get("interview_id"):
+                linked_interview = self.database.get_interview_by_id(int(record["interview_id"])) or {}
+                guest_id = linked_interview.get("guest_id")
+            if not guest_id:
+                return []
+            guest = self.database.get_guest_by_id(int(guest_id)) or {}
+        return self._representative_cc_recipients(guest, email_type=email_type)
+
     def _smart_email_draft(
         self,
         *,
@@ -3798,6 +3852,8 @@ class GuestWebService:
         """Return one validated draft contract with an explainable deterministic fallback."""
         subject = _normalize_text(template.get("subject"))
         body = str(template.get("body") or "").strip()
+        automatic_cc = self._representative_cc_for_record(record, email_type=email_type)
+        representative_copied = representative_copied or bool(automatic_cc)
         result = {
             **dict(template),
             "subject": subject,
@@ -3805,6 +3861,7 @@ class GuestWebService:
             "draft_source": "approved_template",
             "tailored": False,
             "tailoring_notice": "",
+            "cc_recipients": automatic_cc,
         }
         if not tailor:
             return result
@@ -3920,7 +3977,13 @@ class GuestWebService:
         if not guest_email:
             raise WebInterfaceError("This guest does not have an email address.")
 
-        cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
+        automatic_cc = (
+            self._representative_cc_recipients(guest, email_type="accepted")
+            if normalized_status == "accepted" else []
+        )
+        cc_recipients = self._resolve_email_recipients(
+            guest_email, [*automatic_cc, *(additional_recipients or [])]
+        )[1:]
 
         email_manager = self._build_email_manager()
         if not email_manager.is_configured():
@@ -6262,12 +6325,16 @@ class GuestWebService:
         preview = self.preview_interview_reminder(interview_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
+        cc_recipients = self._representative_cc_for_record(
+            interview, email_type="reminder"
+        )
 
         outbox_id = self._queue_approved_email(
             email_type="weekly_confirmation", sent_to=guest_email,
             subject=resolved_subject, body=resolved_body,
             idempotency_key=f"weekly_reminder:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
             correlation_id=f"interview:{interview_id}", interview_id=interview_id,
+            cc_recipients=cc_recipients,
         )
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
@@ -6328,7 +6395,10 @@ class GuestWebService:
         preview = self.preview_interview_appreciation(interview_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
+        cc_recipients = self._resolve_email_recipients(
+            guest_email,
+            [*self._representative_cc_for_record(interview, email_type="appreciation"), *(additional_recipients or [])],
+        )[1:]
 
         self._queue_approved_email(
             email_type="post_interview_appreciation", sent_to=guest_email,
@@ -6380,6 +6450,9 @@ class GuestWebService:
         preview = self.preview_interview_booking_confirmation(interview_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
+        cc_recipients = self._representative_cc_for_record(
+            interview, email_type="booking_confirmation"
+        )
 
         invite_builder = self._template_capable_manager(email_manager, "build_calendar_invite")
         invite_attachment = {
@@ -6394,6 +6467,7 @@ class GuestWebService:
             subject=resolved_subject, body=resolved_body, attachments=[invite_attachment],
             idempotency_key=f"booking_confirmation:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
             correlation_id=f"interview:{interview_id}", interview_id=interview_id,
+            cc_recipients=cc_recipients,
         )
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
@@ -6448,6 +6522,9 @@ class GuestWebService:
         )
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
+        cc_recipients = self._representative_cc_for_record(
+            interview, email_type="reschedule"
+        )
 
         proposal_fingerprint = hashlib.sha256(json.dumps(
             {"mode": proposal["mode"], "times": proposal["proposed_times"], "subject": resolved_subject, "body": resolved_body},
@@ -6458,6 +6535,7 @@ class GuestWebService:
             email_type="reschedule_link", sent_to=guest_email,
             subject=resolved_subject, body=resolved_body, idempotency_key=idempotency_key,
             correlation_id=f"interview:{interview_id}", interview_id=interview_id,
+            cc_recipients=cc_recipients,
         )
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
@@ -6506,12 +6584,16 @@ class GuestWebService:
         preview = self.preview_interview_cancellation(interview_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
+        cc_recipients = self._representative_cc_for_record(
+            interview, email_type="cancellation"
+        )
 
         self._queue_approved_email(
             email_type="interview_cancellation", sent_to=guest_email,
             subject=resolved_subject, body=resolved_body,
             idempotency_key=f"interview_cancellation:{interview_id}:{_normalize_text(interview.get('scheduled_for'))}",
             correlation_id=f"interview:{interview_id}", interview_id=interview_id,
+            cc_recipients=cc_recipients,
         )
 
         provider = "resend" if email_manager.resend_api_key else "smtp"
@@ -6581,7 +6663,10 @@ class GuestWebService:
         preview = self.preview_episode_appreciation(episode_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
+        cc_recipients = self._resolve_email_recipients(
+            guest_email,
+            [*self._representative_cc_for_record(episode, email_type="appreciation"), *(additional_recipients or [])],
+        )[1:]
 
         self._queue_approved_email(
             email_type="episode_appreciation", sent_to=guest_email,
@@ -6701,6 +6786,9 @@ class GuestWebService:
         send_at = datetime.fromisoformat(preview["send_at"])
         release_key = _normalize_text(episode.get("release_date"))
         manager = self._build_email_manager()
+        cc_recipients = self._representative_cc_for_record(
+            episode, email_type="release_heads_up"
+        )
         outbox_id = self.database.enqueue_email_outbox(
             interview_id=int(episode["interview_id"]) if episode.get("interview_id") else None,
             email_type="episode_release_heads_up",
@@ -6711,6 +6799,7 @@ class GuestWebService:
             next_attempt_at=send_at.strftime("%Y-%m-%d %H:%M:%S"),
             idempotency_key=f"episode_release_heads_up:{episode_id}:{release_key}",
             correlation_id=f"episode:{episode_id}",
+            cc_recipients=cc_recipients,
         )
         queued = self.database.reactivate_terminal_email_outbox(
             outbox_id,
@@ -6720,6 +6809,7 @@ class GuestWebService:
             provider="resend" if manager.resend_api_key else "smtp",
             next_attempt_at=send_at.strftime("%Y-%m-%d %H:%M:%S"),
             actor=actor,
+            cc_recipients=cc_recipients,
         )
         self.database.append_audit_event(
             entity_type="episode", entity_id=episode_id, event_type="release_heads_up_approved",
@@ -6749,7 +6839,10 @@ class GuestWebService:
         preview = self.preview_episode_release_email(episode_id)
         resolved_subject = subject.strip() or preview["subject"]
         resolved_body = body.strip() or preview["body"]
-        cc_recipients = self._resolve_email_recipients(guest_email, additional_recipients)[1:]
+        cc_recipients = self._resolve_email_recipients(
+            guest_email,
+            [*self._representative_cc_for_record(episode, email_type="released_episode"), *(additional_recipients or [])],
+        )[1:]
 
         self._queue_approved_email(
             email_type="released_episode_follow_up", sent_to=guest_email,
@@ -7299,6 +7392,7 @@ class GuestWebService:
         guest_email: str,
         intake_url: str,
         agency_name: str = "",
+        agency_email: str = "",
     ) -> None:
         """Best-effort email asking a referred guest to complete their own intake."""
         if not guest_email:
@@ -7314,6 +7408,7 @@ class GuestWebService:
             email_type="personal_application_request", sent_to=guest_email,
             subject=template["subject"], body=template["body"],
             idempotency_key=f"personal_application_request:{guest_email}:{intake_url}",
+            cc_recipients=[agency_email] if _is_valid_email_address(agency_email) else [],
         )
 
     def resend_guest_personal_application_email(self, guest_id: int) -> Dict[str, Any]:
@@ -7328,6 +7423,7 @@ class GuestWebService:
         guest_name = _normalize_text(original_data.get("represented_guest_name")) or _normalize_text(guest.get("full_name"))
         guest_email = _normalize_text(original_data.get("represented_guest_email")) or _normalize_text(guest.get("email"))
         agency_name = _normalize_text(original_data.get("agency_name"))
+        agency_email = _normalize_text(original_data.get("agency_email"))
 
         if not guest_email:
             raise WebInterfaceError("This referral does not have a guest email yet.")
@@ -7346,6 +7442,7 @@ class GuestWebService:
             subject=template["subject"], body=template["body"],
             idempotency_key=f"personal_application_resend:{guest_id}:{secrets.token_hex(8)}",
             correlation_id=f"guest:{guest_id}",
+            cc_recipients=[agency_email] if _is_valid_email_address(agency_email) else [],
         )
 
         refreshed = self.database.get_guest_by_id(guest_id)
@@ -7380,6 +7477,7 @@ class GuestWebService:
             subject=template["subject"], body=template["body"],
             idempotency_key=f"booking_link_resend:{guest_id}:{secrets.token_hex(8)}",
             correlation_id=f"guest:{guest_id}",
+            cc_recipients=self._representative_cc_recipients(guest, email_type="booking_link"),
         )
 
         refreshed = self.database.get_guest_by_id(guest_id)
@@ -7412,6 +7510,9 @@ class GuestWebService:
         timezone_label = self._guest_facing_timezone(interview)
         join_url = _normalize_text(interview.get("join_url")) or self._booking_join_url()
         personalization = self._email_personalization(email_manager, guest)
+        cc_recipients = self._representative_cc_recipients(
+            guest, email_type="booking_confirmation"
+        )
         confirmation_kwargs = {"personalization": personalization} if personalization else {}
         template = email_manager.get_booking_confirmation_template(
             guest_name, scheduled_for, timezone_label, join_url, **confirmation_kwargs
@@ -7452,6 +7553,7 @@ class GuestWebService:
             status="pending",
             idempotency_key=idempotency_key,
             correlation_id=f"interview:{interview['id']}",
+            cc_recipients=cc_recipients,
         )
         self.database.log_interview_email(
             interview_id=int(interview["id"]),

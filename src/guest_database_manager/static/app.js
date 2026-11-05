@@ -1665,9 +1665,7 @@ function renderGuests(payload) {
               body: templateData.body || "",
               variant: templateData.variant || "",
               variants: templateData.variants || [],
-              additionalRecipients: decision === "accepted" && guest.submission_meta?.mode === "agency_referral"
-                ? (guest.submission_meta.agency_email || "")
-                : "",
+              additionalRecipients: (templateData.cc_recipients || []).join(", "),
               tailoring: false,
               tailoringNotice: "",
               sending: false,
@@ -1687,7 +1685,7 @@ function renderGuests(payload) {
               body: templateData.body || "",
               variant: templateData.variant || "",
               variants: templateData.variants || [],
-              additionalRecipients: "",
+              additionalRecipients: (templateData.cc_recipients || []).join(", "),
               tailoring: false,
               tailoringNotice: templateData.tailoring_notice || "Review the tailored draft before sending.",
               sending: false,

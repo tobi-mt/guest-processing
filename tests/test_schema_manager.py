@@ -18,7 +18,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == list(range(1, 42))
+    assert _versions(db_path) == list(range(1, 43))
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}
@@ -51,6 +51,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
         "dashboard_account_recovery_tokens",
         "dashboard_account_events",
         "guest_ai_artifacts",
+        "guest_communication_contacts",
     } <= tables
     assert {"normalized_name", "normalized_email", "row_version", "identity_status", "owner", "marketing_opt_in"} <= guest_columns
     assert {

@@ -1135,7 +1135,7 @@ function renderInterviews(interviews, totalCount) {
         ? `<label class="composer-field"><span>Approved tone</span><select data-template-kind="${kind}">${preview.variants.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === preview.variant ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select></label>`
         : "";
       reminderPreviewNode.classList.remove("hidden");
-      reminderPreviewNode.innerHTML = `${select}<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p><pre>${escapeHtml(preview.body)}</pre><div class="inline-editor-actions"><button type="button" class="secondary-button" data-tailor-template="${kind}" ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small></div>`;
+      reminderPreviewNode.innerHTML = `${select}<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<pre>${escapeHtml(preview.body)}</pre><div class="inline-editor-actions"><button type="button" class="secondary-button" data-tailor-template="${kind}" ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small></div>`;
       reminderPreviewNode.querySelector("[data-template-kind]")?.addEventListener("change", async (event) => {
         const selectedKind = event.target.dataset.templateKind;
         const endpoint = selectedKind === "booking" ? "booking-confirmation-template" : "reminder-template";
@@ -1367,7 +1367,7 @@ function renderInterviews(interviews, totalCount) {
           const preview = await fetchJSON(`/api/interviews/${interview.id}/reschedule-template?${params}`);
           reminderPreviewNode.dataset.rescheduleSubject = preview.subject || "";
           reminderPreviewNode.dataset.rescheduleBody = preview.body || "";
-          emailPreviewNode.innerHTML = `<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p><pre>${escapeHtml(preview.body)}</pre><button type="button" class="secondary-button" data-tailor-reschedule ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>`;
+          emailPreviewNode.innerHTML = `<h4>${escapeHtml(preview.subject)}</h4><p>To: ${renderLinkedValue(interview.guest_email)}</p>${(preview.cc_recipients || []).length ? `<p>CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}<pre>${escapeHtml(preview.body)}</pre><button type="button" class="secondary-button" data-tailor-reschedule ${aiEnabled ? "" : "disabled"}>Tailor with AI</button><small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>`;
           emailPreviewNode.querySelector("[data-tailor-reschedule]")?.addEventListener("click", async () => {
             try { await fetchPreview(true); } catch (error) { setMessage(interviewMessage, error.message, "error"); }
           });
@@ -1544,6 +1544,7 @@ function renderInterviews(interviews, totalCount) {
           reminderPreviewNode.innerHTML = `
             <h4>${escapeHtml(preview.subject)}</h4>
             <p>To: ${renderLinkedValue(interview.guest_email)}</p>
+            ${(preview.cc_recipients || []).length ? `<p>CC: ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}
             <pre>${escapeHtml(preview.body)}</pre>
             <button type="button" class="secondary-button" data-tailor-cancellation ${aiEnabled ? "" : "disabled"}>Tailor with AI</button>
             <small>${escapeHtml(preview.tailoring_notice || "Starts from the approved template; review before sending.")}</small>

@@ -1447,7 +1447,7 @@ function renderReleaseComposer(node, episode, preview) {
     <div class="inline-editor-title">Release Email</div>
     <label class="full-width">
       <span>CC representatives <small>(optional)</small></span>
-      <input data-release-field="additionalRecipients" type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" />
+      <input data-release-field="additionalRecipients" type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" value="${escapeHtml((preview.cc_recipients || []).join(", "))}" />
       <small>The guest remains in To. Everyone copied here can see the email exchange.</small>
     </label>
     <label class="full-width">
@@ -1535,6 +1535,7 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
   node.innerHTML = `
     <div class="inline-editor-title">14-day guest heads-up</div>
     <p class="helper-copy">Approved messages enter the outbox for ${escapeHtml(formatDateTime(preview.send_at))}. They are not sent during this review.</p>
+    ${(preview.cc_recipients || []).length ? `<p class="helper-copy"><strong>CC:</strong> ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}
     <label class="full-width"><span>Subject</span><input data-heads-up-field="subject" type="text" value="${escapeHtml(preview.subject || "")}" /></label>
     <label class="full-width"><span>Email Body</span><textarea data-heads-up-field="body" rows="12">${escapeHtml(preview.body || "")}</textarea></label>
     <div class="inline-editor-actions full-width">
@@ -2557,7 +2558,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
             <p>To: ${renderLinkedValue(episode.guest_email)}</p>
             <label class="full-width">
               <span>CC representatives <small>(optional)</small></span>
-              <input data-appreciation-additional-recipients type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" />
+              <input data-appreciation-additional-recipients type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" value="${escapeHtml((preview.cc_recipients || []).join(", "))}" />
               <small>The guest remains in To. Everyone copied here can see the email exchange.</small>
             </label>
             <label class="full-width"><span>Email Body</span><textarea data-appreciation-body rows="12">${escapeHtml(preview.body)}</textarea></label>

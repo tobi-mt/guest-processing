@@ -260,6 +260,51 @@ class GuestDatabase:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def upsert_guest_communication_contact(
+        self,
+        guest_id: int,
+        *,
+        email: str,
+        name: str = "",
+        role: str = "representative",
+        cc_policy: str = "coordination",
+        source: str = "agency_referral",
+    ) -> Dict[str, Any]:
+        """Create or reactivate a durable guest-linked communication contact."""
+        normalized_email = str(email or "").strip()
+        if not normalized_email:
+            raise ValueError("Communication contact email is required")
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """INSERT INTO guest_communication_contacts
+                   (guest_id, name, email, role, cc_policy, is_active, source)
+                   VALUES (?, ?, ?, ?, ?, 1, ?)
+                   ON CONFLICT(guest_id, email) DO UPDATE SET
+                     name = excluded.name,
+                     role = excluded.role,
+                     cc_policy = excluded.cc_policy,
+                     is_active = 1,
+                     source = excluded.source,
+                     updated_at = CURRENT_TIMESTAMP""",
+                (guest_id, name or None, normalized_email, role, cc_policy, source),
+            )
+            row = conn.execute(
+                "SELECT * FROM guest_communication_contacts WHERE guest_id = ? AND email = ? COLLATE NOCASE",
+                (guest_id, normalized_email),
+            ).fetchone()
+            return dict(row)
+
+    def list_guest_communication_contacts(self, guest_id: int, *, active_only: bool = True) -> List[Dict]:
+        """Return explicit communication contacts for a guest identity."""
+        query = "SELECT * FROM guest_communication_contacts WHERE guest_id = ?"
+        if active_only:
+            query += " AND is_active = 1"
+        query += " ORDER BY id"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(row) for row in conn.execute(query, (guest_id,)).fetchall()]
+
     def list_latest_guest_applications(self) -> Dict[int, Dict[str, Any]]:
         """Return the latest immutable application projection for every guest."""
         with self._connect() as conn:
@@ -2528,6 +2573,7 @@ class GuestDatabase:
         provider: str,
         next_attempt_at: str,
         actor: str,
+        cc_recipients: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """Reactivate a failed or cancelled message only after explicit operator review."""
         with self._connect() as conn:
@@ -2541,12 +2587,16 @@ class GuestDatabase:
             validate_transition("communication", current["status"], "retrying")
             cursor = conn.execute(
                 """UPDATE email_outbox
-                   SET sent_to = ?, subject = ?, body = ?, provider = ?, status = 'retrying',
+                   SET sent_to = ?, subject = ?, body = ?, provider = ?, cc_json = ?, status = 'retrying',
                        attempts = 0, next_attempt_at = ?, last_error = NULL, dead_letter_at = NULL,
                        sent_at = NULL, lease_owner = NULL, lease_until = NULL,
                        row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
                    WHERE id = ? AND row_version = ?""",
-                (sent_to, subject, body, provider, next_attempt_at, outbox_id, current["row_version"]),
+                (
+                    sent_to, subject, body, provider,
+                    dumps(list(cc_recipients or []), ensure_ascii=False) if cc_recipients else None,
+                    next_attempt_at, outbox_id, current["row_version"],
+                ),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Outbox message changed before reapproval")

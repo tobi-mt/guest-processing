@@ -1594,6 +1594,47 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_042_guest_communication_contacts(conn: sqlite3.Connection) -> None:
+        """Preserve representatives independently from replaceable intake payloads."""
+        conn.execute(
+            """CREATE TABLE guest_communication_contacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guest_id INTEGER NOT NULL,
+                name TEXT,
+                email TEXT NOT NULL COLLATE NOCASE,
+                role TEXT NOT NULL DEFAULT 'representative',
+                cc_policy TEXT NOT NULL DEFAULT 'coordination',
+                is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+                source TEXT NOT NULL DEFAULT 'agency_referral',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (guest_id) REFERENCES guests(id) ON DELETE CASCADE,
+                UNIQUE (guest_id, email)
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX idx_guest_communication_contacts_active "
+            "ON guest_communication_contacts(guest_id, is_active, role)"
+        )
+        rows = conn.execute(
+            "SELECT id, email, original_data FROM guests WHERE original_file_name = 'Agency Referral'"
+        ).fetchall()
+        for guest_id, guest_email, raw_payload in rows:
+            try:
+                payload = json.loads(raw_payload or "{}")
+            except (TypeError, ValueError):
+                continue
+            representative_email = str(payload.get("agency_email") or "").strip()
+            if not representative_email or representative_email.casefold() == str(guest_email or "").strip().casefold():
+                continue
+            conn.execute(
+                """INSERT OR IGNORE INTO guest_communication_contacts
+                   (guest_id, name, email, role, cc_policy, source)
+                   VALUES (?, ?, ?, 'representative', 'coordination', 'agency_referral_backfill')""",
+                (guest_id, str(payload.get("agency_name") or "").strip() or None, representative_email),
+            )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1640,6 +1681,7 @@ class SchemaManager:
             (39, "rss_public_metadata", SchemaManager._migration_039_rss_public_metadata),
             (40, "transcript_automation_governance", SchemaManager._migration_040_transcript_automation_governance),
             (41, "email_delivery_observability", SchemaManager._migration_041_email_delivery_observability),
+            (42, "guest_communication_contacts", SchemaManager._migration_042_guest_communication_contacts),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:
