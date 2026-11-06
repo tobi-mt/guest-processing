@@ -1635,6 +1635,15 @@ class SchemaManager:
             )
 
     @staticmethod
+    def _migration_043_representatives_cc_all_guest_email(conn: sqlite3.Connection) -> None:
+        """Expand representative CC policy from coordination-only to every guest email."""
+        conn.execute(
+            """UPDATE guest_communication_contacts
+               SET cc_policy = 'all_guest_emails', updated_at = CURRENT_TIMESTAMP
+               WHERE role = 'representative' AND cc_policy = 'coordination'"""
+        )
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1682,6 +1691,7 @@ class SchemaManager:
             (40, "transcript_automation_governance", SchemaManager._migration_040_transcript_automation_governance),
             (41, "email_delivery_observability", SchemaManager._migration_041_email_delivery_observability),
             (42, "guest_communication_contacts", SchemaManager._migration_042_guest_communication_contacts),
+            (43, "representatives_cc_all_guest_email", SchemaManager._migration_043_representatives_cc_all_guest_email),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

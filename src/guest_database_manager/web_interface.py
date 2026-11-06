@@ -3796,21 +3796,14 @@ class GuestWebService:
     def _representative_cc_recipients(
         self, guest: Mapping[str, Any], *, email_type: str,
     ) -> list[str]:
-        """Return the stored referral representative for appropriate coordination emails only."""
-        coordination_types = {
-            "accepted", "application_request", "booking_link", "booking_confirmation",
-            "reminder", "reschedule", "cancellation",
-            "appreciation", "released_episode", "release_heads_up",
-        }
-        if email_type not in coordination_types:
-            return []
+        """Return every active representative for any guest-facing email."""
         guest_email = _normalize_text(guest.get("email"))
         recipients: list[str] = []
         guest_id = guest.get("id") or guest.get("guest_id")
         if guest_id:
             for contact in self.database.list_guest_communication_contacts(int(guest_id)):
                 representative_email = _normalize_text(contact.get("email"))
-                if contact.get("role") != "representative" or contact.get("cc_policy") != "coordination":
+                if contact.get("role") != "representative" or contact.get("cc_policy") not in {"coordination", "all_guest_emails"}:
                     continue
                 if _is_valid_email_address(representative_email) and representative_email.casefold() != guest_email.casefold():
                     recipients.append(representative_email)
@@ -3977,10 +3970,7 @@ class GuestWebService:
         if not guest_email:
             raise WebInterfaceError("This guest does not have an email address.")
 
-        automatic_cc = (
-            self._representative_cc_recipients(guest, email_type="accepted")
-            if normalized_status == "accepted" else []
-        )
+        automatic_cc = self._representative_cc_recipients(guest, email_type=normalized_status)
         cc_recipients = self._resolve_email_recipients(
             guest_email, [*automatic_cc, *(additional_recipients or [])]
         )[1:]
@@ -7391,6 +7381,7 @@ class GuestWebService:
             correlation_id=f"guest:{guest.get('id') or effect_id}",
             attachments=[{"filename": "mirror-talk-application.pdf",
                           "content": build_intake_receipt_pdf(guest)}],
+            cc_recipients=self._representative_cc_recipients(guest, email_type="intake_confirmation"),
         )
 
     def _send_guest_self_application_request_email(

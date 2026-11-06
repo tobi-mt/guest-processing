@@ -18,7 +18,7 @@ def test_migrations_apply_to_empty_database_and_are_idempotent(tmp_path):
     SchemaManager.create_tables(str(db_path))
     SchemaManager.create_tables(str(db_path))
 
-    assert _versions(db_path) == list(range(1, 43))
+    assert _versions(db_path) == list(range(1, 44))
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         guest_columns = {row[1] for row in conn.execute("PRAGMA table_info(guests)")}

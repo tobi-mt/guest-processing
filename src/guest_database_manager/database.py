@@ -267,7 +267,7 @@ class GuestDatabase:
         email: str,
         name: str = "",
         role: str = "representative",
-        cc_policy: str = "coordination",
+        cc_policy: str = "all_guest_emails",
         source: str = "agency_referral",
     ) -> Dict[str, Any]:
         """Create or reactivate a durable guest-linked communication contact."""

@@ -6038,7 +6038,7 @@ def test_agency_representative_is_snapshotted_in_booking_confirmation_outbox(mon
     assert json.loads(row[1]) == ["agent@brighttalent.example"]
 
 
-def test_representative_cc_policy_covers_coordination_routes_but_excludes_sensitive_email(monkeypatch, temp_db):
+def test_representative_cc_policy_covers_every_guest_facing_email(monkeypatch, temp_db):
     service = GuestWebService(temp_db.db_path)
     monkeypatch.setattr(service, "_send_guest_self_application_request_email", lambda *args, **kwargs: None)
     guest = service.create_intake_submission(
@@ -6049,6 +6049,9 @@ def test_representative_cc_policy_covers_coordination_routes_but_excludes_sensit
             "represented_guest_name": "Amar Dhall",
             "represented_guest_email": "amar@example.com",
         }
+    )
+    service.database.upsert_guest_communication_contact(
+        guest["id"], email="manager@brighttalent.example", name="Account Manager"
     )
     interview = service.create_interview(
         {
@@ -6063,17 +6066,57 @@ def test_representative_cc_policy_covers_coordination_routes_but_excludes_sensit
         }
     )
 
-    expected = ["agent@brighttalent.example"]
+    expected = ["agent@brighttalent.example", "manager@brighttalent.example"]
     for email_type in (
         "accepted", "application_request", "booking_link", "booking_confirmation",
         "reminder", "reschedule", "cancellation",
         "appreciation", "released_episode", "release_heads_up",
+        "intake_confirmation", "rejected",
     ):
         assert service._representative_cc_for_record(interview, email_type=email_type) == expected
         assert service._representative_cc_for_record(episode, email_type=email_type) == expected
 
-    assert service._representative_cc_recipients(guest, email_type="intake_confirmation") == []
-    assert service._representative_cc_recipients(guest, email_type="rejected") == []
+    assert service._representative_cc_recipients(guest, email_type="intake_confirmation") == expected
+    assert service._representative_cc_recipients(guest, email_type="rejected") == expected
+
+
+def test_intake_confirmation_snapshots_all_representatives_in_cc(monkeypatch, temp_db):
+    service = GuestWebService(temp_db.db_path)
+    monkeypatch.setattr(service, "_send_guest_self_application_request_email", lambda *args, **kwargs: None)
+    guest = service.create_intake_submission(
+        {
+            "application_role": "on_behalf",
+            "agency_name": "Bright Talent Agency",
+            "agency_email": "agent@brighttalent.example",
+            "represented_guest_name": "Amar Dhall",
+            "represented_guest_email": "amar@example.com",
+        }
+    )
+    service.database.upsert_guest_communication_contact(
+        guest["id"], email="manager@brighttalent.example", name="Account Manager"
+    )
+
+    class StubEmailManager:
+        resend_api_key = "re_test"
+        last_error = ""
+
+        def is_configured(self):
+            return True
+
+        def get_intake_confirmation_template(self, guest_name):
+            return {"subject": "Application received", "body": f"Thank you, {guest_name}."}
+
+        def send_email(self, to_email, subject, body, **kwargs):
+            return True
+
+    monkeypatch.setattr(service, "_build_email_manager", lambda: StubEmailManager())
+    service._send_intake_confirmation_email(guest)
+
+    with temp_db._connect() as conn:
+        row = conn.execute(
+            "SELECT cc_json FROM email_outbox WHERE email_type = 'intake_confirmation' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert json.loads(row[0]) == ["agent@brighttalent.example", "manager@brighttalent.example"]
 
 
 def test_representative_contact_survives_guest_personal_intake(monkeypatch, temp_db):
