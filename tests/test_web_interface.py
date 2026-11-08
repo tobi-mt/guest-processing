@@ -4,8 +4,10 @@
 """Tests for the direct web interface service layer."""
 
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor
 import json
 import sqlite3
+from threading import Barrier
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -5835,6 +5837,43 @@ def test_booking_slot_buffer_only_blocks_nearby_conflicts(monkeypatch, temp_db):
     assert "10:00" in conflict_times
 
 
+def test_public_booking_blocks_all_day_calendar_holds(monkeypatch, temp_db):
+    """An all-day away or out-of-office event must make every slot on that date unavailable."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Jordan Rivers", "email": "jordan@example.com"})
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+    booking_timezone = ZoneInfo(service._booking_timezone_name())
+    away_date = (datetime.now(booking_timezone) + timedelta(days=1)).date()
+
+    class StubCalendarClient:
+        def list_busy_events(self, **kwargs):
+            return [{
+                "summary": "Away",
+                "start": {"date": away_date.isoformat()},
+                "end": {"date": (away_date + timedelta(days=1)).isoformat()},
+            }]
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: StubCalendarClient())
+    monkeypatch.setattr(GuestWebService, "_booking_days_ahead", staticmethod(lambda: 2))
+    monkeypatch.setattr(GuestWebService, "_booking_min_notice_hours", staticmethod(lambda: 0))
+    monkeypatch.setattr(GuestWebService, "_booking_slot_weekdays", staticmethod(lambda: tuple(range(7))))
+    monkeypatch.setattr(GuestWebService, "_booking_slot_times", staticmethod(lambda: ("10:00", "17:00")))
+
+    availability = service.list_public_booking_slots(token)
+    offered_dates = {
+        datetime.fromisoformat(item["start"]).astimezone(booking_timezone).date()
+        for item in availability["slots"]
+    }
+    conflict_dates = {
+        datetime.fromisoformat(item["start"]).astimezone(booking_timezone).date()
+        for item in availability["conflicts"]
+    }
+
+    assert away_date not in offered_dates
+    assert away_date in conflict_dates
+
+
 def test_booking_conflict_buffer_is_saved_and_audited(temp_db):
     service = GuestWebService(temp_db.db_path)
 
@@ -5916,6 +5955,104 @@ def test_public_booking_creates_interview_calendar_event_and_confirmation(monkey
     assert "Booked through the Mirror Talk guest booking flow." in (saved["notes"] or "")
     assert "Guest browser timezone: Europe/Berlin" in (saved["notes"] or "")
     assert sent == {"guest": "Jordan Rivers", "interview_id": interview["id"]}
+
+
+def test_public_booking_calendar_failure_removes_unconfirmed_local_booking(monkeypatch, temp_db):
+    """A rejected calendar write must not leave a locally confirmed phantom booking."""
+    service = GuestWebService(temp_db.db_path)
+    guest = service.create_guest({"full_name": "Calendar Failure", "email": "failure@example.com"})
+    service.update_guest_status(guest["id"], "accepted")
+    token = service._ensure_guest_booking_token(guest["id"])
+    scheduled_for = (datetime.now(timezone.utc) + timedelta(days=2)).replace(minute=0, second=0, microsecond=0).isoformat()
+    monkeypatch.setattr(
+        GuestWebService,
+        "list_public_booking_slots",
+        lambda self, booking_token, limit=None: {"slots": [{"start": scheduled_for, "end": scheduled_for}]},
+    )
+
+    class FailingCalendarClient:
+        def create_event_from_interview(self, interview):
+            raise GoogleCalendarSyncError("Calendar rejected the event")
+
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: FailingCalendarClient())
+
+    with pytest.raises(WebInterfaceError, match="Calendar rejected"):
+        service.create_public_booking(token, {"scheduled_for": scheduled_for, "timezone": "Europe/Berlin"})
+
+    assert temp_db.list_interviews() == []
+    deleted = temp_db.list_audit_events("interview", "1")
+    assert deleted[0]["event_type"] == "deleted"
+    assert deleted[0]["source"] == "public_booking"
+
+
+def test_public_booking_atomically_rejects_an_already_claimed_slot(monkeypatch, temp_db):
+    """The database write boundary must reject two guests claiming the same instant."""
+    service = GuestWebService(temp_db.db_path)
+    scheduled_for = (datetime.now(timezone.utc) + timedelta(days=3)).replace(minute=0, second=0, microsecond=0).isoformat()
+    monkeypatch.setattr(
+        GuestWebService,
+        "list_public_booking_slots",
+        lambda self, booking_token, limit=None: {"slots": [{"start": scheduled_for, "end": scheduled_for}]},
+    )
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: None)
+    monkeypatch.setattr(
+        GuestWebService,
+        "_send_booking_confirmation_email",
+        lambda self, guest, interview: {"status": "queued", "message": "Queued."},
+    )
+
+    tokens = []
+    for name, email in (("First Guest", "first@example.com"), ("Second Guest", "second@example.com")):
+        guest = service.create_guest({"full_name": name, "email": email})
+        service.update_guest_status(guest["id"], "accepted")
+        tokens.append(service._ensure_guest_booking_token(guest["id"]))
+
+    service.create_public_booking(tokens[0], {"scheduled_for": scheduled_for, "timezone": "Europe/Berlin"})
+    with pytest.raises(WebInterfaceError, match="just booked"):
+        service.create_public_booking(tokens[1], {"scheduled_for": scheduled_for, "timezone": "Europe/Berlin"})
+
+    assert len(temp_db.list_interviews()) == 1
+
+
+def test_concurrent_public_bookings_create_only_one_interview(monkeypatch, temp_db):
+    """Simultaneous requests sharing an availability snapshot must produce one winner."""
+    scheduled_for = (datetime.now(timezone.utc) + timedelta(days=4)).replace(minute=0, second=0, microsecond=0).isoformat()
+    services = [GuestWebService(temp_db.db_path), GuestWebService(temp_db.db_path)]
+    tokens = []
+    for service, (name, email) in zip(services, (("First Guest", "first@example.com"), ("Second Guest", "second@example.com"))):
+        guest = service.create_guest({"full_name": name, "email": email})
+        service.update_guest_status(guest["id"], "accepted")
+        tokens.append(service._ensure_guest_booking_token(guest["id"]))
+
+    arrivals = Barrier(2)
+
+    def shared_snapshot(self, booking_token, limit=None):
+        arrivals.wait(timeout=5)
+        return {"slots": [{"start": scheduled_for, "end": scheduled_for}]}
+
+    monkeypatch.setattr(GuestWebService, "list_public_booking_slots", shared_snapshot)
+    monkeypatch.setattr(GuestWebService, "_build_google_calendar_client", lambda self: None)
+    monkeypatch.setattr(
+        GuestWebService,
+        "_send_booking_confirmation_email",
+        lambda self, guest, interview: {"status": "queued", "message": "Queued."},
+    )
+
+    def book(index):
+        try:
+            services[index].create_public_booking(
+                tokens[index], {"scheduled_for": scheduled_for, "timezone": "Europe/Berlin"}
+            )
+            return "created"
+        except WebInterfaceError as exc:
+            return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(book, range(2)))
+
+    assert outcomes.count("created") == 1
+    assert sum("just booked" in outcome for outcome in outcomes) == 1
+    assert len(temp_db.list_interviews()) == 1
 
 
 def test_public_booking_repairs_existing_interview_without_calendar_event(monkeypatch, temp_db):
@@ -8352,10 +8489,56 @@ def test_service_account_calendar_client_supports_busy_event_listing(monkeypatch
 
     events = client.list_busy_events(days_ahead=30)
 
-    assert len(events) == 1
+    assert len(events) == 2
     assert events[0]["start"]["dateTime"] == "2026-05-10T17:00:00+00:00"
+    assert events[1]["start"]["date"] == "2026-05-11"
     assert hasattr(client, "create_event_from_interview")
     assert hasattr(client, "normalize_event")
+
+
+def test_service_account_calendar_busy_listing_reads_every_page(monkeypatch):
+    """Availability must not miss conflicts beyond Google's first results page."""
+    client = GoogleServiceAccountCalendarClient.from_base64(
+        b64encode(json.dumps({
+            "client_email": "mirror-talk-service@example.iam.gserviceaccount.com",
+            "private_key": "-----BEGIN PRIVATE KEY-----\\nfake\\n-----END PRIVATE KEY-----\\n",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }).encode("utf-8")).decode("ascii"),
+        calendar_id="calendar@example.com",
+    )
+    monkeypatch.setattr(client, "_get_access_token", lambda: "test-access-token")
+    requested_page_tokens = []
+
+    class StubResponse:
+        ok = True
+        status_code = 200
+        text = ""
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    def fake_get(*args, **kwargs):
+        page_token = kwargs["params"].get("pageToken")
+        requested_page_tokens.append(page_token)
+        if page_token is None:
+            return StubResponse({
+                "items": [{"start": {"dateTime": "2026-05-10T17:00:00Z"}, "end": {"dateTime": "2026-05-10T18:00:00Z"}}],
+                "nextPageToken": "page-2",
+            })
+        return StubResponse({
+            "items": [{"start": {"date": "2026-05-11"}, "end": {"date": "2026-05-12"}}],
+        })
+
+    monkeypatch.setattr("guest_database_manager.google_service_account_calendar.requests.get", fake_get)
+
+    events = client.list_busy_events(days_ahead=30)
+
+    assert requested_page_tokens == [None, "page-2"]
+    assert len(events) == 2
+    assert events[1]["start"]["date"] == "2026-05-11"
 
 
 def test_web_service_syncs_google_calendar_with_long_horizon_by_default(monkeypatch, temp_db):
@@ -8449,6 +8632,25 @@ def test_operations_flag_duplicate_future_guest_bookings(temp_db):
     assert len(operations["booking_alerts"]["double_bookings"]) == 1
     assert operations["booking_alerts"]["double_bookings"][0]["guest_name"] == "Jordan Rivers"
     assert operations["booking_alerts"]["double_bookings"][0]["count"] == 2
+
+
+def test_operations_flag_overlapping_interviews_for_different_guests(temp_db):
+    """Operations must surface schedule collisions even when guest identities differ."""
+    service = GuestWebService(temp_db.db_path)
+    service.create_interview({
+        "guest_name": "First Guest", "guest_email": "first@example.com",
+        "scheduled_for": "2099-03-31 17:00:00", "status": "scheduled",
+    })
+    service.create_interview({
+        "guest_name": "Second Guest", "guest_email": "second@example.com",
+        "scheduled_for": "2099-03-31 17:30:00", "status": "scheduled",
+    })
+
+    operations = service.list_operations()
+    conflicts = operations["booking_alerts"]["slot_conflicts"]
+
+    assert len(conflicts) == 1
+    assert {item["guest_name"] for item in conflicts[0]["interviews"]} == {"First Guest", "Second Guest"}
 
 
 def test_operations_flag_calendar_cleanup_candidates(temp_db):

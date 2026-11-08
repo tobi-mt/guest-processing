@@ -21,7 +21,7 @@ from threading import Event, Thread
 from email.parser import BytesParser
 from email.policy import default
 from http.cookies import SimpleCookie
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -3254,6 +3254,7 @@ class GuestWebService:
         duplicate_groups: Dict[str, list[Dict[str, Any]]] = {}
         cleanup_candidates: list[Dict[str, Any]] = []
         missing_calendar: list[Dict[str, Any]] = []
+        active_future_interviews: list[tuple[datetime, Dict[str, Any]]] = []
 
         for interview in interviews:
             scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
@@ -3272,6 +3273,8 @@ class GuestWebService:
 
             if future_or_current and status != "cancelled" and confirmation != "declined" and guest_key:
                 duplicate_groups.setdefault(guest_key, []).append(interview)
+            if future_or_current and status != "cancelled" and confirmation not in {"declined", "reschedule_requested"}:
+                active_future_interviews.append((scheduled_for, interview))
 
             if _normalize_text(interview.get("calendar_event_id")) and (
                 status == "cancelled" or confirmation in {"declined", "reschedule_requested"}
@@ -3326,6 +3329,22 @@ class GuestWebService:
             )
 
         duplicate_alerts.sort(key=lambda item: item["guest_name"].lower())
+        slot_conflicts: list[Dict[str, Any]] = []
+        duration = timedelta(minutes=self._booking_duration_minutes())
+        active_future_interviews.sort(key=lambda item: item[0])
+        for index, (left_start, left) in enumerate(active_future_interviews):
+            left_end = left_start + duration
+            for right_start, right in active_future_interviews[index + 1:]:
+                if right_start >= left_end:
+                    break
+                slot_conflicts.append({
+                    "scheduled_for": left_start.isoformat(),
+                    "interviews": [
+                        {"id": left.get("id"), "guest_name": _normalize_text(left.get("guest_name")), "scheduled_for": left.get("scheduled_for")},
+                        {"id": right.get("id"), "guest_name": _normalize_text(right.get("guest_name")), "scheduled_for": right.get("scheduled_for")},
+                    ],
+                    "reason": "Two active interviews overlap within the configured recording duration.",
+                })
         cleanup_candidates.sort(key=lambda item: _normalize_text(item.get("scheduled_for")))
         missing_calendar.sort(key=lambda item: _normalize_text(item.get("scheduled_for")))
         missing_confirmation = [
@@ -3340,6 +3359,7 @@ class GuestWebService:
         ]
         return {
             "double_bookings": duplicate_alerts,
+            "slot_conflicts": slot_conflicts,
             "calendar_cleanup": cleanup_candidates,
             "calendar_missing": missing_calendar,
             "confirmation_missing": missing_confirmation,
@@ -4300,6 +4320,10 @@ class GuestWebService:
             "reschedule_token_created_at": _normalize_text(payload.get("reschedule_token_created_at")),
             "notes": _normalize_text(payload.get("notes")),
             "owner": _normalize_text(payload.get("owner")),
+            "actor": _normalize_text(payload.get("actor")),
+            "source": _normalize_text(payload.get("source")),
+            "reason": _normalize_text(payload.get("reason")),
+            "correlation_id": _normalize_text(payload.get("correlation_id")),
         }
 
         if not interview_data["guest_name"]:
@@ -4833,8 +4857,21 @@ class GuestWebService:
             except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
                 raise WebInterfaceError(str(exc)) from exc
             for event in events:
-                start = self._parse_datetime((event.get("start") or {}).get("dateTime"))
-                end = self._parse_datetime((event.get("end") or {}).get("dateTime"))
+                event_start = event.get("start") or {}
+                event_end = event.get("end") or {}
+                start = self._parse_datetime(event_start.get("dateTime"))
+                end = self._parse_datetime(event_end.get("dateTime"))
+                if not start and event_start.get("date"):
+                    try:
+                        calendar_timezone = self._booking_timezone()
+                        start_date = date.fromisoformat(str(event_start["date"]))
+                        end_date = date.fromisoformat(str(event_end.get("date") or event_start["date"]))
+                        start = datetime.combine(start_date, datetime.min.time(), tzinfo=calendar_timezone).astimezone(timezone.utc)
+                        end = datetime.combine(end_date, datetime.min.time(), tzinfo=calendar_timezone).astimezone(timezone.utc)
+                        if end <= start:
+                            end = start + timedelta(days=1)
+                    except (TypeError, ValueError):
+                        start = end = None
                 if start and end and end > start:
                     busy.append((start, end))
 
@@ -5122,6 +5159,9 @@ class GuestWebService:
                         guest_note,
                     ] if part
                 ),
+                "actor": "guest",
+                "source": "public_booking",
+                "reason": "Guest confirmed an available interview slot.",
             }
         )
 
@@ -5130,6 +5170,13 @@ class GuestWebService:
             try:
                 created_event = client.create_event_from_interview(interview)
             except GOOGLE_CALENDAR_CLIENT_ERRORS as exc:
+                self.database.delete_interview(
+                    interview["id"],
+                    actor="system",
+                    source="public_booking",
+                    reason="Google Calendar rejected the booking before external confirmation.",
+                )
+                self._invalidate_payload_cache("operations", "planning", "planning_ai_copilot")
                 raise WebInterfaceError(str(exc)) from exc
             self.database.update_interview(
                 interview["id"],

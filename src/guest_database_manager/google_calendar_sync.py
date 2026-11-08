@@ -150,24 +150,35 @@ class GoogleCalendarSyncClient:
         }
 
         url = self.EVENTS_URL_TEMPLATE.format(calendar_id=requests.utils.quote(self.calendar_id, safe=""))
-        try:
-            response = requests.get(
-                url,
-                headers={"Authorization": f"Bearer {access_token}"},
-                params=params,
-                timeout=20,
-            )
-        except requests.RequestException as exc:
-            raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
+        items: List[Dict[str, Any]] = []
+        while True:
+            try:
+                response = requests.get(
+                    url,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params=params,
+                    timeout=20,
+                )
+            except requests.RequestException as exc:
+                raise GoogleCalendarSyncError(f"Could not reach Google Calendar: {exc}") from exc
 
-        if not response.ok:
-            raise GoogleCalendarSyncError(
-                f"Google Calendar availability fetch failed: {response.text.strip() or response.status_code}"
-            )
+            if not response.ok:
+                raise GoogleCalendarSyncError(
+                    f"Google Calendar availability fetch failed: {response.text.strip() or response.status_code}"
+                )
 
-        payload = response.json()
-        items = payload.get("items", [])
-        return [item for item in items if item.get("start", {}).get("dateTime")]
+            payload = response.json()
+            items.extend(payload.get("items", []))
+            next_page_token = payload.get("nextPageToken")
+            if not next_page_token:
+                break
+            params["pageToken"] = next_page_token
+        return [
+            item
+            for item in items
+            if item.get("status") != "cancelled"
+            and (item.get("start", {}).get("dateTime") or item.get("start", {}).get("date"))
+        ]
 
     def get_event(self, event_id: str) -> Dict[str, Any]:
         """Fetch a single Google Calendar event."""

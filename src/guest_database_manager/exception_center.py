@@ -155,6 +155,14 @@ def build_exception_center(
             reason=f"{len(double_bookings)} guest{'s' if len(double_bookings) != 1 else ''} appear across {booking_count} active interview slots.",
             href="/operations", action_label="Resolve bookings", count=len(double_bookings),
         ))
+    slot_conflicts = alerts.get("slot_conflicts") or []
+    if slot_conflicts:
+        items.append(_item(
+            "calendar:slot_conflicts", severity="critical", category="calendar",
+            title="Active interview times overlap",
+            reason=f"{len(slot_conflicts)} overlapping interview pair{'s' if len(slot_conflicts) != 1 else ''} require scheduling review.",
+            href="/operations", action_label="Resolve schedule", count=len(slot_conflicts),
+        ))
     cleanup = alerts.get("calendar_cleanup") or []
     if cleanup:
         items.append(_item(

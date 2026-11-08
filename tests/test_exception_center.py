@@ -63,6 +63,7 @@ def test_exception_center_includes_calendar_discrepancies(temp_db):
         growth=growth,
         operations_alerts={
             "double_bookings": [{"guest_name": "Ada", "count": 2}],
+            "slot_conflicts": [{"interviews": [{"id": 1}, {"id": 2}]}],
             "calendar_cleanup": [{"id": 7}],
             "calendar_missing": [{"id": 8}],
             "confirmation_missing": [{"id": 9}],
@@ -70,6 +71,7 @@ def test_exception_center_includes_calendar_discrepancies(temp_db):
     )
     keys = {item["key"] for item in payload["items"]}
     assert "calendar:double_bookings" in keys
+    assert "calendar:slot_conflicts" in keys
     assert "calendar:cleanup" in keys
     assert "calendar:missing_events" in keys
     assert "communication:missing_confirmations" in keys

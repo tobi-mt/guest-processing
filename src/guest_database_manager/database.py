@@ -1188,6 +1188,7 @@ class GuestDatabase:
 
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN IMMEDIATE")
 
             existing_row = None
             if interview_id:
@@ -1207,6 +1208,16 @@ class GuestDatabase:
             confirmation_status = validate_state(
                 "confirmation", interview_data.get("confirmation_status", "pending")
             )
+            if str(interview_data.get("source") or "") == "public_booking" and interview_status != "cancelled":
+                conflict = conn.execute(
+                    """SELECT id FROM interviews
+                       WHERE status != 'cancelled' AND datetime(scheduled_for) = datetime(?)
+                         AND (? IS NULL OR id != ?)
+                       LIMIT 1""",
+                    (interview_data.get("scheduled_for"), interview_id, interview_id),
+                ).fetchone()
+                if conflict:
+                    raise ValueError("That slot was just booked by someone else. Please choose another time.")
             if existing_row:
                 existing_row = conn.execute(
                     "SELECT * FROM interviews WHERE id = ?", (existing_row["id"],)
@@ -1435,9 +1446,30 @@ class GuestDatabase:
             )
             conn.commit()
 
-    def delete_interview(self, interview_id: int) -> None:
-        """Delete an interview from the database."""
+    def delete_interview(
+        self,
+        interview_id: int,
+        *,
+        actor: str = "operator",
+        source: str = "operations",
+        reason: str = "",
+    ) -> None:
+        """Delete an interview while retaining an audit snapshot."""
         with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            before = conn.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone()
+            if not before:
+                return
+            self._append_audit_event_conn(
+                conn,
+                entity_type="interview",
+                entity_id=interview_id,
+                event_type="deleted",
+                actor=actor,
+                source=source,
+                reason=reason,
+                before=dict(before),
+            )
             conn.execute("DELETE FROM interviews WHERE id = ?", (interview_id,))
             conn.commit()
 
