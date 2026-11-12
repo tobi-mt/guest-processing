@@ -1484,7 +1484,7 @@ class GuestWebService:
             return "high"
         return "normal"
 
-    def _build_action_queue(self, *, limit: int = 18) -> Dict[str, Any]:
+    def _build_action_queue(self, *, limit: Optional[int] = None) -> Dict[str, Any]:
         """Build one deterministic next-action queue across the three workspaces."""
         reference = datetime.now()
         guests = self.database.get_all_guests()
@@ -1745,7 +1745,7 @@ class GuestWebService:
             )
         )
         total = len(items)
-        global_limit = max(1, int(limit))
+        global_limit = total if limit is None else max(1, int(limit))
         visible_by_key = {item["key"]: item for item in items[:global_limit]}
         # Keep the queue globally prioritized while guaranteeing that each
         # workspace filter has useful candidates even when one domain has a
@@ -1980,6 +1980,7 @@ class GuestWebService:
         guest_indexes = self._build_guest_lookup_indexes(guests)
         
         ai_copilot = self._build_openai_scheduling_copilot()
+        release_heads_up_outbox = self.database.list_release_heads_up_outbox()
         enriched_episodes = []
         for episode in episodes:
             enriched = dict(episode)
@@ -1987,6 +1988,20 @@ class GuestWebService:
             enriched["guest_research"] = self._match_guest_research_with_indexes(enriched, guest_indexes)
             enriched["promotion_readiness"] = build_promotion_readiness(enriched)
             enriched["copy_assist"] = build_episode_copy_assist(enriched)
+            heads_up = release_heads_up_outbox.get(f"episode:{episode.get('id')}") or {}
+            heads_up_matches_release = bool(
+                heads_up
+                and _normalize_text(heads_up.get("idempotency_key")).endswith(
+                    f":{_normalize_text(episode.get('release_date'))}"
+                )
+            )
+            enriched["release_heads_up"] = {
+                "status": _normalize_text(heads_up.get("status")) if heads_up_matches_release else "not_scheduled",
+                "send_at": heads_up.get("next_attempt_at") if heads_up_matches_release else None,
+                "sent_at": heads_up.get("sent_at") if heads_up_matches_release else None,
+                "requires_review": not heads_up_matches_release
+                or _normalize_text(heads_up.get("status")).lower() in {"failed", "dead_letter", "cancelled"},
+            }
             
             # Replace episode's potentially incorrect guest_name with actual guest's name from DB
             matched_guest = self._find_matching_guest_with_indexes(enriched, guest_indexes)
@@ -6860,6 +6875,7 @@ class GuestWebService:
             actor=actor, source="planning", reason="Operator approved the 14-day guest release notice.",
             after={"outbox_id": outbox_id, "send_at": preview["send_at"], "release_date": release_key},
         )
+        self._invalidate_payload_cache("planning")
         return {**preview, "outbox_id": outbox_id, "status": queued["status"]}
 
     def send_episode_release_email(self, episode_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:

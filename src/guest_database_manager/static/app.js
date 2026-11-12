@@ -1708,7 +1708,7 @@ function renderGuests(payload) {
             const guestLabel = guest.full_name || "guest";
             const needsTypedConfirmation = Boolean(guest.is_processed || guest.email_status);
             if (needsTypedConfirmation) {
-              const typedName = window.prompt(`Type "${guestLabel}" to delete this processed guest.`);
+              const typedName = await window.WorkspaceShell?.requestDecision({title: `Delete ${guestLabel}`, description: "This processed guest may have communication history. Linked-record safeguards still apply.", label: `Type ${guestLabel} exactly`, confirmLabel: "Delete guest"});
               if (typedName === null) {
                 return;
               }
@@ -1736,7 +1736,8 @@ function renderGuests(payload) {
             activeGuestActionFeedback = null;
             setMessage(`Deleted ${guestLabel}.`, "success");
           } else if (action === "skipped") {
-            const skipReason = window.prompt("Optional skip reason:") || "";
+            const skipReason = await window.WorkspaceShell?.requestDecision({title: `Skip ${guest.full_name || "guest"}`, description: "The guest will leave the active review queue. Record an optional reason for future reviewers.", label: "Skip reason", confirmLabel: "Mark skipped", required: false});
+            if (skipReason === null || skipReason === undefined) return;
             activeGuestActionFeedback = { guestId: guest.id, text: `Skipping ${guest.full_name || "guest"}...`, tone: "pending" };
             renderGuests(latestPayload);
             await fetchJSON(`/api/guests/${guest.id}/status`, {
@@ -1746,7 +1747,7 @@ function renderGuests(payload) {
             activeGuestActionFeedback = { guestId: guest.id, text: `${guest.full_name || "Guest"} marked skipped.`, tone: "success" };
             setMessage(`Updated ${guest.full_name} to skipped.`, "success");
           } else if (action === "needs_information") {
-            const reason = String(window.prompt("What information is missing?") || "").trim();
+            const reason = await window.WorkspaceShell?.requestDecision({title: `Request information from ${guest.full_name || "guest"}`, description: "Record what is missing before moving this application out of active review.", label: "Missing information", confirmLabel: "Mark needs information"});
             if (!reason) return;
             activeGuestActionFeedback = { guestId: guest.id, text: `Flagging missing information for ${guest.full_name || "guest"}...`, tone: "pending" };
             renderGuests(latestPayload);
@@ -1986,7 +1987,7 @@ if (identityReviewButton) {
         if (!button) return;
         const survivorId = Number(button.dataset.mergeSurvivor);
         const duplicateId = Number(button.dataset.mergeDuplicate);
-        const reason = String(window.prompt("Why should these guest identities be merged?") || "").trim();
+        const reason = await window.WorkspaceShell?.requestDecision({title: "Merge duplicate guest identities", description: `All applications, interviews, and episodes from guest ${duplicateId} will move to guest ${survivorId}. The duplicate remains as an audit tombstone.`, label: "Merge reason", confirmLabel: "Continue to merge review"});
         if (!reason) return;
         if (!confirmCriticalAction(`Merge guest ID ${duplicateId} into ${survivorId}? All linked applications, interviews, and episodes will move to the survivor; the duplicate remains as an audit tombstone.`)) return;
         button.disabled = true;

@@ -755,6 +755,18 @@ def test_action_queue_payload_keeps_each_workspace_represented_under_large_backl
     assert any(item["domain"] == "episode" for item in queue["items"])
 
 
+def test_default_action_queue_payload_is_complete(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    for index in range(24):
+        service.create_guest({"full_name": f"Visible Guest {index:02d}"})
+
+    queue = service._build_action_queue()
+
+    assert queue["total"] == 24
+    assert len(queue["items"]) == 24
+    assert queue["remaining"] == 0
+
+
 def test_incomplete_information_workflow_updates_latest_application(temp_db):
     service = GuestWebService(temp_db.db_path)
     guest = service.create_guest({"full_name": "Incomplete Applicant", "email": "missing@example.com"})
@@ -8126,6 +8138,10 @@ def test_release_heads_up_requires_approval_and_is_queued_idempotently(temp_db):
     assert preview["send_at"] == "2099-11-20T08:00:00+00:00"
     assert "Friday, 04 December 2099" in preview["subject"]
     assert temp_db.get_email_outbox_count() == 0
+    before = next(item for item in service.list_planning()["episodes"] if item["id"] == episode["id"])
+    assert before["release_heads_up"] == {
+        "status": "not_scheduled", "send_at": None, "sent_at": None, "requires_review": True,
+    }
 
     scheduled = service.schedule_episode_release_heads_up(
         episode["id"], subject="Edited release notice", actor="producer"
@@ -8136,6 +8152,10 @@ def test_release_heads_up_requires_approval_and_is_queued_idempotently(temp_db):
 
     assert scheduled["outbox_id"] == repeated["outbox_id"]
     assert temp_db.get_email_outbox_count() == 1
+    after = next(item for item in service.list_planning()["episodes"] if item["id"] == episode["id"])
+    assert after["release_heads_up"]["status"] == "pending"
+    assert after["release_heads_up"]["send_at"] == "2099-11-20 08:00:00"
+    assert after["release_heads_up"]["requires_review"] is False
     with temp_db._connect() as conn:
         row = conn.execute(
             "SELECT email_type, subject, next_attempt_at, correlation_id FROM email_outbox WHERE id = ?",

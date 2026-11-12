@@ -2368,10 +2368,21 @@ button:active:not(:disabled) {
 .briefing-switch, .briefing-counts { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.8rem 0; }
 .briefing-switch button, .briefing-counts span { border: 1px solid var(--color-border); border-radius: 999px; padding: 0.55rem 0.75rem; background: var(--color-surface-interactive); color: var(--color-text); }
 .mobile-workspace-nav { display: none; }
+.mobile-workspace-nav [aria-current="page"], .workspace-utility-bar [aria-current="page"] { background: var(--accent-soft); color: var(--color-text); border-radius: 999px; }
+.governed-dialog [data-decision-field] { display: grid; gap: 0.45rem; font-weight: 700; }
+.governed-dialog [data-decision-input] { width: 100%; min-height: 44px; font: inherit; padding: 0.75rem; border: 1px solid var(--color-border); border-radius: 0.75rem; }
+.action-queue-expand { margin-top: 0.75rem; }
 html[data-density="compact"] .panel, html[data-density="compact"] .operations-tool, html[data-density="compact"] .guest-card, html[data-density="compact"] .episode-card { padding-top: 0.75rem; padding-bottom: 0.75rem; }
 html[data-density="compact"] .guest-card, html[data-density="compact"] .episode-card { margin-bottom: 0.55rem; }
 @media (max-width: 760px) {
   body { padding-bottom: 4.25rem; }
+  .page-shell:has(> #workspace-action-queue) { display: flex; flex-direction: column; }
+  .page-shell:has(> #workspace-action-queue) > #workspace-action-queue { order: 1; }
+  .page-shell:has(> #workspace-action-queue) > .hero { order: 2; }
+  .page-shell:has(> #workspace-action-queue) > .workspace-tabs { order: 3; }
+  .page-shell:has(> #workspace-action-queue) > main { order: 4; }
+  .page-shell:has(> #workspace-action-queue) > .hero .hero-copy,
+  .page-shell:has(> #workspace-action-queue) > .hero .premium-badges { display: none; }
   .workspace-utility-bar { display: none; }
   .mobile-workspace-nav { position: fixed; z-index: 95; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr)); background: var(--surface-raised); border-top: 1px solid #d9cec0; box-shadow: 0 -6px 24px rgba(40, 30, 20, 0.1); }
   .mobile-workspace-nav a, .mobile-workspace-nav button { min-width: 0; padding: 0.9rem 0.25rem; text-align: center; color: var(--accent); text-decoration: none; font-size: 0.8rem; font-weight: 750; }

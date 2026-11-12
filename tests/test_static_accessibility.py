@@ -389,7 +389,7 @@ def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20261101.1' in html
+    assert 'operations.css?v=20261112.1' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -470,14 +470,14 @@ def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
     assert "String(quality.unclassified_released_episodes ?? 0)" in javascript
 
 
-def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -> None:
+def test_authenticated_workspaces_share_search_personal_view_and_mobile_navigation() -> None:
     shell = (STATIC_ROOT / "workspace-shell.js").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
-    for name in ("index.html", "operations.html", "planning.html"):
+    for name in ("index.html", "operations.html", "planning.html", "partners.html", "insights.html", "availability.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
-        assert 'workspace-shell.js?v=20260927.3' in html
+        assert 'workspace-shell.js?v=20261112.2' in html
         assert 'brand-system.css?v=20261018.1' in html
-        assert 'styles.css?v=20261018.2' in html
+        assert 'styles.css?v=20261112.1' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -485,6 +485,9 @@ def test_primary_workspaces_share_search_personal_view_and_mobile_navigation() -
     assert 'beforeunload' in shell
     assert 'mirror-talk-details-state' in shell
     assert 'data-toggle-density' in shell
+    assert 'aria-current' in shell
+    assert 'id="workspace-decision-dialog"' in shell
+    assert shell.count('value="cancel" formnovalidate') == 2
     assert ".mobile-workspace-nav" in styles
 
 
@@ -558,8 +561,8 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261105.4" in html
-    assert "operations.css?v=20261101.1" in html
+    assert "planning.js?v=20261112.2" in html
+    assert "operations.css?v=20261112.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
 
@@ -576,11 +579,42 @@ def test_recommendations_default_to_chronological_release_slot_order() -> None:
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript
 
 
-def test_release_heads_up_is_action_queue_driven_without_a_permanent_card_button() -> None:
+def test_release_heads_up_is_visible_on_scheduled_episode_cards_and_action_queue() -> None:
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'pendingEpisodeActionFromUrl === "release_heads_up"' in javascript
     assert "/release-heads-up-template" in javascript
-    assert 'data-episode-action="preview-release-heads-up"' not in javascript
+    assert 'data-episode-action="preview-release-heads-up"' in javascript
+    assert "Needs explicit review and approval; nothing is sent automatically." in javascript
+
+
+def test_action_queue_can_reveal_every_returned_action() -> None:
+    javascript = (STATIC_ROOT / "performance-utils.js").read_text(encoding="utf-8")
+    assert 'container.dataset.expanded === "true"' in javascript
+    assert 'data-action-expand' in javascript
+    assert "Show all ${escapeUtilityHtml(filtered.length)} actions" in javascript
+
+
+def test_schedule_dialog_uses_native_modal_and_restores_focus() -> None:
+    html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+    assert '<dialog id="schedule-modal"' in html
+    assert "scheduleModal.showModal()" in javascript
+    assert "scheduleModalReturnFocus = document.activeElement" in javascript
+    assert "scheduleModalReturnFocus.focus()" in javascript
+    assert 'name="guest_email" type="email"' in html
+
+
+def test_mobile_work_precedes_overview_content() -> None:
+    styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
+    assert '.page-shell:has(> #workspace-action-queue) > #workspace-action-queue { order: 1; }' in styles
+    assert '.page-shell:has(> #workspace-action-queue) > .hero { order: 2; }' in styles
+
+
+def test_episode_administration_is_separated_from_guest_communication() -> None:
+    javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+    assert 'class="episode-administration full-width"' in javascript
+    assert "More lifecycle and administrative actions" in javascript
+    assert "Delete episode" in javascript
 
 
 def test_editorial_mix_fits_its_card_at_narrow_container_widths() -> None:

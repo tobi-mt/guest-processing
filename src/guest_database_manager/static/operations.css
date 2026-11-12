@@ -356,6 +356,41 @@
   color: var(--muted);
 }
 
+.episode-administration {
+  border-top: 1px dashed rgba(91, 70, 47, 0.14);
+  padding-top: 8px;
+}
+
+.episode-administration > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.native-workspace-modal {
+  inset: 0;
+  margin: auto;
+  width: min(680px, calc(100vw - 2rem));
+  height: fit-content;
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.native-workspace-modal:not([open]) {
+  display: none;
+}
+
+.native-workspace-modal::backdrop {
+  background: rgba(31, 25, 18, 0.58);
+  backdrop-filter: blur(3px);
+}
+
 .interview-more-actions {
   flex: 1 1 100%;
   border-top: 1px dashed var(--border);

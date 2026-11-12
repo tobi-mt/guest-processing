@@ -49,7 +49,12 @@
       </div>
       <nav class="mobile-workspace-nav" aria-label="Workspace navigation"><a href="/dashboard">Guests</a><a href="/operations">Interviews</a><a href="/planning">Episodes</a><button type="button" data-open-command>Search</button><a href="/account-settings">Account</a><a href="/accounts" data-account-admin hidden>Accounts</a></nav>
       <dialog id="workspace-command-dialog" class="workspace-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form><p class="eyebrow">Global command menu</p><h2>Find anything</h2><label class="command-search-label">Search guests, interviews, episodes, transcripts, and actions<input id="workspace-command-input" type="search" autocomplete="off" placeholder="Search or type a command…" /></label><div id="workspace-command-results" class="command-results" aria-live="polite"></div><div id="workspace-recent-results" class="recent-results"></div></dialog>
-      <dialog id="workspace-briefing-dialog" class="workspace-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form><p class="eyebrow">Personal operating view</p><h2>My work</h2><div class="briefing-switch"><button type="button" data-briefing-window="daily">Today</button><button type="button" data-briefing-window="weekly">This week</button></div><div id="workspace-briefing-results" aria-live="polite"><p>Loading…</p></div></dialog>`);
+      <dialog id="workspace-briefing-dialog" class="workspace-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form><p class="eyebrow">Personal operating view</p><h2>My work</h2><div class="briefing-switch"><button type="button" data-briefing-window="daily">Today</button><button type="button" data-briefing-window="weekly">This week</button></div><div id="workspace-briefing-results" aria-live="polite"><p>Loading…</p></div></dialog>
+      <dialog id="workspace-decision-dialog" class="workspace-dialog governed-dialog"><form method="dialog"><button class="dialog-close" value="cancel" formnovalidate aria-label="Close">×</button><p class="eyebrow" data-decision-eyebrow>Review required</p><h2 data-decision-title>Confirm action</h2><p data-decision-description></p><label data-decision-field>Reason<input data-decision-input autocomplete="off" /></label><p class="field-hint" data-decision-hint></p><div class="form-actions"><button class="ghost-button" value="cancel" formnovalidate>Cancel</button><button class="primary-button" value="confirm" data-decision-confirm>Confirm</button></div></form></dialog>`);
+    const currentPath = location.pathname.replace(/\.html$/, "");
+    document.querySelectorAll(".mobile-workspace-nav a, .workspace-utility-bar a").forEach((link) => {
+      if (new URL(link.href, location.origin).pathname.replace(/\.html$/, "") === currentPath) link.setAttribute("aria-current", "page");
+    });
   }
 
   function initializeDetailsPersistence() {
@@ -93,6 +98,7 @@
     const recent = document.getElementById("workspace-recent-results");
     const briefing = document.getElementById("workspace-briefing-dialog");
     const briefingResults = document.getElementById("workspace-briefing-results");
+    const decision = document.getElementById("workspace-decision-dialog");
     let timer;
     const openCommand = () => {
       const recentItems = readJson(STORAGE.recent, []);
@@ -127,6 +133,24 @@
       document.documentElement.dataset.density = next; localStorage.setItem(STORAGE.density, next);
       event.currentTarget.textContent = next === "compact" ? "Comfortable" : "Compact";
     });
+    window.WorkspaceShell = {
+      requestDecision(options = {}) {
+        const input = decision.querySelector("[data-decision-input]");
+        decision.querySelector("[data-decision-eyebrow]").textContent = options.eyebrow || "Review required";
+        decision.querySelector("[data-decision-title]").textContent = options.title || "Confirm action";
+        decision.querySelector("[data-decision-description]").textContent = options.description || "Review this action before continuing.";
+        decision.querySelector("[data-decision-field]").firstChild.textContent = options.label || "Reason";
+        decision.querySelector("[data-decision-hint]").textContent = options.hint || "";
+        decision.querySelector("[data-decision-confirm]").textContent = options.confirmLabel || "Confirm";
+        input.value = options.value || "";
+        input.required = options.required !== false;
+        return new Promise((resolve) => {
+          decision.addEventListener("close", () => resolve(decision.returnValue === "confirm" ? input.value.trim() : null), { once: true });
+          decision.showModal();
+          input.focus();
+        });
+      },
+    };
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true }); else init();

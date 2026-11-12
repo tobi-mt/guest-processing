@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mirror Talk Episode Planning</title>
     <link rel="stylesheet" href="/static/brand-system.css?v=20261018.1" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261018.2" />
-    <link rel="stylesheet" href="/static/operations.css?v=20261101.1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261112.1" />
+    <link rel="stylesheet" href="/static/operations.css?v=20261112.1" />
   </head>
   <body>
     <div class="page-shell operations-shell">
@@ -118,7 +118,7 @@
               </label>
               <label>
                 Guest Email
-                <input name="guest_email" type="text" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" />
+                <input name="guest_email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" />
               </label>
               <label class="full-width">
                 Working Title
@@ -683,7 +683,7 @@
     </div>
 
     <!-- Schedule Modal -->
-    <div id="schedule-modal" class="modal hidden" role="dialog" aria-labelledby="schedule-modal-title">
+    <dialog id="schedule-modal" class="modal native-workspace-modal" aria-labelledby="schedule-modal-title">
       <div class="modal-content">
         <h2 id="schedule-modal-title">Schedule Episode for Release</h2>
         <form id="schedule-form">
@@ -703,16 +703,16 @@
         </form>
         <p class="message" data-schedule-modal-message aria-live="polite"></p>
       </div>
-    </div>
+    </dialog>
 
     <div id="episode-editor-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="episode-editor-title">
       <div class="modal-content episode-editor-modal-content"></div>
     </div>
 
-    <script src="/static/performance-utils.js?v=20260803.1"></script>
-    <script src="/static/workspace-shell.js?v=20260927.3" defer></script>
+    <script src="/static/performance-utils.js?v=20261112.1"></script>
+    <script src="/static/workspace-shell.js?v=20261112.2" defer></script>
     <script src="/static/planning-sort.js?v=20260802.11"></script>
     <script src="/static/planning-intelligence.js?v=20261018.1" defer></script>
-    <script src="/static/planning.js?v=20261105.4" defer></script>
+    <script src="/static/planning.js?v=20261112.2" defer></script>
   </body>
 </html>

@@ -508,8 +508,8 @@ function installSavedViews(container, scope) {
     select.innerHTML = `<option value="">Choose view</option>${Object.keys(views).sort().map((name) => `<option value="${name.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")}">${name.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}</option>`).join("")}`;
     deleteButton.disabled = true;
   };
-  container.querySelector("[data-saved-view-save]").addEventListener("click", () => {
-    const name = String(window.prompt("Name this saved view:") || "").trim();
+  container.querySelector("[data-saved-view-save]").addEventListener("click", async () => {
+    const name = await window.WorkspaceShell?.requestDecision({title: "Save current view", description: "Saved views are stored in this browser and do not follow you to another device.", label: "View name", confirmLabel: "Save view"});
     if (!name) return;
     const views = readViews();
     views[name] = window.location.search;
@@ -557,7 +557,8 @@ function renderActionQueue(container, queuePayload, options = {}) {
     if (focusFilter === "workspace" && activeDomain && item.domain !== activeDomain) return false;
     return true;
   });
-  const visible = filtered.slice(0, 6);
+  const expanded = container.dataset.expanded === "true";
+  const visible = expanded ? filtered : filtered.slice(0, 6);
   const counts = payload.counts || {};
   const generatedAt = payload.generated_at
     ? new Date(payload.generated_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
@@ -612,6 +613,7 @@ function renderActionQueue(container, queuePayload, options = {}) {
       `).join("") : `<p class="action-queue-empty">No actions match this view. The current queue is clear.</p>`}
     </div>
     <p class="action-queue-meta">Showing ${escapeUtilityHtml(visible.length)} of ${escapeUtilityHtml(filtered.length)} matching actions${payload.remaining ? ` · ${escapeUtilityHtml(payload.remaining)} lower-priority actions remain outside this focused payload` : ""}. Updated ${escapeUtilityHtml(generatedAt)}.</p>
+    ${filtered.length > 6 ? `<button type="button" class="ghost-button action-queue-expand" data-action-expand>${expanded ? "Show priority actions only" : `Show all ${escapeUtilityHtml(filtered.length)} actions`}</button>` : ""}
   `;
 
   container.querySelectorAll("[data-action-focus]").forEach((button) => {
@@ -622,6 +624,11 @@ function renderActionQueue(container, queuePayload, options = {}) {
   });
   container.querySelector("[data-action-owner]")?.addEventListener("change", (event) => {
     container.dataset.ownerFilter = event.currentTarget.value;
+    container.dataset.expanded = "false";
+    renderActionQueue(container, payload, options);
+  });
+  container.querySelector("[data-action-expand]")?.addEventListener("click", () => {
+    container.dataset.expanded = expanded ? "false" : "true";
     renderActionQueue(container, payload, options);
   });
 }

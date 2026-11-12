@@ -65,6 +65,7 @@ const planningTabPanels = Array.from(document.querySelectorAll("[data-planning-p
 const scheduleModal = document.getElementById("schedule-modal");
 const scheduleForm = document.getElementById("schedule-form");
 const scheduleModalMessage = document.querySelector("[data-schedule-modal-message]");
+let scheduleModalReturnFocus = null;
 const episodeDetailsModal = document.getElementById("episode-details-modal");
 const episodeDetailsTitle = document.getElementById("episode-details-title");
 const episodeDetailsBody = document.getElementById("episode-details-body");
@@ -2170,18 +2171,28 @@ function filterRecommendations(recommendations) {
 }
 
 function openScheduleModal(episode) {
+  scheduleModalReturnFocus = document.activeElement;
   scheduleForm.elements.episode_id.value = episode.id;
   scheduleForm.elements.release_date.value = formatDateForDateTimeInput(episode.release_date);
-  scheduleForm.elements.release_date.focus();
   setMessage(scheduleModalMessage, "", "");
-  scheduleModal.classList.remove("hidden");
+  scheduleModal.showModal();
+  scheduleForm.elements.release_date.focus();
 }
 
 function closeScheduleModal() {
-  scheduleModal.classList.add("hidden");
+  if (scheduleModal.open) scheduleModal.close();
   scheduleForm.reset();
   setMessage(scheduleModalMessage, "", "");
+  if (scheduleModalReturnFocus?.isConnected) scheduleModalReturnFocus.focus();
+  scheduleModalReturnFocus = null;
 }
+
+scheduleModal?.addEventListener("close", () => {
+  scheduleForm.reset();
+  setMessage(scheduleModalMessage, "", "");
+  if (scheduleModalReturnFocus?.isConnected) scheduleModalReturnFocus.focus();
+  scheduleModalReturnFocus = null;
+});
 
 function deriveEpisodeNextAction(episode) {
   const releaseStatus = normalizeText(episode.release_status);
@@ -2292,6 +2303,20 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     const hasFilesLink = Boolean(normalizeText(episode.release_files_url));
     const releaseEmailReady = hasEmail && isReleased && hasShowNotes && hasFilesLink;
     const releaseActionLabel = releaseEmailReady ? "Send Release Email" : "Prepare Release Email";
+    const headsUp = episode.release_heads_up || {};
+    const headsUpStatus = normalizeText(headsUp.status) || "not_scheduled";
+    const headsUpNeedsReview = !headsUpStatus || headsUpStatus === "not_scheduled" || ["failed", "dead_letter", "cancelled"].includes(headsUpStatus);
+    const headsUpLabel = headsUpNeedsReview ? "Review Release Heads-up" : headsUpStatus === "sent" ? "Heads-up Sent" : "Review Scheduled Heads-up";
+    const headsUpDisabled = !isScheduled || !hasEmail;
+    const headsUpSummary = !isScheduled
+      ? "Available after the episode is scheduled."
+      : !hasEmail
+        ? "Add the guest email to prepare the notice."
+        : headsUpStatus === "sent"
+          ? `Sent ${formatDateTime(headsUp.sent_at)}.`
+          : headsUpNeedsReview
+            ? "Needs explicit review and approval; nothing is sent automatically."
+            : `Approved for ${formatDateTime(headsUp.send_at)}.`;
     const releaseTone = isReleased ? "success" : isScheduled ? "pending" : "warning";
     const nextAction = deriveEpisodeNextAction(episode);
     const card = document.createElement("article");
@@ -2358,19 +2383,26 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
             <button type="button" class="ghost-button" data-episode-action="refresh">Refresh</button>
             ${isScheduled && normalizeText(episode.production_status) === "ready" && normalizeText(episode.promotion_status) === "ready" ? `<button type="button" class="primary-button" data-episode-action="release">Mark Released</button>` : ""}
             ${!isReleased ? `<button type="button" class="ghost-button" data-episode-action="accelerate">Accelerate</button>` : ""}
-            <button type="button" class="ghost-button" data-episode-action="hold">Hold</button>
-            <button type="button" class="ghost-button" data-episode-action="archive">Archive</button>
-            <button type="button" class="ghost-button" data-episode-action="retire">Retire</button>
             ${!isReleased ? `${!isScheduled ? `<button type="button" class="secondary-button" data-episode-action="schedule">Schedule for Release</button>` : `<button type="button" class="secondary-button" data-episode-action="reschedule">Change Release Date</button><button type="button" class="ghost-button" data-episode-action="unschedule">Unschedule</button>`}` : ""}
           </div>
           <div class="action-group">
             <span class="action-group-label">Guest communication</span>
+            <div class="helper-copy full-width"><strong>Pre-release heads-up:</strong> ${escapeHtml(headsUpSummary)}</div>
+            <button type="button" class="${headsUpNeedsReview ? "primary-button" : "ghost-button"}" data-episode-action="preview-release-heads-up" ${headsUpDisabled ? "disabled" : ""}>${escapeHtml(headsUpLabel)}</button>
             <button type="button" class="ghost-button" data-episode-action="preview-appreciation" ${hasEmail ? "" : "disabled"}>Preview Thank You</button>
             <button type="button" class="secondary-button" data-episode-action="send-appreciation" ${hasEmail ? "" : "disabled"}>Send Thank You</button>
             <button type="button" class="ghost-button" data-episode-action="preview-release-email" ${hasEmail ? "" : "disabled"}>Preview Release Email</button>
             <button type="button" class="secondary-button" data-episode-action="send-release-email" ${hasEmail ? "" : "disabled"}>${releaseActionLabel}</button>
-            <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete</button>
           </div>
+          <details class="episode-administration full-width">
+            <summary>More lifecycle and administrative actions</summary>
+            <div class="action-group">
+              <button type="button" class="ghost-button" data-episode-action="hold">Hold</button>
+              <button type="button" class="ghost-button" data-episode-action="archive">Archive</button>
+              <button type="button" class="ghost-button" data-episode-action="retire">Retire</button>
+              <button type="button" class="ghost-button danger-button" data-episode-action="delete">Delete episode</button>
+            </div>
+          </details>
         </div>
       </details>
       <div class="card-action-feedback">${activeEpisodeActionFeedback.id === episode.id ? actionFeedbackMarkup(activeEpisodeActionFeedback) : ""}</div>
@@ -2390,6 +2422,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     const rescheduleButton = card.querySelector("[data-episode-action='reschedule']");
     const unscheduleButton = card.querySelector("[data-episode-action='unschedule']");
     const previewAppreciationButton = card.querySelector("[data-episode-action='preview-appreciation']");
+    const previewHeadsUpButton = card.querySelector("[data-episode-action='preview-release-heads-up']");
     const sendAppreciationButton = card.querySelector("[data-episode-action='send-appreciation']");
     const previewReleaseButton = card.querySelector("[data-episode-action='preview-release-email']");
     const sendReleaseButton = card.querySelector("[data-episode-action='send-release-email']");
@@ -2399,6 +2432,22 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
     const actionFeedbackNode = card.querySelector(".card-action-feedback");
     const appreciationPreviewNode = card.querySelector("[data-episode-appreciation-preview]");
     const releasePreviewNode = card.querySelector("[data-episode-release-preview]");
+    previewHeadsUpButton?.addEventListener("click", async () => {
+      previewHeadsUpButton.disabled = true;
+      const originalLabel = previewHeadsUpButton.textContent;
+      previewHeadsUpButton.textContent = "Loading heads-up…";
+      try {
+        const preview = await fetchJSON(`/api/episodes/${episode.id}/release-heads-up-template`);
+        renderReleaseHeadsUpComposer(releasePreviewNode, episode, preview);
+        card.querySelector("details").open = true;
+        releasePreviewNode.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (error) {
+        setMessage(episodeMessage, error.message, "error");
+      } finally {
+        previewHeadsUpButton.disabled = headsUpDisabled;
+        previewHeadsUpButton.textContent = originalLabel;
+      }
+    });
     editButton.addEventListener("click", async () => {
       if (activeEpisodeEditorId === episode.id) {
         activeEpisodeEditorId = null;
@@ -3937,20 +3986,20 @@ learningShadowCycle?.addEventListener("click", () => runLearningAction(
 learningRssReconcile?.addEventListener("click", () => runLearningAction(
   "/api/recommendation-learning/rss-reconcile", {}, "Reconciling verified podcast releases…",
 ));
-learningRollback?.addEventListener("click", () => {
-  const reason = window.prompt("Why are you rolling back the active recommendation policy?");
-  if (!reason?.trim()) return;
-  runLearningAction("/api/recommendation-learning/rollback", { reason: reason.trim() }, "Rolling back policy…");
+learningRollback?.addEventListener("click", async () => {
+  const reason = await window.WorkspaceShell?.requestDecision({title: "Roll back recommendation policy", description: "This changes which policy guides future recommendations. Existing editorial decisions are preserved.", label: "Rollback reason", confirmLabel: "Roll back policy"});
+  if (!reason) return;
+  runLearningAction("/api/recommendation-learning/rollback", { reason }, "Rolling back policy…");
 });
-learningStatus?.addEventListener("click", (event) => {
+learningStatus?.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-promote-policy]");
   if (!button) return;
-  const reason = window.prompt(`Why should ${button.dataset.promotePolicy} become active?`);
-  if (!reason?.trim()) return;
+  const reason = await window.WorkspaceShell?.requestDecision({title: `Promote ${button.dataset.promotePolicy}`, description: "This makes the validated challenger active for future recommendations. Record the evidence-based reason for the audit trail.", label: "Promotion reason", confirmLabel: "Promote policy"});
+  if (!reason) return;
   runLearningAction("/api/recommendation-learning/promote", {
     version: button.dataset.promotePolicy,
     row_version: Number(button.dataset.rowVersion || 0),
-    reason: reason.trim(),
+    reason,
   }, "Promoting validated challenger…");
 });
 document.addEventListener("keydown", (event) => {
