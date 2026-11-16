@@ -410,7 +410,7 @@ function buildPlanningApiUrl(path) {
   return `${path}${separator}_=${Date.now()}`;
 }
 
-function refreshPlanningQuietly() {
+function refreshPlanningQuietly({ render = true } = {}) {
   if (planningRefreshInFlight) return;
   planningRefreshInFlight = true;
   window.setTimeout(async () => {
@@ -420,7 +420,7 @@ function refreshPlanningQuietly() {
       updatePlanningStats(payload);
       storeCachedPayload(PLANNING_PAYLOAD_CACHE_KEY, payload);
       const mainFormEditing = Boolean(episodeForm?.elements?.id?.value);
-      if (!activeEpisodeEditorId && !mainFormEditing) {
+      if (render && !activeEpisodeEditorId && !mainFormEditing) {
         renderPlanning();
       }
     } catch (error) {
@@ -1534,6 +1534,7 @@ function renderReleaseComposer(node, episode, preview) {
 
 function renderReleaseHeadsUpComposer(node, episode, preview) {
   node.classList.remove("hidden");
+  node.setAttribute("tabindex", "-1");
   node.innerHTML = `
     <div class="inline-editor-title">14-day guest heads-up</div>
     <p class="helper-copy">Approved messages enter the outbox for ${escapeHtml(formatDateTime(preview.send_at))}. They are not sent during this review.</p>
@@ -1550,6 +1551,7 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
   node.querySelector("[data-heads-up-action='close']").addEventListener("click", () => {
     node.classList.add("hidden");
     node.innerHTML = "";
+    clearReleaseHeadsUpUrlIntent(episode.id);
   });
   node.querySelector("[data-heads-up-action='tailor']").addEventListener("click", async (event) => {
     const button = event.currentTarget;
@@ -1586,13 +1588,43 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
       });
       setMessage(message, `Guest heads-up scheduled for ${formatDateTime(result.send_at)}.`, "success");
       button.textContent = "Scheduled";
-      await refreshPlanningQuietly();
+      clearReleaseHeadsUpUrlIntent(episode.id);
+      refreshPlanningQuietly({ render: false });
     } catch (error) {
       setMessage(message, error.message, "error");
       button.disabled = false;
       button.textContent = "Approve and Schedule";
     }
   });
+}
+
+function clearReleaseHeadsUpUrlIntent(episodeId) {
+  const url = new URL(window.location.href);
+  if (
+    url.searchParams.get("action") !== "release_heads_up"
+    || String(url.searchParams.get("episode_id") || "") !== String(episodeId || "")
+  ) {
+    return;
+  }
+  url.searchParams.delete("action");
+  url.searchParams.delete("episode_id");
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function revealReleaseHeadsUpComposer(episode, preview) {
+  const episodeCard = Array.from(episodeList.querySelectorAll(".operations-card")).find(
+    (card) => String(card.dataset.episodeId || "") === String(episode.id),
+  );
+  if (!episodeCard) {
+    throw new Error("The episode is not visible in the current release-planning view.");
+  }
+  const previewNode = episodeCard.querySelector("[data-episode-release-preview]");
+  renderReleaseHeadsUpComposer(previewNode, episode, preview);
+  const disclosure = episodeCard.querySelector("details");
+  if (disclosure) disclosure.open = true;
+  previewNode.scrollIntoView({ behavior: "auto", block: "start" });
+  window.requestAnimationFrame(() => previewNode.focus({ preventScroll: true }));
+  return previewNode;
 }
 
 function splitRecommendationInsights(reason) {
@@ -2438,9 +2470,7 @@ function renderEpisodes(episodes, totalCount, episodeNumberMap) {
       previewHeadsUpButton.textContent = "Loading heads-up…";
       try {
         const preview = await fetchJSON(`/api/episodes/${episode.id}/release-heads-up-template`);
-        renderReleaseHeadsUpComposer(releasePreviewNode, episode, preview);
-        card.querySelector("details").open = true;
-        releasePreviewNode.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        revealReleaseHeadsUpComposer(episode, preview);
       } catch (error) {
         setMessage(episodeMessage, error.message, "error");
       } finally {
@@ -3503,34 +3533,31 @@ async function applyEpisodeFocusFromUrl() {
   if (!pendingEpisodeIdFromUrl) {
     return;
   }
+  const requestedEpisodeId = pendingEpisodeIdFromUrl;
+  const requestedAction = pendingEpisodeActionFromUrl;
+  pendingEpisodeIdFromUrl = null;
+  pendingEpisodeActionFromUrl = "";
   const episode = (latestPlanningPayload.episodes || []).find(
-    (item) => String(item.id || "") === String(pendingEpisodeIdFromUrl),
+    (item) => String(item.id || "") === String(requestedEpisodeId),
   );
   if (!episode) {
-    return;
+    throw new Error("The requested episode is no longer available in Release Planning.");
   }
   setPlanningTab("release_planning");
-  const fullEpisode = await hydrateEpisodeForEditing(episode);
-  if (pendingEpisodeActionFromUrl === "release_heads_up") {
+  if (requestedAction === "release_heads_up") {
+    resetEpisodeForm();
+    closeEpisodeEditor({ restoreFocus: false });
     const preview = await fetchJSON(`/api/episodes/${episode.id}/release-heads-up-template`);
-    const episodeCard = Array.from(episodeList.querySelectorAll(".operations-card")).find(
-      (card) => String(card.dataset.episodeId || "") === String(episode.id),
-    );
-    if (episodeCard) {
-      renderReleaseHeadsUpComposer(
-        episodeCard.querySelector("[data-episode-release-preview]"), episode, preview,
-      );
-      const disclosure = episodeCard.querySelector("details");
-      if (disclosure) disclosure.open = true;
-      episodeCard.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    revealReleaseHeadsUpComposer(episode, preview);
+    setMessage(episodeMessage, `Review the guest heads-up for ${episode.episode_title || episode.guest_name || "this episode"}.`, "pending");
+    pendingPlanningSuccessMessage = "";
+    return;
   }
+  const fullEpisode = await hydrateEpisodeForEditing(episode);
   loadEpisodeIntoForm(fullEpisode);
   if (pendingPlanningSuccessMessage) {
     setMessage(episodeMessage, pendingPlanningSuccessMessage, "success");
   }
-  pendingEpisodeIdFromUrl = null;
-  pendingEpisodeActionFromUrl = "";
   pendingPlanningSuccessMessage = "";
 }
 
