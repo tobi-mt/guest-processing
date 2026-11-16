@@ -1599,11 +1599,17 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
       setMessage(
         message,
         result.timing_status === "immediate"
-          ? "Guest notice queued for immediate delivery. It will show as sent after delivery succeeds."
+          ? result.status === "sent"
+            ? "Guest notice sent successfully."
+            : result.status === "retrying"
+              ? "The first delivery attempt failed. The email is queued for an automatic retry."
+              : "Guest notice queued for immediate delivery. It will show as sent after delivery succeeds."
           : `Guest heads-up scheduled for ${formatDateTime(result.send_at)}.`,
-        "success",
+        result.status === "retrying" ? "warning" : "success",
       );
-      button.textContent = result.timing_status === "immediate" ? "Queued" : "Scheduled";
+      button.textContent = result.timing_status === "immediate"
+        ? result.status === "sent" ? "Sent" : result.status === "retrying" ? "Retry Queued" : "Queued"
+        : "Scheduled";
       clearReleaseHeadsUpUrlIntent(episode.id);
       refreshPlanningQuietly({ render: false });
     } catch (error) {

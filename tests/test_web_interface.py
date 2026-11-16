@@ -8175,11 +8175,31 @@ def test_release_heads_up_requires_approval_and_is_queued_idempotently(temp_db):
     assert audit[0]["event_type"] == "release_heads_up_approved"
 
 
-def test_late_release_heads_up_is_explicitly_queued_for_immediate_delivery(temp_db):
+def test_late_release_heads_up_attempts_immediate_delivery(monkeypatch, temp_db):
     service = GuestWebService(temp_db.db_path)
+    monkeypatch.setattr(service, "_send_guest_self_application_request_email", lambda *args, **kwargs: None)
+    guest = service.create_intake_submission(
+        {
+            "application_role": "on_behalf",
+            "agency_name": "Bright Talent Agency",
+            "agency_email": "agent@brighttalent.example",
+            "represented_guest_name": "Tomorrow Guest",
+            "represented_guest_email": "tomorrow@example.com",
+        }
+    )
+    interview = service.create_interview(
+        {
+            "guest_id": guest["id"],
+            "guest_name": "Tomorrow Guest",
+            "guest_email": "tomorrow@example.com",
+            "scheduled_for": "2026-11-01T17:00:00+00:00",
+            "timezone": "Europe/Berlin",
+        }
+    )
     release_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
     episode = service.create_episode(
         {
+            "interview_id": interview["id"],
             "guest_name": "Tomorrow Guest",
             "guest_email": "tomorrow@example.com",
             "episode_title": "Tomorrow Episode",
@@ -8199,13 +8219,36 @@ def test_late_release_heads_up_is_explicitly_queued_for_immediate_delivery(temp_
     assert "We’ll send the live episode link and share-ready files when it is published." in preview["body"]
     assert "[Add" not in preview["body"]
 
-    approved = service.schedule_episode_release_heads_up(episode["id"], actor="producer")
-    assert approved["timing_status"] == "immediate"
+    manager = service._build_email_manager()
+    manager.resend_api_key = "configured"
+    manager.last_provider_message_id = "provider-heads-up-1"
+    sent = []
+    monkeypatch.setattr(manager, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        manager,
+        "send_email",
+        lambda to_email, subject, body, **kwargs: sent.append(
+            (to_email, subject, body, kwargs)
+        ) or True,
+    )
+    monkeypatch.setattr(service, "_build_email_manager", lambda: manager)
+
+    result = service.schedule_episode_release_heads_up(
+        episode["id"], actor="producer", additional_recipients=["producer@example.com"]
+    )
+    assert result["timing_status"] == "immediate"
+    assert result["status"] == "sent"
+    assert result["delivery_attempt"]["sent"] == 1
+    assert len(sent) == 1
+    assert sent[0][0] == "tomorrow@example.com"
+    assert sent[0][3]["idempotency_key"].startswith("episode_release_heads_up:")
+    assert sent[0][3]["cc_emails"] == ["agent@brighttalent.example", "producer@example.com"]
     with temp_db._connect() as conn:
-        queued_at = conn.execute(
-            "SELECT next_attempt_at FROM email_outbox WHERE id = ?", (approved["outbox_id"],)
-        ).fetchone()[0]
-    assert queued_at == datetime.fromisoformat(approved["send_at"]).strftime("%Y-%m-%d %H:%M:%S")
+        delivery = conn.execute(
+            "SELECT status, provider_message_id, cc_json FROM email_outbox WHERE id = ?", (result["outbox_id"],)
+        ).fetchone()
+    assert tuple(delivery[:2]) == ("sent", "provider-heads-up-1")
+    assert json.loads(delivery[2]) == ["agent@brighttalent.example", "producer@example.com"]
 
 
 def test_release_heads_up_is_cancelled_if_release_date_changes(monkeypatch, temp_db):

@@ -597,6 +597,7 @@ def test_release_heads_up_is_visible_on_scheduled_episode_cards_and_action_queue
     assert 'data-heads-up-action="send"' in javascript
     assert 'data-heads-up-action="approve"' not in javascript
     assert "Guest notice queued for immediate delivery." in javascript
+    assert "Guest notice sent successfully." in javascript
     assert "The ideal 14-day notice window has passed" in javascript
 
 

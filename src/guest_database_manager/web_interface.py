@@ -6888,8 +6888,19 @@ class GuestWebService:
             actor=actor, source="planning", reason="Operator approved the 14-day guest release notice.",
             after={"outbox_id": outbox_id, "send_at": preview["send_at"], "release_date": release_key},
         )
+        delivery_attempt = None
+        if preview["timing_status"] == "immediate":
+            delivery_attempt = self.process_pending_email_outbox(
+                limit=1, worker_id=f"request-{secrets.token_hex(6)}", outbox_id=outbox_id
+            )
+        delivery = self.database.get_email_outbox_by_id(outbox_id) or queued
         self._invalidate_payload_cache("planning")
-        return {**preview, "outbox_id": outbox_id, "status": queued["status"]}
+        return {
+            **preview,
+            "outbox_id": outbox_id,
+            "status": delivery["status"],
+            "delivery_attempt": delivery_attempt,
+        }
 
     def send_episode_release_email(self, episode_id: int, subject: str = "", body: str = "", additional_recipients: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         """Send the released-episode follow-up email from an episode record."""
@@ -7687,7 +7698,13 @@ class GuestWebService:
                 correlation_id = _normalize_text(entry.get("correlation_id"))
                 episode_id_text = correlation_id.removeprefix("episode:") if correlation_id.startswith("episode:") else ""
                 episode = self.database.get_episode_by_id(int(episode_id_text)) if episode_id_text.isdigit() else None
-                approved_release_date = _normalize_text(entry.get("idempotency_key")).rsplit(":", 1)[-1]
+                idempotency_key = _normalize_text(entry.get("idempotency_key"))
+                release_key_prefix = f"episode_release_heads_up:{episode_id_text}:"
+                approved_release_date = (
+                    idempotency_key.removeprefix(release_key_prefix)
+                    if idempotency_key.startswith(release_key_prefix)
+                    else ""
+                )
                 stale_reason = ""
                 if not episode:
                     stale_reason = "Episode no longer exists."
