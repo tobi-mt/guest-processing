@@ -491,6 +491,25 @@ def test_release_heads_up_template_sets_expectations_without_claiming_publicatio
     assert manager.build_personalization_context({"guest_research": {"cache_status": "failed"}}) == {}
 
 
+def test_release_heads_up_explains_when_website_show_notes_become_accessible():
+    manager = EmailManager()
+
+    for variant in ("warm", "concise"):
+        template = manager.get_release_heads_up_template(
+            "Jordan",
+            "Friday, 04 December 2026",
+            variant=variant,
+            show_notes_url="https://mirrortalkpodcast.com/episode/jordan",
+        )
+
+        assert "Show notes: https://mirrortalkpodcast.com/episode/jordan" in template["body"]
+        assert (
+            "The website show-notes page will become accessible about one hour after the episode is released."
+            in template["body"]
+        )
+        assert "materials are already available" not in template["body"]
+
+
 def test_html_email_renderer_is_branded_responsive_and_escapes_guest_content():
     manager = EmailManager()
     rendered = manager._build_html_body(

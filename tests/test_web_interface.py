@@ -8142,6 +8142,7 @@ def test_release_heads_up_requires_approval_and_is_queued_idempotently(temp_db):
     assert preview["timing_status"] == "scheduled"
     assert "Friday, 04 December 2099" in preview["subject"]
     assert "Show notes: https://mirrortalkpodcast.com/episodes/meaningful-conversation" in preview["body"]
+    assert "The website show-notes page will become accessible about one hour after the episode is released." in preview["body"]
     assert "Share-ready files: https://files.example.com/meaningful-conversation" in preview["body"]
     assert "Please treat any unpublished material as private until the release date." in preview["body"]
     assert temp_db.get_email_outbox_count() == 0

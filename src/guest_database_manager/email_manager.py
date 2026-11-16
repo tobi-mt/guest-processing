@@ -817,11 +817,14 @@ Mirror Talk Podcast"""
         topic_line = self._personalized_topic_line(personalization, purpose="release")
         prepared_links = []
         if show_notes_url.strip():
-            prepared_links.append(f"- Show notes: {show_notes_url.strip()}")
+            prepared_links.append(
+                f"- Show notes: {show_notes_url.strip()}\n"
+                "  The website show-notes page will become accessible about one hour after the episode is released."
+            )
         if files_url.strip():
             prepared_links.append(f"- Share-ready files: {files_url.strip()}")
         materials_block = (
-            "\n\nThe prepared episode materials are already available for you:\n"
+            "\n\nPrepared links for the episode:\n"
             + "\n".join(prepared_links)
             + "\n\nPlease treat any unpublished material as private until the release date."
             if prepared_links else ""
