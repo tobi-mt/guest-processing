@@ -561,7 +561,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261116.2" in html
+    assert "planning.js?v=20261116.3" in html
     assert "operations.css?v=20261112.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
@@ -584,7 +584,7 @@ def test_release_heads_up_is_visible_on_scheduled_episode_cards_and_action_queue
     assert 'requestedAction === "release_heads_up"' in javascript
     assert "/release-heads-up-template" in javascript
     assert 'data-episode-action="preview-release-heads-up"' in javascript
-    assert "Needs explicit review and approval; nothing is sent automatically." in javascript
+    assert "Review the draft, then send now or schedule it. Nothing is sent automatically." in javascript
     assert 'if (requestedAction === "release_heads_up")' in javascript
     assert "revealReleaseHeadsUpComposer(episode, preview);" in javascript
     release_branch = javascript.index('if (requestedAction === "release_heads_up")')
@@ -592,7 +592,11 @@ def test_release_heads_up_is_visible_on_scheduled_episode_cards_and_action_queue
     assert javascript.index("return;", release_branch) < editor_open
     assert 'refreshPlanningQuietly({ render: false })' in javascript
     assert "Late guest release notice" in javascript
-    assert "Approve for Immediate Delivery" in javascript
+    assert "Send Now" in javascript
+    assert "Schedule Email" in javascript
+    assert 'data-heads-up-action="send"' in javascript
+    assert 'data-heads-up-action="approve"' not in javascript
+    assert "Guest notice queued for immediate delivery." in javascript
     assert "The ideal 14-day notice window has passed" in javascript
 
 

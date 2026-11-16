@@ -1675,9 +1675,9 @@ class GuestWebService:
                     heads_up_status = _normalize_text((heads_up or {}).get("status")).lower()
                     if not heads_up_matches_release or heads_up_status in {"failed", "dead_letter", "cancelled"}:
                         reason = (
-                            "The previous notice needs review before another delivery is approved."
+                            "The previous notice failed or was cancelled; review it before queueing another delivery."
                             if heads_up_status in {"failed", "dead_letter", "cancelled"}
-                            else "The release is within 14 days and the guest notice has not been approved."
+                            else "The release is within 14 days and the guest notice has not been sent or scheduled."
                         )
                         add_item(
                             key=f"episode:{episode_id}:release-heads-up",
