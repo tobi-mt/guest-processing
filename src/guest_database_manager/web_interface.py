@@ -6800,6 +6800,8 @@ class GuestWebService:
         kwargs: Dict[str, Any] = {
             "guest_name": guest_name,
             "release_date": release_dt.strftime("%A, %d %B %Y"),
+            "show_notes_url": _normalize_text(episode.get("show_notes_url")),
+            "files_url": _normalize_text(episode.get("release_files_url")),
         }
         personalization = self._email_personalization(manager, episode)
         if personalization:
@@ -6808,16 +6810,27 @@ class GuestWebService:
             kwargs["variant"] = variant
         template = manager.get_release_heads_up_template(**kwargs)
         scheduled_send_at = self._release_heads_up_send_at(release_dt)
-        effective_send_at = max(scheduled_send_at, datetime.now(timezone.utc).replace(microsecond=0))
+        now_utc = datetime.now(timezone.utc).replace(microsecond=0)
+        effective_send_at = max(scheduled_send_at, now_utc)
+        timing_status = "immediate" if scheduled_send_at <= now_utc else "scheduled"
         draft = self._smart_email_draft(
             email_type="release_heads_up", record=episode, template=template,
-            operational_context={"release_date": release_dt.isoformat(), "send_at": effective_send_at.isoformat()},
+            operational_context={
+                "release_date": release_dt.isoformat(),
+                "send_at": effective_send_at.isoformat(),
+                "ideal_send_at": scheduled_send_at.isoformat(),
+                "timing_status": timing_status,
+                "show_notes_url": kwargs["show_notes_url"],
+                "files_url": kwargs["files_url"],
+            },
             tailor=tailor,
         )
         return {
             "episode": self._normalize_episode_record(episode),
             **draft,
             "send_at": effective_send_at.isoformat(),
+            "ideal_send_at": scheduled_send_at.isoformat(),
+            "timing_status": timing_status,
             "variant": variant or "warm",
             "variants": manager.template_variants("release_heads_up") if hasattr(manager, "template_variants") else [],
         }

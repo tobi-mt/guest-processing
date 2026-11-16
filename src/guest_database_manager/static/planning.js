@@ -1533,18 +1533,25 @@ function renderReleaseComposer(node, episode, preview) {
 }
 
 function renderReleaseHeadsUpComposer(node, episode, preview) {
+  const immediateDelivery = preview.timing_status === "immediate";
+  const composerTitle = immediateDelivery ? "Late guest release notice" : "14-day guest heads-up";
+  const timingCopy = immediateDelivery
+    ? `The ideal 14-day notice window has passed. If you approve this draft, it enters the outbox for immediate delivery. Nothing is sent until you approve.`
+    : `If approved, this message enters the outbox for ${formatDateTime(preview.send_at)}. Nothing is sent during this review.`;
+  const approveLabel = immediateDelivery ? "Approve for Immediate Delivery" : "Approve and Schedule";
   node.classList.remove("hidden");
   node.setAttribute("tabindex", "-1");
   node.innerHTML = `
-    <div class="inline-editor-title">14-day guest heads-up</div>
-    <p class="helper-copy">Approved messages enter the outbox for ${escapeHtml(formatDateTime(preview.send_at))}. They are not sent during this review.</p>
+    <div class="inline-editor-title">${escapeHtml(composerTitle)}</div>
+    <p class="helper-copy ${immediateDelivery ? "warning" : ""}">${escapeHtml(timingCopy)}</p>
+    ${immediateDelivery ? `<p class="helper-copy"><strong>Ideal notice time:</strong> ${escapeHtml(formatDateTime(preview.ideal_send_at))} · <strong>Release:</strong> ${escapeHtml(formatDateTime(episode.release_date))}</p>` : ""}
     ${(preview.cc_recipients || []).length ? `<p class="helper-copy"><strong>Automatic CC:</strong> ${escapeHtml(preview.cc_recipients.join(", "))}</p>` : ""}
     <label class="full-width"><span>Additional CC</span><input data-heads-up-field="additionalRecipients" type="text" inputmode="email" autocomplete="off" placeholder="name@example.com, other@example.com" /></label>
     <label class="full-width"><span>Subject</span><input data-heads-up-field="subject" type="text" value="${escapeHtml(preview.subject || "")}" /></label>
     <label class="full-width"><span>Email Body</span><textarea data-heads-up-field="body" rows="12">${escapeHtml(preview.body || "")}</textarea></label>
     <div class="inline-editor-actions full-width">
       <button type="button" class="secondary-button" data-heads-up-action="tailor">Tailor with AI</button>
-      <button type="button" class="primary-button" data-heads-up-action="approve">Approve and Schedule</button>
+      <button type="button" class="primary-button" data-heads-up-action="approve">${escapeHtml(approveLabel)}</button>
       <button type="button" class="ghost-button" data-heads-up-action="close">Close</button>
     </div>
     <p class="message" data-heads-up-message aria-live="polite"></p>`;
@@ -1572,7 +1579,10 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
     }
   });
   node.querySelector("[data-heads-up-action='approve']").addEventListener("click", async (event) => {
-    if (!confirmCriticalAction(`Approve and schedule the 14-day release heads-up to ${episode.guest_name || episode.guest_email}?`)) return;
+    const confirmation = immediateDelivery
+      ? `The ideal 14-day window has passed. Approve this guest notice to ${episode.guest_name || episode.guest_email} for immediate outbox delivery?`
+      : `Approve and schedule the 14-day release heads-up to ${episode.guest_name || episode.guest_email}?`;
+    if (!confirmCriticalAction(confirmation)) return;
     const button = event.currentTarget;
     const message = node.querySelector("[data-heads-up-message]");
     button.disabled = true;
@@ -1586,14 +1596,20 @@ function renderReleaseHeadsUpComposer(node, episode, preview) {
           additional_recipients: node.querySelector("[data-heads-up-field='additionalRecipients']").value.split(",").map((email) => email.trim()).filter(Boolean),
         }),
       });
-      setMessage(message, `Guest heads-up scheduled for ${formatDateTime(result.send_at)}.`, "success");
-      button.textContent = "Scheduled";
+      setMessage(
+        message,
+        result.timing_status === "immediate"
+          ? "Guest notice approved for immediate outbox delivery."
+          : `Guest heads-up scheduled for ${formatDateTime(result.send_at)}.`,
+        "success",
+      );
+      button.textContent = result.timing_status === "immediate" ? "Approved for Delivery" : "Scheduled";
       clearReleaseHeadsUpUrlIntent(episode.id);
       refreshPlanningQuietly({ render: false });
     } catch (error) {
       setMessage(message, error.message, "error");
       button.disabled = false;
-      button.textContent = "Approve and Schedule";
+      button.textContent = approveLabel;
     }
   });
 }

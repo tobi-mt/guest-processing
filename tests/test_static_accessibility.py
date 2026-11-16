@@ -561,7 +561,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261116.1" in html
+    assert "planning.js?v=20261116.2" in html
     assert "operations.css?v=20261112.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
@@ -591,6 +591,9 @@ def test_release_heads_up_is_visible_on_scheduled_episode_cards_and_action_queue
     editor_open = javascript.index("loadEpisodeIntoForm(fullEpisode);", release_branch)
     assert javascript.index("return;", release_branch) < editor_open
     assert 'refreshPlanningQuietly({ render: false })' in javascript
+    assert "Late guest release notice" in javascript
+    assert "Approve for Immediate Delivery" in javascript
+    assert "The ideal 14-day notice window has passed" in javascript
 
 
 def test_action_queue_can_reveal_every_returned_action() -> None:

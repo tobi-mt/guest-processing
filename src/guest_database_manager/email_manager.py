@@ -808,17 +808,37 @@ Mirror Talk Podcast"""
         release_date: str,
         variant: str = "warm",
         personalization: Optional[Mapping[str, Any]] = None,
+        show_notes_url: str = "",
+        files_url: str = "",
     ) -> Dict[str, str]:
         """Build the reviewed pre-release notice sent after operator approval."""
         variant = self._template_variant("release_heads_up", variant, "warm")
         subject = f"Your Mirror Talk episode is scheduled for {release_date}"
         topic_line = self._personalized_topic_line(personalization, purpose="release")
+        prepared_links = []
+        if show_notes_url.strip():
+            prepared_links.append(f"- Show notes: {show_notes_url.strip()}")
+        if files_url.strip():
+            prepared_links.append(f"- Share-ready files: {files_url.strip()}")
+        materials_block = (
+            "\n\nThe prepared episode materials are already available for you:\n"
+            + "\n".join(prepared_links)
+            + "\n\nPlease treat any unpublished material as private until the release date."
+            if prepared_links else ""
+        )
+        follow_up_line = (
+            "We’ll still confirm when the episode is live."
+            if prepared_links else
+            "We’ll send the live episode link and share-ready files when it is published."
+        )
         if variant == "concise":
             body = f"""Hi {guest_name},
 
 A quick personal heads-up: your Mirror Talk episode is scheduled for release on {release_date}.
 
-We’ll send the live link and share-ready files when it is published. There is nothing you need to do now; if the date creates a conflict, please reply as soon as you can.
+{follow_up_line}{materials_block}
+
+There is nothing else you need to do now; if the date creates a conflict, please reply as soon as you can.
 
 Warm regards,
 Tobi Ojekunle
@@ -830,7 +850,7 @@ I wanted you to hear it from me first: your Mirror Talk episode is scheduled for
 
 {topic_line.rstrip()}
 
-There is nothing you need to do right now. We’ll send the live episode link and share-ready files once it is published, so you can share the conversation with your community if and when it feels right.
+There is nothing you need to do right now. {follow_up_line}{materials_block}
 
 If this timing overlaps with another launch or creates a conflict, please reply as soon as you can and we’ll review the plan together.
 

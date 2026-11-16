@@ -8131,12 +8131,19 @@ def test_release_heads_up_requires_approval_and_is_queued_idempotently(temp_db):
             "topic": "Purpose",
             "release_status": "scheduled",
             "release_date": "2099-12-04",
+            "show_notes_url": "https://mirrortalkpodcast.com/episodes/meaningful-conversation",
+            "release_files_url": "https://files.example.com/meaningful-conversation",
         }
     )
 
     preview = service.preview_episode_release_heads_up(episode["id"])
     assert preview["send_at"] == "2099-11-20T08:00:00+00:00"
+    assert preview["ideal_send_at"] == preview["send_at"]
+    assert preview["timing_status"] == "scheduled"
     assert "Friday, 04 December 2099" in preview["subject"]
+    assert "Show notes: https://mirrortalkpodcast.com/episodes/meaningful-conversation" in preview["body"]
+    assert "Share-ready files: https://files.example.com/meaningful-conversation" in preview["body"]
+    assert "Please treat any unpublished material as private until the release date." in preview["body"]
     assert temp_db.get_email_outbox_count() == 0
     before = next(item for item in service.list_planning()["episodes"] if item["id"] == episode["id"])
     assert before["release_heads_up"] == {
@@ -8166,6 +8173,39 @@ def test_release_heads_up_requires_approval_and_is_queued_idempotently(temp_db):
     )
     audit = temp_db.list_audit_events("episode", episode["id"])
     assert audit[0]["event_type"] == "release_heads_up_approved"
+
+
+def test_late_release_heads_up_is_explicitly_queued_for_immediate_delivery(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    release_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    episode = service.create_episode(
+        {
+            "guest_name": "Tomorrow Guest",
+            "guest_email": "tomorrow@example.com",
+            "episode_title": "Tomorrow Episode",
+            "topic": "Purpose",
+            "release_status": "scheduled",
+            "release_date": release_date,
+        }
+    )
+
+    before = datetime.now(timezone.utc).replace(microsecond=0)
+    preview = service.preview_episode_release_heads_up(episode["id"])
+    after = datetime.now(timezone.utc).replace(microsecond=0)
+
+    assert preview["timing_status"] == "immediate"
+    assert datetime.fromisoformat(preview["ideal_send_at"]) < before
+    assert before <= datetime.fromisoformat(preview["send_at"]) <= after
+    assert "We’ll send the live episode link and share-ready files when it is published." in preview["body"]
+    assert "[Add" not in preview["body"]
+
+    approved = service.schedule_episode_release_heads_up(episode["id"], actor="producer")
+    assert approved["timing_status"] == "immediate"
+    with temp_db._connect() as conn:
+        queued_at = conn.execute(
+            "SELECT next_attempt_at FROM email_outbox WHERE id = ?", (approved["outbox_id"],)
+        ).fetchone()[0]
+    assert queued_at == datetime.fromisoformat(approved["send_at"]).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def test_release_heads_up_is_cancelled_if_release_date_changes(monkeypatch, temp_db):
