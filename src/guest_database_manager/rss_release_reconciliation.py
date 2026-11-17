@@ -39,6 +39,15 @@ def _normalize_title(value: Any) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text))
 
 
+def _guest_name_in_title(guest_name: Any, normalized_title: str) -> bool:
+    """Return whether a sufficiently specific full guest name occurs in a feed title."""
+    normalized_guest = _normalize_title(guest_name)
+    guest_tokens = normalized_guest.split()
+    if len(guest_tokens) < 2:
+        return False
+    return f" {normalized_guest} " in f" {normalized_title} "
+
+
 def _iso_datetime(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
@@ -62,6 +71,17 @@ def _date_distance_days(first: Any, second: Any) -> int | None:
         return None
     return abs((datetime.fromisoformat(left.replace("Z", "+00:00")).date() -
                 datetime.fromisoformat(right.replace("Z", "+00:00")).date()).days)
+
+
+def _publication_is_due(value: Any, *, reference: datetime | None = None) -> bool:
+    published_at = _iso_datetime(value)
+    if not published_at:
+        return False
+    due_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+    now = reference or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return due_at <= now.astimezone(timezone.utc)
 
 
 def _duration_seconds(value: Any) -> int | None:
@@ -109,7 +129,7 @@ class FeedItem:
 
 
 class RSSReleaseReconciler:
-    """Match authoritative feed items without mutating episode lifecycle fields."""
+    """Match feed items and optionally apply tightly governed release transitions."""
 
     def __init__(self, db_path: str | Path, *, feed_url: str = ""):
         self.db_path = str(db_path)
@@ -194,7 +214,8 @@ class RSSReleaseReconciler:
         with connect_database(self.db_path) as conn:
             conn.row_factory = __import__("sqlite3").Row
             return [dict(row) for row in conn.execute(
-                """SELECT id, episode_title, working_title, published_title, release_date, release_status
+                """SELECT id, guest_name, episode_title, working_title, published_title,
+                          release_date, release_status
                    FROM episodes ORDER BY id"""
             ).fetchall()]
 
@@ -231,15 +252,46 @@ class RSSReleaseReconciler:
                         candidates = [best_id]
                         method = "strong_title"
 
+            # Published titles often replace the editorial title. A full guest name
+            # plus close release-date agreement is strong enough to identify a
+            # unique episode, while repeat guests and single-name guests stay out of
+            # automation.
+            if not candidates and item.normalized_title:
+                guest_date_candidates = []
+                for episode_id, episode in by_id.items():
+                    if not _guest_name_in_title(episode.get("guest_name"), item.normalized_title):
+                        continue
+                    candidate_distance = _date_distance_days(
+                        item.published_at, episode.get("release_date")
+                    )
+                    if (
+                        candidate_distance is not None
+                        and candidate_distance <= AUTO_RELEASE_MAX_DATE_DISTANCE_DAYS
+                    ):
+                        guest_date_candidates.append(episode_id)
+                if len(guest_date_candidates) == 1:
+                    candidates = guest_date_candidates
+                    method = "guest_name_date"
+                    confidence = 0.99
+                elif len(guest_date_candidates) > 1:
+                    candidates = sorted(guest_date_candidates)
+                    method = "guest_name_date"
+                    confidence = 0.0
+
             status = "unmatched"
             reason = "No unique title candidate"
             episode_id = candidates[0] if len(candidates) == 1 else None
             distance = _date_distance_days(item.published_at, by_id[episode_id].get("release_date")) if episode_id else None
             if len(candidates) > 1:
-                status, reason = "review_required", "Title matches more than one episode"
+                status, reason = "review_required", "RSS evidence matches more than one episode"
             elif episode_id:
                 episode = by_id[episode_id]
-                if str(episode.get("release_status") or "").strip().casefold() != "released":
+                if (
+                    str(episode.get("release_status") or "").strip().casefold() != "released"
+                    and not _publication_is_due(item.published_at)
+                ):
+                    status, reason = "review_required", "RSS publication time has not arrived"
+                elif str(episode.get("release_status") or "").strip().casefold() != "released":
                     status, reason = "review_required", "RSS confirms publication but the episode is not marked released"
                 elif episode_id in claimed and claimed[episode_id] != item.key:
                     status, reason = "conflict", "More than one feed item maps to the same episode"
@@ -372,7 +424,7 @@ class RSSReleaseReconciler:
                 and
                 match.get("episode_id") is not None
                 and match.get("status") == "review_required"
-                and match.get("match_method") == "exact_title"
+                and match.get("match_method") in {"exact_title", "guest_name_date"}
                 and float(match.get("confidence") or 0) >= 0.99
                 and match.get("episode_release_status") == "scheduled"
                 and match.get("date_distance_days") is not None

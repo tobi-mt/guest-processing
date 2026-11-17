@@ -314,6 +314,129 @@ def test_rss_automatic_release_requires_close_planned_date(temp_db):
     assert temp_db.get_episode_by_id(episode_id)["release_status"] == "scheduled"
 
 
+def test_rss_automatic_release_matches_renamed_episode_by_guest_and_date(temp_db):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": "Maya Angelou", "episode_title": "Editorial Working Title",
+        "release_status": "scheduled", "release_date": "2026-09-21",
+    })
+    feed = """<?xml version="1.0"?><rss><channel><item>
+      <guid>renamed-release</guid>
+      <title>Maya Angelou: Finding Courage Through Change</title>
+      <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+
+    result = RSSReleaseReconciler(
+        temp_db.db_path, feed_url="https://example.com/feed.xml"
+    ).reconcile(actor="rss-release-automation", payload=feed, apply_lifecycle=True)
+
+    assert result["lifecycle_updates"] == 1
+    assert result["counts"] == {"auto_linked": 1}
+    updated = temp_db.get_episode_by_id(episode_id)
+    assert updated["release_status"] == "released"
+    assert updated["published_title"] == "Maya Angelou: Finding Courage Through Change"
+
+    replay = RSSReleaseReconciler(
+        temp_db.db_path, feed_url="https://example.com/feed.xml"
+    ).reconcile(actor="rss-release-automation", payload=feed, apply_lifecycle=True)
+    assert replay["lifecycle_updates"] == 0
+    assert replay["new_outcomes"] == 0
+
+
+def test_rss_future_feed_item_does_not_release_episode_before_due_time(temp_db):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": "Future Guest", "episode_title": "Future Published Title",
+        "release_status": "scheduled", "release_date": "2099-09-21T12:00:00Z",
+    })
+    feed = """<?xml version="1.0"?><rss><channel><item>
+      <guid>future-release</guid><title>Future Published Title</title>
+      <pubDate>Mon, 21 Sep 2099 12:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+
+    reconciler = RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml")
+    result = reconciler.reconcile(
+        actor="rss-release-automation", payload=feed, apply_lifecycle=True
+    )
+
+    assert result["lifecycle_updates"] == 0
+    assert result["counts"] == {"review_required": 1}
+    assert temp_db.get_episode_by_id(episode_id)["release_status"] == "scheduled"
+    assert reconciler.status()["review_queue"][0]["reason"] == "RSS publication time has not arrived"
+
+
+@pytest.mark.parametrize(
+    ("guest_name", "rss_title"),
+    [
+        ("Cher", "Cher: A New Conversation"),
+        ("Maya Angelou", "Maya on Finding Courage"),
+        ("Ann Lee", "Joann Lee: A New Conversation"),
+    ],
+)
+def test_rss_guest_matching_rejects_weak_or_partial_name_evidence(
+    temp_db, guest_name, rss_title
+):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": guest_name, "episode_title": "Different Editorial Title",
+        "release_status": "scheduled", "release_date": "2026-09-21",
+    })
+    feed = f"""<?xml version="1.0"?><rss><channel><item>
+      <guid>weak-guest-match</guid><title>{rss_title}</title>
+      <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+
+    result = RSSReleaseReconciler(
+        temp_db.db_path, feed_url="https://example.com/feed.xml"
+    ).reconcile(actor="rss-release-automation", payload=feed, apply_lifecycle=True)
+
+    assert result["lifecycle_updates"] == 0
+    assert result["counts"] == {"unmatched": 1}
+    assert temp_db.get_episode_by_id(episode_id)["release_status"] == "scheduled"
+
+
+def test_rss_guest_date_match_keeps_repeat_guest_ambiguity_in_review(temp_db):
+    for title, release_date in (
+        ("First Conversation", "2026-09-20"),
+        ("Second Conversation", "2026-09-22"),
+    ):
+        temp_db.upsert_episode({
+            "guest_name": "Repeat Guest", "episode_title": title,
+            "release_status": "scheduled", "release_date": release_date,
+        })
+    feed = """<?xml version="1.0"?><rss><channel><item>
+      <guid>ambiguous-repeat-guest</guid>
+      <title>Repeat Guest: A Newly Published Conversation</title>
+      <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+
+    result = RSSReleaseReconciler(
+        temp_db.db_path, feed_url="https://example.com/feed.xml"
+    ).reconcile(actor="rss-release-automation", payload=feed, apply_lifecycle=True)
+
+    assert result["lifecycle_updates"] == 0
+    assert result["counts"] == {"review_required": 1}
+    assert all(
+        episode["release_status"] == "scheduled" for episode in temp_db.list_episodes()
+    )
+
+
+def test_rss_guest_name_without_close_date_does_not_auto_release(temp_db):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": "Date Guard Guest", "episode_title": "Original Editorial Title",
+        "release_status": "scheduled", "release_date": "2026-09-01",
+    })
+    feed = """<?xml version="1.0"?><rss><channel><item>
+      <guid>renamed-date-guard</guid><title>Date Guard Guest: Published Much Later</title>
+      <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+
+    result = RSSReleaseReconciler(
+        temp_db.db_path, feed_url="https://example.com/feed.xml"
+    ).reconcile(actor="rss-release-automation", payload=feed, apply_lifecycle=True)
+
+    assert result["lifecycle_updates"] == 0
+    assert result["counts"] == {"unmatched": 1}
+    assert temp_db.get_episode_by_id(episode_id)["release_status"] == "scheduled"
+
+
 def test_rss_automatic_release_rejects_multiple_feed_items_for_one_episode(temp_db):
     episode_id, _ = temp_db.upsert_episode({
         "guest_name": "Conflict Guest", "episode_title": "One Canonical Episode",

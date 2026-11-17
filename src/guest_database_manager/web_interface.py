@@ -1073,7 +1073,7 @@ class GuestWebService:
         return status
 
     def reconcile_rss_releases(self, *, actor: str, apply_lifecycle: bool = False) -> Dict[str, Any]:
-        """Reconcile RSS evidence, applying releases only after explicit operator approval."""
+        """Reconcile RSS evidence and optionally apply tightly governed releases."""
         return self.rss_release_reconciler.reconcile(actor=actor, apply_lifecycle=apply_lifecycle)
 
     def evaluate_recommendation_policy(self, *, actor: str) -> Dict[str, Any]:
