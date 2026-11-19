@@ -563,10 +563,19 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261119.1" in html
+    assert "planning.js?v=20261120.1" in html
     assert "operations.css?v=20261112.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
+
+
+def test_episode_badge_respects_transcript_available_when_list_text_is_omitted() -> None:
+    """Compact planning payloads must not label hydrated transcripts as missing."""
+    javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
+
+    badge_function = javascript[javascript.index("function renderEpisodeBadges"):javascript.index("function renderOutreachSummary")]
+    assert "episodeHasTranscript(episode)" in badge_function
+    assert "if (episode.transcript_text)" not in badge_function
 
 
 def test_recommendations_default_to_chronological_release_slot_order() -> None:

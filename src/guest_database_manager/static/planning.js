@@ -1422,7 +1422,7 @@ function renderEpisodeBadges(episode) {
   if (normalizeText(episode.source_type) === "ask_mirror_talk_sync") {
     badges.push('<span class="signal-chip good">Ask Synced</span>');
   }
-  if (episode.transcript_text) {
+  if (episodeHasTranscript(episode)) {
     badges.push('<span class="signal-chip good">Transcript Available</span>');
   } else if (transcriptExpectedSoon(episode)) {
     badges.push('<span class="signal-chip warning">Missing Transcript</span>');
