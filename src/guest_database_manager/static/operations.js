@@ -70,6 +70,11 @@ function dashboardRequestHeaders(options = {}, isReadRequest = false) {
   };
 }
 
+function redirectToDashboardLogin() {
+  const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  window.location.assign(`/dashboard-login?next=${encodeURIComponent(next)}`);
+}
+
 const stats = {
   interviewsTotal: document.getElementById("ops-interviews-total"),
   interviewsPending: document.getElementById("ops-interviews-pending"),
@@ -121,6 +126,7 @@ async function fetchJSON(url, options = {}) {
         }
       }
       if (!response.ok) {
+        if (response.status === 401) redirectToDashboardLogin();
         throw new Error(data.error || `Request failed (${response.status})`);
       }
       window.clearTimeout(timeoutId);

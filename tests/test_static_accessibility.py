@@ -215,7 +215,7 @@ def test_weekly_confirmations_uses_one_empty_state_message() -> None:
     javascript = (STATIC_ROOT / "operations.js").read_text(encoding="utf-8")
 
     assert javascript.count("No reminder emails are due for this week.") == 1
-    assert "operations.js?v=20261105.4" in html
+    assert "operations.js?v=20261119.1" in html
 
 
 def test_ai_email_tailoring_exposes_working_success_and_failure_feedback() -> None:
@@ -561,7 +561,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
-    assert "planning.js?v=20261116.3" in html
+    assert "planning.js?v=20261119.1" in html
     assert "operations.css?v=20261112.1" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
@@ -577,6 +577,14 @@ def test_recommendations_default_to_chronological_release_slot_order() -> None:
     assert sort_markup.index('value="recommended_date"') < sort_markup.index('value="score"')
     assert 'recommendationSort.value || "recommended_date"' in javascript
     assert "promotion ${automationLocked ? \"locked\" : \"enabled\"}" in javascript
+
+
+def test_private_workspaces_redirect_expired_sessions_to_login() -> None:
+    for filename in ("app.js", "operations.js", "planning.js"):
+        javascript = (STATIC_ROOT / filename).read_text(encoding="utf-8")
+        assert "function redirectToDashboardLogin()" in javascript
+        assert "response.status === 401" in javascript
+        assert "/dashboard-login?next=" in javascript
 
 
 def test_release_heads_up_is_visible_on_scheduled_episode_cards_and_action_queue() -> None:

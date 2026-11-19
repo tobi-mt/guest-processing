@@ -3266,7 +3266,7 @@ class GuestWebService:
 
     def _build_operations_alerts(self, interviews: list[Dict[str, Any]]) -> Dict[str, Any]:
         """Highlight duplicate future bookings and stale calendar holds."""
-        reference = datetime.now()
+        reference = datetime.now(timezone.utc)
         duplicate_groups: Dict[str, list[Dict[str, Any]]] = {}
         cleanup_candidates: list[Dict[str, Any]] = []
         missing_calendar: list[Dict[str, Any]] = []
@@ -3274,10 +3274,10 @@ class GuestWebService:
 
         for interview in interviews:
             scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
-            if not scheduled_for:
+            normalized_scheduled = self._interview_datetime_utc(interview, scheduled_for)
+            if not scheduled_for or not normalized_scheduled:
                 continue
-            comparison_reference = self._align_reference_datetime(reference, scheduled_for)
-            future_or_current = scheduled_for >= comparison_reference
+            future_or_current = normalized_scheduled >= reference
             status = _normalize_text(interview.get("status")).lower()
             confirmation = _normalize_text(interview.get("confirmation_status")).lower()
             guest_id = _normalize_text(interview.get("guest_id"))
@@ -3290,7 +3290,7 @@ class GuestWebService:
             if future_or_current and status != "cancelled" and confirmation != "declined" and guest_key:
                 duplicate_groups.setdefault(guest_key, []).append(interview)
             if future_or_current and status != "cancelled" and confirmation not in {"declined", "reschedule_requested"}:
-                active_future_interviews.append((scheduled_for, interview))
+                active_future_interviews.append((normalized_scheduled, interview))
 
             if _normalize_text(interview.get("calendar_event_id")) and (
                 status == "cancelled" or confirmation in {"declined", "reschedule_requested"}
@@ -5697,7 +5697,7 @@ class GuestWebService:
         self,
         *,
         overwrite_existing: bool = False,
-        limit: int = 2000,
+        limit: int = 1000,
         search: str = "",
         preview_only: bool = False,
         approved_matches: Optional[list[Dict[str, Any]]] = None,
@@ -6119,12 +6119,17 @@ class GuestWebService:
 
         def sort_key(interview: Dict[str, Any]) -> tuple[Any, ...]:
             scheduled_for = self._parse_datetime(interview.get("scheduled_for"))
-            if not scheduled_for:
+            normalized_scheduled = self._interview_datetime_utc(interview, scheduled_for)
+            if not scheduled_for or not normalized_scheduled:
                 return (2, float("inf"), -int(interview.get("id") or 0))
 
-            comparison_reference = self._align_reference_datetime(reference, scheduled_for)
-            sort_value = scheduled_for.timestamp()
-            if scheduled_for >= comparison_reference:
+            normalized_reference = (
+                reference.replace(tzinfo=timezone.utc)
+                if reference.tzinfo is None
+                else reference
+            ).astimezone(timezone.utc)
+            sort_value = normalized_scheduled.timestamp()
+            if normalized_scheduled >= normalized_reference:
                 return (0, sort_value, int(interview.get("id") or 0))
 
             return (1, -sort_value, -int(interview.get("id") or 0))
@@ -7227,6 +7232,22 @@ class GuestWebService:
         if scheduled_for.tzinfo is None and reference.tzinfo is not None:
             return reference.astimezone().replace(tzinfo=None)
         return reference
+
+    @classmethod
+    def _interview_datetime_utc(
+        cls, interview: Mapping[str, Any], parsed: Optional[datetime] = None
+    ) -> Optional[datetime]:
+        """Interpret naive interview times in their stored timezone and return UTC."""
+        scheduled_for = parsed or cls._parse_datetime(interview.get("scheduled_for"))
+        if not scheduled_for:
+            return None
+        if scheduled_for.tzinfo is None:
+            timezone_name = _normalize_text(interview.get("timezone")) or "UTC"
+            try:
+                scheduled_for = scheduled_for.replace(tzinfo=ZoneInfo(timezone_name))
+            except ZoneInfoNotFoundError:
+                scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+        return scheduled_for.astimezone(timezone.utc)
 
     def _build_google_calendar_client(self) -> Optional[GoogleServiceAccountCalendarClient]:
         """Build a service-account client, optionally impersonating a Workspace user."""
@@ -9624,7 +9645,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             try:
                 result = self.service.sync_ask_mirror_talk_transcripts(
                     overwrite_existing=bool(payload.get("overwrite_existing")),
-                    limit=int(payload.get("limit", 2000) or 2000),
+                    limit=int(payload.get("limit", 1000) or 1000),
                     search=_normalize_text(payload.get("search")),
                     preview_only=bool(payload.get("preview_only")),
                     approved_matches=(

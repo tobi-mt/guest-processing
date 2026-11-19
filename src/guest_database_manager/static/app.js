@@ -190,6 +190,11 @@ function dashboardRequestHeaders(options = {}, isReadRequest = false, includeJso
   };
 }
 
+function redirectToDashboardLogin() {
+  const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  window.location.assign(`/dashboard-login?next=${encodeURIComponent(next)}`);
+}
+
 function buildGuestScopedLink(path, guest) {
   const query = encodeURIComponent(guest.full_name || guest.email || "");
   return `${path}?q=${query}`;
@@ -269,6 +274,7 @@ async function fetchJSONInternal(url, options = {}) {
           const error = new Error(data.error || "Request failed");
           error.status = response.status;
           error.userMessage = getUserFriendlyErrorFn(error);
+          if (response.status === 401) redirectToDashboardLogin();
           throw error;
         }
         return data;

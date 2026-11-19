@@ -33,7 +33,7 @@ def test_export_fetches_transcripts_with_bounded_stream(monkeypatch):
 
     def fake_get(url, **kwargs):
         assert kwargs["stream"] is True
-        assert kwargs["params"]["limit"] == 2000
+        assert kwargs["params"]["limit"] == 1000
         assert kwargs["params"]["include_transcript"] == "true"
         return response
 

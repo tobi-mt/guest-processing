@@ -32,7 +32,7 @@ class AskMirrorTalkClient:
     def export_episodes(
         self,
         *,
-        limit: int = 2000,
+        limit: int = 1000,
         search: str = "",
         include_transcript: bool = True,
     ) -> List[Dict[str, Any]]:
@@ -41,7 +41,7 @@ class AskMirrorTalkClient:
             response = requests.get(
                 f"{self.base_url}/api/admin/episodes/export",
                 params={
-                    "limit": max(1, min(int(limit or 2000), 2000)),
+                    "limit": max(1, min(int(limit or 1000), 2000)),
                     "search": search or "",
                     "include_transcript": "true" if include_transcript else "false",
                 },

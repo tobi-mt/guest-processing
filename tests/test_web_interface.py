@@ -7625,7 +7625,7 @@ def test_sort_interviews_handles_mixed_naive_and_aware_datetimes(temp_db):
             "guest_name": "Aware Guest",
             "guest_email": "aware@example.com",
             "title": "Aware interview",
-            "scheduled_for": "2026-04-16T18:00:00+00:00",
+            "scheduled_for": "2099-04-16T18:00:00+00:00",
             "timezone": "Europe/Berlin",
         }
     )
@@ -7634,17 +7634,24 @@ def test_sort_interviews_handles_mixed_naive_and_aware_datetimes(temp_db):
             "guest_name": "Naive Guest",
             "guest_email": "naive@example.com",
             "title": "Naive interview",
-            "scheduled_for": "2026-04-16 20:00:00",
+            "scheduled_for": "2099-04-16 20:00:00",
             "timezone": "Europe/Berlin",
         }
     )
 
     ordered = service._sort_interviews_by_upcoming_priority(
         service.database.list_interviews(),
-        reference=datetime(2026, 4, 15, 12, 0, 0),
+        reference=datetime(2099, 4, 15, 12, 0, 0),
     )
 
     assert [item["guest_name"] for item in ordered] == ["Aware Guest", "Naive Guest"]
+
+    operations = service.list_operations()
+    assert [item["guest_name"] for item in operations["interviews"][:2]] == [
+        "Aware Guest",
+        "Naive Guest",
+    ]
+    assert len(operations["booking_alerts"]["slot_conflicts"]) == 1
 
 
 def test_web_service_requires_interview_and_episode_basics(temp_db):

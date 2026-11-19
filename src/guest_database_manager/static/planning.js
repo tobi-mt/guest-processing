@@ -326,6 +326,11 @@ function dashboardRequestHeaders(options = {}, isReadRequest = false, includeJso
   };
 }
 
+function redirectToDashboardLogin() {
+  const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  window.location.assign(`/dashboard-login?next=${encodeURIComponent(next)}`);
+}
+
 const stats = {
   total: document.getElementById("plan-episodes-total"),
   released: document.getElementById("plan-episodes-released"),
@@ -460,6 +465,7 @@ async function fetchJSON(url, options = {}) {
         const requestError = new Error(data.error || "Request failed");
         requestError.status = response.status;
         requestError.payload = data;
+        if (response.status === 401) redirectToDashboardLogin();
         throw requestError;
       }
       window.clearTimeout(timeoutId);
