@@ -150,6 +150,7 @@ ASK_MIRROR_TALK_PASSWORD_ENV_VAR = "MIRROR_TALK_ASK_PASSWORD"
 RSS_AUTO_RELEASE_ENABLED_ENV_VAR = "MIRROR_TALK_RSS_AUTO_RELEASE_ENABLED"
 TRANSCRIPT_AUTO_SYNC_ENABLED_ENV_VAR = "MIRROR_TALK_TRANSCRIPT_AUTO_SYNC_ENABLED"
 TRANSCRIPT_AUTO_SYNC_INTERVAL_ENV_VAR = "MIRROR_TALK_TRANSCRIPT_AUTO_SYNC_INTERVAL_SECONDS"
+MAX_TRANSCRIPT_CHARACTERS = 5_000_000
 OPENAI_API_KEY_ENV_VAR = "MIRROR_TALK_OPENAI_API_KEY"
 OPENAI_MODEL_ENV_VAR = "MIRROR_TALK_OPENAI_MODEL"
 OPENAI_TIMEOUT_ENV_VAR = "MIRROR_TALK_OPENAI_TIMEOUT_SECONDS"
@@ -5696,22 +5697,37 @@ class GuestWebService:
         self,
         *,
         overwrite_existing: bool = False,
-        limit: int = 1000,
+        limit: int = 2000,
         search: str = "",
         preview_only: bool = False,
         approved_matches: Optional[list[Dict[str, Any]]] = None,
         approved_sources_only: bool = False,
+        require_explicit_approval: bool = False,
         actor: str = "operator",
     ) -> Dict[str, Any]:
         """Preview or apply lossless transcript matches from Ask Mirror Talk."""
         client = self._build_ask_mirror_talk_client()
         if client is None:
             raise WebInterfaceError("Ask Mirror Talk sync is not configured.")
+        if (
+            require_explicit_approval
+            and not preview_only
+            and approved_matches is None
+            and not approved_sources_only
+        ):
+            raise WebInterfaceError("Preview and approve transcript matches before applying them.")
 
         try:
             remote_episodes = client.export_episodes(limit=limit, search=search, include_transcript=True)
         except AskMirrorTalkClientError as exc:
             raise WebInterfaceError(str(exc)) from exc
+
+        for remote_episode in remote_episodes:
+            transcript = remote_episode.get("transcript_text")
+            if transcript is not None and not isinstance(transcript, str):
+                raise WebInterfaceError("Ask Mirror Talk returned an invalid transcript payload.")
+            if len(transcript or "") > MAX_TRANSCRIPT_CHARACTERS:
+                raise WebInterfaceError("Ask Mirror Talk returned an oversized transcript.")
 
         # Build indexes for O(1) lookups instead of O(n*m) nested loops
         # With 528 local episodes and 1000 remote episodes, this reduces from 528,000 to ~1,528 operations
@@ -9608,7 +9624,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             try:
                 result = self.service.sync_ask_mirror_talk_transcripts(
                     overwrite_existing=bool(payload.get("overwrite_existing")),
-                    limit=int(payload.get("limit", 1000) or 1000),
+                    limit=int(payload.get("limit", 2000) or 2000),
                     search=_normalize_text(payload.get("search")),
                     preview_only=bool(payload.get("preview_only")),
                     approved_matches=(
@@ -9616,6 +9632,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                         if isinstance(payload.get("approved_matches"), list)
                         else None
                     ),
+                    require_explicit_approval=True,
                     actor=str((self._session_claims() or {}).get("sub") or "operator"),
                 )
             except WebInterfaceError as exc:

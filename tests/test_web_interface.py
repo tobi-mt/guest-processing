@@ -4775,6 +4775,61 @@ def test_web_service_can_sync_matching_transcripts_from_ask_mirror_talk(monkeypa
     assert updated_episode["transcript_text"] == "We explored how calm grows through honest practice."
 
 
+def test_ask_sync_backend_requires_approval_when_requested(monkeypatch, temp_db):
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def export_episodes(self, **kwargs):
+            return [{
+                "id": 901,
+                "title": "Approval Boundary",
+                "transcript_text": "This must not be imported without approval.",
+            }]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+    service = GuestWebService(temp_db.db_path)
+    episode = service.create_episode({
+        "guest_name": "Approval Guest", "episode_title": "Approval Boundary"
+    })
+
+    with pytest.raises(WebInterfaceError, match="Preview and approve"):
+        service.sync_ask_mirror_talk_transcripts(require_explicit_approval=True)
+
+    assert not service.database.get_episode_by_id(episode["id"])["transcript_text"]
+
+
+@pytest.mark.parametrize("transcript", [{"unexpected": "object"}, "x" * 5_000_001])
+def test_ask_sync_rejects_invalid_or_oversized_transcripts(
+    monkeypatch, temp_db, transcript
+):
+    class StubAskMirrorTalkClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def export_episodes(self, **kwargs):
+            return [{
+                "id": 902,
+                "title": "Unsafe Transcript Payload",
+                "transcript_text": transcript,
+            }]
+
+    monkeypatch.setattr("guest_database_manager.web_interface.AskMirrorTalkClient", StubAskMirrorTalkClient)
+    monkeypatch.setenv(ASK_MIRROR_TALK_BASE_URL_ENV_VAR, "https://ask-mirror-talk.example.com")
+    monkeypatch.setenv(ASK_MIRROR_TALK_USERNAME_ENV_VAR, "admin")
+    monkeypatch.setenv(ASK_MIRROR_TALK_PASSWORD_ENV_VAR, "secret")
+    service = GuestWebService(temp_db.db_path)
+    service.create_episode({
+        "guest_name": "Safety Guest", "episode_title": "Unsafe Transcript Payload"
+    })
+
+    with pytest.raises(WebInterfaceError, match="invalid transcript|oversized transcript"):
+        service.sync_ask_mirror_talk_transcripts(preview_only=True)
+
+
 def test_ask_sync_preview_requires_approval_and_preserves_release_metadata(monkeypatch, temp_db):
     """A review pass must be non-mutating and an approved sync must be lossless."""
 
