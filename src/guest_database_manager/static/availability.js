@@ -67,6 +67,11 @@ function render() {
   const slotCount = [...document.querySelectorAll(".time-row input")].filter((input) => input.value).length;
   const codes = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
   const todayKey = iso(new Date());
+  const bookingWindow = AvailabilityWindow.bookingWindow(
+    new Date(),
+    Number(form.min_notice_hours.value || availability.min_notice_hours || 0),
+    Number(form.days_ahead.value || availability.days_ahead || 0),
+  );
   let open = 0;
   let booked = 0;
   let away = 0;
@@ -86,10 +91,17 @@ function render() {
       const manualAway = availability.blackouts.includes(key);
       const googleAway = items.some((item) => item.all_day && /podcast break|vacation|away|holiday/i.test(item.title || ""));
       const busy = items.length > 0;
-      const eligible = inside && selected.includes(codes[date.getDay()]);
+      const windowPosition = AvailabilityWindow.positionInBookingWindow(date, bookingWindow);
+      const withinBookingWindow = windowPosition === "inside";
+      const eligible = inside && withinBookingWindow && selected.includes(codes[date.getDay()]);
       const capacity = eligible ? slotCount : 0;
       const available = capacity && !busy && !manualAway && !googleAway ? capacity : 0;
-      const status = !inside ? "outside this month" : manualAway || googleAway ? "Away" : busy ? `${items.length} calendar item${items.length > 1 ? "s" : ""}` : available ? `${available} open slot${available > 1 ? "s" : ""}` : "Closed";
+      const status = !inside ? "outside this month"
+        : windowPosition === "before" ? "Before booking window"
+          : windowPosition === "after" ? "Outside booking window"
+            : manualAway || googleAway ? "Away"
+              : busy ? `${items.length} calendar item${items.length > 1 ? "s" : ""}`
+                : available ? `${available} open slot${available > 1 ? "s" : ""}` : "Closed";
       if (inside) {
         open += available;
         booked += items.length;
