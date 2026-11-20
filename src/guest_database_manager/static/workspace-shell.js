@@ -39,6 +39,7 @@
   function buildShell() {
     const density = localStorage.getItem(STORAGE.density) || "comfortable";
     document.documentElement.dataset.density = density;
+    document.body.classList.add("has-workspace-shell");
     document.body.insertAdjacentHTML("beforeend", `
       <div class="workspace-utility-bar" aria-label="Workspace tools">
         <button type="button" data-open-command>Search <kbd>⌘K</kbd></button>

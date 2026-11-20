@@ -175,6 +175,15 @@ def test_primary_page_workflows_fit_mobile_tablet_and_desktop(visual_server):
                 overflow = page.evaluate("document.documentElement.scrollWidth - innerWidth")
                 if overflow > 0:
                     failures.append(f"{viewport_name} {route}: {overflow}px horizontal overflow")
+                utility_overlap = page.evaluate("""() => {
+                  const utility = document.querySelector('.workspace-utility-bar');
+                  const content = document.querySelector('.page-shell')?.firstElementChild;
+                  if (!utility || !content || getComputedStyle(utility).display === 'none') return false;
+                  const a = utility.getBoundingClientRect(), b = content.getBoundingClientRect();
+                  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+                }""")
+                if utility_overlap:
+                    failures.append(f"{viewport_name} {route}: workspace tools overlap page content")
                 timing = page.evaluate("""() => {
                   const nav = performance.getEntriesByType('navigation')[0];
                   return {dom: nav.domContentLoadedEventEnd, load: nav.loadEventEnd};

@@ -201,6 +201,19 @@ def test_workspace_heroes_use_compact_responsive_stats_layouts() -> None:
     assert ".interview-hero .metric-grid" in operations_styles
 
 
+def test_workspace_navigation_cannot_overlap_page_actions_at_narrow_desktop_widths() -> None:
+    """The fixed desktop toolbar must yield before zoom and split-screen layouts collide."""
+    styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "workspace-shell.js").read_text(encoding="utf-8")
+
+    assert '.classList.add("has-workspace-shell")' in javascript
+    assert ".has-workspace-shell .page-shell" in styles
+    responsive = styles[styles.index("@media (max-width: 1050px)") :]
+    assert ".workspace-utility-bar { display: none; }" in responsive
+    assert ".mobile-workspace-nav" in responsive
+    assert ".has-workspace-shell .page-shell { padding-top: 32px; }" in responsive
+
+
 def test_operations_hero_uses_reusable_ai_status_styles() -> None:
     source = (STATIC_ROOT / "operations.html").read_text(encoding="utf-8")
 
@@ -477,9 +490,9 @@ def test_authenticated_workspaces_share_search_personal_view_and_mobile_navigati
     styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
     for name in ("index.html", "operations.html", "planning.html", "partners.html", "insights.html", "availability.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
-        assert 'workspace-shell.js?v=20261112.2' in html
+        assert 'workspace-shell.js?v=20261120.1' in html
         assert 'brand-system.css?v=20261018.1' in html
-        assert 'styles.css?v=20261112.1' in html
+        assert 'styles.css?v=20261120.1' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell

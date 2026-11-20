@@ -2348,6 +2348,9 @@ button:active:not(:disabled) {
   padding: 0.4rem; border: 1px solid rgba(196, 61, 0, 0.18); border-radius: 999px;
   background: rgba(18, 15, 21, 0.96); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28); backdrop-filter: blur(12px);
 }
+.has-workspace-shell .page-shell {
+  padding-top: 5.75rem;
+}
 .workspace-utility-bar button, .workspace-utility-bar a, .mobile-workspace-nav button { border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 750; cursor: pointer; padding: 0.55rem 0.7rem; text-decoration: none; }
 .workspace-utility-bar kbd { font: inherit; opacity: 0.65; }
 .workspace-dialog { width: min(720px, calc(100vw - 2rem)); max-height: min(760px, calc(100vh - 2rem)); border: 0; border-radius: 1.5rem; padding: 1.5rem; background: var(--surface-raised); color: var(--color-text); box-shadow: 0 28px 80px rgba(30, 25, 18, 0.28); }
@@ -2374,7 +2377,8 @@ button:active:not(:disabled) {
 .action-queue-expand { margin-top: 0.75rem; }
 html[data-density="compact"] .panel, html[data-density="compact"] .operations-tool, html[data-density="compact"] .guest-card, html[data-density="compact"] .episode-card { padding-top: 0.75rem; padding-bottom: 0.75rem; }
 html[data-density="compact"] .guest-card, html[data-density="compact"] .episode-card { margin-bottom: 0.55rem; }
-@media (max-width: 760px) {
+@media (max-width: 1050px) {
+  .has-workspace-shell .page-shell { padding-top: 32px; }
   body { padding-bottom: 4.25rem; }
   .page-shell:has(> #workspace-action-queue) { display: flex; flex-direction: column; }
   .page-shell:has(> #workspace-action-queue) > #workspace-action-queue { order: 1; }
