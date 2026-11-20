@@ -391,7 +391,7 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261017.4" in html
+    assert "insights.css?v=20261120.2" in html
     assert ".freshness{" in styles
     assert "background:rgba(255,255,255,.08);color:var(--text)" in styles
     assert ".freshness.current{background:rgba(93,205,169,.14);color:#9ee5cd" in styles
@@ -402,7 +402,7 @@ def test_scheduling_intelligence_sidebar_never_requires_horizontal_scrolling() -
     html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
 
-    assert 'operations.css?v=20261112.1' in html
+    assert 'operations.css?v=20261120.2' in html
     assert "overflow-x: hidden;\n  overflow-y: auto;" in styles
     assert (
         '.operations-form-panel > .workspace-panel[data-planning-panel="scheduling_intelligence"] .guest-form {\n'
@@ -431,7 +431,7 @@ def test_availability_calendar_preserves_week_context_and_accessible_dates() -> 
     assert ".calendar-day.today" in styles
     assert "overflow-x: auto" in styles
     assert "grid-template-columns: repeat(2, 1fr)" not in styles
-    assert "availability.css?v=20261017.2" in html
+    assert "availability.css?v=20261120.2" in html
     assert "availability-window.js?v=20261119.1" in html
     assert "availability.js?v=20261119.1" in html
     assert 'windowPosition === "after" ? "Outside booking window"' in javascript
@@ -490,9 +490,9 @@ def test_authenticated_workspaces_share_search_personal_view_and_mobile_navigati
     styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
     for name in ("index.html", "operations.html", "planning.html", "partners.html", "insights.html", "availability.html"):
         html = (STATIC_ROOT / name).read_text(encoding="utf-8")
-        assert 'workspace-shell.js?v=20261120.1' in html
+        assert 'workspace-shell.js?v=20261120.2' in html
         assert 'brand-system.css?v=20261018.1' in html
-        assert 'styles.css?v=20261120.1' in html
+        assert 'styles.css?v=20261120.2' in html
     assert 'id="workspace-command-dialog"' in shell
     assert "/api/search?q=" in shell
     assert "/api/personal-briefing?window=" in shell
@@ -504,6 +504,32 @@ def test_authenticated_workspaces_share_search_personal_view_and_mobile_navigati
     assert 'id="workspace-decision-dialog"' in shell
     assert shell.count('value="cancel" formnovalidate') == 2
     assert ".mobile-workspace-nav" in styles
+
+
+def test_mobile_workspace_navigation_stays_one_row_and_preserves_admin_access() -> None:
+    shell = (STATIC_ROOT / "workspace-shell.js").read_text(encoding="utf-8")
+    styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
+    settings = (STATIC_ROOT / "account-settings.html").read_text(encoding="utf-8")
+    settings_js = (STATIC_ROOT / "account-settings.js").read_text(encoding="utf-8")
+
+    mobile_nav = re.search(r'<nav class="mobile-workspace-nav".*?</nav>', shell)
+    assert mobile_nav
+    assert mobile_nav.group(0).count("<a ") == 4
+    assert mobile_nav.group(0).count("<button ") == 1
+    assert 'href="/accounts"' not in mobile_nav.group(0)
+    assert "grid-template-columns: repeat(5, minmax(0, 1fr))" in styles
+    assert 'id="manage-accounts-link" href="/accounts" hidden' in settings
+    assert 'session.role!=="super_admin"' in settings_js
+
+
+def test_mobile_action_queue_keeps_workspace_context_first_and_collapses_long_lists() -> None:
+    styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
+    utilities = (STATIC_ROOT / "performance-utils.js").read_text(encoding="utf-8")
+
+    assert "> #workspace-action-queue { order:" not in styles
+    assert 'window.matchMedia("(max-width: 700px)").matches ? 3 : 6' in utilities
+    assert "filtered.slice(0, collapsedLimit)" in utilities
+    assert "filtered.length > collapsedLimit" in utilities
 
 
 def test_guest_actions_are_grouped_by_user_intent() -> None:
@@ -547,7 +573,7 @@ def test_account_surfaces_have_labeled_fields_and_status_regions() -> None:
     assert 'brand-system.css?v=20261018.1' in login
     assert 'auth.css?v=20261018.1' in login
     assert "[hidden]" in auth_styles and "display: none !important" in auth_styles
-    assert 'auth.css?v=20261018.1' in settings
+    assert 'auth.css?v=20261120.2' in settings
 
 
 def test_guided_import_replaces_raw_json_and_exposes_history_and_reviews() -> None:
@@ -577,7 +603,7 @@ def test_learning_console_exposes_shadow_progress_and_safe_automation() -> None:
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
     assert 'id="learning-shadow-cycle"' in html
     assert "planning.js?v=20261120.1" in html
-    assert "operations.css?v=20261112.1" in html
+    assert "operations.css?v=20261120.2" in html
     assert '"/api/recommendation-learning/shadow-cycle"' in javascript
     assert "credible target" in javascript
 
@@ -650,10 +676,10 @@ def test_schedule_dialog_uses_native_modal_and_restores_focus() -> None:
     assert 'name="guest_email" type="email"' in html
 
 
-def test_mobile_work_precedes_overview_content() -> None:
+def test_mobile_workspace_identity_precedes_the_action_queue() -> None:
     styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
-    assert '.page-shell:has(> #workspace-action-queue) > #workspace-action-queue { order: 1; }' in styles
-    assert '.page-shell:has(> #workspace-action-queue) > .hero { order: 2; }' in styles
+    assert '.page-shell:has(> #workspace-action-queue) > #workspace-action-queue { order:' not in styles
+    assert '.page-shell:has(> #workspace-action-queue) > .hero { order:' not in styles
 
 
 def test_episode_administration_is_separated_from_guest_communication() -> None:

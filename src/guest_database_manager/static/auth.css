@@ -3,6 +3,8 @@
 body { min-height:100vh; margin:0; padding:24px; color:var(--color-text); font-family:var(--font-ui); background:radial-gradient(circle at 8% 0%,rgba(255,100,34,.18),transparent 30rem),radial-gradient(circle at 92% 8%,rgba(91,57,92,.22),transparent 34rem),linear-gradient(180deg,var(--color-canvas-top),var(--color-canvas)); }
 body.auth-centered { display:grid; place-items:center; }
 .auth-page { width:min(620px,100%); margin:24px auto 64px; }
+.auth-page-nav { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; margin-bottom:8px; }
+.auth-page-nav a { display:inline-flex; align-items:center; min-height:44px; }
 .auth-card,.auth-panel { background:var(--panel); border:1px solid var(--color-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); }
 .auth-card { width:min(440px,100%); padding:30px; }
 .auth-panel { padding:24px; margin:16px 0; }

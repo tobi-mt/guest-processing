@@ -184,6 +184,21 @@ def test_primary_page_workflows_fit_mobile_tablet_and_desktop(visual_server):
                 }""")
                 if utility_overlap:
                     failures.append(f"{viewport_name} {route}: workspace tools overlap page content")
+                mobile_nav_height = page.evaluate("""() => {
+                  const nav = document.querySelector('.mobile-workspace-nav');
+                  return !nav || getComputedStyle(nav).display === 'none' ? 0 : nav.getBoundingClientRect().height;
+                }""")
+                if mobile_nav_height > 64:
+                    failures.append(f"{viewport_name} {route}: mobile navigation wrapped to {mobile_nav_height:.0f}px")
+                if viewport_name == "mobile" and route in ("dashboard", "operations", "planning"):
+                    queue_items = page.locator("#workspace-action-queue .action-queue-item").count()
+                    if queue_items > 3:
+                        failures.append(f"{viewport_name} {route}: action queue shows {queue_items} items before expansion")
+                    first_is_hero = page.evaluate(
+                        "document.querySelector('.page-shell')?.firstElementChild?.classList.contains('hero')"
+                    )
+                    if not first_is_hero:
+                        failures.append(f"{viewport_name} {route}: workspace identity is not first")
                 timing = page.evaluate("""() => {
                   const nav = performance.getEntriesByType('navigation')[0];
                   return {dom: nav.domContentLoadedEventEnd, load: nav.loadEventEnd};

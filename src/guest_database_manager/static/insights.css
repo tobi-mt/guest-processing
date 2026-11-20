@@ -74,7 +74,7 @@
 .dimension-group .insight-bars{padding:0 0 18px}
 .dimension-note{margin:0;color:var(--muted);font-size:.8rem;line-height:1.45}
 .city-breakdown{margin-top:16px;border-top:1px solid var(--border);padding-top:14px}
-.city-breakdown>summary{color:var(--accent);font-size:.82rem;font-weight:800;cursor:pointer}
+.city-breakdown>summary{display:flex;align-items:center;min-height:44px;color:var(--accent);font-size:.82rem;font-weight:800;cursor:pointer}
 .city-breakdown>#city-breakdown{margin-top:8px}
 .insight-bar>div:first-child{display:flex;justify-content:space-between;gap:12px}
 .insight-bar-track{height:10px;margin:7px 0;border-radius:999px;background:#eee7dc;overflow:hidden}
@@ -84,7 +84,7 @@
 .trend-row{display:grid;grid-template-columns:1fr repeat(2,minmax(100px,.5fr));gap:12px;padding:12px;border-bottom:1px solid var(--border)}
 .trend-head{color:var(--muted);font-size:.75rem;text-transform:uppercase;font-weight:800}
 .trend-controls{display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px}
-.trend-controls button{min-height:38px;padding:7px 12px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--muted);font:inherit;font-size:.78rem;font-weight:800;cursor:pointer}
+.trend-controls button{min-height:44px;padding:7px 12px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--muted);font:inherit;font-size:.78rem;font-weight:800;cursor:pointer}
 .trend-controls button.active{border-color:var(--accent);background:var(--accent);color:var(--color-brand-ink)}
 .monthly-trend-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .trend-card{min-width:0;padding:18px;border:1px solid var(--border);border-radius:18px;background:var(--color-surface-raised)}
@@ -100,7 +100,7 @@
 .chart-axis{stroke:var(--border);stroke-width:1}
 .trend-line{fill:none;stroke:currentColor;stroke-width:4;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .trend-data{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
-.trend-data summary{color:var(--accent);font-size:.78rem;font-weight:800;cursor:pointer}
+.trend-data summary{display:flex;align-items:center;min-height:44px;color:var(--accent);font-size:.78rem;font-weight:800;cursor:pointer}
 .trend-table-wrap{max-height:320px;margin-top:10px;overflow:auto}
 .trend-data table{width:100%;border-collapse:collapse;font-size:.78rem}
 .trend-data th,.trend-data td{padding:8px;border-bottom:1px solid var(--border);text-align:right}

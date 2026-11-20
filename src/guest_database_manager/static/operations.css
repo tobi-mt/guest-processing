@@ -716,6 +716,10 @@
   .interview-hero .metric-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  .list-toolbar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -742,6 +746,12 @@
 
   .toolbar-search {
     grid-column: span 1;
+  }
+}
+
+@media (max-width: 700px) {
+  .list-toolbar {
+    grid-template-columns: 1fr;
   }
 }
 .delivery-health-grid {

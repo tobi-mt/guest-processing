@@ -20,6 +20,7 @@ fieldset { border: 0; padding: 0; }
 .overview-stats strong { font-size: 1.8rem; }
 .overview-stats small { display: block; color: var(--muted); font-size: .75rem; }
 .availability-calendar-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; padding-bottom: 4px; }
+.calendar-scroll-hint { display: none; margin: 0 0 8px; color: var(--muted); font-size: .82rem; }
 .availability-calendar { display: grid; grid-template-columns: 48px repeat(7, minmax(88px, 1fr)); gap: 8px; min-width: 720px; }
 .calendar-weekday, .calendar-week-number-heading, .calendar-week-number { display: flex; align-items: center; justify-content: center; min-height: 36px; color: var(--muted); font-size: .76rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .calendar-week-number { border-right: 1px solid var(--border); font-variant-numeric: tabular-nums; }
@@ -47,4 +48,5 @@ fieldset { border: 0; padding: 0; }
   .calendar-controls button { flex: 1; }
   .availability-calendar { grid-template-columns: 42px repeat(7, 78px); min-width: 630px; gap: 6px; }
   .calendar-day { min-height: 82px; padding: 8px; }
+  .calendar-scroll-hint { display: block; }
 }

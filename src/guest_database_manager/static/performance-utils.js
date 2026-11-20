@@ -558,7 +558,8 @@ function renderActionQueue(container, queuePayload, options = {}) {
     return true;
   });
   const expanded = container.dataset.expanded === "true";
-  const visible = expanded ? filtered : filtered.slice(0, 6);
+  const collapsedLimit = window.matchMedia("(max-width: 700px)").matches ? 3 : 6;
+  const visible = expanded ? filtered : filtered.slice(0, collapsedLimit);
   const counts = payload.counts || {};
   const generatedAt = payload.generated_at
     ? new Date(payload.generated_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
@@ -613,7 +614,7 @@ function renderActionQueue(container, queuePayload, options = {}) {
       `).join("") : `<p class="action-queue-empty">No actions match this view. The current queue is clear.</p>`}
     </div>
     <p class="action-queue-meta">Showing ${escapeUtilityHtml(visible.length)} of ${escapeUtilityHtml(filtered.length)} matching actions${payload.remaining ? ` · ${escapeUtilityHtml(payload.remaining)} lower-priority actions remain outside this focused payload` : ""}. Updated ${escapeUtilityHtml(generatedAt)}.</p>
-    ${filtered.length > 6 ? `<button type="button" class="ghost-button action-queue-expand" data-action-expand>${expanded ? "Show priority actions only" : `Show all ${escapeUtilityHtml(filtered.length)} actions`}</button>` : ""}
+    ${filtered.length > collapsedLimit ? `<button type="button" class="ghost-button action-queue-expand" data-action-expand>${expanded ? "Show priority actions only" : `Show all ${escapeUtilityHtml(filtered.length)} actions`}</button>` : ""}
   `;
 
   container.querySelectorAll("[data-action-focus]").forEach((button) => {
