@@ -530,6 +530,8 @@ def test_mobile_action_queue_keeps_workspace_context_first_and_collapses_long_li
     assert 'window.matchMedia("(max-width: 700px)").matches ? 3 : 6' in utilities
     assert "filtered.slice(0, collapsedLimit)" in utilities
     assert "filtered.length > collapsedLimit" in utilities
+    assert 'responsiveQuery.addEventListener("change"' in utilities
+    assert 'container.dataset.expanded = "false"' in utilities
 
 
 def test_guest_actions_are_grouped_by_user_intent() -> None:

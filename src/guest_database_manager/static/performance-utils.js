@@ -543,6 +543,16 @@ function escapeUtilityHtml(value) {
 
 function renderActionQueue(container, queuePayload, options = {}) {
   if (!container) return;
+  container.actionQueuePayload = queuePayload;
+  container.actionQueueOptions = options;
+  if (!container.actionQueueResponsiveBound) {
+    const responsiveQuery = window.matchMedia("(max-width: 700px)");
+    responsiveQuery.addEventListener("change", () => {
+      container.dataset.expanded = "false";
+      renderActionQueue(container, container.actionQueuePayload, container.actionQueueOptions);
+    });
+    container.actionQueueResponsiveBound = true;
+  }
   const payload = queuePayload || {};
   const allItems = Array.isArray(payload.items) ? payload.items : [];
   const activeDomain = String(options.activeDomain || "").trim();
