@@ -1303,7 +1303,11 @@ class GuestWebService:
                                 actor="podcast-analytics-automation"
                             )
                     except AnalyticsConnectorError:
-                        logger.warning("OpenPodcast analytics synchronization needs attention")
+                        safe_status = self.podcast_analytics_connectors.status().get("openpodcast", {})
+                        logger.warning(
+                            "OpenPodcast analytics synchronization needs attention (%s)",
+                            safe_status.get("last_error_code") or "sync_failed",
+                        )
                     except Exception:
                         logger.exception("OpenPodcast analytics synchronization failed")
                 try:
