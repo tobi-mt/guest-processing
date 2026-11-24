@@ -10,6 +10,7 @@ from guest_database_manager.podcast_analytics_connectors import (
     GA4_PROPERTY_ENV,
     GOOGLE_CLIENT_ID_ENV,
     GOOGLE_CLIENT_SECRET_ENV,
+    OPENPODCAST_AUTO_SYNC_ENV,
     OPENPODCAST_PODCAST_ID_ENV,
     OPENPODCAST_TOKEN_ENV,
     TOKEN_KEY_ENV,
@@ -171,6 +172,38 @@ def test_openpodcast_sync_requires_server_configuration(temp_db, monkeypatch):
     assert connectors.status()["openpodcast"]["status"] == "not_configured"
     with pytest.raises(AnalyticsConnectorError, match="not configured"):
         connectors.sync_openpodcast(actor="admin")
+
+
+def test_openpodcast_credentials_do_not_enable_optional_startup_sync(temp_db, monkeypatch):
+    monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, "server-only-openpodcast-token")
+    monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
+    monkeypatch.delenv(OPENPODCAST_AUTO_SYNC_ENV, raising=False)
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+
+    status = connectors.status()["openpodcast"]
+
+    assert status["configured"] is True
+    assert status["auto_sync_enabled"] is False
+    assert status["status"] == "manual"
+    assert connectors.openpodcast_auto_sync_due() is False
+
+
+def test_openpodcast_automatic_failure_enters_backoff(temp_db, monkeypatch):
+    monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, "server-only-openpodcast-token")
+    monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
+    monkeypatch.setenv(OPENPODCAST_AUTO_SYNC_ENV, "true")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    monkeypatch.setattr(
+        connectors, "_get_openpodcast_json",
+        lambda *_args: (_ for _ in ()).throw(AnalyticsConnectorError("provider unavailable")),
+    )
+
+    assert connectors.openpodcast_auto_sync_due() is True
+    with pytest.raises(AnalyticsConnectorError):
+        connectors.sync_openpodcast(actor="podcast-analytics-automation")
+
+    assert connectors.status()["openpodcast"]["status"] == "error"
+    assert connectors.openpodcast_auto_sync_due() is False
 
 
 def test_openpodcast_sync_identifies_failing_endpoint_without_exposing_provider_details(temp_db, monkeypatch):

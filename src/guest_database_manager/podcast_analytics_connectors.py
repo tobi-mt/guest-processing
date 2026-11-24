@@ -28,6 +28,7 @@ PUBLIC_URL_ENV = "MIRROR_TALK_PUBLIC_URL"
 COLLECTOR_TOKEN_ENV = "MIRROR_TALK_ANALYTICS_COLLECTOR_TOKEN"
 OPENPODCAST_TOKEN_ENV = "MIRROR_TALK_OPENPODCAST_TOKEN"
 OPENPODCAST_PODCAST_ID_ENV = "MIRROR_TALK_OPENPODCAST_PODCAST_ID"
+OPENPODCAST_AUTO_SYNC_ENV = "MIRROR_TALK_OPENPODCAST_AUTO_SYNC"
 OPENPODCAST_API_BASE = "https://api.openpodcast.dev/analytics/v1"
 LOCAL_COLLECTOR_PROVIDERS = {"spotify", "apple_podcasts"}
 LOCAL_COLLECTOR_STALE_AFTER = timedelta(days=2)
@@ -72,7 +73,7 @@ class PodcastAnalyticsConnectors:
         self.growth = GrowthIntelligence(db_path)
 
     @staticmethod
-    def _config() -> dict[str, str]:
+    def _config() -> dict[str, Any]:
         return {
             "client_id": os.environ.get(GOOGLE_CLIENT_ID_ENV, "").strip(),
             "client_secret": os.environ.get(GOOGLE_CLIENT_SECRET_ENV, "").strip(),
@@ -82,6 +83,9 @@ class PodcastAnalyticsConnectors:
             "collector_token": os.environ.get(COLLECTOR_TOKEN_ENV, "").strip(),
             "openpodcast_token": os.environ.get(OPENPODCAST_TOKEN_ENV, "").strip(),
             "openpodcast_podcast_id": os.environ.get(OPENPODCAST_PODCAST_ID_ENV, "").strip(),
+            "openpodcast_auto_sync": os.environ.get(
+                OPENPODCAST_AUTO_SYNC_ENV, "false"
+            ).strip().casefold() == "true",
         }
 
     @classmethod
@@ -117,7 +121,7 @@ class PodcastAnalyticsConnectors:
                    FROM analytics_browser_collectors ORDER BY provider"""
             ).fetchall()
             openpodcast_event = conn.execute(
-                """SELECT event_type, after_json, created_at FROM audit_events
+                """SELECT event_type, actor, after_json, created_at FROM audit_events
                    WHERE entity_type = 'analytics_connector' AND entity_id = 'openpodcast'
                      AND event_type IN ('analytics_sync_completed', 'analytics_sync_failed')
                    ORDER BY id DESC LIMIT 1"""
@@ -152,13 +156,26 @@ class PodcastAnalyticsConnectors:
                    ORDER BY imported_at DESC, id DESC LIMIT 1"""
             ).fetchall()]
         openpodcast_ready = bool(config["openpodcast_token"] and config["openpodcast_podcast_id"].isdigit())
+        openpodcast_auto_sync = bool(config["openpodcast_auto_sync"])
         openpodcast_event_details = json.loads(openpodcast_event["after_json"] or "{}") if openpodcast_event else {}
-        openpodcast_status = "connected" if openpodcast_rows else "ready" if openpodcast_ready else "not_configured"
-        if openpodcast_event and openpodcast_event["event_type"] == "analytics_sync_failed":
+        openpodcast_status = (
+            "connected" if openpodcast_rows else
+            "manual" if openpodcast_ready and not openpodcast_auto_sync else
+            "ready" if openpodcast_ready else "not_configured"
+        )
+        if (
+            openpodcast_event
+            and openpodcast_event["event_type"] == "analytics_sync_failed"
+            and (
+                openpodcast_auto_sync
+                or openpodcast_event["actor"] != "podcast-analytics-automation"
+            )
+        ):
             openpodcast_status = "error"
         return {
             "openpodcast": {
                 "configured": openpodcast_ready,
+                "auto_sync_enabled": openpodcast_auto_sync,
                 "status": openpodcast_status,
                 "podcast_id": config["openpodcast_podcast_id"] if openpodcast_ready else None,
                 "last_success_at": openpodcast_rows[0]["imported_at"] if openpodcast_rows else None,
@@ -168,7 +185,10 @@ class PodcastAnalyticsConnectors:
                     openpodcast_event["created_at"]
                     if openpodcast_event and openpodcast_event["event_type"] == "analytics_sync_failed" else None
                 ),
-                "required_environment": [OPENPODCAST_TOKEN_ENV, OPENPODCAST_PODCAST_ID_ENV],
+                "required_environment": [
+                    OPENPODCAST_TOKEN_ENV, OPENPODCAST_PODCAST_ID_ENV,
+                    OPENPODCAST_AUTO_SYNC_ENV,
+                ],
             },
             "google": {
                 "oauth_configured": oauth_ready,
@@ -195,6 +215,21 @@ class PodcastAnalyticsConnectors:
                 {"provider": "apple_connect", "reason": "Apple does not provide third-party podcast analytics access."},
             ],
         }
+
+    def openpodcast_auto_sync_due(
+        self, *, now: datetime | None = None, cooldown: timedelta = timedelta(hours=20)
+    ) -> bool:
+        """Return whether the optional connector is explicitly enabled and outside backoff."""
+        status = self.status().get("openpodcast", {})
+        if not status.get("configured") or not status.get("auto_sync_enabled"):
+            return False
+        reference_times = [
+            parsed for parsed in (
+                _parse_datetime(status.get("last_success_at")),
+                _parse_datetime(status.get("last_error_at")),
+            ) if parsed is not None
+        ]
+        return not reference_times or (now or _now()) - max(reference_times) >= cooldown
 
     def sync_openpodcast(self, *, actor: str, start: date | None = None, end: date | None = None) -> dict[str, Any]:
         """Collect read-only, show-level OpenPodcast evidence without persisting its bearer token."""

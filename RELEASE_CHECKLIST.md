@@ -49,6 +49,9 @@
 - On the authorized operations Mac, both collector LaunchAgents are loaded, their
   latest runs succeeded, and no collector token or provider session appears in the
   plist, application logs, or Railway logs.
+- Leave `MIRROR_TALK_OPENPODCAST_AUTO_SYNC` unset unless the optional OpenPodcast
+  account has passed a manual endpoint sync. If enabled, verify a failure enters the
+  20-hour backoff instead of retrying every worker cycle.
 - A dry-run calendar read creates no interview changes.
 - A test outbox item is claimed once and records its attempt.
 - A Resend test message records its provider ID, then changes from `accepted` to

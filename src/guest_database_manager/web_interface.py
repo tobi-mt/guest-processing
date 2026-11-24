@@ -1312,17 +1312,7 @@ class GuestWebService:
                     except Exception:
                         logger.exception("Private podcast analytics synchronization failed")
                     try:
-                        connector_status = self.podcast_analytics_connectors.status().get("openpodcast", {})
-                        last_success = connector_status.get("last_success_at")
-                        last_success_at = (
-                            datetime.fromisoformat(str(last_success).replace("Z", "+00:00"))
-                            if last_success else None
-                        )
-                        if connector_status.get("configured") and (
-                            last_success_at is None
-                            or datetime.now(timezone.utc) - last_success_at.astimezone(timezone.utc)
-                            >= timedelta(hours=20)
-                        ):
+                        if self.podcast_analytics_connectors.openpodcast_auto_sync_due():
                             self.podcast_analytics_connectors.sync_openpodcast(
                                 actor="podcast-analytics-automation"
                             )
