@@ -5,8 +5,11 @@ import pytest
 from guest_database_manager.local_analytics_collector import (
     LocalCollectorError,
     _collector_token,
+    _launch_agent_payload,
     _profile_path,
     _server_url,
+    install_schedule,
+    uninstall_schedule,
 )
 
 
@@ -27,3 +30,33 @@ def test_collector_profile_is_provider_scoped_and_owner_only(tmp_path: Path) -> 
 def test_collector_prefers_environment_token(monkeypatch) -> None:
     monkeypatch.setenv("MIRROR_TALK_ANALYTICS_COLLECTOR_TOKEN", "environment-secret")
     assert _collector_token() == "environment-secret"
+
+
+def test_launch_agent_runs_daily_sync_without_embedding_the_secret(tmp_path: Path) -> None:
+    payload = _launch_agent_payload(
+        "spotify", server="https://guest-processing.example",
+        profile_root=tmp_path / "profiles", hour=7, minute=30,
+        python_executable="/opt/mirror-talk/bin/python", logs_dir=tmp_path / "logs",
+    )
+
+    assert payload["StartCalendarInterval"] == {"Hour": 7, "Minute": 30}
+    assert payload["ProgramArguments"][:4] == [
+        "/opt/mirror-talk/bin/python", "-m",
+        "guest_database_manager.local_analytics_collector", "sync",
+    ]
+    assert "environment-secret" not in repr(payload)
+    assert payload["RunAtLoad"] is True
+
+
+def test_schedule_install_and_remove_are_user_scoped_and_reversible(tmp_path: Path) -> None:
+    launch_agents = tmp_path / "LaunchAgents"
+    path = install_schedule(
+        "apple_podcasts", server="https://guest-processing.example",
+        profile_root=tmp_path / "profiles", launch_agent_dir=launch_agents,
+        logs_dir=tmp_path / "logs", load=False,
+    )
+
+    assert path.parent == launch_agents
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert uninstall_schedule("apple_podcasts", launch_agent_dir=launch_agents, unload=False) is True
+    assert not path.exists()

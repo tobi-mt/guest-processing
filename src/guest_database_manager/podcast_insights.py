@@ -11,13 +11,13 @@ from guest_database_manager.db_connection import connect_database
 
 
 ADDITIVE_METRICS = {"downloads", "plays", "streams", "downloads_7d", "watch_time_hours"}
-AUDIENCE_METRICS = {"unique_listeners", "listeners", "followers", "subscribers"}
+AUDIENCE_METRICS = {"unique_listeners", "unique_viewers", "listeners", "followers", "subscribers"}
 DEVICE_PREFIX = "device_"
 COUNTRY_PREFIX = "country_"
 DISPLAY_METRICS = {
     "downloads", "plays", "streams", "unique_listeners", "listeners", "followers",
     "subscribers", "watch_time_hours", "average_view_duration_seconds", "organic_reach",
-    "consumption_depth_pct", "engaged_listeners",
+    "consumption_depth_pct", "engaged_listeners", "unique_viewers",
 }
 
 
@@ -109,6 +109,7 @@ class PodcastInsights:
         apple_rows = [row for row in rows if str(row["provider"]).casefold() == "apple_podcasts"]
         apple_summary = self._apple_summary(apple_rows)
         apple_monthly = self._apple_monthly(apple_rows)
+        global_rollup = self._global_rollup(rows, spotify_window, youtube_rows)
         audience_by_platform = []
         for card in provider_cards:
             for metric in AUDIENCE_METRICS:
@@ -206,6 +207,7 @@ class PodcastInsights:
                 "spotify_28d": spotify_window,
                 "spotify_lifetime": spotify_lifetime,
                 "apple": apple_summary,
+                "global_rollup": global_rollup,
                 "unique_listeners": None,
                 "unique_listener_explanation": "Cross-platform listeners are not additive; a deduplicated total requires compatible identity-level reporting from every provider.",
             },
@@ -239,9 +241,185 @@ class PodcastInsights:
             "definitions": {
                 "downloads": "Provider-reported file downloads for the selected period.",
                 "plays": "Provider-reported starts or plays; not assumed equivalent to downloads.",
+                "global_measured_activity": "Open-RSS downloads plus Spotify-native plays plus YouTube views for their latest comparable windows. Apple-native plays are excluded because Apple delivery is already represented in host-reported RSS downloads.",
                 "unique_listeners": "Distinct listeners within one provider and period; not deduplicated across platforms.",
                 "platform_strength": "The latest source-backed metrics for each provider, without a fabricated composite score.",
             },
+        }
+
+    @classmethod
+    def _global_rollup(
+        cls,
+        rows: list[dict[str, Any]],
+        spotify_window: dict[str, Any] | None,
+        youtube_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build one non-overlapping cross-channel activity total.
+
+        The hosting export is authoritative for open-RSS delivery, including Apple
+        Podcasts and the long tail of RSS clients. Provider-native Apple plays are
+        therefore intentionally not added again.
+        """
+        components: list[dict[str, Any]] = []
+        if spotify_window:
+            window_start = datetime.fromisoformat(spotify_window["period_start"]).date()
+            window_end = datetime.fromisoformat(spotify_window["period_end"]).date()
+            spotify_daily = [
+                row for row in rows
+                if str(row["provider"]).casefold() == "spotify"
+                and row["period_start"] == row["period_end"]
+                and window_start <= datetime.fromisoformat(row["period_end"]).date() <= window_end
+            ]
+            if any(row["metric_name"] in {"downloads", "downloads_7d"} for row in spotify_daily):
+                components.append({
+                    "key": "open_rss_downloads", "label": "Podcast-app downloads",
+                    "value": float(spotify_window["downloads"]),
+                    "period_start": spotify_window["period_start"],
+                    "period_end": spotify_window["period_end"],
+                    "source": "Spotify for Creators hosting delivery",
+                })
+            if any(row["metric_name"] in {"plays", "streams"} for row in spotify_daily):
+                components.append({
+                    "key": "spotify_native_plays", "label": "Spotify plays",
+                    "value": float(spotify_window["plays"]),
+                    "period_start": spotify_window["period_start"],
+                    "period_end": spotify_window["period_end"],
+                    "source": "Spotify for Creators",
+                })
+            audio_starts = sum(float(item["value"]) for item in components) if components else None
+        else:
+            host_rows = [
+                row for row in rows
+                if row["metric_name"] in {"downloads", "downloads_7d"}
+                and row.get("source_class") == "host_rss_delivery"
+            ]
+            host_period = max(
+                {(row["period_start"], row["period_end"]) for row in host_rows},
+                default=None, key=lambda value: (value[1], value[0]),
+            )
+            current_host_rows = [
+                row for row in host_rows
+                if host_period and (row["period_start"], row["period_end"]) == host_period
+            ]
+            undimensional_host_rows = [
+                row for row in current_host_rows
+                if not any(row.get(field) for field in (
+                    "country_code", "city", "device_type", "app_name", "age_group",
+                    "gender", "traffic_source", "platform_content_id",
+                ))
+            ]
+            controlling_host_rows = undimensional_host_rows or current_host_rows
+            host_downloads = sum(
+                cls._metric_total(controlling_host_rows, metric)
+                for metric in {"downloads", "downloads_7d"}
+            )
+            native_spotify_rows = [
+                row for row in rows
+                if str(row["provider"]).casefold() == "spotify"
+                and row["metric_name"] in {"plays", "streams"}
+                and row.get("source_class") == "provider_native"
+            ]
+            spotify_plays, spotify_period = cls._latest_family_total(
+                native_spotify_rows, {"plays", "streams"}
+            )
+            audio_starts = None
+            if host_period:
+                components.append({
+                    "key": "open_rss_downloads", "label": "Podcast-app downloads",
+                    "value": host_downloads, "period_start": host_period[0],
+                    "period_end": host_period[1], "source": "Podcast hosting delivery",
+                })
+            if spotify_period:
+                components.append({
+                    "key": "spotify_native_plays", "label": "Spotify plays",
+                    "value": spotify_plays, "period_start": spotify_period[0],
+                    "period_end": spotify_period[1], "source": "Spotify for Creators",
+                })
+            audio_components = [item for item in components if item["key"] != "youtube_views"]
+            if audio_components:
+                audio_starts = sum(float(item["value"]) for item in audio_components)
+
+        video_views, video_period = cls._latest_family_total(youtube_rows, {"plays", "streams"})
+        if video_period:
+            components.append({
+                "key": "youtube_views", "label": "YouTube views", "value": video_views,
+                "period_start": video_period[0], "period_end": video_period[1],
+                "source": "YouTube Analytics",
+            })
+
+        total = sum(float(item["value"]) for item in components) if components else None
+        starts = [datetime.fromisoformat(item["period_start"]).date() for item in components]
+        ends = [datetime.fromisoformat(item["period_end"]).date() for item in components]
+        aligned = len(ends) < 2 or (
+            (max(starts) - min(starts)).days <= 7 and (max(ends) - min(ends)).days <= 7
+        )
+        expected = {"open_rss_downloads", "spotify_native_plays", "youtube_views"}
+        present = {item["key"] for item in components}
+
+        audience_rows = [
+            row for row in rows
+            if row["metric_name"] in {"unique_listeners", "unique_viewers"}
+            and row.get("episode_id") is None
+        ]
+        audience_period = max(
+            {(row["period_start"], row["period_end"]) for row in audience_rows},
+            default=None, key=lambda value: (value[1], value[0]),
+        )
+        audience_sources: list[dict[str, Any]] = []
+        if audience_period:
+            current = [
+                row for row in audience_rows
+                if (row["period_start"], row["period_end"]) == audience_period
+            ]
+            if any(
+                row["metric_name"] == "unique_listeners"
+                and row.get("source_class") == "host_cross_platform_aggregate"
+                for row in current
+            ):
+                current = [
+                    row for row in current
+                    if row["metric_name"] == "unique_viewers"
+                    or row.get("source_class") == "host_cross_platform_aggregate"
+                ]
+            for provider in sorted({str(row["provider"]) for row in current}):
+                provider_rows = [row for row in current if str(row["provider"]) == provider]
+                preferred_metric = (
+                    "unique_viewers"
+                    if any(row["metric_name"] == "unique_viewers" for row in provider_rows)
+                    else "unique_listeners"
+                )
+                value = cls._metric_total(provider_rows, preferred_metric)
+                audience_sources.append({"provider": provider, "value": value})
+        reach_range = None
+        if audience_sources:
+            values = [float(item["value"]) for item in audience_sources]
+            reach_range = {
+                "minimum": max(values),
+                "maximum": sum(values) if len(values) > 1 else None,
+                "period_start": audience_period[0],
+                "period_end": audience_period[1],
+                "source_count": len(values),
+                "explanation": (
+                    "The lower bound is the largest provider audience; the upper bound assumes no person used more than one provider."
+                    if len(values) > 1 else
+                    "Only one distinct-audience source is available, so a cross-platform upper bound cannot be calculated."
+                ),
+            }
+
+        return {
+            "measured_activity": total,
+            "audio_starts": audio_starts,
+            "video_views": video_views if video_period else None,
+            "components": components,
+            "coverage": "complete" if expected <= present else "partial" if components else "no_data",
+            "period_alignment": "aligned" if aligned else "directional",
+            "period_start": min((item["period_start"] for item in components), default=None),
+            "period_end": max((item["period_end"] for item in components), default=None),
+            "reach_range": reach_range,
+            "excluded_from_total": [
+                "Apple-native plays and engagement, because Apple downloads are already included in hosting delivery.",
+                "Public listing checks, because availability is not consumption.",
+            ],
         }
 
     @staticmethod

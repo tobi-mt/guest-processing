@@ -25,6 +25,8 @@
 .summary-card span{color:var(--muted);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
 .summary-card strong{font-size:clamp(1.4rem,3vw,2.2rem);overflow-wrap:anywhere}
 .summary-card small{color:var(--muted);line-height:1.45}
+.summary-card.global{border-color:rgba(93,205,169,.45);background:linear-gradient(145deg,rgba(30,100,81,.24),var(--panel-strong))}
+.summary-card.global strong{color:#9ee5cd}
 .reach-highlights{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
 .highlight-card{padding:18px 20px;border-radius:20px;background:#24201e;color:#f9f5ea;box-shadow:var(--shadow)}
 .highlight-card span{display:block;color:#b9d7cd;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em}

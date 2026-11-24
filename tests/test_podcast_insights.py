@@ -36,6 +36,89 @@ def test_insights_never_invents_cross_platform_listener_total(temp_db):
     assert result["quality"]["status"] == "partial"
 
 
+def test_global_rollup_counts_each_delivery_channel_once(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "spotify", "metric_name": "downloads", "metric_value": 100,
+         "period_start": "2026-11-01", "period_end": "2026-11-28", "source_reference": "spotify.csv",
+         "source_class": "host_rss_delivery", "overlap_group": "open_rss_downloads"},
+        {"provider": "spotify", "metric_name": "plays", "metric_value": 50,
+         "period_start": "2026-11-01", "period_end": "2026-11-28", "source_reference": "spotify.csv",
+         "source_class": "provider_native", "overlap_group": "spotify_native_plays"},
+        {"provider": "apple_podcasts", "metric_name": "plays", "metric_value": 80,
+         "period_start": "2026-11-01", "period_end": "2026-11-28", "source_reference": "apple.csv",
+         "source_class": "provider_native", "overlap_group": "apple_native_plays"},
+        {"provider": "youtube:channel", "metric_name": "plays", "metric_value": 40,
+         "period_start": "2026-11-01", "period_end": "2026-11-28", "source_reference": "youtube-api",
+         "source_class": "video_platform_consumption", "overlap_group": "youtube_native_plays"},
+    ]}, actor="automation")
+
+    rollup = PodcastInsights(temp_db.db_path).dashboard()["summary"]["global_rollup"]
+
+    assert rollup["measured_activity"] == 190
+    assert rollup["audio_starts"] == 150
+    assert rollup["video_views"] == 40
+    assert rollup["coverage"] == "complete"
+    assert all("Apple" not in item["label"] for item in rollup["components"])
+
+
+def test_global_rollup_bounds_people_instead_of_adding_overlapping_audiences(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "spotify", "metric_name": "unique_listeners", "metric_value": 70,
+         "period_start": "2026-11-01", "period_end": "2026-11-28", "source_reference": "spotify.csv",
+         "source_class": "host_cross_platform_aggregate"},
+        {"provider": "apple_podcasts", "metric_name": "unique_listeners", "metric_value": 20,
+         "period_start": "2026-11-01", "period_end": "2026-11-28", "source_reference": "apple.csv",
+         "source_class": "provider_native"},
+        {"provider": "youtube:channel", "metric_name": "unique_viewers", "metric_value": 30,
+         "period_start": "2026-11-01", "period_end": "2026-11-28", "source_reference": "youtube-export.csv"},
+    ]}, actor="automation")
+
+    reach = PodcastInsights(temp_db.db_path).dashboard()["summary"]["global_rollup"]["reach_range"]
+
+    assert reach["minimum"] == 70
+    assert reach["maximum"] == 100
+    assert reach["source_count"] == 2
+
+
+def test_global_rollup_does_not_claim_missing_zero_value_channels(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "spotify", "metric_name": "unique_listeners", "metric_value": 7,
+         "period_start": "2026-11-21", "period_end": "2026-11-21", "source_reference": "spotify.csv",
+         "source_class": "host_cross_platform_aggregate"},
+        {"provider": "youtube:channel", "metric_name": "plays", "metric_value": 40,
+         "period_start": "2026-10-25", "period_end": "2026-11-21", "source_reference": "youtube-api"},
+    ]}, actor="automation")
+
+    rollup = PodcastInsights(temp_db.db_path).dashboard()["summary"]["global_rollup"]
+
+    assert rollup["measured_activity"] == 40
+    assert rollup["audio_starts"] is None
+    assert rollup["coverage"] == "partial"
+    assert [item["key"] for item in rollup["components"]] == ["youtube_views"]
+
+
+def test_global_rollup_prefers_host_total_over_its_app_breakdown(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    common = {
+        "provider": "podcast_host", "metric_name": "downloads",
+        "period_start": "2026-11-01", "period_end": "2026-11-28",
+        "source_class": "host_rss_delivery", "overlap_group": "open_rss_downloads",
+    }
+    service.record_growth_observations({"observations": [
+        {**common, "metric_value": 100, "source_reference": "host-total.csv"},
+        {**common, "metric_value": 60, "source_reference": "host-apps.csv", "app_name": "Apple Podcasts"},
+        {**common, "metric_value": 40, "source_reference": "host-apps.csv", "app_name": "Pocket Casts"},
+    ]}, actor="automation")
+
+    rollup = PodcastInsights(temp_db.db_path).dashboard()["summary"]["global_rollup"]
+
+    assert rollup["audio_starts"] == 100
+    assert rollup["measured_activity"] == 100
+
+
 def test_insights_support_source_backed_device_and_country_dimensions(temp_db):
     service = GuestWebService(temp_db.db_path)
     service.record_growth_observations({"observations": [

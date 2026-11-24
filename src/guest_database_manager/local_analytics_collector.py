@@ -7,7 +7,9 @@ Only downloaded CSV contents are sent to the configured Mirror Talk server.
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -24,6 +26,7 @@ DEFAULT_URLS = {
     "spotify": "https://creators.spotify.com/analytics",
     "apple_podcasts": "https://podcastsconnect.apple.com/analytics",
 }
+LAUNCH_AGENT_PREFIX = "com.mirrortalk.analytics"
 
 
 class LocalCollectorError(RuntimeError):
@@ -42,6 +45,24 @@ def _collector_token() -> str:
         if result.returncode == 0:
             return result.stdout.strip()
     return ""
+
+
+def save_collector_token() -> None:
+    """Store the Railway ingestion token in the current macOS user's Keychain."""
+    if sys.platform != "darwin":
+        raise LocalCollectorError("Secure token setup is currently supported on macOS only.")
+    token = getpass.getpass("Railway analytics collector token: ").strip()
+    if len(token) < 32:
+        raise LocalCollectorError("The collector token must contain at least 32 characters.")
+    result = subprocess.run(
+        [
+            "security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE,
+            "-a", getpass.getuser(), "-w", token,
+        ],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise LocalCollectorError("The collector token could not be saved in macOS Keychain.")
 
 
 def _server_url(value: str) -> str:
@@ -160,10 +181,88 @@ def sync_once(
         raise LocalCollectorError("The local provider collection run failed safely.") from exc
 
 
+def _launch_agent_payload(
+    provider: str, *, server: str, profile_root: Path, hour: int = 6, minute: int = 15,
+    python_executable: str | None = None, logs_dir: Path | None = None,
+) -> dict:
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise LocalCollectorError("Schedule hour and minute must form a valid local time.")
+    server = _server_url(server)
+    logs = (logs_dir or (Path.home() / "Library" / "Logs" / "MirrorTalkAnalyticsCollector")).expanduser()
+    label = f"{LAUNCH_AGENT_PREFIX}.{provider}"
+    return {
+        "Label": label,
+        "ProgramArguments": [
+            python_executable or sys.executable,
+            "-m", "guest_database_manager.local_analytics_collector",
+            "sync", provider,
+            "--server", server,
+            "--profile-root", str(profile_root.expanduser().resolve()),
+        ],
+        "RunAtLoad": True,
+        "StartCalendarInterval": {"Hour": hour, "Minute": minute},
+        "ProcessType": "Background",
+        "StandardOutPath": str(logs / f"{provider}.log"),
+        "StandardErrorPath": str(logs / f"{provider}.error.log"),
+    }
+
+
+def install_schedule(
+    provider: str, *, server: str, profile_root: Path, hour: int = 6, minute: int = 15,
+    launch_agent_dir: Path | None = None, logs_dir: Path | None = None,
+    load: bool = True,
+) -> Path:
+    """Install a daily, user-scoped macOS LaunchAgent for one provider."""
+    if sys.platform != "darwin" and load:
+        raise LocalCollectorError("Automatic local collector scheduling is currently supported on macOS only.")
+    if load and len(_collector_token()) < 32:
+        raise LocalCollectorError("Save the Railway collector token in macOS Keychain first.")
+    agent_dir = (launch_agent_dir or (Path.home() / "Library" / "LaunchAgents")).expanduser()
+    logs = (logs_dir or (Path.home() / "Library" / "Logs" / "MirrorTalkAnalyticsCollector")).expanduser()
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    logs.mkdir(parents=True, exist_ok=True)
+    path = agent_dir / f"{LAUNCH_AGENT_PREFIX}.{provider}.plist"
+    payload = _launch_agent_payload(
+        provider, server=server, profile_root=profile_root, hour=hour, minute=minute,
+        logs_dir=logs,
+    )
+    with path.open("wb") as handle:
+        plistlib.dump(payload, handle, sort_keys=True)
+    path.chmod(0o600)
+    if load:
+        domain = f"gui/{os.getuid()}"
+        subprocess.run(["launchctl", "bootout", domain, str(path)], check=False, capture_output=True)
+        result = subprocess.run(
+            ["launchctl", "bootstrap", domain, str(path)], check=False, capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise LocalCollectorError("The daily collector schedule could not be loaded by macOS.")
+    return path
+
+
+def uninstall_schedule(
+    provider: str, *, launch_agent_dir: Path | None = None, unload: bool = True,
+) -> bool:
+    if sys.platform != "darwin" and unload:
+        raise LocalCollectorError("Automatic local collector scheduling is currently supported on macOS only.")
+    path = (launch_agent_dir or (Path.home() / "Library" / "LaunchAgents")).expanduser() / (
+        f"{LAUNCH_AGENT_PREFIX}.{provider}.plist"
+    )
+    if unload and path.exists():
+        subprocess.run(
+            ["launchctl", "bootout", f"gui/{os.getuid()}", str(path)],
+            check=False, capture_output=True,
+        )
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Mirror Talk local private-analytics collector")
-    parser.add_argument("command", choices=("login", "sync"))
-    parser.add_argument("provider", choices=tuple(DEFAULT_URLS))
+    parser.add_argument("command", choices=("save-token", "login", "sync", "install-schedule", "uninstall-schedule"))
+    parser.add_argument("provider", nargs="?", choices=tuple(DEFAULT_URLS))
     parser.add_argument("--server", default=os.environ.get("MIRROR_TALK_PUBLIC_URL", ""))
     parser.add_argument("--url", default="")
     parser.add_argument(
@@ -171,16 +270,39 @@ def create_parser() -> argparse.ArgumentParser:
         default=Path.home() / "Library" / "Application Support" / "MirrorTalkAnalyticsCollector",
     )
     parser.add_argument("--headed", action="store_true", help="Show the provider page during synchronization")
+    parser.add_argument("--hour", type=int, default=6, help="Local hour for the daily scheduled sync")
+    parser.add_argument("--minute", type=int, default=15, help="Local minute for the daily scheduled sync")
     return parser
 
 
 def main() -> None:
     args = create_parser().parse_args()
+    if args.command == "save-token":
+        try:
+            save_collector_token()
+            print("Collector token saved in macOS Keychain.")
+        except LocalCollectorError as exc:
+            print(f"Collector stopped: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        return
+    if not args.provider:
+        raise SystemExit("A provider is required for this command.")
     url = args.url or DEFAULT_URLS[args.provider]
     try:
         if args.command == "login":
             login(args.provider, profile_root=args.profile_root, url=url)
             print(f"Local {args.provider} browser session retained; no password was stored by Mirror Talk.")
+            return
+        if args.command == "install-schedule":
+            path = install_schedule(
+                args.provider, server=args.server, profile_root=args.profile_root,
+                hour=args.hour, minute=args.minute,
+            )
+            print(f"Daily {args.provider} synchronization installed: {path}")
+            return
+        if args.command == "uninstall-schedule":
+            removed = uninstall_schedule(args.provider)
+            print(f"Daily {args.provider} synchronization {'removed' if removed else 'was not installed'}.")
             return
         result = sync_once(
             args.provider,

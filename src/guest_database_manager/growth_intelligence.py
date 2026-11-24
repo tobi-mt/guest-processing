@@ -37,6 +37,7 @@ CANONICAL_METRICS = {
     "plays": "count",
     "streams": "count",
     "unique_listeners": "count",
+    "unique_viewers": "count",
     "listeners": "count",
     "followers": "count",
     "followers_gained": "count",

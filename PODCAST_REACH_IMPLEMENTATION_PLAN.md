@@ -117,7 +117,7 @@ Current registry coverage comprises direct/owned listings, catalog listings, RSS
 
 ### Workstream C — Automated private analytics
 
-Status: Google is scheduled; configured aggregation sync is now scheduled with a 20-hour freshness guard; local collectors exist.
+Status: Google is scheduled; configured aggregation sync has a 20-hour freshness guard; Spotify and Apple collectors now include a daily macOS LaunchAgent installer after one owner-approved login.
 
 - Backfill Google/YouTube in bounded windows, then collect daily with overlap for provider corrections.
 - Collect YouTube totals, devices, countries, demographics, traffic sources, average view percentage, and video-level performance.
@@ -125,6 +125,20 @@ Status: Google is scheduled; configured aggregation sync is now scheduled with a
 - Keep provider sessions and passwords out of Railway.
 - Quarantine unknown export schemas and require a reviewed parser update.
 - Treat the aggregation connector as secondary evidence until provenance and commercial access are verified.
+
+The executive roll-up uses one explicit accounting equation: hosting-reported open-RSS downloads (including Apple and long-tail podcast apps) + Spotify-native plays + YouTube views. Apple-native plays remain a diagnostic metric and are not added again. Exact cross-platform people cannot be deduplicated without shared identities; when compatible distinct-audience sources are present, Podcast Reach reports a lower/upper bound instead of a fabricated total.
+
+Authorized operations-machine setup:
+
+```bash
+python3 -m guest_database_manager.local_analytics_collector save-token
+python3 -m guest_database_manager.local_analytics_collector login spotify
+python3 -m guest_database_manager.local_analytics_collector install-schedule spotify --server https://guest-processing-production.up.railway.app
+python3 -m guest_database_manager.local_analytics_collector login apple_podcasts
+python3 -m guest_database_manager.local_analytics_collector install-schedule apple_podcasts --server https://guest-processing-production.up.railway.app
+```
+
+The daily jobs keep credentials, MFA, cookies, and browser profiles on the owner-controlled Mac. Only validated CSV observations are uploaded to Railway.
 
 Acceptance:
 
@@ -200,9 +214,9 @@ Service objectives:
 
 - Configure Google OAuth, token encryption, GA4 property, and each owned YouTube channel.
 - Configure and validate the aggregation connector if retained.
-- Install the local collector on the authorized operations machine.
+- Install the local collector and daily schedules on the authorized operations Mac.
 - Run supervised Spotify and Apple logins and an initial historical export.
-- Add OS-level schedules and heartbeat monitoring for local collection.
+- Confirm both LaunchAgents run at load and daily, then verify their server-side heartbeat and reauthorization alerts.
 
 ### Release 3 — Backfill and reconciliation
 

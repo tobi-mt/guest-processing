@@ -110,7 +110,6 @@ function renderTopPlatformContent(items) {
 function render(payload) {
   const summary = payload.summary || {}; const quality = payload.quality || {};
   const release = payload.release_readiness || {};
-  const catalog = payload.public_catalog || {};
   const providers = payload.provider_strength || [];
   const youtubeChannels = providers.filter((item) => item.provider === "youtube" || item.provider.startsWith("youtube:"));
   const youtubeMetricTotal = (metric) => youtubeChannels.reduce((total, item) => total + Number(item.metrics?.[metric] || 0), 0);
@@ -149,23 +148,32 @@ function render(payload) {
   };
   document.querySelectorAll("#refresh-podcast-reach,[data-refresh-reach]").forEach((button) => button.addEventListener("click", () => refreshReach(button)));
   const spotify = summary.spotify_28d || {};
+  const global = summary.global_rollup || {};
+  const reach = global.reach_range || {};
+  const reachValue = reach.minimum == null ? "Not yet measurable" : reach.maximum == null ? `At least ${number(reach.minimum)}` : `${number(reach.minimum)}–${number(reach.maximum)}`;
+  const audioComponents = (global.components || []).filter((item) => item.key !== "youtube_views");
+  const audioDetail = audioComponents.length
+    ? audioComponents.map((item) => `${number(item.value)} ${String(item.label || "activity").toLowerCase()}`).join(" · ")
+    : "Hosting data covers every RSS listening app";
+  const activityDetail = global.measured_activity == null
+    ? "Connect the hosting account and YouTube to calculate this"
+    : `${global.coverage === "complete" ? "All primary channels" : "Connected channels"} · ${global.period_alignment === "directional" ? "windows differ" : `through ${global.period_end}`}`;
   document.getElementById("insights-summary").innerHTML = [
-    ["Episodes available", number(catalog.published_episodes), `Latest release ${catalog.latest_release || "is being checked"}`],
-    ["Audio activity · 28 days", spotify.period_end ? number(Number(spotify.downloads || 0) + Number(spotify.plays || 0)) : "—", spotify.period_end ? `${number(spotify.downloads)} downloads · ${number(spotify.plays)} Spotify plays` : "Connect Spotify to begin"],
-    ["YouTube views", number(summary.plays), summary.plays_period_end ? `Latest window through ${summary.plays_period_end}` : "Connect YouTube to begin"],
+    ["Total measured activity", number(global.measured_activity), activityDetail, "global"],
+    ["Audio starts", number(global.audio_starts), audioDetail],
+    ["Video views", number(global.video_views), summary.plays_period_end ? `YouTube window through ${summary.plays_period_end}` : "Connect YouTube to begin"],
     ["Places to listen", number(summary.verified_platforms), `${number(summary.distribution_coverage_pct)}% of known destinations confirmed`],
-  ].map(([label,value,detail]) => `<article class="summary-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
+  ].map(([label,value,detail,className]) => `<article class="summary-card ${className || ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
   const youtubeDevices = (payload.devices || []).filter((item) => item.provider === "youtube" || item.provider.startsWith("youtube:"));
   const youtubeDeviceTotal = youtubeDevices.reduce((total, item) => total + Number(item.value || 0), 0);
   const youtubeMobileValue = youtubeDevices.filter((item) => item.name === "Mobile").reduce((total, item) => total + Number(item.value || 0), 0);
   const youtubeMobileShare = youtubeDeviceTotal ? Math.round(youtubeMobileValue * 1000 / youtubeDeviceTotal) / 10 : null;
-  const weightedDuration = youtubeChannels.reduce((total, item) => total + Number(item.metrics?.average_view_duration_seconds || 0) * Number(item.metrics?.plays || 0), 0) / Math.max(youtubeMetricTotal("plays"), 1);
-  const websiteCountries = (payload.countries || []).filter((item) => item.provider === "website");
-  const topCountry = [...websiteCountries].sort((left, right) => Number(right.value) - Number(left.value))[0];
+  const hasViewDuration = youtubeChannels.some((item) => item.metrics?.average_view_duration_seconds != null);
+  const weightedDuration = hasViewDuration ? youtubeChannels.reduce((total, item) => total + Number(item.metrics?.average_view_duration_seconds || 0) * Number(item.metrics?.plays || 0), 0) / Math.max(youtubeMetricTotal("plays"), 1) : null;
   document.getElementById("reach-highlights").innerHTML = [
+    ["People reached", reachValue, reach.minimum == null ? "Platforms do not expose one shared person ID. Compatible unique-audience reports are kept separate until a truthful range is possible." : reach.explanation],
     ["How people watch", youtubeMobileShare == null ? "Connect YouTube for device mix" : `${youtubeMobileShare}% watch on mobile`, youtubeMobileShare == null ? "One connection unlocks mobile, TV, desktop, and tablet viewing." : `${number(youtubeMobileValue)} recent views came from mobile devices.`],
-    ["How long they stay", youtubeChannels.length ? duration(weightedDuration) : "Connect YouTube for watch time", youtubeChannels.length ? "Average viewing time across connected channels." : "Viewing depth appears after the first channel sync."],
-    ["Where interest is strongest", topCountry ? `${topCountry.name} · ${topCountry.share_pct}%` : "Connect website analytics for geography", topCountry ? `${number(topCountry.value)} recent website visitors came from the leading country.` : "Country insight appears after website analytics is connected."],
+    ["How long they stay", hasViewDuration ? duration(weightedDuration) : "Watch-time detail unavailable", hasViewDuration ? "Average viewing time across connected channels." : "The connected source has not returned average viewing duration yet."],
   ].map(([label,value,detail]) => `<article class="highlight-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><p>${escapeHtml(detail)}</p></article>`).join("");
   const spotifyLifetime = summary.spotify_lifetime || {};
   const apple = summary.apple || {};

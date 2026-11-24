@@ -43,6 +43,12 @@
 - Podcast Reach release readiness reports current migration 46, complete public
   discovery, fresh YouTube analytics, connected Spotify and Apple collectors, and
   fresh provider evidence. Known unavailable destinations remain explicit warnings.
+- Podcast Reach's global activity total reconciles to open-RSS downloads +
+  Spotify-native plays + YouTube views for comparable windows. Confirm Apple-native
+  plays are visible in the deep dive but excluded from the executive total.
+- On the authorized operations Mac, both collector LaunchAgents are loaded, their
+  latest runs succeeded, and no collector token or provider session appears in the
+  plist, application logs, or Railway logs.
 - A dry-run calendar read creates no interview changes.
 - A test outbox item is claimed once and records its attempt.
 - A Resend test message records its provider ID, then changes from `accepted` to
