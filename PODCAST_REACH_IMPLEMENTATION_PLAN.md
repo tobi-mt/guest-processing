@@ -79,7 +79,7 @@ AI never fills missing provider measurements. It may explain, forecast, or recom
 
 ### Workstream A — Evidence correctness
 
-Status: implemented in migrations 44–45 and the analytics service.
+Status: implemented in migrations 44–46 and the analytics service.
 
 - Version corrected provider values instead of silently discarding them.
 - Preserve immutable historical observations.
@@ -190,7 +190,7 @@ Service objectives:
 
 ### Release 1 — Correctness foundation
 
-- Apply migrations 44–45 on empty, current-copy, and representative legacy databases.
+- Apply migrations 44–46 on empty, current-copy, and representative legacy databases.
 - Deploy revision-aware ingestion and current-view reads.
 - Deploy dynamic registry-backed platform cards.
 - Enable overlap groups on provider adapters.

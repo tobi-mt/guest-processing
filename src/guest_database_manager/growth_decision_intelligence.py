@@ -114,9 +114,9 @@ class GrowthDecisionIntelligence:
             recommendations.append({
                 "id": "release-cadence",
                 "priority": "medium" if cadence_pct < 70 else "normal",
-                "action": "Stabilize the release cadence before attributing performance changes to episode choices."
-                if cadence_pct < 70 else "Keep the established release cadence as the control for future content experiments.",
-                "rationale": f"{cadence_pct:.1f}% of the last {cadence['intervals_analyzed']} release intervals were within two days of the {cadence['median_days_between_releases']}-day median.",
+                "action": "Publish more consistently before judging which episode choices work best."
+                if cadence_pct < 70 else "Keep publishing on the established schedule so future comparisons stay meaningful.",
+                "rationale": f"{cadence_pct:.1f}% of the last {cadence['intervals_analyzed']} releases stayed close to the usual {cadence['median_days_between_releases']}-day rhythm.",
                 "confidence": "high" if cadence["intervals_analyzed"] >= 20 else "medium",
                 "ranking_changed": False,
             })
@@ -125,8 +125,8 @@ class GrowthDecisionIntelligence:
             recommendations.append({
                 "id": "learning-evidence",
                 "priority": "high",
-                "action": "Keep adaptive ranking in shadow mode and continue linking recommendation outcomes.",
-                "rationale": f"Only {linked} independently linked outcomes are available; the activation gate requires {minimum}.",
+                "action": "Keep recording what happened after each recommendation before automating episode choices.",
+                "rationale": f"{linked} completed outcomes are connected so far; {minimum} are needed for a dependable comparison.",
                 "confidence": "high",
                 "ranking_changed": False,
             })

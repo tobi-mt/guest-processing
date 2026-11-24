@@ -1876,6 +1876,22 @@ class SchemaManager:
                WHERE platform_key IN ('spotify','apple_podcasts','youtube','amazon_music','iheartradio','rss')"""
         )
 
+    @staticmethod
+    def _migration_046_podcast_reach_release_hardening(conn: sqlite3.Connection) -> None:
+        """Repair early migration-44 databases and guarantee the analytics leader lease."""
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS analytics_job_leases (
+                job_key TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                acquired_at TIMESTAMP NOT NULL,
+                lease_until TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analytics_job_leases_expiry ON analytics_job_leases(lease_until)"
+        )
+
 
     @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
@@ -1928,6 +1944,7 @@ class SchemaManager:
             (43, "representatives_cc_all_guest_email", SchemaManager._migration_043_representatives_cc_all_guest_email),
             (44, "podcast_reach_reliability", SchemaManager._migration_044_podcast_reach_reliability),
             (45, "expanded_podcast_distribution", SchemaManager._migration_045_expanded_podcast_distribution),
+            (46, "podcast_reach_release_hardening", SchemaManager._migration_046_podcast_reach_release_hardening),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

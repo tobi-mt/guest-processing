@@ -391,8 +391,8 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261120.2" in html
-    assert "insights.js?v=20261124.4" in html
+    assert "insights.css?v=20261124.1" in html
+    assert "insights.js?v=20261124.5" in html
     assert ".freshness{" in styles
     assert "background:rgba(255,255,255,.08);color:var(--text)" in styles
     assert ".freshness.current{background:rgba(93,205,169,.14);color:#9ee5cd" in styles
@@ -725,6 +725,9 @@ def test_scheduling_intelligence_prioritizes_decisions_and_guides_evidence_impor
     assert 'id="listening-app-breakdown"' in insights_html
     assert 'id="video-performance"' in insights_html
     assert 'id="release-readiness"' in insights_html
+    assert "Know what is growing. Decide what to do next." in insights_html
+    assert "Open the audience and platform deep dive" in insights_html
+    assert 'id="analytics-import" class="panel disclosure-panel analytics-import-panel"' in insights_html
     assert 'class="operations-tool scheduling-admin-hub"' in html
     assert 'id="recommendation-comparison-grid"' in html
     assert 'request("/api/growth-intelligence/preview"' in javascript

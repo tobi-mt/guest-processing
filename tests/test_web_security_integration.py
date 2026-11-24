@@ -179,6 +179,34 @@ def test_podcast_release_readiness_is_admin_only_and_fails_closed(monkeypatch, t
         assert authorized.json()["blocker_count"] > 0
 
 
+def test_podcast_reach_refresh_is_admin_only_and_returns_safe_source_states(monkeypatch, temp_db):
+    configure_auth(monkeypatch)
+    monkeypatch.setattr(
+        GuestWebService,
+        "refresh_podcast_reach",
+        lambda _service, *, actor: {
+            "public_distribution": {"status": "completed"},
+            "youtube": {"status": "needs_setup"},
+            "openpodcast": {"status": "not_configured"},
+            "local_collectors": {"configured": False},
+            "actor": actor,
+        },
+    )
+    with running_server(temp_db.db_path) as base_url:
+        session = requests.Session()
+        assert login(session, base_url).status_code == 200
+        response = session.post(
+            f"{base_url}/api/podcast-reach/refresh",
+            json={},
+            headers={"X-CSRF-Token": session.cookies["dashboard_csrf"]},
+            timeout=5,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["public_distribution"]["status"] == "completed"
+        assert response.json()["youtube"]["status"] == "needs_setup"
+
+
 def test_cookie_authenticated_write_requires_matching_csrf(monkeypatch, temp_db):
     configure_auth(monkeypatch)
     with running_server(temp_db.db_path) as base_url:

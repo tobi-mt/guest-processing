@@ -7,22 +7,22 @@
   <link rel="stylesheet" href="/static/brand-system.css?v=20261018.1">
   <link rel="stylesheet" href="/static/styles.css?v=20261120.2">
   <link rel="stylesheet" href="/static/operations.css?v=20261120.2">
-  <link rel="stylesheet" href="/static/insights.css?v=20261120.2">
+  <link rel="stylesheet" href="/static/insights.css?v=20261124.1">
 </head>
 <body class="page-loading">
 <div class="page-loading-indicator" role="status" aria-live="polite"><span>Preparing podcast intelligence…</span></div>
 <div class="page-shell insights-shell">
   <header class="hero insights-hero">
-    <div><p class="eyebrow">Podcast intelligence</p><h1>Source-backed reach, without guesswork.</h1><p class="hero-copy">A live view of Mirror Talk across YouTube, the website, podcast distribution, devices, geography, and measurement coverage.</p></div>
-    <nav class="insights-nav" aria-label="Podcast intelligence workspaces"><a class="dashboard-link" href="#analytics-import">Import analytics</a><a class="dashboard-link" href="/planning">Episode Planning</a><a class="dashboard-link" href="/partners">Partner Intelligence</a><a class="dashboard-link" href="/dashboard">Guest Dashboard</a></nav>
+    <div><p class="eyebrow">Podcast Reach</p><h1>Know what is growing. Decide what to do next.</h1><p class="hero-copy">A clear view of audience momentum, distribution, and the next best actions for Mirror Talk.</p></div>
+    <nav class="insights-nav" aria-label="Podcast workspaces"><a class="dashboard-link" href="/planning">Plan episodes</a><a class="dashboard-link" href="/partners">Grow partnerships</a><a class="dashboard-link" href="/dashboard">Manage guests</a></nav>
   </header>
   <main>
-    <section id="insights-quality" class="panel insights-quality" aria-live="polite">Loading source coverage…</section>
-    <section class="panel" aria-labelledby="release-readiness-title"><div class="section-heading"><div><p class="eyebrow">Deployment contract</p><h2 id="release-readiness-title">Podcast Reach release readiness</h2></div><p>Release blockers are computed from migration, distribution, freshness, connector, and evidence state.</p></div><div id="release-readiness" class="source-coverage" aria-live="polite"></div></section>
+    <section id="insights-quality" class="panel insights-quality" aria-live="polite">Preparing your overview…</section>
     <section id="insights-summary" class="insights-summary" aria-label="Podcast reach summary"></section>
-    <section id="reach-highlights" class="reach-highlights" aria-label="Current reach highlights"></section>
+    <section class="panel decision-panel" aria-labelledby="decision-intelligence-title"><div class="section-heading"><div><p class="eyebrow">Recommended next moves</p><h2 id="decision-intelligence-title">What to do now</h2></div><p id="decision-confidence"></p></div><div id="decision-intelligence" class="decision-intelligence"></div></section>
+    <section id="reach-highlights" class="reach-highlights" aria-label="Audience highlights"></section>
+    <details class="panel disclosure-panel deep-dive-panel"><summary><span><span class="eyebrow">Explore performance</span><strong>Open the audience and platform deep dive</strong></span><span>Show insights</span></summary><div class="deep-dive-content">
     <section id="platform-overviews" class="platform-overviews" aria-label="Apple and Spotify totals"></section>
-    <section class="panel decision-panel" aria-labelledby="decision-intelligence-title"><div class="section-heading"><div><p class="eyebrow">Decision intelligence</p><h2 id="decision-intelligence-title">What the evidence recommends</h2></div><p id="decision-confidence"></p></div><div id="decision-intelligence" class="decision-intelligence"></div></section>
     <section class="insights-two-column">
       <article class="panel"><div class="section-heading"><div><p class="eyebrow">Measured evidence</p><h2>Performance by source</h2></div></div><div id="provider-strength"></div></article>
       <article class="panel"><div class="section-heading"><div><p class="eyebrow">Owned audiences</p><h2>Audience counters</h2></div></div><div id="audience-platform"></div></article>
@@ -36,8 +36,9 @@
     </section>
     <section class="panel"><div class="section-heading"><div><p class="eyebrow">Content intelligence</p><h2>Top measured YouTube videos</h2></div></div><div id="video-performance"></div></section>
     <section class="panel"><div class="section-heading"><div><p class="eyebrow">Movement over time</p><h2>Apple and Spotify monthly trends</h2></div><button id="insights-refresh" class="secondary-button" type="button">Refresh</button></div><div id="reach-trend" class="reach-trend"></div></section>
-    <section id="analytics-import" class="panel analytics-import-panel" aria-labelledby="analytics-import-title">
-      <div class="section-heading"><div><p class="eyebrow">Verified evidence</p><h2 id="analytics-import-title">Import performance analytics</h2><p class="tool-copy">Preview column mapping, episode links, invalid values, and duplicates before anything is written.</p></div></div>
+    </div></details>
+    <details id="analytics-import" class="panel disclosure-panel analytics-import-panel" aria-labelledby="analytics-import-title"><summary><span><span class="eyebrow">Add data</span><strong id="analytics-import-title">Import provider reports</strong></span><span>Show importer</span></summary><div class="import-content">
+      <div class="section-heading"><div><p class="eyebrow">Guided import</p><h2>Add a provider report</h2><p class="tool-copy">Choose the provider and preview the report before anything is saved.</p></div></div>
       <div class="provider-export-grid" aria-label="Provider export assistants">
         <article class="provider-export-card"><div><span class="status-chip pending">Current podcast host</span><h3>Spotify for Creators</h3></div><p>Import the verified export for plays, audience, downloads, discovery, devices, geography, and episode performance.</p><div class="provider-export-actions"><a class="secondary-button" href="https://creators.spotify.com/analytics" target="_blank" rel="noopener noreferrer">Open Spotify analytics</a><button class="ghost-button" type="button" data-import-provider="spotify">Prepare Spotify import</button></div></article>
         <article class="provider-export-card"><div><span class="status-chip pending">Supervised export</span><h3>Apple Podcasts Connect</h3></div><p>Import listeners, engaged listeners, plays, average consumption, devices, countries, and episode performance.</p><div class="provider-export-actions"><a class="secondary-button" href="https://podcastsconnect.apple.com/analytics" target="_blank" rel="noopener noreferrer">Open Apple analytics</a><button class="ghost-button" type="button" data-import-provider="apple_podcasts">Prepare Apple import</button></div></article>
@@ -53,17 +54,16 @@
       <p id="analytics-import-message" class="message" aria-live="polite"></p>
       <div id="analytics-preview" class="analytics-preview hidden" aria-live="polite"></div>
       <div id="analytics-import-history" class="analytics-import-history" aria-live="polite"><p>Loading recent imports…</p></div>
-    </section>
+    </div></details>
     <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Measured improvement</span><strong>Register a reach experiment</strong></span><span>Show form</span></summary><p class="disclosure-intro">Define a governed comparison only after its evidence source and success metric are clear.</p><form id="growth-experiment-form" class="guest-form reach-experiment-form"><label>Name<input name="name" required></label><label>Primary metric<select name="primary_metric" required><option value="organic_reach">Organic reach</option><option value="downloads_7d">7-day downloads</option><option value="conversion_rate_pct">Conversion rate</option><option value="return_rate_pct">Return rate</option></select></label><label class="full-width">Hypothesis<textarea name="hypothesis" rows="3" required></textarea></label><label>Control<input name="control_label" required placeholder="Tuesday 17:00"></label><label>Treatment<input name="treatment_label" required placeholder="Tuesday 05:00"></label><label>Starts on<input name="starts_on" type="date"></label><label>Ends on<input name="ends_on" type="date"></label><div class="form-actions full-width"><button type="submit" class="secondary-button">Register draft experiment</button></div></form><p id="growth-experiment-message" class="message" aria-live="polite"></p></details>
-    <section class="panel" aria-labelledby="platform-title"><div class="section-heading"><div><p class="eyebrow">Distribution footprint</p><h2 id="platform-title">Where Mirror Talk is available</h2></div><p>Direct listings, catalog evidence, and RSS-compatible subscription targets are shown separately; availability is not an audience count.</p></div><div id="platform-grid" class="platform-grid"></div></section>
-    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Private analytics</span><strong id="connections-title">Connection health</strong></span><span>Show details</span></summary><p class="disclosure-intro">Read-only authorization; platform passwords are never stored, and Apple/Spotify browser sessions remain local.</p><div id="analytics-connections" class="analytics-connections" aria-live="polite">Loading connection health…</div></details>
-    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Evidence coverage</span><strong id="source-coverage-title">Sources and remaining gaps</strong></span><span>Show details</span></summary><p class="disclosure-intro">Automated sources are separated from provider-limited sources.</p><div id="source-coverage" class="source-coverage"></div></details>
-    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Metric contract</span><strong>What these numbers mean</strong></span><span>Show details</span></summary><div id="metric-definitions" class="definition-grid"></div></details>
+    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Availability</span><strong id="platform-title">Where people can find Mirror Talk</strong></span><span>Show platforms</span></summary><p class="disclosure-intro">A simple directory of confirmed listings and compatible podcast apps.</p><div id="platform-grid" class="platform-grid"></div></details>
+    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Data setup</span><strong id="release-readiness-title">Keep every insight current</strong></span><span>Review setup</span></summary><p class="disclosure-intro">Refresh server-accessible sources automatically, then follow the few actions that require an account owner.</p><div id="release-readiness" class="source-coverage" aria-live="polite"></div><div id="analytics-connections" class="analytics-connections" aria-live="polite">Loading connections…</div><div id="source-coverage" class="source-coverage"></div></details>
+    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">How it works</span><strong>Definitions and data safeguards</strong></span><span>Show details</span></summary><div id="metric-definitions" class="definition-grid"></div></details>
   </main>
 </div>
 <script src="/static/performance-utils.js?v=20261121.1"></script>
 <script src="/static/workspace-shell.js?v=20261120.2" defer></script>
 <script src="/static/planning-intelligence.js?v=20261018.1" defer></script>
-<script src="/static/insights.js?v=20261124.4" defer></script>
+<script src="/static/insights.js?v=20261124.5" defer></script>
 </body>
 </html>

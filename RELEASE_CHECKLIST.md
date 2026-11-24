@@ -40,7 +40,7 @@
   bounded lifetime. Password changes, suspension, role changes, and “sign out
   everywhere” invalidate existing sessions.
 - Dashboard, Operations, and Planning load with non-zero data or a truthful empty state.
-- Podcast Reach release readiness reports current migration 45, complete public
+- Podcast Reach release readiness reports current migration 46, complete public
   discovery, fresh YouTube analytics, connected Spotify and Apple collectors, and
   fresh provider evidence. Known unavailable destinations remain explicit warnings.
 - A dry-run calendar read creates no interview changes.

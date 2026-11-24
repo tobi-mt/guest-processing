@@ -945,6 +945,30 @@ class GuestWebService:
     def sync_openpodcast_analytics(self, *, actor: str) -> Dict[str, Any]:
         return self.podcast_analytics_connectors.sync_openpodcast(actor=actor)
 
+    def refresh_podcast_reach(self, *, actor: str) -> Dict[str, Any]:
+        """Refresh every server-accessible reach source without hiding provider access needs."""
+        result: Dict[str, Any] = {
+            "public_distribution": self.podcast_source_monitor.run(actor=actor, force=True),
+            "youtube": {"status": "not_connected"},
+            "openpodcast": {"status": "not_configured"},
+        }
+        try:
+            result["youtube"] = self.podcast_analytics_connectors.sync_google(actor=actor, force=True)
+        except AnalyticsConnectorError:
+            result["youtube"] = {"status": "needs_setup"}
+        openpodcast = self.podcast_analytics_connectors.status().get("openpodcast", {})
+        if openpodcast.get("configured"):
+            try:
+                result["openpodcast"] = self.podcast_analytics_connectors.sync_openpodcast(actor=actor)
+            except AnalyticsConnectorError:
+                status = self.podcast_analytics_connectors.status().get("openpodcast", {})
+                result["openpodcast"] = {
+                    "status": "needs_setup",
+                    "error_code": status.get("last_error_code") or "sync_failed",
+                }
+        result["local_collectors"] = self.podcast_analytics_connectors.status()["local_collectors"]
+        return result
+
     def disconnect_google_analytics(self, *, actor: str,
                                     connection_id: int | None = None) -> Dict[str, Any]:
         return self.podcast_analytics_connectors.disconnect_google(
@@ -9209,6 +9233,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
             return
 
         if self.path in {
+            "/api/podcast-reach/refresh",
             "/api/analytics-connectors/openpodcast/sync",
             "/api/analytics-connectors/google/connect",
             "/api/analytics-connectors/google/sync",
@@ -9216,7 +9241,9 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
         }:
             actor = str((self._session_claims() or {}).get("sub") or "admin")
             try:
-                if self.path.endswith("/openpodcast/sync"):
+                if self.path == "/api/podcast-reach/refresh":
+                    result = self.service.refresh_podcast_reach(actor=actor)
+                elif self.path.endswith("/openpodcast/sync"):
                     result = self.service.sync_openpodcast_analytics(actor=actor)
                 elif self.path.endswith("/local/configure"):
                     payload = self._read_json_payload()
@@ -10599,7 +10626,7 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
     def _required_role_for_request(method: str, path: str) -> str:
         if method == "GET":
             return "viewer"
-        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge", "/api/recommendation-learning/settings", "/api/recommendation-learning/promote", "/api/recommendation-learning/rollback", "/api/recommendation-learning/cycle", "/api/analytics-connectors/openpodcast/sync", "/api/analytics-connectors/google/connect", "/api/analytics-connectors/google/sync", "/api/analytics-connectors/local/configure"}:
+        if method == "DELETE" or path in {"/api/import", "/api/episodes/import", "/api/system/backup", "/api/exports", "/api/identity-merge", "/api/recommendation-learning/settings", "/api/recommendation-learning/promote", "/api/recommendation-learning/rollback", "/api/recommendation-learning/cycle", "/api/podcast-reach/refresh", "/api/analytics-connectors/openpodcast/sync", "/api/analytics-connectors/google/connect", "/api/analytics-connectors/google/sync", "/api/analytics-connectors/local/configure"}:
             return "admin"
         return "operator"
 

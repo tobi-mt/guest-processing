@@ -22,7 +22,7 @@ def test_release_readiness_fails_closed_when_collection_is_not_configured(temp_d
 
 def test_release_readiness_reports_outdated_schema_without_querying_new_contract(temp_db):
     with connect_database(temp_db.db_path) as conn:
-        conn.execute("DELETE FROM schema_migrations WHERE version=45")
+        conn.execute("DELETE FROM schema_migrations WHERE version=46")
         conn.commit()
 
     report = PodcastReachReleaseReadiness(temp_db.db_path).report()
@@ -30,9 +30,9 @@ def test_release_readiness_reports_outdated_schema_without_querying_new_contract
     assert report["status"] == "not_ready"
     assert report["blockers"] == [{
         "code": "schema_outdated",
-        "message": "Database migration 45 has not been applied.",
+        "message": "Database migration 46 has not been applied.",
     }]
-    assert report["checks"]["schema"]["current_version"] == 44
+    assert report["checks"]["schema"]["current_version"] == 45
 
 
 def test_release_readiness_passes_only_with_fresh_distribution_and_private_evidence(temp_db, monkeypatch):
