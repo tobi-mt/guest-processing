@@ -18,6 +18,7 @@ load_dotenv()
 from guest_database_manager.constants import DEFAULT_DB_PATH
 from guest_database_manager.database import GuestDatabase
 from guest_database_manager.maintenance import build_integrity_report, build_sqlite_scale_report, verify_backup_restore
+from guest_database_manager.podcast_release_readiness import PodcastReachReleaseReadiness
 from guest_database_manager.web_interface import run_web_interface
 from guest_database_manager.web_interface import GuestWebService
 
@@ -125,6 +126,11 @@ def create_parser() -> argparse.ArgumentParser:
     backup_parser.add_argument("--db", type=Path, default=Path(DEFAULT_DB_PATH))
     scale_parser = subparsers.add_parser("scale-report", help="Measure observable SQLite exit signals")
     scale_parser.add_argument("--db", type=Path, default=Path(DEFAULT_DB_PATH))
+    podcast_release_parser = subparsers.add_parser(
+        "podcast-release-readiness",
+        help="Fail unless Podcast Reach distribution and analytics are release-ready",
+    )
+    podcast_release_parser.add_argument("--db", type=Path, default=Path(DEFAULT_DB_PATH))
 
     return parser
 
@@ -303,6 +309,13 @@ def run_scale_report(db_path: Path) -> None:
     print(json.dumps(build_sqlite_scale_report(db_path), indent=2, sort_keys=True))
 
 
+def run_podcast_release_readiness(db_path: Path) -> None:
+    report = PodcastReachReleaseReadiness(db_path).report()
+    print(json.dumps(report, indent=2, sort_keys=True))
+    if report["status"] != "ready":
+        raise SystemExit(2)
+
+
 def main() -> None:
     """Main CLI entry point."""
     parser = create_parser()
@@ -333,6 +346,8 @@ def main() -> None:
         run_backup_verification(args.db)
     elif args.command == "scale-report":
         run_scale_report(args.db)
+    elif args.command == "podcast-release-readiness":
+        run_podcast_release_readiness(args.db)
     else:
         parser.print_help()
 

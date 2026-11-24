@@ -147,7 +147,7 @@ class PodcastAnalyticsConnectors:
         with connect_database(self.db_path) as conn:
             conn.row_factory = __import__("sqlite3").Row
             openpodcast_rows = [dict(row) for row in conn.execute(
-                """SELECT imported_at, period_end FROM growth_metric_observations
+                """SELECT imported_at, period_end FROM current_growth_metric_observations
                    WHERE source_reference LIKE 'openpodcast-api:%'
                    ORDER BY imported_at DESC, id DESC LIMIT 1"""
             ).fetchall()]
@@ -261,6 +261,8 @@ class PodcastAnalyticsConnectors:
                 "provider": provider, "metric_name": metric, "metric_value": value,
                 "period_start": period_start, "period_end": period_end, "traffic_scope": "all",
                 "source_reference": f"openpodcast-api:{endpoint}",
+                "source_class": "aggregator_copy",
+                "overlap_group": f"{provider}_native_{metric}",
             })
 
         daily: dict[tuple[str, str, str], float] = {}
@@ -699,13 +701,16 @@ class PodcastAnalyticsConnectors:
         youtube_reference = f"youtube-analytics-api:{channel_id or 'mine'}"
         yt = self._get_json("https://youtubeanalytics.googleapis.com/v2/reports?" + urlencode({
             "ids": channel_selector, "startDate": start.isoformat(), "endDate": end.isoformat(),
-            "metrics": "views,estimatedMinutesWatched,averageViewDuration",
+            "metrics": "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage",
         }), access_token)
-        values = (yt.get("rows") or [[0, 0, 0]])[0]
+        values = list((yt.get("rows") or [[0, 0, 0, 0]])[0])
+        values.extend([0] * max(0, 4 - len(values)))
         for metric, value in (("plays", values[0]), ("watch_time_hours", float(values[1]) / 60),
-                              ("average_view_duration_seconds", values[2])):
+                              ("average_view_duration_seconds", values[2]),
+                              ("average_view_percentage", values[3])):
             rows.append({**common, "provider": youtube_provider, "metric_name": metric, "metric_value": value,
-                         "source_reference": youtube_reference})
+                         "source_reference": youtube_reference,
+                         "overlap_group": f"{youtube_provider}_native_{metric}"})
         channel = self._get_json(
             "https://www.googleapis.com/youtube/v3/channels?" + urlencode(
                 {"part": "statistics", "id": channel_id} if channel_id else {"part": "statistics", "mine": "true"}
@@ -724,6 +729,15 @@ class PodcastAnalyticsConnectors:
                                             channel_selector, youtube_provider, youtube_reference))
         rows.extend(self._youtube_dimension(access_token, start, end, "country", "country",
                                             channel_selector, youtube_provider, youtube_reference))
+        rows.extend(self._youtube_demographics(
+            access_token, start, end, channel_selector, youtube_provider, youtube_reference
+        ))
+        rows.extend(self._youtube_traffic_sources(
+            access_token, start, end, channel_selector, youtube_provider, youtube_reference
+        ))
+        rows.extend(self._youtube_video_performance(
+            access_token, start, end, channel_selector, youtube_provider, youtube_reference
+        ))
 
         property_id = self._config()["ga4_property_id"]
         if property_id and sync_ga4:
@@ -745,6 +759,88 @@ class PodcastAnalyticsConnectors:
         return [{"provider": provider, "metric_name": f"{prefix}_{self._slug(item[0])}", "metric_value": item[1],
                  "period_start": start.isoformat(), "period_end": end.isoformat(), "traffic_scope": "all",
                  "source_reference": source_reference} for item in data.get("rows") or []]
+
+    def _youtube_demographics(
+        self, token: str, start: date, end: date, channel_selector: str,
+        provider: str, source_reference: str,
+    ) -> list[dict[str, Any]]:
+        try:
+            data = self._get_json("https://youtubeanalytics.googleapis.com/v2/reports?" + urlencode({
+                "ids": channel_selector, "startDate": start.isoformat(), "endDate": end.isoformat(),
+                "metrics": "viewerPercentage", "dimensions": "ageGroup,gender",
+                "sort": "-viewerPercentage", "maxResults": 50,
+            }), token)
+        except AnalyticsConnectorError:
+            return []  # Privacy thresholds and channel eligibility can make this report unavailable.
+        return [{
+            "provider": provider, "metric_name": "viewer_percentage", "metric_value": item[2],
+            "period_start": start.isoformat(), "period_end": end.isoformat(), "traffic_scope": "all",
+            "source_reference": source_reference, "age_group": item[0], "gender": item[1],
+            "source_class": "video_platform_consumption",
+        } for item in data.get("rows") or [] if len(item) >= 3]
+
+    def _youtube_traffic_sources(
+        self, token: str, start: date, end: date, channel_selector: str,
+        provider: str, source_reference: str,
+    ) -> list[dict[str, Any]]:
+        try:
+            data = self._get_json("https://youtubeanalytics.googleapis.com/v2/reports?" + urlencode({
+                "ids": channel_selector, "startDate": start.isoformat(), "endDate": end.isoformat(),
+                "metrics": "views", "dimensions": "insightTrafficSourceType",
+                "sort": "-views", "maxResults": 50,
+            }), token)
+        except AnalyticsConnectorError:
+            return []
+        return [{
+            "provider": provider, "metric_name": "traffic_source_views", "metric_value": item[1],
+            "period_start": start.isoformat(), "period_end": end.isoformat(), "traffic_scope": "all",
+            "source_reference": source_reference, "traffic_source": item[0],
+            "source_class": "video_platform_consumption",
+        } for item in data.get("rows") or [] if len(item) >= 2]
+
+    def _youtube_video_performance(
+        self, token: str, start: date, end: date, channel_selector: str,
+        provider: str, source_reference: str,
+    ) -> list[dict[str, Any]]:
+        try:
+            data = self._get_json("https://youtubeanalytics.googleapis.com/v2/reports?" + urlencode({
+                "ids": channel_selector, "startDate": start.isoformat(), "endDate": end.isoformat(),
+                "metrics": "views,estimatedMinutesWatched,averageViewDuration", "dimensions": "video",
+                "sort": "-views", "maxResults": 200,
+            }), token)
+        except AnalyticsConnectorError:
+            return []
+        analytics_rows = [item for item in data.get("rows") or [] if len(item) >= 4 and str(item[0] or "").strip()]
+        video_ids = [str(item[0]).strip() for item in analytics_rows]
+        titles: dict[str, str] = {}
+        for offset in range(0, len(video_ids), 50):
+            try:
+                videos = self._get_json(
+                    "https://www.googleapis.com/youtube/v3/videos?" + urlencode({
+                        "part": "snippet", "id": ",".join(video_ids[offset:offset + 50]), "maxResults": 50,
+                    }), token,
+                )
+            except AnalyticsConnectorError:
+                break
+            for video in videos.get("items") or []:
+                video_id = str(video.get("id") or "")
+                titles[video_id] = str((video.get("snippet") or {}).get("title") or "")
+        observations = []
+        for item in analytics_rows:
+            video_id = str(item[0] or "").strip()
+            for metric, value in (
+                ("video_views", item[1]),
+                ("video_watch_time_hours", float(item[2]) / 60),
+                ("video_average_view_duration_seconds", item[3]),
+            ):
+                observations.append({
+                    "provider": provider, "metric_name": metric, "metric_value": value,
+                    "period_start": start.isoformat(), "period_end": end.isoformat(),
+                    "traffic_scope": "all", "source_reference": source_reference,
+                    "platform_content_id": video_id, "source_class": "video_platform_consumption",
+                    "platform_content_title": titles.get(video_id, ""),
+                })
+        return observations
 
     def _ga4_report(self, token: str, property_id: str, start: date, end: date,
                     dimensions: list[str], metrics: list[str]) -> dict[str, Any]:

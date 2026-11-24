@@ -32,6 +32,22 @@ def test_google_connection_requires_production_configuration(temp_db):
         connectors.begin_google(actor="admin", origin="https://example.test")
 
 
+def test_analytics_job_lease_elects_one_replica_and_recovers_after_expiry(temp_db):
+    from guest_database_manager.web_interface import GuestWebService
+
+    first = GuestWebService(temp_db.db_path)
+    second = GuestWebService(temp_db.db_path)
+
+    assert first._try_acquire_analytics_job_lease(owner_id="replica-a", lease_seconds=300) is True
+    assert second._try_acquire_analytics_job_lease(owner_id="replica-b", lease_seconds=300) is False
+    with sqlite3.connect(temp_db.db_path) as conn:
+        conn.execute(
+            "UPDATE analytics_job_leases SET lease_until='2000-01-01T00:00:00Z' "
+            "WHERE job_key='podcast-analytics-cycle'"
+        )
+    assert second._try_acquire_analytics_job_lease(owner_id="replica-b", lease_seconds=300) is True
+
+
 def test_local_collector_keeps_browser_session_local_and_ingests_validated_export(temp_db, monkeypatch):
     token = "collector-token-with-at-least-thirty-two-characters"
     monkeypatch.setenv(COLLECTOR_TOKEN_ENV, token)
@@ -367,10 +383,18 @@ def test_google_collector_keeps_platform_metrics_source_backed(temp_db, monkeypa
             return {"rows": [["MOBILE", 70], ["DESKTOP", 30]]}
         if "youtubeanalytics" in url and "dimensions=country" in url:
             return {"rows": [["DE", 60]]}
+        if "youtubeanalytics" in url and "dimensions=ageGroup%2Cgender" in url:
+            return {"rows": [["age25-34", "female", 62.5], ["age25-34", "male", 37.5]]}
+        if "youtubeanalytics" in url and "dimensions=insightTrafficSourceType" in url:
+            return {"rows": [["YT_SEARCH", 44]]}
+        if "youtubeanalytics" in url and "dimensions=video" in url:
+            return {"rows": [["video-1", 80, 90, 68]]}
         if "youtubeanalytics" in url:
-            return {"rows": [[100, 120, 72]]}
+            return {"rows": [[100, 120, 72, 55.5]]}
         if "youtube/v3/channels" in url:
             return {"items": [{"statistics": {"subscriberCount": "2500"}}]}
+        if "youtube/v3/videos" in url:
+            return {"items": [{"id": "video-1", "snippet": {"title": "A measured episode"}}]}
         raise AssertionError(url)
 
     monkeypatch.setattr(connectors, "_get_json", google_response)
@@ -386,5 +410,8 @@ def test_google_collector_keeps_platform_metrics_source_backed(temp_db, monkeypa
     assert values[("youtube", "watch_time_hours")] == 2
     assert values[("youtube", "subscribers")] == 2500
     assert values[("youtube", "device_mobile")] == 70
+    assert values[("youtube", "average_view_percentage")] == 55.5
+    assert values[("youtube", "traffic_source_views")] == 44
+    assert values[("youtube", "video_views")] == 80
     assert values[("website", "organic_reach")] == 40
     assert values[("website", "device_mobile")] == 25

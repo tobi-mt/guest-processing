@@ -57,6 +57,27 @@ def test_growth_observations_are_database_immutable_and_block_episode_deletion(t
             conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
 
 
+def test_growth_observation_corrections_append_a_revision_and_current_view_selects_it(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    original = _observation(None, "downloads", 100)
+
+    intelligence.record_observations([original], actor="collector", correlation_id="daily-1")
+    revised = intelligence.record_observations(
+        [{**original, "metric_value": 106}], actor="collector", correlation_id="daily-2"
+    )
+
+    assert revised == {"submitted": 1, "inserted": 1, "duplicates": 0, "revised": 1}
+    with sqlite3.connect(temp_db.db_path) as conn:
+        history = conn.execute(
+            "SELECT metric_value, revision, supersedes_id FROM growth_metric_observations ORDER BY revision"
+        ).fetchall()
+        current = conn.execute(
+            "SELECT metric_value, revision FROM current_growth_metric_observations"
+        ).fetchone()
+    assert history == [(100, 1, None), (106, 2, 1)]
+    assert current == (106, 2)
+
+
 def test_growth_validation_rejects_ambiguous_or_unsafe_evidence(temp_db):
     intelligence = GrowthIntelligence(temp_db.db_path)
 
@@ -68,6 +89,30 @@ def test_growth_validation_rejects_ambiguous_or_unsafe_evidence(temp_db):
         intelligence.record_observations([_observation(None, "conversion_rate_pct", 101)], actor="producer")
     with pytest.raises(GrowthIntelligenceError, match="Unsupported"):
         intelligence.record_observations([_observation(None, "views", 10)], actor="producer")
+
+
+def test_canonical_csv_preserves_host_app_device_and_geography_dimensions(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    preview = intelligence.preview_csv(
+        "provider,metric_name,metric_value,period_start,period_end,source_reference,app_name,device_type,country_code,source_class\n"
+        "podcast_host,downloads,42,2026-11-01,2026-11-23,host-export.csv,Pocket Casts,mobile,DE,host_rss_delivery\n",
+        provider="podcast_host",
+        source_reference="host-export.csv",
+    )
+
+    assert preview["summary"]["ready"] == 1
+    observation = preview["observations"][0]
+    assert observation["app_name"] == "Pocket Casts"
+    assert observation["device_type"] == "mobile"
+    assert observation["country_code"] == "DE"
+    assert observation["source_class"] == "host_rss_delivery"
+
+    intelligence.record_observations(preview["observations"], actor="test")
+    with sqlite3.connect(temp_db.db_path) as conn:
+        saved = conn.execute(
+            "SELECT app_name, device_type, country_code, source_class FROM growth_metric_observations"
+        ).fetchone()
+    assert saved == ("Pocket Casts", "mobile", "DE", "host_rss_delivery")
 
 
 def test_mirror_fan_score_requires_all_dimensions_and_separates_paid_reach(temp_db):

@@ -161,6 +161,24 @@ def test_health_and_readiness_are_public_and_truthful(monkeypatch, temp_db):
         assert readiness.json()["status"] == "ready"
 
 
+def test_podcast_release_readiness_is_admin_only_and_fails_closed(monkeypatch, temp_db):
+    configure_auth(monkeypatch)
+    with running_server(temp_db.db_path) as base_url:
+        unauthorized = requests.get(
+            f"{base_url}/api/podcast-reach/release-readiness", timeout=5
+        )
+        session = requests.Session()
+        assert login(session, base_url).status_code == 200
+        authorized = session.get(
+            f"{base_url}/api/podcast-reach/release-readiness", timeout=5
+        )
+
+        assert unauthorized.status_code == 401
+        assert authorized.status_code == 200
+        assert authorized.json()["status"] == "not_ready"
+        assert authorized.json()["blocker_count"] > 0
+
+
 def test_cookie_authenticated_write_requires_matching_csrf(monkeypatch, temp_db):
     configure_auth(monkeypatch)
     with running_server(temp_db.db_path) as base_url:

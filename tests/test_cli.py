@@ -20,6 +20,7 @@ def test_create_parser_uses_default_database_path():
     clean_args = parser.parse_args(["clean"])
     integrity_args = parser.parse_args(["integrity"])
     backup_args = parser.parse_args(["verify-backup"])
+    podcast_release_args = parser.parse_args(["podcast-release-readiness"])
 
     expected_path = Path(DEFAULT_DB_PATH)
     assert import_args.db == expected_path
@@ -27,6 +28,7 @@ def test_create_parser_uses_default_database_path():
     assert clean_args.db == expected_path
     assert integrity_args.db == expected_path
     assert backup_args.db == expected_path
+    assert podcast_release_args.db == expected_path
 
 
 def test_import_data_prints_database_stats(monkeypatch, capsys, tmp_path):

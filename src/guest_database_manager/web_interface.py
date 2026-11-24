@@ -83,6 +83,7 @@ from guest_database_manager.podcast_insights import PodcastInsights
 from guest_database_manager.growth_decision_intelligence import GrowthDecisionIntelligence
 from guest_database_manager.podcast_analytics_connectors import AnalyticsConnectorError, PodcastAnalyticsConnectors
 from guest_database_manager.podcast_source_monitor import PodcastSourceMonitor
+from guest_database_manager.podcast_release_readiness import PodcastReachReleaseReadiness
 from guest_database_manager.production_governance import POLICY_VERSION, classify_focus
 from guest_database_manager.recommendation_learning import (
     FEATURE_SCHEMA_VERSION,
@@ -900,6 +901,7 @@ class GuestWebService:
         self.growth_decision_intelligence = GrowthDecisionIntelligence(self.db_path)
         self.podcast_source_monitor = PodcastSourceMonitor(self.db_path)
         self.podcast_analytics_connectors = PodcastAnalyticsConnectors(self.db_path)
+        self.podcast_release_readiness = PodcastReachReleaseReadiness(self.db_path)
 
     def get_growth_intelligence(self) -> Dict[str, Any]:
         return self.growth_intelligence.dashboard()
@@ -922,6 +924,7 @@ class GuestWebService:
             dashboard["quality"]["status"] = "public_only"
         dashboard["source_coverage"] = coverage
         dashboard["analytics_connectors"] = self.podcast_analytics_connectors.status()
+        dashboard["release_readiness"] = self.podcast_release_readiness.report()
         dashboard["decision_intelligence"] = self.growth_decision_intelligence.dashboard(
             dashboard.get("monthly_trends") or {}, self.recommendation_learning.status()
         )
@@ -1255,6 +1258,7 @@ class GuestWebService:
         raw_interval = os.environ.get("MIRROR_TALK_SHADOW_LEARNING_INTERVAL_SECONDS", "3600")
         interval = interval_seconds if interval_seconds is not None else float(raw_interval)
         self._learning_stop = Event()
+        analytics_worker_id = f"analytics-{secrets.token_hex(8)}"
 
         def run() -> None:
             assert self._learning_stop is not None
@@ -1268,16 +1272,40 @@ class GuestWebService:
                     )
                 except Exception:
                     logger.exception("RSS release reconciliation cycle failed")
-                try:
-                    self.podcast_source_monitor.run(actor="podcast-source-automation")
-                except Exception:
-                    logger.exception("Podcast source monitoring cycle failed")
-                try:
-                    self.podcast_analytics_connectors.sync_google(actor="podcast-analytics-automation")
-                except AnalyticsConnectorError:
-                    logger.warning("Private podcast analytics synchronization needs attention")
-                except Exception:
-                    logger.exception("Private podcast analytics synchronization failed")
+                analytics_leader = self._try_acquire_analytics_job_lease(
+                    owner_id=analytics_worker_id,
+                    lease_seconds=max(300.0, float(interval)),
+                )
+                if analytics_leader:
+                    try:
+                        self.podcast_source_monitor.run(actor="podcast-source-automation")
+                    except Exception:
+                        logger.exception("Podcast source monitoring cycle failed")
+                    try:
+                        self.podcast_analytics_connectors.sync_google(actor="podcast-analytics-automation")
+                    except AnalyticsConnectorError:
+                        logger.warning("Private podcast analytics synchronization needs attention")
+                    except Exception:
+                        logger.exception("Private podcast analytics synchronization failed")
+                    try:
+                        connector_status = self.podcast_analytics_connectors.status().get("openpodcast", {})
+                        last_success = connector_status.get("last_success_at")
+                        last_success_at = (
+                            datetime.fromisoformat(str(last_success).replace("Z", "+00:00"))
+                            if last_success else None
+                        )
+                        if connector_status.get("configured") and (
+                            last_success_at is None
+                            or datetime.now(timezone.utc) - last_success_at.astimezone(timezone.utc)
+                            >= timedelta(hours=20)
+                        ):
+                            self.podcast_analytics_connectors.sync_openpodcast(
+                                actor="podcast-analytics-automation"
+                            )
+                    except AnalyticsConnectorError:
+                        logger.warning("OpenPodcast analytics synchronization needs attention")
+                    except Exception:
+                        logger.exception("OpenPodcast analytics synchronization failed")
                 try:
                     self.run_shadow_learning_cycle(actor="shadow-learning-automation")
                     self.run_recommendation_learning_cycle(actor="learning-automation")
@@ -1287,6 +1315,30 @@ class GuestWebService:
 
         self._learning_thread = Thread(target=run, name="recommendation-shadow-learning", daemon=True)
         self._learning_thread.start()
+
+    def _try_acquire_analytics_job_lease(
+        self, *, owner_id: str, lease_seconds: float, job_key: str = "podcast-analytics-cycle"
+    ) -> bool:
+        """Elect one web replica for a bounded analytics collection window."""
+        now = datetime.now(timezone.utc)
+        lease_until = now + timedelta(seconds=max(60.0, float(lease_seconds)))
+        now_text = now.isoformat().replace("+00:00", "Z")
+        lease_text = lease_until.isoformat().replace("+00:00", "Z")
+        with connect_database(self.db_path) as conn:
+            before = conn.total_changes
+            conn.execute(
+                """INSERT INTO analytics_job_leases
+                   (job_key, owner_id, acquired_at, lease_until, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(job_key) DO UPDATE SET
+                     owner_id=excluded.owner_id, acquired_at=excluded.acquired_at,
+                     lease_until=excluded.lease_until, updated_at=excluded.updated_at
+                   WHERE analytics_job_leases.lease_until <= excluded.acquired_at""",
+                (job_key, owner_id, now_text, lease_text, now_text),
+            )
+            acquired = conn.total_changes > before
+            conn.commit()
+        return acquired
 
     def stop_learning_worker(self, *, timeout_seconds: float = 5.0) -> None:
         if self._learning_stop:
@@ -8506,6 +8558,12 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.podcast_analytics_connectors.status())
+            return
+
+        if request_path == "/api/podcast-reach/release-readiness":
+            if not self._enforce_dashboard_security(required_role="admin", require_csrf=False):
+                return
+            self._send_json(HTTPStatus.OK, self.service.podcast_release_readiness.report())
             return
 
         if request_path == "/api/exceptions":

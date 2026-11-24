@@ -5,6 +5,8 @@
 - Record the commit and migration versions.
 - Run unit, API integration, browser, keyboard, accessibility, lint, migration,
   worker-recovery, and backup/restore gates.
+- Run `guest-manager podcast-release-readiness --db /path/to/guest_database.db`.
+  Do not call Podcast Reach released until it exits successfully with zero blockers.
 - Download a full backup and run `guest-manager verify-backup` against the exact
   production database snapshot.
 - Set `MIRROR_TALK_ENV=production`, an HTTPS origin in `MIRROR_TALK_PUBLIC_URL`,
@@ -38,6 +40,9 @@
   bounded lifetime. Password changes, suspension, role changes, and “sign out
   everywhere” invalidate existing sessions.
 - Dashboard, Operations, and Planning load with non-zero data or a truthful empty state.
+- Podcast Reach release readiness reports current migration 45, complete public
+  discovery, fresh YouTube analytics, connected Spotify and Apple collectors, and
+  fresh provider evidence. Known unavailable destinations remain explicit warnings.
 - A dry-run calendar read creates no interview changes.
 - A test outbox item is claimed once and records its attempt.
 - A Resend test message records its provider ID, then changes from `accepted` to

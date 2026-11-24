@@ -71,17 +71,89 @@ def test_insights_prefers_show_total_over_overlapping_episode_rows(temp_db):
     assert result["quality"]["mixed_grain_conflicts"] == ["spotify:downloads:2026-09-01:2026-09-30"]
 
 
+def test_insights_selects_primary_source_when_aggregator_evidence_overlaps(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    common = {
+        "provider": "spotify", "metric_name": "plays", "period_start": "2026-09-01",
+        "period_end": "2026-09-30", "overlap_group": "spotify_native_plays",
+    }
+    service.record_growth_observations({"observations": [
+        {**common, "metric_value": 100, "source_reference": "spotify.csv", "source_class": "provider_native"},
+        {**common, "metric_value": 98, "source_reference": "openpodcast-api:daily", "source_class": "aggregator_copy"},
+    ]}, actor="automation")
+
+    result = PodcastInsights(temp_db.db_path).dashboard()
+
+    spotify = next(item for item in result["provider_strength"] if item["provider"] == "spotify")
+    assert spotify["metrics"]["plays"] == 100
+
+
+def test_insights_exposes_structured_youtube_demographics_traffic_and_content(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    common = {
+        "provider": "youtube:uc-one", "period_start": "2026-09-01",
+        "period_end": "2026-09-30", "source_reference": "youtube-api",
+    }
+    service.record_growth_observations({"observations": [
+        {**common, "metric_name": "viewer_percentage", "metric_value": 62.5,
+         "age_group": "age25-34", "gender": "female"},
+        {**common, "metric_name": "traffic_source_views", "metric_value": 44,
+         "traffic_source": "YT_SEARCH"},
+        {**common, "metric_name": "video_views", "metric_value": 80,
+         "platform_content_id": "video-1", "platform_content_title": "Measured episode"},
+    ]}, actor="automation")
+
+    result = PodcastInsights(temp_db.db_path).dashboard()
+
+    assert result["demographics"][0]["name"] == "25–34 · Female"
+    assert result["demographics"][0]["share_pct"] == 62.5
+    assert result["traffic_sources"][0]["name"] == "Yt Search"
+    assert result["top_platform_content"][0]["title"] == "Measured episode"
+    assert result["top_platform_content"][0]["metrics"]["video_views"] == 80
+
+
+def test_insights_exposes_host_reported_listening_apps_without_treating_them_as_listings(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "podcast_host", "metric_name": "downloads", "metric_value": 30,
+         "period_start": "2026-11-01", "period_end": "2026-11-23", "source_reference": "host-export",
+         "source_class": "host_rss_delivery", "app_name": "Pocket Casts"},
+        {"provider": "podcast_host", "metric_name": "downloads", "metric_value": 70,
+         "period_start": "2026-11-01", "period_end": "2026-11-23", "source_reference": "host-export",
+         "source_class": "host_rss_delivery", "app_name": "Apple Podcasts"},
+    ]}, actor="automation")
+
+    apps = PodcastInsights(temp_db.db_path).dashboard()["listening_apps"]
+
+    assert [(item["name"], item["value"], item["share_pct"]) for item in apps] == [
+        ("Apple Podcasts", 70.0, 70.0),
+        ("Pocket Casts", 30.0, 30.0),
+    ]
+
+
 def test_source_coverage_never_treats_public_listing_as_private_analytics(temp_db):
     coverage = PodcastSourceMonitor(temp_db.db_path).status()
 
     assert coverage["public_available"] == 0
-    assert coverage["public_expected"] == 6
+    assert coverage["public_expected"] == 9
     assert coverage["private_connected"] == 0
     assert coverage["private_expected"] == 5
     assert all(item["status"] == "provider_access_required" for item in coverage["private"])
     assert coverage["automated_connected"] == 0
     assert coverage["automated_expected"] == 2
     assert coverage["provider_limited_count"] == 3
+
+
+def test_directory_discovery_maps_first_party_and_catalog_links_to_platforms():
+    payload = b'''<a href="https://goodpods.com/podcasts/show">Goodpods</a>
+        <a href="https://music.amazon.de/podcasts/show">Amazon</a>
+        <a href="https://pca.st/itunes/1518394292">Pocket Casts</a>
+        <a href="https://music.youtube.com/library/podcasts?addrssfeed=x">YouTube Music</a>
+        <a href="https://unrelated.example/show">Ignore</a>'''
+
+    assert PodcastSourceMonitor._discover_platform_keys(payload) == {
+        "goodpods", "amazon_music", "pocket_casts", "youtube_music_rss",
+    }
 
 
 def test_web_insights_keeps_private_metrics_missing_without_public_checks(temp_db):

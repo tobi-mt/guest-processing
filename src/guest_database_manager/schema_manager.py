@@ -970,6 +970,7 @@ class SchemaManager:
     @staticmethod
     def _migration_024_growth_evidence_integrity(conn: sqlite3.Connection) -> None:
         """Upgrade early growth tables without losing already imported evidence."""
+        conn.execute("DROP VIEW IF EXISTS current_growth_metric_observations")
         conn.execute(
             """CREATE TABLE growth_metric_observations_v24 (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1644,6 +1645,239 @@ class SchemaManager:
         )
 
     @staticmethod
+    def _migration_044_podcast_reach_reliability(conn: sqlite3.Connection) -> None:
+        """Version analytics evidence and persist discoverable podcast platforms."""
+        conn.execute("DROP TRIGGER IF EXISTS trg_growth_observations_immutable_update")
+        conn.execute("DROP TRIGGER IF EXISTS trg_growth_observations_immutable_delete")
+        conn.execute("ALTER TABLE growth_metric_observations RENAME TO growth_metric_observations_legacy")
+        conn.execute(
+            """CREATE TABLE growth_metric_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER,
+                provider TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                metric_value REAL NOT NULL CHECK(metric_value >= 0),
+                unit TEXT NOT NULL,
+                traffic_scope TEXT NOT NULL DEFAULT 'all'
+                    CHECK(traffic_scope IN ('organic', 'paid', 'all', 'unknown')),
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                source_reference TEXT NOT NULL,
+                source_hash TEXT NOT NULL,
+                observation_key TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+                supersedes_id INTEGER,
+                source_class TEXT NOT NULL DEFAULT 'provider_native',
+                overlap_group TEXT NOT NULL DEFAULT '',
+                country_code TEXT NOT NULL DEFAULT '',
+                city TEXT NOT NULL DEFAULT '',
+                device_type TEXT NOT NULL DEFAULT '',
+                app_name TEXT NOT NULL DEFAULT '',
+                age_group TEXT NOT NULL DEFAULT '',
+                gender TEXT NOT NULL DEFAULT '',
+                traffic_source TEXT NOT NULL DEFAULT '',
+                platform_content_id TEXT NOT NULL DEFAULT '',
+                platform_content_title TEXT NOT NULL DEFAULT '',
+                actor TEXT NOT NULL,
+                correlation_id TEXT NOT NULL DEFAULT '',
+                imported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE RESTRICT,
+                FOREIGN KEY (supersedes_id) REFERENCES growth_metric_observations(id) ON DELETE RESTRICT,
+                UNIQUE(observation_key, revision),
+                CHECK(period_end >= period_start)
+            )"""
+        )
+        conn.execute(
+            """INSERT INTO growth_metric_observations
+               (id, episode_id, provider, metric_name, metric_value, unit, traffic_scope,
+                period_start, period_end, source_reference, source_hash, observation_key,
+                idempotency_key, revision, source_class, actor, correlation_id, imported_at)
+               SELECT id, episode_id, provider, metric_name, metric_value, unit, traffic_scope,
+                      period_start, period_end, source_reference, source_hash, observation_key,
+                      idempotency_key, 1,
+                      CASE
+                        WHEN provider IN ('podcast_host', 'spotify_for_creators', 'anchor')
+                          THEN 'host_rss_delivery'
+                        WHEN provider LIKE 'youtube%' THEN 'video_platform_consumption'
+                        WHEN provider IN ('website', 'google_analytics', 'ga4') THEN 'website'
+                        ELSE 'provider_native'
+                      END,
+                      actor, correlation_id, imported_at
+               FROM growth_metric_observations_legacy"""
+        )
+        conn.execute("DROP TABLE growth_metric_observations_legacy")
+        conn.execute(
+            "CREATE INDEX idx_growth_metrics_episode_period "
+            "ON growth_metric_observations(episode_id, period_end DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_growth_metrics_provider_metric "
+            "ON growth_metric_observations(provider, metric_name, period_end DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_growth_metrics_current "
+            "ON growth_metric_observations(observation_key, revision DESC)"
+        )
+        conn.execute(
+            """CREATE VIEW current_growth_metric_observations AS
+               SELECT observation.* FROM growth_metric_observations observation
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM growth_metric_observations newer
+                   WHERE newer.observation_key = observation.observation_key
+                     AND newer.revision > observation.revision
+               )"""
+        )
+        conn.execute(
+            """CREATE TRIGGER trg_growth_observations_immutable_update
+               BEFORE UPDATE ON growth_metric_observations
+               BEGIN SELECT RAISE(ABORT, 'growth observations are immutable'); END"""
+        )
+        conn.execute(
+            """CREATE TRIGGER trg_growth_observations_immutable_delete
+               BEFORE DELETE ON growth_metric_observations
+               BEGIN SELECT RAISE(ABORT, 'growth observations are immutable'); END"""
+        )
+        conn.execute(
+            """CREATE TABLE podcast_platform_registry (
+                platform_key TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('listening', 'video', 'rss', 'directory')),
+                listing_url TEXT NOT NULL DEFAULT '',
+                platform_show_id TEXT NOT NULL DEFAULT '',
+                discovery_method TEXT NOT NULL,
+                evidence_level TEXT NOT NULL
+                    CHECK(evidence_level IN ('configured', 'catalog_inferred', 'verified')),
+                status TEXT NOT NULL
+                    CHECK(status IN ('pending', 'available', 'unavailable')),
+                canonical_feed_url TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                first_seen_at TIMESTAMP NOT NULL,
+                last_verified_at TIMESTAMP,
+                last_error_code TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP NOT NULL
+            )"""
+        )
+        platforms = (
+            ("spotify", "Spotify", "listening", "https://open.spotify.com/show/0trwqguYCic32smqh3Ny60", "0trwqguYCic32smqh3Ny60", "configured_listing"),
+            ("apple_podcasts", "Apple Podcasts", "listening", "https://podcasts.apple.com/podcast/mirror-talk/id1518394292", "1518394292", "configured_listing"),
+            ("youtube", "YouTube", "video", "https://www.youtube.com/@mirrortalkpodcast", "", "configured_listing"),
+            ("amazon_music", "Amazon Music", "listening", "https://music.amazon.com/podcasts/8996f709-4711-4d9f-8563-93b770bf42ae/mirror-talk-soulful-conversations", "8996f709-4711-4d9f-8563-93b770bf42ae", "configured_listing"),
+            ("iheartradio", "iHeartRadio", "listening", "https://www.iheart.com/podcast/269-mirror-talk-soulful-conver-69159083/", "69159083", "configured_listing"),
+            ("rss", "Open podcast apps", "rss", "https://anchor.fm/s/261b1464/podcast/rss", "", "canonical_feed"),
+        )
+        conn.executemany(
+            """INSERT INTO podcast_platform_registry
+               (platform_key, display_name, kind, listing_url, platform_show_id,
+                discovery_method, evidence_level, status, canonical_feed_url,
+                first_seen_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'configured', 'pending',
+                       'https://anchor.fm/s/261b1464/podcast/rss', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            platforms,
+        )
+        conn.execute(
+            """CREATE TABLE analytics_job_leases (
+                job_key TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                acquired_at TIMESTAMP NOT NULL,
+                lease_until TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX idx_analytics_job_leases_expiry ON analytics_job_leases(lease_until)"
+        )
+
+    @staticmethod
+    def _migration_045_expanded_podcast_distribution(conn: sqlite3.Connection) -> None:
+        """Track direct listings, catalog listings, and RSS subscription targets separately."""
+        SchemaManager._add_column_if_missing(
+            conn, "podcast_platform_registry", "distribution_mode", "TEXT NOT NULL DEFAULT 'direct_listing'"
+        )
+        SchemaManager._add_column_if_missing(
+            conn, "podcast_platform_registry", "analytics_mode", "TEXT NOT NULL DEFAULT 'host_rss_only'"
+        )
+        SchemaManager._add_column_if_missing(
+            conn, "podcast_platform_registry", "directory_source", "TEXT NOT NULL DEFAULT ''"
+        )
+        feed = "https://anchor.fm/s/261b1464/podcast/rss"
+        platforms = (
+            ("deezer", "Deezer", "listening", "https://www.deezer.com/show/1425562", "1425562", "direct_listing", "host_rss_only", "official_listen_directory"),
+            ("goodpods", "Goodpods", "listening", "https://goodpods.com/podcasts/mirror-talk-soulful-conversations-105972", "105972", "direct_listing", "host_rss_only", "official_listen_directory"),
+            ("castbox", "Castbox", "listening", "https://castbox.fm/channel/Mirror-Talk%3A-Soulful-Conversations-id3003775", "3003775", "catalog_listing", "host_rss_only", "podnews"),
+            ("castamatic", "Castamatic", "listening", "https://castamatic.com/guid/dfb3456c-241e-586b-ae2e-2d980c61d409", "dfb3456c-241e-586b-ae2e-2d980c61d409", "catalog_listing", "host_rss_only", "podnews"),
+            ("ivoox", "iVoox", "listening", "https://www.ivoox.com/en/podcast-mirror-talk_sq_f1970999_1.html", "970999", "catalog_listing", "host_rss_only", "podnews"),
+            ("listen_notes", "Listen Notes", "directory", "https://www.listennotes.com/podcasts/mirror-talk-soulful-conversations-tobi-QosfzaqghNB/", "QosfzaqghNB", "catalog_listing", "host_rss_only", "search_discovery"),
+            ("metacast", "Metacast", "listening", "https://metacast.app/podcast/mirror-talk-soulful-conversations/8CbK5vz7", "8CbK5vz7", "catalog_listing", "host_rss_only", "podnews"),
+            ("moon_fm", "Moon FM", "listening", "https://moon.fm/itunes/1518394292", "1518394292", "catalog_listing", "host_rss_only", "podnews"),
+            ("overcast", "Overcast", "listening", "https://overcast.fm/itunes1518394292", "1518394292", "catalog_listing", "host_rss_only", "podnews"),
+            ("pocket_casts", "Pocket Casts", "listening", "https://pocketcasts.com/podcast/mirror-talk-soulful-conversations/f1ef1f30-8fea-0138-ee62-0acc26574db2", "f1ef1f30-8fea-0138-ee62-0acc26574db2", "catalog_listing", "host_rss_only", "podnews"),
+            ("podbean", "Podbean", "listening", "https://www.podbean.com/itunes/1518394292", "1518394292", "catalog_listing", "host_rss_only", "podnews"),
+            ("podcast_addict", "Podcast Addict", "listening", "https://podcastaddict.com/podcast/mirror-talk-soulful-conversations/3022087", "3022087", "catalog_listing", "host_rss_only", "podnews"),
+            ("podcast_guru", "Podcast Guru", "listening", "https://app.podcastguru.io/podcast/mirror-talk-soulful-conversations-9d7e994d524285f2e52019ab33c8a627", "9d7e994d524285f2e52019ab33c8a627", "catalog_listing", "host_rss_only", "podnews"),
+            ("podcast_republic", "Podcast Republic", "listening", "https://www.podcastrepublic.net/podcast/1518394292", "1518394292", "catalog_listing", "host_rss_only", "podnews"),
+            ("podchaser", "Podchaser", "directory", "https://www.podchaser.com/f/pod/1518394292", "1518394292", "catalog_listing", "host_rss_only", "podnews"),
+            ("podcast_index", "Podcast Index", "directory", "https://podcastindex.org/podcast/296724", "296724", "catalog_listing", "host_rss_only", "podnews"),
+            ("podlp", "PodLP", "listening", "https://link.podlp.app/1518394292", "1518394292", "catalog_listing", "host_rss_only", "podnews"),
+            ("podverse", "Podverse", "listening", "https://podverse.fm/podcast/CVLOFzZ36g", "CVLOFzZ36g", "catalog_listing", "host_rss_only", "podnews"),
+            ("antenna_pod", "AntennaPod", "listening", "https://antennapod.org/deeplink/subscribe/?url=https://anchor.fm/s/261b1464/podcast/rss", "", "rss_subscription", "host_rss_only", "podnews"),
+            ("anytime_player", "Anytime Player", "listening", "https://anytimeplayer.app/subscribe?url=https://anchor.fm/s/261b1464/podcast/rss", "", "rss_subscription", "host_rss_only", "podnews"),
+            ("castro", "Castro", "listening", "https://castro.fm/itunes/1518394292", "1518394292", "catalog_listing", "host_rss_only", "podnews"),
+            ("curiocaster", "Curiocaster", "listening", "https://curiocaster.com/", "", "rss_subscription", "host_rss_only", "podnews"),
+            ("great_pods", "Great Pods", "directory", "https://www.greatpods.co/podcasts?podcastIndexId=296724", "296724", "catalog_listing", "host_rss_only", "podnews"),
+            ("player_fm", "Player FM", "listening", "https://player.fm/subscribe?id=https%3A%2F%2Fanchor.fm%2Fs%2F261b1464%2Fpodcast%2Frss", "", "rss_subscription", "host_rss_only", "podnews"),
+            ("steno", "Steno.fm", "directory", "https://steno.fm/show/dfb3456c-241e-586b-ae2e-2d980c61d409", "dfb3456c-241e-586b-ae2e-2d980c61d409", "catalog_listing", "host_rss_only", "podnews"),
+            ("subscribe_android", "Subscribe on Android", "directory", "https://www.subscribeonandroid.com/anchor.fm/s/261b1464/podcast/rss", "", "rss_subscription", "host_rss_only", "podnews"),
+            ("subscribe_email", "Subscribe by Email", "directory", "https://www.subscribebyemail.com/anchor.fm/s/261b1464/podcast/rss", "", "rss_subscription", "host_rss_only", "podnews"),
+            ("youtube_music_rss", "YouTube Music RSS", "listening", "https://music.youtube.com/library/podcasts?addrssfeed=aHR0cHM6Ly9hbmNob3IuZm0vcy8yNjFiMTQ2NC9wb2RjYXN0L3Jzcw%3D%3D", "", "rss_subscription", "host_rss_only", "podnews"),
+            ("mirror_talk_web", "Mirror Talk Web Player", "listening", "https://mirrortalkpodcast.com/listen/", "", "direct_listing", "website_and_host_rss", "official_listen_directory"),
+            ("podnews", "Podnews", "directory", "https://podnews.net/podcast/i4epq", "i4epq", "catalog_listing", "host_rss_only", "podnews"),
+            ("truefans", "Truefans", "listening", "https://truefans.fm/", "", "expected_missing", "host_rss_only", "podnews"),
+            ("luminary", "Luminary", "listening", "https://luminarypodcasts.com/", "", "expected_missing", "host_rss_only", "podnews"),
+        )
+        conn.executemany(
+            """INSERT INTO podcast_platform_registry
+               (platform_key, display_name, kind, listing_url, platform_show_id,
+                discovery_method, evidence_level, status, canonical_feed_url,
+                first_seen_at, last_error_code, updated_at,
+                distribution_mode, analytics_mode, directory_source)
+               VALUES (?, ?, ?, ?, ?, 'directory_discovery', 'catalog_inferred',
+                       CASE WHEN ?='expected_missing' THEN 'unavailable' ELSE 'pending' END,
+                       ?, CURRENT_TIMESTAMP,
+                       CASE WHEN ?='expected_missing' THEN 'not_listed' ELSE '' END,
+                       CURRENT_TIMESTAMP, ?, ?, ?)
+               ON CONFLICT(platform_key) DO UPDATE SET
+                 listing_url=CASE WHEN podcast_platform_registry.listing_url='' THEN excluded.listing_url ELSE podcast_platform_registry.listing_url END,
+                 platform_show_id=CASE WHEN podcast_platform_registry.platform_show_id='' THEN excluded.platform_show_id ELSE podcast_platform_registry.platform_show_id END,
+                 distribution_mode=excluded.distribution_mode,
+                 analytics_mode=excluded.analytics_mode,
+                 directory_source=excluded.directory_source,
+                 updated_at=CURRENT_TIMESTAMP""",
+            [
+                (key, name, kind, url, show_id, distribution_mode, feed,
+                 distribution_mode, distribution_mode, analytics_mode, directory_source)
+                for key, name, kind, url, show_id, distribution_mode, analytics_mode, directory_source in platforms
+            ],
+        )
+        conn.execute(
+            """UPDATE podcast_platform_registry SET
+                 distribution_mode=CASE platform_key
+                   WHEN 'rss' THEN 'rss_subscription'
+                   WHEN 'youtube' THEN 'direct_video'
+                   ELSE 'direct_listing' END,
+                 analytics_mode=CASE platform_key
+                   WHEN 'spotify' THEN 'host_and_provider_export'
+                   WHEN 'apple_podcasts' THEN 'provider_export'
+                   WHEN 'youtube' THEN 'oauth_api'
+                   ELSE 'host_rss_only' END,
+                 directory_source=CASE platform_key
+                   WHEN 'rss' THEN 'canonical_feed'
+                   ELSE 'official_listen_directory' END
+               WHERE platform_key IN ('spotify','apple_podcasts','youtube','amazon_music','iheartradio','rss')"""
+        )
+
+
+    @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
         """Apply each schema migration once, transactionally and in order."""
         conn.execute(SchemaManager.CREATE_MIGRATIONS_TABLE_SQL)
@@ -1692,6 +1926,8 @@ class SchemaManager:
             (41, "email_delivery_observability", SchemaManager._migration_041_email_delivery_observability),
             (42, "guest_communication_contacts", SchemaManager._migration_042_guest_communication_contacts),
             (43, "representatives_cc_all_guest_email", SchemaManager._migration_043_representatives_cc_all_guest_email),
+            (44, "podcast_reach_reliability", SchemaManager._migration_044_podcast_reach_reliability),
+            (45, "expanded_podcast_distribution", SchemaManager._migration_045_expanded_podcast_distribution),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:

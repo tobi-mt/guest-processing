@@ -44,6 +44,12 @@ CANONICAL_METRICS = {
     "engaged_listeners": "count",
     "subscribers": "count",
     "watch_time_hours": "count",
+    "average_view_percentage": "percent",
+    "viewer_percentage": "percent",
+    "traffic_source_views": "count",
+    "video_views": "count",
+    "video_watch_time_hours": "count",
+    "video_average_view_duration_seconds": "seconds",
     "device_mobile": "count",
     "device_desktop": "count",
     "device_tablet": "count",
@@ -64,6 +70,17 @@ CSV_FIELD_ALIASES = {
     "period_start": ("period_start", "period start", "start date", "start", "from", "date"),
     "period_end": ("period_end", "period end", "end date", "end", "to", "date"),
     "source_reference": ("source_reference", "source reference", "source file", "reference"),
+    "source_class": ("source_class", "source class", "evidence class"),
+    "overlap_group": ("overlap_group", "overlap group", "deduplication group"),
+    "country_code": ("country_code", "country code", "country/region code"),
+    "city": ("city", "city name"),
+    "device_type": ("device_type", "device type", "device"),
+    "app_name": ("app_name", "app name", "application", "listening app", "user agent app"),
+    "age_group": ("age_group", "age group"),
+    "gender": ("gender",),
+    "traffic_source": ("traffic_source", "traffic source", "discovery source"),
+    "platform_content_id": ("platform_content_id", "platform content id", "video id", "provider episode id"),
+    "platform_content_title": ("platform_content_title", "platform content title", "video title"),
 }
 
 EXPORTED_METRIC_ALIASES = {
@@ -150,11 +167,23 @@ class GrowthIntelligence:
             for row_number, raw in enumerate(raw_rows, 2):
                 for metric, column in metric_columns.items():
                     if _text(raw.get(column)):
+                        source_class = {
+                            "downloads": "host_rss_delivery",
+                            "plays": "provider_native",
+                            "unique_listeners": "host_cross_platform_aggregate",
+                        }[metric]
+                        overlap_group = {
+                            "downloads": "open_rss_downloads",
+                            "plays": "spotify_native_plays",
+                            "unique_listeners": "spotify_host_audience",
+                        }[metric]
                         candidates.append((row_number, {
                             "metric_name": metric,
                             "metric_value": raw.get(column),
                             "period_start": raw.get("Date"),
                             "period_end": raw.get("Date"),
+                            "source_class": source_class,
+                            "overlap_group": overlap_group,
                         }))
             return candidates
 
@@ -184,6 +213,8 @@ class GrowthIntelligence:
                                 "metric_value": raw.get(column),
                                 "period_start": start,
                                 "period_end": end,
+                                "source_class": "provider_native",
+                                "overlap_group": f"apple_native_{metric}",
                             }))
                 return candidates
             for dimension, code_column, name_column in (
@@ -300,10 +331,43 @@ class GrowthIntelligence:
         if end < start:
             raise GrowthIntelligenceError("period_end cannot be before period_start.")
         value = _metric_value(metric, row.get("metric_value"))
-        fingerprint = json.dumps([episode_id, provider, metric, scope, start, end], separators=(",", ":"))
+        source_class = _text(row.get("source_class")) or (
+            "host_rss_delivery" if provider in {"podcast_host", "spotify_for_creators", "anchor"}
+            else "video_platform_consumption" if provider.startswith("youtube")
+            else "website" if provider in {"website", "google_analytics", "ga4"}
+            else "provider_native"
+        )
+        overlap_group = _text(row.get("overlap_group"))[:120]
+        dimensions = {
+            "country_code": _text(row.get("country_code")).upper()[:3],
+            "city": _text(row.get("city"))[:120],
+            "device_type": GrowthIntelligence._metric_slug(row.get("device_type")),
+            "app_name": _text(row.get("app_name"))[:120],
+            "age_group": GrowthIntelligence._metric_slug(row.get("age_group")),
+            "gender": GrowthIntelligence._metric_slug(row.get("gender")),
+            "traffic_source": GrowthIntelligence._metric_slug(row.get("traffic_source")),
+            "platform_content_id": _text(row.get("platform_content_id"))[:160],
+            "platform_content_title": _text(row.get("platform_content_title"))[:300],
+        }
+        if dimensions["country_code"] and not re.fullmatch(r"[A-Z0-9]{2,3}", dimensions["country_code"]):
+            raise GrowthIntelligenceError("country_code must be a two- or three-character code.")
+        fingerprint_values: list[Any] = [episode_id, provider, metric, scope, start, end]
+        if overlap_group:
+            fingerprint_values.extend([source_class, overlap_group])
+        identity_dimensions = {
+            key: value for key, value in dimensions.items() if key != "platform_content_title"
+        }
+        if any(identity_dimensions.values()):
+            fingerprint_values.append(identity_dimensions)
+        fingerprint = json.dumps(fingerprint_values, separators=(",", ":"), sort_keys=True)
         observation_key = hashlib.sha256(fingerprint.encode()).hexdigest()
-        key = _text(row.get("idempotency_key")) or observation_key
-        source_hash = hashlib.sha256(source_reference.encode()).hexdigest()
+        key = _text(row.get("idempotency_key")) or hashlib.sha256(
+            json.dumps([observation_key, value], separators=(",", ":")).encode()
+        ).hexdigest()
+        source_hash = hashlib.sha256(json.dumps(
+            {"source_reference": source_reference, "observation": fingerprint_values, "value": value},
+            separators=(",", ":"), sort_keys=True,
+        ).encode()).hexdigest()
         normalized = {
             "episode_id": episode_id,
             "provider": provider,
@@ -313,10 +377,17 @@ class GrowthIntelligence:
             "period_start": start,
             "period_end": end,
             "source_reference": source_reference,
+            "source_class": source_class,
+            "overlap_group": overlap_group,
+            **dimensions,
         }
         prepared = (
             episode_id, provider, metric, value, CANONICAL_METRICS.get(metric, "count"), scope, start, end,
-            source_reference, source_hash, observation_key, key,
+            source_reference, source_hash, observation_key, key, source_class, overlap_group,
+            dimensions["country_code"], dimensions["city"], dimensions["device_type"],
+            dimensions["app_name"], dimensions["age_group"], dimensions["gender"],
+            dimensions["traffic_source"], dimensions["platform_content_id"],
+            dimensions["platform_content_title"],
         )
         return normalized, prepared, observation_key
 
@@ -373,9 +444,12 @@ class GrowthIntelligence:
         with connect_database(self.db_path) as conn:
             valid_ids, by_title_guest, by_title = self._episode_indexes(conn)
             existing = {
-                str(row[0]) for row in conn.execute("SELECT observation_key FROM growth_metric_observations").fetchall()
+                str(row[0]): float(row[1])
+                for row in conn.execute(
+                    "SELECT observation_key, metric_value FROM current_growth_metric_observations"
+                ).fetchall()
             }
-            seen: set[str] = set()
+            seen: dict[str, float] = {}
 
             def process_candidate(candidate: dict[str, Any], row_number: int) -> None:
                 require_episode_link = bool(candidate.pop("_require_episode_link", False))
@@ -414,11 +488,15 @@ class GrowthIntelligence:
                     normalized, _prepared, observation_key = self._normalize_observation(
                         candidate, valid_episode_ids=valid_ids
                     )
-                    duplicate = observation_key in existing or observation_key in seen
-                    seen.add(observation_key)
-                    status = "duplicate" if duplicate else "ready"
+                    current_value = existing.get(observation_key, seen.get(observation_key))
+                    duplicate = current_value is not None and current_value == normalized["metric_value"]
+                    revision = current_value is not None and current_value != normalized["metric_value"]
+                    seen[observation_key] = normalized["metric_value"]
+                    status = "duplicate" if duplicate else "revision" if revision else "ready"
                     if duplicate:
                         row_warnings.append("This observation already exists or is repeated in the file.")
+                    elif revision:
+                        row_warnings.append("This value revises an existing immutable observation.")
                     preview_rows.append({
                         "row": row_number,
                         "status": status,
@@ -470,21 +548,25 @@ class GrowthIntelligence:
 
         invalid_count = sum(item["status"] == "invalid" for item in preview_rows)
         duplicate_count = sum(item["status"] == "duplicate" for item in preview_rows)
+        revision_count = sum(item["status"] == "revision" for item in preview_rows)
         linked_count = sum(item.get("observation", {}).get("episode_id") is not None for item in preview_rows if item["status"] != "invalid")
         metrics = sorted({item["metric_name"] for item in ready})
         missing_mfs = [metric for metric in MFS_COMPONENTS if metric not in metrics]
+        summary = {
+            "submitted": len(preview_rows),
+            "ready": len(ready),
+            "invalid": invalid_count,
+            "duplicates": duplicate_count,
+            "linked_to_episode": linked_count,
+            "unlinked": max(len(preview_rows) - invalid_count - linked_count, 0),
+        }
+        if revision_count:
+            summary["revisions"] = revision_count
         return {
             "headers": headers,
             "mapping": resolved_mapping,
             "format": "provider" if adapted_candidates is not None else "long" if long_format else "wide",
-            "summary": {
-                "submitted": len(preview_rows),
-                "ready": len(ready),
-                "invalid": invalid_count,
-                "duplicates": duplicate_count,
-                "linked_to_episode": linked_count,
-                "unlinked": max(len(preview_rows) - invalid_count - linked_count, 0),
-            },
+            "summary": summary,
             "quality": {
                 "metrics_present": metrics,
                 "missing_mfs_metrics": missing_mfs,
@@ -501,25 +583,50 @@ class GrowthIntelligence:
         rows = list(rows)
         if not rows or len(rows) > 25_000:
             raise GrowthIntelligenceError("Provide between 1 and 25,000 observations.")
-        prepared = []
         with connect_database(self.db_path) as conn:
             valid_episode_ids = {int(row[0]) for row in conn.execute("SELECT id FROM episodes").fetchall()}
+            inserted = 0
+            revised = 0
+            duplicates = 0
             for row in rows:
-                _normalized, values, _observation_key = self._normalize_observation(
+                normalized, values, observation_key = self._normalize_observation(
                     row, valid_episode_ids=valid_episode_ids
                 )
-                prepared.append((*values, actor, correlation_id))
-            before = conn.total_changes
-            conn.executemany(
-                """INSERT OR IGNORE INTO growth_metric_observations
-                   (episode_id, provider, metric_name, metric_value, unit, traffic_scope,
-                    period_start, period_end, source_reference, source_hash, observation_key,
-                    idempotency_key, actor, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                prepared,
-            )
-            inserted = conn.total_changes - before
+                current = conn.execute(
+                    """SELECT id, revision, metric_value FROM growth_metric_observations
+                       WHERE observation_key=? ORDER BY revision DESC LIMIT 1""",
+                    (observation_key,),
+                ).fetchone()
+                if current and float(current[2]) == float(normalized["metric_value"]):
+                    duplicates += 1
+                    continue
+                revision = int(current[1]) + 1 if current else 1
+                supersedes_id = int(current[0]) if current else None
+                try:
+                    conn.execute(
+                        """INSERT INTO growth_metric_observations
+                           (episode_id, provider, metric_name, metric_value, unit, traffic_scope,
+                            period_start, period_end, source_reference, source_hash, observation_key,
+                            idempotency_key, source_class, overlap_group, country_code, city,
+                            device_type, app_name, age_group, gender, traffic_source,
+                            platform_content_id,
+                            platform_content_title,
+                            revision, supersedes_id, actor, correlation_id)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (*values, revision, supersedes_id, actor, correlation_id),
+                    )
+                except __import__("sqlite3").IntegrityError as exc:
+                    if "idempotency_key" not in str(exc):
+                        raise
+                    duplicates += 1
+                    continue
+                inserted += 1
+                revised += int(current is not None)
             conn.commit()
-        return {"submitted": len(rows), "inserted": inserted, "duplicates": len(rows) - inserted}
+        result = {"submitted": len(rows), "inserted": inserted, "duplicates": duplicates}
+        if revised:
+            result["revised"] = revised
+        return result
 
     @staticmethod
     def _episode_mfs(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -549,7 +656,7 @@ class GrowthIntelligence:
     def dashboard(self) -> dict[str, Any]:
         with connect_database(self.db_path) as conn:
             conn.row_factory = __import__("sqlite3").Row
-            rows = [dict(row) for row in conn.execute("SELECT * FROM growth_metric_observations ORDER BY period_end DESC, id DESC").fetchall()]
+            rows = [dict(row) for row in conn.execute("SELECT * FROM current_growth_metric_observations ORDER BY period_end DESC, id DESC").fetchall()]
             episodes = [dict(row) for row in conn.execute("SELECT * FROM episodes ORDER BY release_date DESC, id DESC").fetchall()]
             experiments = [dict(row) for row in conn.execute("SELECT * FROM growth_experiments ORDER BY updated_at DESC, id DESC").fetchall()]
             import_history = [dict(row) for row in conn.execute(
@@ -559,7 +666,7 @@ class GrowthIntelligence:
                           COUNT(*) AS observation_count,
                           COUNT(DISTINCT episode_id) AS episode_count,
                           MIN(period_start) AS period_start, MAX(period_end) AS period_end
-                   FROM growth_metric_observations
+                   FROM current_growth_metric_observations
                    GROUP BY COALESCE(NULLIF(correlation_id, ''), source_hash)
                    ORDER BY MAX(imported_at) DESC LIMIT 12"""
             ).fetchall()]
