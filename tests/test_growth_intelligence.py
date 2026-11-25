@@ -357,6 +357,22 @@ def test_spotify_audience_dimension_exports_are_normalized(temp_db, csv_text, ex
         assert row[dimension] == dimension_value
 
 
+def test_spotify_audience_composition_export_is_normalized(temp_db):
+    preview = GrowthIntelligence(temp_db.db_path).preview_csv(
+        "Date,Total,Returning,New,Analytics Period Start,Analytics Period End\n"
+        "11/25/2026,120,45,75,2026-10-27,2026-11-25\n",
+        provider="spotify", source_reference="spotify-audience-composition.csv",
+    )
+
+    assert preview["format"] == "provider"
+    assert preview["summary"]["ready"] == 3
+    assert {row["metric_name"]: row["metric_value"] for row in preview["observations"]} == {
+        "unique_listeners": 120,
+        "returning_listeners": 45,
+        "new_listeners": 75,
+    }
+
+
 def test_provider_export_accepts_more_than_legacy_500_row_limit(temp_db):
     intelligence = GrowthIntelligence(temp_db.db_path)
     rows = [

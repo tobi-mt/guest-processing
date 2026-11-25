@@ -663,11 +663,11 @@ def sync_once(
                         raw_audience_exports["audience"][1]
                     )
                     dimension_exports = {}
-                    for name in ("gender", "age", "geography", "apps"):
+                    for name in ("audience", "gender", "age", "geography", "apps"):
                         export_name, export_csv = raw_audience_exports[name]
                         start, end = (
                             (recent_start, recent_end)
-                            if name in {"gender", "age"}
+                            if name in {"audience", "gender", "age"}
                             else (window_start, window_end)
                         )
                         dimension_exports[name] = (

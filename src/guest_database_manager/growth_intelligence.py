@@ -37,6 +37,8 @@ CANONICAL_METRICS = {
     "plays": "count",
     "streams": "count",
     "unique_listeners": "count",
+    "new_listeners": "count",
+    "returning_listeners": "count",
     "unique_viewers": "count",
     "listeners": "count",
     "followers": "count",
@@ -203,6 +205,26 @@ class GrowthIntelligence:
                             "period_end": raw.get("Date"),
                             "source_class": source_class,
                             "overlap_group": overlap_group,
+                        }))
+            return candidates
+        if provider_key == "spotify" and {
+            "Date", "Total", "Returning", "New",
+        }.issubset(header_set):
+            metric_columns = {
+                "unique_listeners": "Total",
+                "returning_listeners": "Returning",
+                "new_listeners": "New",
+            }
+            for row_number, raw in enumerate(raw_rows, 2):
+                for metric, column in metric_columns.items():
+                    if _text(raw.get(column)):
+                        candidates.append((row_number, {
+                            "metric_name": metric,
+                            "metric_value": raw.get(column),
+                            "period_start": raw.get("Date"),
+                            "period_end": raw.get("Date"),
+                            "source_class": "provider_native",
+                            "overlap_group": f"spotify_native_{metric}",
                         }))
             return candidates
         spotify_window = {"Analytics Period Start", "Analytics Period End"}

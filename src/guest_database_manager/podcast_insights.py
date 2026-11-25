@@ -11,13 +11,17 @@ from guest_database_manager.db_connection import connect_database
 
 
 ADDITIVE_METRICS = {"downloads", "plays", "streams", "downloads_7d", "watch_time_hours"}
-AUDIENCE_METRICS = {"unique_listeners", "unique_viewers", "listeners", "followers", "subscribers"}
+AUDIENCE_METRICS = {
+    "unique_listeners", "new_listeners", "returning_listeners", "unique_viewers",
+    "listeners", "followers", "subscribers",
+}
 DEVICE_PREFIX = "device_"
 COUNTRY_PREFIX = "country_"
 DISPLAY_METRICS = {
     "downloads", "plays", "streams", "unique_listeners", "listeners", "followers",
     "subscribers", "watch_time_hours", "average_view_duration_seconds", "organic_reach",
     "consumption_depth_pct", "engaged_listeners", "unique_viewers",
+    "new_listeners", "returning_listeners",
     "lifetime_plays", "lifetime_watch_time_hours",
 }
 
