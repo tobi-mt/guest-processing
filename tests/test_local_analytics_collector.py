@@ -8,6 +8,7 @@ import guest_database_manager.local_analytics_collector as collector
 from guest_database_manager.local_analytics_collector import (
     BROWSER_CHANNEL_ENV,
     LocalCollectorError,
+    ReauthenticationRequired,
     _browser_channel,
     _collector_token,
     _launch_agent_payload,
@@ -276,10 +277,13 @@ def test_launch_agent_runs_daily_sync_without_embedding_the_secret(tmp_path: Pat
     assert payload["StartCalendarInterval"] == {"Hour": 7, "Minute": 30}
     assert payload["ProgramArguments"][:4] == [
         "/opt/mirror-talk/bin/python", "-m",
-        "guest_database_manager.local_analytics_collector", "sync",
+        "guest_database_manager.local_analytics_collector", "scheduled-sync",
     ]
     assert "--headed" in payload["ProgramArguments"]
     assert payload["ProcessType"] == "Interactive"
+    assert payload["LowPriorityIO"] is True
+    assert payload["Nice"] == 10
+    assert payload["ThrottleInterval"] == 300
     assert "environment-secret" not in repr(payload)
     assert payload["RunAtLoad"] is True
 
@@ -333,3 +337,46 @@ def test_one_command_setup_registers_logs_in_and_schedules_both_providers(
     assert [item[0] for item in logins] == ["spotify", "apple_podcasts"]
     assert schedules == [("spotify", 6, 15), ("apple_podcasts", 6, 30)]
     assert paths == [tmp_path / "spotify.plist", tmp_path / "apple_podcasts.plist"]
+
+
+def test_scheduled_sync_retries_transient_failures_then_succeeds(tmp_path: Path, monkeypatch) -> None:
+    attempts = []
+    sleeps = []
+
+    def fake_sync(provider, **kwargs):
+        attempts.append((provider, kwargs["headed"], kwargs["quiet_window"]))
+        if len(attempts) < 3:
+            raise LocalCollectorError("temporary provider failure")
+        return {"status": "completed", "inserted": 2, "duplicates": 1}
+
+    monkeypatch.setattr(collector, "sync_once", fake_sync)
+    monkeypatch.setattr(collector.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = collector.scheduled_sync(
+        "spotify", server="https://guest-processing.example", token="x" * 32,
+        profile_root=tmp_path, url="https://creators.spotify.com/analytics",
+        retry_delays=(1, 2),
+    )
+
+    assert result["status"] == "completed"
+    assert attempts == [("spotify", True, True)] * 3
+    assert sleeps == [1, 2]
+
+
+def test_scheduled_sync_never_retries_owner_reauthentication(tmp_path: Path, monkeypatch) -> None:
+    attempts = []
+
+    def fake_sync(provider, **kwargs):
+        attempts.append(provider)
+        raise ReauthenticationRequired("owner action required")
+
+    monkeypatch.setattr(collector, "sync_once", fake_sync)
+
+    with pytest.raises(ReauthenticationRequired, match="owner action"):
+        collector.scheduled_sync(
+            "apple_podcasts", server="https://guest-processing.example", token="x" * 32,
+            profile_root=tmp_path, url="https://podcastsconnect.apple.com/analytics",
+            retry_delays=(),
+        )
+
+    assert attempts == ["apple_podcasts"]

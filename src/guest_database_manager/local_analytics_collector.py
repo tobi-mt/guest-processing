@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import getpass
 import os
 import plistlib
@@ -38,6 +39,10 @@ BROWSER_CHANNEL_ENV = "MIRROR_TALK_ANALYTICS_BROWSER_CHANNEL"
 
 class LocalCollectorError(RuntimeError):
     """A safe collector failure that never contains session material."""
+
+
+class ReauthenticationRequired(LocalCollectorError):
+    """The provider requires a one-time owner authentication ceremony."""
 
 
 def _collector_token() -> str:
@@ -166,7 +171,9 @@ def _launch_browser_context(playwright, *, profile_path: Path, headless: bool):
 
 
 @contextmanager
-def _sync_browser_context(playwright, *, profile_path: Path, headless: bool):
+def _sync_browser_context(
+    playwright, *, profile_path: Path, headless: bool, quiet_window: bool = False,
+):
     """Reuse the owner's native Chrome session without a Playwright-owned launch.
 
     Some provider identity systems accept the dedicated profile in normal Chrome but
@@ -212,6 +219,10 @@ def _sync_browser_context(playwright, *, profile_path: Path, headless: bool):
     ]
     if headless:
         arguments.append("--headless=new")
+    elif quiet_window:
+        # Native headed Chrome is required by the provider portals, but a scheduled
+        # collection should not steal focus or cover the owner's work.
+        arguments.extend(["--window-position=-32000,-32000", "--window-size=800,600"])
     arguments.append("about:blank")
     process = subprocess.Popen(
         arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -447,7 +458,8 @@ def login(provider: str, *, profile_root: Path, url: str) -> None:
 
 
 def sync_once(
-    provider: str, *, server: str, token: str, profile_root: Path, url: str, headed: bool = False
+    provider: str, *, server: str, token: str, profile_root: Path, url: str,
+    headed: bool = False, quiet_window: bool = False,
 ) -> dict:
     """Download one explicitly labelled provider CSV and upload it through the safe ingestion boundary."""
     sync_playwright = _playwright()
@@ -458,6 +470,7 @@ def sync_once(
                 playwright,
                 profile_path=_profile_path(profile_root, provider),
                 headless=not headed,
+                quiet_window=quiet_window,
             ) as context:
                 page = context.pages[0] if context.pages else context.new_page()
                 page.goto(url, wait_until="domcontentloaded", timeout=90_000)
@@ -470,7 +483,7 @@ def sync_once(
                 if visible_password or re.search(r"/(?:login|signin|auth)(?:/|\?|$)", page.url, re.I):
                     login_path = urlsplit(page.url).path[:160]
                     _status(server, token, provider, "reauth_required", "provider_login_required")
-                    raise LocalCollectorError(
+                    raise ReauthenticationRequired(
                         f"Provider login or MFA is required at {login_path or '/'}. "
                         "Run the collector login command again."
                     )
@@ -603,6 +616,41 @@ def sync_once(
         raise LocalCollectorError("The local provider collection run failed safely.") from exc
 
 
+def scheduled_sync(
+    provider: str, *, server: str, token: str, profile_root: Path, url: str,
+    attempts: int = 3, retry_delays: tuple[float, ...] = (20, 90),
+) -> dict:
+    """Run one quiet, non-overlapping scheduled collection with bounded retries."""
+    if attempts < 1:
+        raise LocalCollectorError("The scheduled collector requires at least one attempt.")
+    lock_dir = profile_root.expanduser().resolve() / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = lock_dir / f"{provider}.lock"
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"status": "already_running", "inserted": 0, "duplicates": 0}
+        last_error: LocalCollectorError | None = None
+        for attempt in range(attempts):
+            try:
+                return sync_once(
+                    provider, server=server, token=token, profile_root=profile_root,
+                    url=url, headed=True, quiet_window=True,
+                )
+            except ReauthenticationRequired:
+                # MFA and login are owner actions. Repeating them in the background
+                # only creates noise and can trigger provider security controls.
+                raise
+            except LocalCollectorError as exc:
+                last_error = exc
+                if attempt + 1 >= attempts:
+                    break
+                delay = retry_delays[min(attempt, len(retry_delays) - 1)] if retry_delays else 0
+                time.sleep(max(0, delay))
+        raise last_error or LocalCollectorError("The scheduled collector did not complete.")
+
+
 def _launch_agent_payload(
     provider: str, *, server: str, profile_root: Path, hour: int = 6, minute: int = 15,
     python_executable: str | None = None, logs_dir: Path | None = None,
@@ -617,7 +665,7 @@ def _launch_agent_payload(
         "ProgramArguments": [
             python_executable or sys.executable,
             "-m", "guest_database_manager.local_analytics_collector",
-            "sync", provider,
+            "scheduled-sync", provider,
             # Provider analytics portals deliberately vary or suppress export controls
             # in headless Chrome. A normal, owner-visible Chrome session also reuses
             # the authentication ceremony that the collector is designed to retain.
@@ -631,6 +679,9 @@ def _launch_agent_payload(
         # background process causes macOS to background-throttle Chrome and some
         # portals omit their authenticated export UI under that launch context.
         "ProcessType": "Interactive",
+        "LowPriorityIO": True,
+        "Nice": 10,
+        "ThrottleInterval": 300,
         "StandardOutPath": str(logs / f"{provider}.log"),
         "StandardErrorPath": str(logs / f"{provider}.error.log"),
     }
@@ -716,7 +767,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Mirror Talk local private-analytics collector")
     parser.add_argument(
         "command",
-        choices=("setup", "save-token", "login", "sync", "install-schedule", "uninstall-schedule"),
+        choices=("setup", "save-token", "login", "sync", "scheduled-sync", "install-schedule", "uninstall-schedule"),
     )
     parser.add_argument("provider", nargs="?", choices=tuple(DEFAULT_URLS))
     parser.add_argument("--server", default=os.environ.get("MIRROR_TALK_PUBLIC_URL", ""))
@@ -768,14 +819,17 @@ def main() -> None:
             removed = uninstall_schedule(args.provider)
             print(f"Daily {args.provider} synchronization {'removed' if removed else 'was not installed'}.")
             return
-        result = sync_once(
-            args.provider,
-            server=args.server,
-            token=_collector_token(),
-            profile_root=args.profile_root,
-            url=url,
-            headed=args.headed,
-        )
+        runner = scheduled_sync if args.command == "scheduled-sync" else sync_once
+        run_options = {
+            "server": args.server, "token": _collector_token(),
+            "profile_root": args.profile_root, "url": url,
+        }
+        if runner is sync_once:
+            run_options["headed"] = args.headed
+        result = runner(args.provider, **run_options)
+        if result.get("status") == "already_running":
+            print(f"{args.provider} synchronization is already running; this invocation exited quietly.")
+            return
         print(f"{args.provider} synchronization completed: {result.get('inserted', 0)} inserted, "
               f"{result.get('duplicates', 0)} duplicates.")
     except LocalCollectorError as exc:

@@ -244,16 +244,21 @@ function render(payload) {
   };
   document.querySelectorAll("#refresh-podcast-reach,[data-refresh-reach]").forEach((button) => button.addEventListener("click", () => refreshReach(button)));
   const global = summary.global_rollup || {};
-  const reach = global.reach_range || {};
-  const reachValue = reach.minimum == null ? "Not yet measurable" : reach.maximum == null ? `At least ${number(reach.minimum)}` : `${number(reach.minimum)}–${number(reach.maximum)}`;
   const dailyAudio = payload.daily_trends?.spotify || [];
   const audio = audioView(dailyAudio);
   const rangeLabel = audio.start && audio.end ? `${formatDate(audio.start)} – ${formatDate(audio.end)}` : "Automatic lifetime collection is starting";
+  const audienceCounters = payload.audience_by_platform || [];
+  const spotifyListeners = [...audienceCounters].reverse().find((item) => item.provider === "spotify" && item.metric === "unique_listeners");
+  const appleFollowers = [...audienceCounters].reverse().find((item) => item.provider === "apple_podcasts" && item.metric === "followers");
+  const youtubeSubscribers = audienceCounters.filter((item) => String(item.provider || "").startsWith("youtube") && item.metric === "subscribers");
+  const youtubeSubscriberTotal = youtubeSubscribers.reduce((total, item) => total + Number(item.value || 0), 0);
   document.getElementById("insights-summary").innerHTML = [
     ["Podcast downloads & plays", number(audio.total), rangeLabel, "global"],
     ["Other podcast apps", number(audio.downloads), "Hosting delivery across Apple Podcasts and every other RSS app"],
     ["Spotify plays", number(audio.plays), `Native Spotify starts · ${rangeLabel}`],
-    ["Latest measured audience", reachValue, reach.minimum == null ? "Awaiting compatible audience reports" : `Cross-platform lower bound through ${reach.period_end}`],
+    ["Latest Spotify listeners", number(spotifyListeners?.value), spotifyListeners ? `Unique listeners on ${formatDate(spotifyListeners.period_end)} · not followers or devices` : "Awaiting Spotify listener data"],
+    ["Apple followers", number(appleFollowers?.value), appleFollowers ? `Followers through ${formatDate(appleFollowers.period_end)}` : "Awaiting Apple follower data"],
+    ["YouTube subscriptions", youtubeSubscribers.length ? number(youtubeSubscriberTotal) : "—", youtubeSubscribers.length ? `Across ${number(youtubeSubscribers.length)} connected channels · not deduplicated people` : "Awaiting YouTube subscriber data"],
   ].map(([label,value,detail,className]) => `<article class="summary-card ${className || ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
   const youtubeDevices = (payload.devices || []).filter((item) => item.provider === "youtube" || item.provider.startsWith("youtube:"));
   const youtubeDeviceTotal = youtubeDevices.reduce((total, item) => total + Number(item.value || 0), 0);
