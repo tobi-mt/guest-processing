@@ -78,7 +78,7 @@ class PodcastReachReleaseReadiness:
                     }},
                 }
             platforms = [dict(row) for row in conn.execute(
-                """SELECT platform_key, display_name, status, distribution_mode, last_verified_at,
+                """SELECT platform_key, display_name, status, distribution_mode, evidence_level, last_verified_at,
                           last_error_code FROM podcast_platform_registry ORDER BY platform_key"""
             ).fetchall()]
             source_checks = [dict(row) for row in conn.execute(
@@ -100,8 +100,14 @@ class PodcastReachReleaseReadiness:
         }
 
         expected = [row for row in platforms if row["distribution_mode"] != "expected_missing"]
-        available = [row for row in expected if row["status"] == "available"]
-        unresolved = [row["platform_key"] for row in expected if row["status"] != "available"]
+        def confirmed(row: dict[str, Any]) -> bool:
+            return row["status"] == "available" or bool(
+                row.get("last_verified_at")
+                and row.get("evidence_level") in {"verified", "catalog_inferred"}
+            )
+
+        available = [row for row in expected if confirmed(row)]
+        unresolved = [row["platform_key"] for row in expected if not confirmed(row)]
         known_missing = [row["platform_key"] for row in platforms if row["distribution_mode"] == "expected_missing"]
         distribution_ok = bool(expected) and not unresolved
         checks["distribution"] = {

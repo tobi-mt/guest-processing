@@ -152,7 +152,8 @@ class PodcastSourceMonitor:
                 if platform_key:
                     conn.execute(
                         """UPDATE podcast_platform_registry
-                           SET status=?, evidence_level=CASE WHEN ?='available' THEN 'verified' ELSE evidence_level END,
+                           SET status=CASE WHEN ?='available' THEN 'available' ELSE status END,
+                               evidence_level=CASE WHEN ?='available' THEN 'verified' ELSE evidence_level END,
                                last_verified_at=CASE WHEN ?='available' THEN ? ELSE last_verified_at END,
                                last_error_code=?, metadata_json=?, updated_at=?
                            WHERE platform_key=?""",
@@ -189,7 +190,7 @@ class PodcastSourceMonitor:
                      ON latest.id = c.id ORDER BY c.source_name"""
             ).fetchall()]
             observations = [dict(row) for row in conn.execute(
-                """SELECT provider, metric_name, period_end FROM current_growth_metric_observations
+                """SELECT provider, metric_name, source_class, period_end FROM current_growth_metric_observations
                    ORDER BY period_end, id"""
             ).fetchall()]
         for row in public:
@@ -202,7 +203,12 @@ class PodcastSourceMonitor:
             tokens = self._provider_tokens(source["key"])
             source_rows = [
                 row for row in observations
-                if str(row["provider"]).casefold() in tokens
+                if (
+                    source["key"] == "podcast_host"
+                    and row["metric_name"] == "downloads"
+                    and row["source_class"] == "host_rss_delivery"
+                )
+                or str(row["provider"]).casefold() in tokens
                 or (source["key"] == "youtube_analytics" and str(row["provider"]).casefold().startswith("youtube:"))
             ]
             private.append({

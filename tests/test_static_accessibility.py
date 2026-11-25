@@ -392,10 +392,10 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261125.5" in html
-    assert "insights.js?v=20261125.8" in html
-    assert "Refreshing automatically" in javascript
-    assert "Owner action" in javascript
+    assert "insights.css?v=20261125.6" in html
+    assert "insights.js?v=20261125.9" in html
+    assert "Connection health" in javascript
+    assert "Check failed" in javascript
     assert "Downloads and plays over time" in html
     assert "Where your audience listens and watches" in html
     assert 'data-audio-range="all" class="active"' in html

@@ -1,6 +1,7 @@
 import json
 
 from guest_database_manager.db_connection import connect_database
+from guest_database_manager.growth_intelligence import GrowthIntelligence
 from guest_database_manager.podcast_insights import PodcastInsights
 from guest_database_manager.podcast_source_monitor import PodcastSourceMonitor
 from guest_database_manager.web_interface import GuestWebService
@@ -314,6 +315,20 @@ def test_source_coverage_never_treats_public_listing_as_private_analytics(temp_d
     assert coverage["provider_limited_count"] == 3
 
 
+def test_host_rss_delivery_counts_as_connected_hosting_analytics(temp_db):
+    GrowthIntelligence(temp_db.db_path).record_observations([{
+        "provider": "spotify", "metric_name": "downloads", "metric_value": 42,
+        "period_start": "2026-11-01", "period_end": "2026-11-25",
+        "source_reference": "spotify-performance.csv", "source_class": "host_rss_delivery",
+    }], actor="test")
+
+    coverage = PodcastSourceMonitor(temp_db.db_path).status()
+    hosting = next(item for item in coverage["private"] if item["key"] == "podcast_host")
+
+    assert hosting["status"] == "data_present"
+    assert hosting["metrics_present"] == ["downloads"]
+
+
 def test_directory_discovery_maps_first_party_and_catalog_links_to_platforms():
     payload = b'''<a href="https://goodpods.com/podcasts/show">Goodpods</a>
         <a href="https://music.amazon.de/podcasts/show">Amazon</a>
@@ -324,6 +339,32 @@ def test_directory_discovery_maps_first_party_and_catalog_links_to_platforms():
     assert PodcastSourceMonitor._discover_platform_keys(payload) == {
         "goodpods", "amazon_music", "pocket_casts", "youtube_music_rss",
     }
+
+
+def test_transient_public_check_failure_preserves_verified_platform(temp_db, monkeypatch):
+    verified_at = "2026-11-24T12:00:00Z"
+    with connect_database(temp_db.db_path) as conn:
+        conn.execute(
+            """UPDATE podcast_platform_registry
+               SET status='available', evidence_level='verified', last_verified_at=?
+               WHERE platform_key='listen_notes'""",
+            (verified_at,),
+        )
+        conn.commit()
+
+    monkeypatch.setattr(
+        "guest_database_manager.podcast_source_monitor.urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("temporary")),
+    )
+    PodcastSourceMonitor(temp_db.db_path).run(actor="test", force=True)
+
+    with connect_database(temp_db.db_path) as conn:
+        row = conn.execute(
+            "SELECT status, evidence_level, last_verified_at, last_error_code "
+            "FROM podcast_platform_registry WHERE platform_key='listen_notes'"
+        ).fetchone()
+    assert tuple(row[:3]) == ("available", "verified", verified_at)
+    assert row[3] == "TimeoutError"
 
 
 def test_web_insights_keeps_private_metrics_missing_without_public_checks(temp_db):
