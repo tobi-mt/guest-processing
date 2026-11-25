@@ -271,6 +271,9 @@ class PodcastInsights:
                 "plays": "Provider-reported starts or plays; not assumed equivalent to downloads.",
                 "global_measured_activity": "Open-RSS downloads plus Spotify-native plays plus YouTube views for their latest comparable windows. Apple-native plays are excluded because Apple delivery is already represented in host-reported RSS downloads.",
                 "unique_listeners": "Distinct listeners within one provider and period; not deduplicated across platforms.",
+                "followers": "People who chose an ongoing follow relationship on a provider. This is a current relationship counter, not a listening total.",
+                "subscribers": "People who chose an ongoing subscription relationship on a provider. This is a current relationship counter, not a listening total.",
+                "audience_relationships": "Current followers and subscribers summed across connected providers. Recent listeners are excluded because they measure consumption during a provider-specific period.",
                 "platform_strength": "The latest source-backed metrics for each provider, without a fabricated composite score.",
             },
         }

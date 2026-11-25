@@ -393,7 +393,7 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
     assert "insights.css?v=20261125.5" in html
-    assert "insights.js?v=20261125.7" in html
+    assert "insights.js?v=20261125.8" in html
     assert "Refreshing automatically" in javascript
     assert "Owner action" in javascript
     assert "Downloads and plays over time" in html
@@ -405,6 +405,8 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
         "Platforms available", "Audience relationships", "Growth trend",
     ):
         assert f'"{label}"' in script
+    assert "Why these numbers differ:" in script
+    assert "Listeners are people who played the show during the provider's stated reporting period" in script
     assert ".freshness{" in styles
     assert "background:rgba(255,255,255,.08);color:var(--text)" in styles
     assert ".freshness.current{background:rgba(93,205,169,.14);color:#9ee5cd" in styles

@@ -259,14 +259,14 @@ function render(payload) {
   ].filter(Boolean).join(" · ");
   const periodAudience = (topline.audience_relationship_by_platform || [])
     .filter((item) => ["unique_listeners", "unique_viewers", "listeners"].includes(item.metric))
-    .map((item) => `${providerLabel(item.provider)}: ${number(item.value)} ${metricLabel(item.metric).toLowerCase()} through ${item.period_end || "unknown"}`)
+    .map((item) => `${providerLabel(item.provider)}: ${number(item.value)} ${metricLabel(item.metric).toLowerCase()} in its latest reported period through ${item.period_end || "unknown"}`)
     .join(" · ");
   document.getElementById("insights-summary").innerHTML = [
     ["Downloads & plays", number(topline.downloads_plays), `${lifetimeRange} · podcast and lifetime video activity`, "global"],
     ["Listening & watch hours", topline.listening_watch_hours == null ? "—" : percentage(topline.listening_watch_hours), topline.hours_coverage_note || "Awaiting duration data"],
     ["Countries reached", number(topline.countries_reached), "Distinct countries across connected audience reports"],
     ["Platforms available", number(topline.platforms_available), "Confirmed listening and watching destinations"],
-    ["Audience relationships", number(topline.audience_relationships), `${relationshipDetail || "Follower and subscription counters are still syncing"}${periodAudience ? ` · Recent audience (not added): ${periodAudience}` : ""}`],
+    ["Audience relationships", number(topline.audience_relationships), `${relationshipDetail || "Follower and subscription counters are still syncing"}. Followers and subscribers chose an ongoing connection.${periodAudience ? ` Recent listeners measure period activity and are not added: ${periodAudience}` : ""}`],
     ["Growth trend", growthValue, topline.growth_basis || "Latest comparable podcast periods"],
   ].map(([label,value,detail,className]) => `<article class="summary-card ${className || ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
   const youtubeDevices = (payload.devices || []).filter((item) => item.provider === "youtube" || item.provider.startsWith("youtube:"));
@@ -296,7 +296,8 @@ function render(payload) {
   }).join("");
   document.getElementById("provider-strength").innerHTML = providers.length ? providers.map((item) => `<article class="provider-row"><div><strong>${escapeHtml(providerLabel(item.provider))}</strong><span class="freshness ${escapeHtml(item.freshness)}">${item.freshness === "current" ? "Up to date" : "Refresh needed"}</span></div><p class="metric-pairs">${Object.entries(item.metrics || {}).map(([key,value]) => `<span>${escapeHtml(metricLabel(key))}<strong>${number(value)}</strong></span>`).join("")}</p><small>${escapeHtml(item.period_start)} – ${escapeHtml(item.period_end)}</small></article>`).join("") : empty("Connect a provider to see its performance here.");
   const audience = payload.audience_by_platform || [];
-  document.getElementById("audience-platform").innerHTML = audience.length ? audience.map((item) => `<article class="provider-row"><div><strong>${escapeHtml(providerLabel(item.provider))}</strong><span>${number(item.value)}</span></div><p>${escapeHtml(item.metric.replaceAll("_", " "))}</p><small>Through ${escapeHtml(item.period_end)}</small></article>`).join("") : empty("Automatic collectors have not received compatible unique-listener or follower counters yet.");
+  const audienceExplanation = `<p class="section-context"><strong>Why these numbers differ:</strong> followers and subscribers are people who opted into an ongoing relationship. Listeners are people who played the show during the provider's stated reporting period; they may not follow, can return in later periods, and cannot be summed across platforms.</p>`;
+  document.getElementById("audience-platform").innerHTML = audienceExplanation + (audience.length ? audience.map((item) => `<article class="provider-row"><div><strong>${escapeHtml(providerLabel(item.provider))}</strong><span>${number(item.value)}</span></div><p>${escapeHtml(metricLabel(item.metric))}</p><small>${["unique_listeners", "unique_viewers", "listeners"].includes(item.metric) ? "Latest reported period through" : "Current counter through"} ${escapeHtml(item.period_end)}</small></article>`).join("") : empty("Automatic collectors have not received compatible unique-listener or follower counters yet."));
   renderBars(payload.devices || [], document.getElementById("device-breakdown"));
   renderBars(payload.countries || [], document.getElementById("country-breakdown"));
   renderBars(payload.cities || [], document.getElementById("city-breakdown"));
