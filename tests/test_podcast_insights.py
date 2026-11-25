@@ -560,3 +560,35 @@ def test_platform_totals_and_monthly_trends_preserve_additive_grain(temp_db):
         {"period": "2026-08-31", "downloads": 10.0, "plays": 5.0, "audience": 0.0},
         {"period": "2026-09-01", "downloads": 20.0, "plays": 0.0, "audience": 0.0},
     ]
+
+
+def test_percentage_dimensions_use_latest_duplicate_observation_once():
+    rows = [
+        {"provider": "spotify", "metric_name": "app_share_pct", "metric_value": 53.1,
+         "period_end": "2026-11-25", "app_name": "Web Browser", "imported_at": "2026-11-25T10:00:00"},
+        {"provider": "spotify", "metric_name": "app_share_pct", "metric_value": 53.1,
+         "period_end": "2026-11-25", "app_name": "Web Browser", "imported_at": "2026-11-25T11:00:00"},
+        {"provider": "spotify", "metric_name": "app_share_pct", "metric_value": 24.2,
+         "period_end": "2026-11-25", "app_name": "Spotify", "imported_at": "2026-11-25T11:00:00"},
+    ]
+
+    result = PodcastInsights._structured_dimension_breakdown(
+        rows, metric="app_share_pct", label_fields=("app_name",), percentage_values=True,
+    )
+
+    assert [(item["name"], item["value"]) for item in result] == [
+        ("Web Browser", 53.1), ("Spotify", 24.2),
+    ]
+
+
+def test_prefixed_percentage_dimensions_do_not_sum_repeated_imports():
+    rows = [
+        {"provider": "spotify", "metric_name": "country_audience_share_pct_united_states",
+         "metric_value": 57.85, "period_end": "2026-11-25", "episode_id": None,
+         "imported_at": "2026-11-25T10:00:00"},
+        {"provider": "spotify", "metric_name": "country_audience_share_pct_united_states",
+         "metric_value": 57.85, "period_end": "2026-11-25", "episode_id": None,
+         "imported_at": "2026-11-25T11:00:00"},
+    ]
+
+    assert PodcastInsights._dimension_breakdown(rows, "country_")[0]["value"] == 57.85

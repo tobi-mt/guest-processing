@@ -799,11 +799,18 @@ class PodcastInsights:
             latest = max((row["period_end"] for row in provider_metric_rows), default=None)
             relevant = [row for row in provider_metric_rows if row["period_end"] == latest]
             show_rows = [row for row in relevant if row.get("episode_id") is None]
+            selected_rows = show_rows or relevant
+            latest_by_identity: dict[str, dict[str, Any]] = {}
+            for row in selected_rows:
+                identity = str(row.get("episode_id") or "show")
+                current = latest_by_identity.get(identity)
+                if current is None or str(row.get("imported_at") or "") > str(current.get("imported_at") or ""):
+                    latest_by_identity[identity] = row
             percentage_prefix = f"{prefix}audience_share_pct_"
             is_percentage = metric.startswith(percentage_prefix)
             name = metric[len(percentage_prefix):] if is_percentage else metric[len(prefix):]
             values.append({"name": name.replace("_", " ").title(),
-                           "value": sum(float(row["metric_value"]) for row in (show_rows or relevant)),
+                           "value": sum(float(row["metric_value"]) for row in latest_by_identity.values()),
                            "provider": provider, "period_end": latest,
                            "is_percentage": is_percentage,
                            "measure": "audience share" if is_percentage else "audience"})
@@ -870,6 +877,13 @@ class PodcastInsights:
             ]
             if labelled_rows:
                 latest_rows = labelled_rows
+            latest_by_label: dict[tuple[str, ...], dict[str, Any]] = {}
+            for row in latest_rows:
+                label_key = tuple(str(row.get(field) or "unknown").strip().casefold() for field in dimension_fields)
+                current = latest_by_label.get(label_key)
+                if current is None or str(row.get("imported_at") or "") > str(current.get("imported_at") or ""):
+                    latest_by_label[label_key] = row
+            latest_rows = list(latest_by_label.values())
             total = sum(float(row["metric_value"]) for row in latest_rows)
             for row in latest_rows:
                 value = float(row["metric_value"])
