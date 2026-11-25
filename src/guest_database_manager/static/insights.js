@@ -1,5 +1,6 @@
 const escapeHtml = window.PerformanceUtils?.escapeHtml || ((value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[character]));
 const number = (value) => value == null ? "—" : new Intl.NumberFormat().format(Number(value));
+const percentage = (value) => value == null ? "—" : new Intl.NumberFormat(undefined, {maximumFractionDigits:1}).format(Number(value));
 const safeUrl = (value) => { try { const parsed = new URL(String(value)); return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "#"; } catch { return "#"; } };
 const empty = (message) => `<div class="insights-empty"><strong>Collecting automatically</strong><p>${escapeHtml(message)}</p></div>`;
 const csrfToken = () => decodeURIComponent((document.cookie.match(/(?:^|;\s*)dashboard_csrf=([^;]+)/) || [])[1] || "");
@@ -79,7 +80,7 @@ function renderPlatformPerformance(global, monthly, listeningApps) {
 
   const appTarget = document.getElementById("listening-app-summary");
   const apps = (listeningApps || []).slice(0, 8);
-  appTarget.innerHTML = apps.length ? `<div class="listening-app-heading"><h3>Podcast-app breakdown</h3><p>Host-reported delivery already included in the RSS total above.</p></div><div class="listening-app-chips">${apps.map((item) => `<span><strong>${escapeHtml(item.name)}</strong>${item.is_percentage ? `${number(item.value)}%` : `${number(item.value)} · ${number(item.share_pct)}%`}</span>`).join("")}</div>` : `<p class="platform-coverage-note">The RSS total covers all podcast apps. Per-app contribution will appear here when the hosting source provides listening-app detail.</p>`;
+  appTarget.innerHTML = apps.length ? `<div class="listening-app-heading"><h3>Podcast-app breakdown</h3><p>Host-reported delivery already included in the RSS total above.</p></div><div class="listening-app-chips">${apps.map((item) => `<span><strong>${escapeHtml(item.name)}</strong>${item.is_percentage ? `${percentage(item.value)}%` : `${number(item.value)} · ${percentage(item.share_pct)}%`}</span>`).join("")}</div>` : `<p class="platform-coverage-note">The RSS total covers all podcast apps. Per-app contribution will appear here when the hosting source provides listening-app detail.</p>`;
 }
 
 function renderDecisionIntelligence(intelligence) {
@@ -140,7 +141,7 @@ function renderBars(items, target) {
     const max = Math.max(...group.map((item) => Number(item.value || 0)), 1);
     const remainder = all.length - group.length;
     const heading = dimensionGroup ? `${providerLabel(provider)} · ${dimensionGroup}` : providerLabel(provider);
-    return `<details class="dimension-group" ${providerIndex === 0 ? "open" : ""}><summary><strong>${escapeHtml(heading)}</strong><span>${all.length} measured ${all.length === 1 ? "segment" : "segments"}</span></summary><div class="insight-bars">${group.map((item) => `<div class="insight-bar"><div><strong>${escapeHtml(item.name)}</strong><span>${item.is_percentage ? `${number(item.value)}%` : `${number(item.value)}${item.share_pct == null ? "" : ` · ${item.share_pct}%`}`}</span></div><div class="insight-bar-track"><span style="width:${Math.max(2, Number(item.value || 0) * 100 / max)}%"></span></div><small>${escapeHtml(item.measure === "plays" ? "All-time plays" : `Through ${item.period_end || "unknown"}`)}</small></div>`).join("")}${remainder > 0 ? `<p class="dimension-note">Top 8 shown · ${remainder} additional ${remainder === 1 ? "entry" : "entries"} included in percentage totals.</p>` : ""}</div></details>`;
+    return `<details class="dimension-group" ${providerIndex === 0 ? "open" : ""}><summary><strong>${escapeHtml(heading)}</strong><span>${all.length} measured ${all.length === 1 ? "segment" : "segments"}</span></summary><div class="insight-bars">${group.map((item) => `<div class="insight-bar"><div><strong>${escapeHtml(item.name)}</strong><span>${item.is_percentage ? `${percentage(item.value)}%` : `${number(item.value)}${item.share_pct == null ? "" : ` · ${percentage(item.share_pct)}%`}`}</span></div><div class="insight-bar-track"><span style="width:${Math.max(2, Number(item.value || 0) * 100 / max)}%"></span></div><small>${escapeHtml(item.measure === "plays" ? "All-time plays" : `Through ${item.period_end || "unknown"}`)}</small></div>`).join("")}${remainder > 0 ? `<p class="dimension-note">Top 8 shown · ${remainder} additional ${remainder === 1 ? "entry" : "entries"} included in percentage totals.</p>` : ""}</div></details>`;
   }).join("");
 }
 

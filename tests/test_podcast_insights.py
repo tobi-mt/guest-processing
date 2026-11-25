@@ -294,6 +294,7 @@ def test_insights_exposes_spotify_host_app_geography_and_demographic_shares(temp
     assert result["countries"][0]["name"] == "United States"
     assert result["countries"][0]["is_percentage"] is True
     assert {item["dimension_group"] for item in result["demographics"]} == {"Age Group", "Gender"}
+    assert {item["name"] for item in result["demographics"]} == {"28–34", "Male"}
     assert [(item["name"], item["value"]) for item in result["listening_apps"]] == [
         ("Apple Podcasts", 8.7), ("Audible", 3.5),
     ]

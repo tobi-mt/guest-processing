@@ -856,15 +856,16 @@ class PodcastInsights:
             for row in latest_rows:
                 value = float(row["metric_value"])
                 labels = []
-                for field in label_fields:
+                for field in dimension_fields:
                     raw_label = str(row.get(field) or "unknown")
                     age_match = re.fullmatch(r"(?:age)?(\d+)[_-](\d+|plus)", raw_label, re.I) if field == "age_group" else None
                     labels.append(
                         f"{age_match.group(1)}–{age_match.group(2)}" if age_match
+                        else raw_label if field == "app_name"
                         else raw_label.replace("_", " ").title()
                     )
                 values.append({
-                    "name": " · ".join(labels), "value": value, "provider": provider,
+                    "name": " · ".join(labels) or "Unknown", "value": value, "provider": provider,
                     "period_end": latest,
                     "share_pct": round(value, 1) if percentage_values else round(value * 100 / total, 1) if total else None,
                     "measure": "audience share" if percentage_values else "views",

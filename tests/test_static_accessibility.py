@@ -392,7 +392,7 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
 
     assert "insights.css?v=20261125.1" in html
-    assert "insights.js?v=20261125.1" in html
+    assert "insights.js?v=20261125.2" in html
     assert "Overall performance" in html
     assert "Performance by platform" in html
     assert ".freshness{" in styles
