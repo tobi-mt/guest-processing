@@ -592,3 +592,46 @@ def test_prefixed_percentage_dimensions_do_not_sum_repeated_imports():
     ]
 
     assert PodcastInsights._dimension_breakdown(rows, "country_")[0]["value"] == 57.85
+
+
+def test_topline_summary_reconciles_six_metrics_without_claiming_unique_people():
+    daily = [
+        {"period": f"2026-10-{day:02d}", "downloads": 10, "plays": 0}
+        for day in range(1, 31)
+    ] + [
+        {"period": f"2026-11-{day:02d}", "downloads": 12, "plays": 0}
+        for day in range(1, 31)
+    ]
+    rows = [
+        {"provider": "youtube:one", "metric_name": "lifetime_plays", "metric_value": 50,
+         "episode_id": None, "source_class": "", "overlap_group": "", "source_reference": "youtube",
+         "imported_at": "2026-11-25T12:00:00"},
+        {"provider": "youtube:one", "metric_name": "lifetime_watch_time_hours", "metric_value": 20,
+         "episode_id": None, "source_class": "", "overlap_group": "", "source_reference": "youtube",
+         "imported_at": "2026-11-25T12:00:00"},
+    ]
+
+    result = PodcastInsights._topline_summary(
+        rows=rows,
+        platforms=[{"availability": "available"}, {"availability": "unavailable"}],
+        countries=[
+            {"name": "Germany", "value": 4}, {"name": " germany ", "value": 3},
+            {"name": "Canada", "value": 2}, {"name": "Unknown", "value": 5},
+        ],
+        audience_by_platform=[
+            {"metric": "subscribers", "value": 100},
+            {"metric": "followers", "value": 20},
+            {"metric": "unique_listeners", "value": 5},
+        ],
+        spotify_daily=daily,
+        spotify_lifetime={"downloads": 1_000, "plays": 500},
+        apple_summary={"listening_time_hours": 10},
+    )
+
+    assert result["downloads_plays"] == 1_550
+    assert result["listening_watch_hours"] == 30
+    assert result["countries_reached"] == 2
+    assert result["platforms_available"] == 1
+    assert result["audience_relationships"] == 125
+    assert result["growth_pct"] == 20
+    assert "overlap" in result["audience_relationship_note"]

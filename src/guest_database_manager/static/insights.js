@@ -244,21 +244,26 @@ function render(payload) {
   };
   document.querySelectorAll("#refresh-podcast-reach,[data-refresh-reach]").forEach((button) => button.addEventListener("click", () => refreshReach(button)));
   const global = summary.global_rollup || {};
+  const topline = summary.topline || {};
   const dailyAudio = payload.daily_trends?.spotify || [];
   const audio = audioView(dailyAudio);
-  const rangeLabel = audio.start && audio.end ? `${formatDate(audio.start)} – ${formatDate(audio.end)}` : "Automatic lifetime collection is starting";
-  const audienceCounters = payload.audience_by_platform || [];
-  const spotifyListeners = [...audienceCounters].reverse().find((item) => item.provider === "spotify" && item.metric === "unique_listeners");
-  const appleFollowers = [...audienceCounters].reverse().find((item) => item.provider === "apple_podcasts" && item.metric === "followers");
-  const youtubeSubscribers = audienceCounters.filter((item) => String(item.provider || "").startsWith("youtube") && item.metric === "subscribers");
-  const youtubeSubscriberTotal = youtubeSubscribers.reduce((total, item) => total + Number(item.value || 0), 0);
+  const lifetime = summary.spotify_lifetime || {};
+  const lifetimeRange = lifetime.period_start && lifetime.period_end ? `${formatDate(lifetime.period_start)} – ${formatDate(lifetime.period_end)}` : "Automatic lifetime collection is starting";
+  const growth = topline.growth_pct;
+  const growthValue = growth == null ? "—" : `${Number(growth) > 0 ? "+" : ""}${percentage(growth)}%`;
+  const relationshipBreakdown = topline.audience_relationship_breakdown || {};
+  const relationshipDetail = [
+    relationshipBreakdown.subscribers ? `${number(relationshipBreakdown.subscribers)} subscriptions` : "",
+    relationshipBreakdown.followers ? `${number(relationshipBreakdown.followers)} followers` : "",
+    (relationshipBreakdown.unique_listeners || relationshipBreakdown.listeners) ? `${number(Number(relationshipBreakdown.unique_listeners || 0) + Number(relationshipBreakdown.listeners || 0))} latest listeners` : "",
+  ].filter(Boolean).join(" · ");
   document.getElementById("insights-summary").innerHTML = [
-    ["Podcast downloads & plays", number(audio.total), rangeLabel, "global"],
-    ["Other podcast apps", number(audio.downloads), "Hosting delivery across Apple Podcasts and every other RSS app"],
-    ["Spotify plays", number(audio.plays), `Native Spotify starts · ${rangeLabel}`],
-    ["Latest Spotify listeners", number(spotifyListeners?.value), spotifyListeners ? `Unique listeners on ${formatDate(spotifyListeners.period_end)} · not followers or devices` : "Awaiting Spotify listener data"],
-    ["Apple followers", number(appleFollowers?.value), appleFollowers ? `Followers through ${formatDate(appleFollowers.period_end)}` : "Awaiting Apple follower data"],
-    ["YouTube subscriptions", youtubeSubscribers.length ? number(youtubeSubscriberTotal) : "—", youtubeSubscribers.length ? `Across ${number(youtubeSubscribers.length)} connected channels · not deduplicated people` : "Awaiting YouTube subscriber data"],
+    ["Downloads & plays", number(topline.downloads_plays), `${lifetimeRange} · podcast and lifetime video activity`, "global"],
+    ["Listening & watch hours", topline.listening_watch_hours == null ? "—" : percentage(topline.listening_watch_hours), topline.hours_coverage_note || "Awaiting duration data"],
+    ["Countries reached", number(topline.countries_reached), "Distinct countries across connected audience reports"],
+    ["Platforms available", number(topline.platforms_available), "Confirmed listening and watching destinations"],
+    ["Audience relationships", number(topline.audience_relationships), relationshipDetail || topline.audience_relationship_note || "Awaiting audience counters"],
+    ["Growth trend", growthValue, topline.growth_basis || "Latest comparable podcast periods"],
   ].map(([label,value,detail,className]) => `<article class="summary-card ${className || ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
   const youtubeDevices = (payload.devices || []).filter((item) => item.provider === "youtube" || item.provider.startsWith("youtube:"));
   const youtubeDeviceTotal = youtubeDevices.reduce((total, item) => total + Number(item.value || 0), 0);

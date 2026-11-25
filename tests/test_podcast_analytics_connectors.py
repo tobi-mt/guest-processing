@@ -457,6 +457,8 @@ def test_google_collector_keeps_platform_metrics_source_backed(temp_db, monkeypa
 
     assert values[("youtube", "plays")] == 100
     assert values[("youtube", "watch_time_hours")] == 2
+    assert values[("youtube", "lifetime_plays")] == 100
+    assert values[("youtube", "lifetime_watch_time_hours")] == 2
     assert values[("youtube", "subscribers")] == 2500
     assert values[("youtube", "device_mobile")] == 70
     assert values[("youtube", "average_view_percentage")] == 55.5

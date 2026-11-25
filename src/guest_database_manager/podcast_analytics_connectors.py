@@ -755,6 +755,22 @@ class PodcastAnalyticsConnectors:
             rows.append({**common, "provider": youtube_provider, "metric_name": metric, "metric_value": value,
                          "source_reference": youtube_reference,
                          "overlap_group": f"{youtube_provider}_native_{metric}"})
+        lifetime_start = date(2005, 4, 23)
+        lifetime = self._get_json("https://youtubeanalytics.googleapis.com/v2/reports?" + urlencode({
+            "ids": channel_selector, "startDate": lifetime_start.isoformat(), "endDate": end.isoformat(),
+            "metrics": "views,estimatedMinutesWatched",
+        }), access_token)
+        lifetime_values = list((lifetime.get("rows") or [[0, 0]])[0])
+        lifetime_values.extend([0] * max(0, 2 - len(lifetime_values)))
+        for metric, value in (
+            ("lifetime_plays", lifetime_values[0]),
+            ("lifetime_watch_time_hours", float(lifetime_values[1]) / 60),
+        ):
+            rows.append({
+                "provider": youtube_provider, "metric_name": metric, "metric_value": value,
+                "period_start": lifetime_start.isoformat(), "period_end": end.isoformat(),
+                "traffic_scope": "all", "source_reference": youtube_reference,
+            })
         channel = self._get_json(
             "https://www.googleapis.com/youtube/v3/channels?" + urlencode(
                 {"part": "statistics", "id": channel_id} if channel_id else {"part": "statistics", "mine": "true"}

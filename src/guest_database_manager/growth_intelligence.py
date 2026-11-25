@@ -45,6 +45,8 @@ CANONICAL_METRICS = {
     "engaged_listeners": "count",
     "subscribers": "count",
     "watch_time_hours": "count",
+    "lifetime_plays": "count",
+    "lifetime_watch_time_hours": "count",
     "average_view_percentage": "percent",
     "viewer_percentage": "percent",
     "app_share_pct": "percent",

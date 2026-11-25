@@ -19,7 +19,7 @@
 .coverage-pill.public_only{background:var(--color-surface-interactive);color:var(--color-text)}
 .coverage-pill.no_data{background:var(--color-danger-soft);color:var(--color-danger)}
 .coverage-pill.building{background:var(--color-warning-soft);color:var(--color-warning)}
-.insights-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.insights-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
 .summary-card{display:grid;gap:7px;min-height:132px;padding:18px;border:1px solid var(--border);border-radius:20px;background:linear-gradient(145deg,var(--color-surface-raised),var(--color-surface));box-shadow:var(--shadow)}
 .summary-card span{color:var(--muted);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
 .summary-card strong{font-size:clamp(1.4rem,3vw,2.2rem);overflow-wrap:anywhere}

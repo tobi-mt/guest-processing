@@ -18,6 +18,7 @@ DISPLAY_METRICS = {
     "downloads", "plays", "streams", "unique_listeners", "listeners", "followers",
     "subscribers", "watch_time_hours", "average_view_duration_seconds", "organic_reach",
     "consumption_depth_pct", "engaged_listeners", "unique_viewers",
+    "lifetime_plays", "lifetime_watch_time_hours",
 }
 
 
@@ -205,6 +206,11 @@ class PodcastInsights:
             "distribution_mode": row["distribution_mode"], "analytics_mode": row["analytics_mode"],
             "directory_source": row["directory_source"],
         } for row in platform_rows]
+        topline = self._topline_summary(
+            rows=rows, platforms=platforms, countries=countries,
+            audience_by_platform=audience_by_platform, spotify_daily=spotify_daily,
+            spotify_lifetime=spotify_lifetime, apple_summary=apple_summary,
+        )
         return {
             "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "summary": {
@@ -227,6 +233,7 @@ class PodcastInsights:
                 "spotify_lifetime": spotify_lifetime,
                 "apple": apple_summary,
                 "global_rollup": global_rollup,
+                "topline": topline,
                 "unique_listeners": None,
                 "unique_listener_explanation": "Cross-platform listeners are not additive; a deduplicated total requires compatible identity-level reporting from every provider.",
             },
@@ -266,6 +273,71 @@ class PodcastInsights:
                 "unique_listeners": "Distinct listeners within one provider and period; not deduplicated across platforms.",
                 "platform_strength": "The latest source-backed metrics for each provider, without a fabricated composite score.",
             },
+        }
+
+    @classmethod
+    def _topline_summary(
+        cls, *, rows: list[dict[str, Any]], platforms: list[dict[str, Any]],
+        countries: list[dict[str, Any]], audience_by_platform: list[dict[str, Any]],
+        spotify_daily: list[dict[str, Any]], spotify_lifetime: dict[str, Any] | None,
+        apple_summary: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build the six defensible, all-source executive metrics."""
+        youtube_lifetime = [
+            row for row in rows
+            if str(row["provider"]).startswith("youtube:")
+            and row["metric_name"] in {"lifetime_plays", "lifetime_watch_time_hours"}
+        ]
+        if not youtube_lifetime:
+            youtube_lifetime = [
+                row for row in rows
+                if row["provider"] == "youtube"
+                and row["metric_name"] in {"lifetime_plays", "lifetime_watch_time_hours"}
+            ]
+        youtube_views = cls._metric_total(youtube_lifetime, "lifetime_plays")
+        youtube_hours = cls._metric_total(youtube_lifetime, "lifetime_watch_time_hours")
+        podcast_activity = (
+            float((spotify_lifetime or {}).get("downloads") or 0)
+            + float((spotify_lifetime or {}).get("plays") or 0)
+        )
+        apple_hours = float((apple_summary or {}).get("listening_time_hours") or 0)
+        country_names = {
+            re.sub(r"\s+", " ", str(item.get("name") or "").strip()).casefold()
+            for item in countries
+            if str(item.get("name") or "").strip().casefold() not in {"", "unknown"}
+            and float(item.get("value") or 0) > 0
+        }
+        relationship_breakdown: dict[str, float] = {}
+        for item in audience_by_platform:
+            metric = str(item.get("metric") or "")
+            if metric in {"unique_listeners", "unique_viewers", "listeners", "followers", "subscribers"}:
+                relationship_breakdown[metric] = relationship_breakdown.get(metric, 0) + float(item.get("value") or 0)
+
+        recent = spotify_daily[-30:]
+        previous = spotify_daily[-60:-30]
+        recent_total = sum(float(item.get("downloads") or 0) + float(item.get("plays") or 0) for item in recent)
+        previous_total = sum(float(item.get("downloads") or 0) + float(item.get("plays") or 0) for item in previous)
+        growth_pct = (
+            round((recent_total - previous_total) * 1000 / previous_total) / 10
+            if previous_total and len(recent) == 30 and len(previous) == 30 else None
+        )
+        return {
+            "downloads_plays": podcast_activity + youtube_views,
+            "podcast_downloads_plays": podcast_activity,
+            "video_views": youtube_views,
+            "listening_watch_hours": apple_hours + youtube_hours,
+            "apple_listening_hours": apple_hours,
+            "youtube_watch_hours": youtube_hours,
+            "hours_coverage_note": "Apple listening plus YouTube watch time; Spotify does not expose lifetime listening duration.",
+            "countries_reached": len(country_names),
+            "platforms_available": sum(item.get("availability") == "available" for item in platforms),
+            "audience_relationships": sum(relationship_breakdown.values()),
+            "audience_relationship_breakdown": relationship_breakdown,
+            "audience_relationship_note": "Latest listener, follower, and subscriber accounts; people may overlap across platforms.",
+            "growth_pct": growth_pct,
+            "growth_current": recent_total if recent else None,
+            "growth_previous": previous_total if previous else None,
+            "growth_basis": "Latest 30 podcast days versus the preceding 30 days.",
         }
 
     @classmethod
