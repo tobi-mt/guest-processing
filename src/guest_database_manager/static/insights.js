@@ -256,14 +256,17 @@ function render(payload) {
   const relationshipDetail = [
     relationshipBreakdown.subscribers ? `${number(relationshipBreakdown.subscribers)} subscriptions` : "",
     relationshipBreakdown.followers ? `${number(relationshipBreakdown.followers)} followers` : "",
-    (relationshipBreakdown.unique_listeners || relationshipBreakdown.listeners) ? `${number(Number(relationshipBreakdown.unique_listeners || 0) + Number(relationshipBreakdown.listeners || 0))} latest listeners` : "",
   ].filter(Boolean).join(" · ");
+  const periodAudience = (topline.audience_relationship_by_platform || [])
+    .filter((item) => ["unique_listeners", "unique_viewers", "listeners"].includes(item.metric))
+    .map((item) => `${providerLabel(item.provider)}: ${number(item.value)} ${metricLabel(item.metric).toLowerCase()} through ${item.period_end || "unknown"}`)
+    .join(" · ");
   document.getElementById("insights-summary").innerHTML = [
     ["Downloads & plays", number(topline.downloads_plays), `${lifetimeRange} · podcast and lifetime video activity`, "global"],
     ["Listening & watch hours", topline.listening_watch_hours == null ? "—" : percentage(topline.listening_watch_hours), topline.hours_coverage_note || "Awaiting duration data"],
     ["Countries reached", number(topline.countries_reached), "Distinct countries across connected audience reports"],
     ["Platforms available", number(topline.platforms_available), "Confirmed listening and watching destinations"],
-    ["Audience relationships", number(topline.audience_relationships), relationshipDetail || topline.audience_relationship_note || "Awaiting audience counters"],
+    ["Audience relationships", number(topline.audience_relationships), `${relationshipDetail || "Follower and subscription counters are still syncing"}${periodAudience ? ` · Recent audience (not added): ${periodAudience}` : ""}`],
     ["Growth trend", growthValue, topline.growth_basis || "Latest comparable podcast periods"],
   ].map(([label,value,detail,className]) => `<article class="summary-card ${className || ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
   const youtubeDevices = (payload.devices || []).filter((item) => item.provider === "youtube" || item.provider.startsWith("youtube:"));

@@ -303,6 +303,20 @@ def test_spotify_all_time_export_is_detected_without_double_counting_combined_co
     }
 
 
+@pytest.mark.parametrize("provider", ["spotify", "apple_podcasts"])
+def test_provider_audience_snapshot_keeps_followers_and_listeners_distinct(temp_db, provider):
+    preview = GrowthIntelligence(temp_db.db_path).preview_csv(
+        "Snapshot Date,Followers,Listeners\n2026-11-25,4321,1234\n",
+        provider=provider,
+        source_reference="audience-snapshot.csv",
+    )
+
+    assert preview["format"] == "provider"
+    assert {(row["metric_name"], row["metric_value"]) for row in preview["observations"]} == {
+        ("followers", 4321.0), ("listeners", 1234.0),
+    }
+
+
 @pytest.mark.parametrize(
     ("csv_text", "expected"),
     [

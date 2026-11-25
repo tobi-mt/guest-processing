@@ -253,6 +253,14 @@ def test_spotify_dimension_exports_receive_the_verified_performance_window() -> 
     assert "2026-10-27,2026-11-25" in annotated
 
 
+def test_provider_audience_snapshot_preserves_durable_and_period_counters() -> None:
+    snapshot = collector._audience_snapshot_csv(
+        snapshot_date=date(2026, 11, 25), followers=4_321, listeners=1_234,
+    )
+
+    assert snapshot == "Snapshot Date,Followers,Listeners\n2026-11-25,4321,1234\n"
+
+
 @pytest.mark.parametrize(
     ("csv_text", "schema"),
     [

@@ -392,8 +392,8 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261125.4" in html
-    assert "insights.js?v=20261125.6" in html
+    assert "insights.css?v=20261125.5" in html
+    assert "insights.js?v=20261125.7" in html
     assert "Refreshing automatically" in javascript
     assert "Owner action" in javascript
     assert "Downloads and plays over time" in html

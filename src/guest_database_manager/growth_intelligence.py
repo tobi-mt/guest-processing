@@ -159,6 +159,21 @@ class GrowthIntelligence:
         header_set = set(headers)
         provider_key = _text(provider).casefold()
         candidates: list[tuple[int, dict[str, Any]]] = []
+        snapshot_headers = {"Snapshot Date", "Followers", "Listeners"}
+        if provider_key in {"spotify", "apple_podcasts"} and snapshot_headers.issubset(header_set):
+            for row_number, raw in enumerate(raw_rows, 2):
+                for metric, column in (("followers", "Followers"), ("listeners", "Listeners")):
+                    value = _text(raw.get(column))
+                    if value:
+                        candidates.append((row_number, {
+                            "metric_name": metric,
+                            "metric_value": value,
+                            "period_start": raw.get("Snapshot Date"),
+                            "period_end": raw.get("Snapshot Date"),
+                            "source_class": "provider_native",
+                            "overlap_group": f"{provider_key}_{metric}_snapshot",
+                        }))
+            return candidates
         if provider_key == "spotify" and {
             "Date", "Plays & downloads", "Plays (on Spotify)",
             "Downloads (everywhere else)", "Audience",

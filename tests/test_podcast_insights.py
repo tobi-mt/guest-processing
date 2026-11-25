@@ -619,9 +619,9 @@ def test_topline_summary_reconciles_six_metrics_without_claiming_unique_people()
             {"name": "Canada", "value": 2}, {"name": "Unknown", "value": 5},
         ],
         audience_by_platform=[
-            {"metric": "subscribers", "value": 100},
-            {"metric": "followers", "value": 20},
-            {"metric": "unique_listeners", "value": 5},
+            {"provider": "youtube:one", "metric": "subscribers", "value": 100, "period_end": "2026-11-25"},
+            {"provider": "apple_podcasts", "metric": "followers", "value": 20, "period_end": "2026-11-25"},
+            {"provider": "spotify", "metric": "unique_listeners", "value": 5, "period_end": "2026-11-25"},
         ],
         spotify_daily=daily,
         spotify_lifetime={"downloads": 1_000, "plays": 500},
@@ -632,6 +632,7 @@ def test_topline_summary_reconciles_six_metrics_without_claiming_unique_people()
     assert result["listening_watch_hours"] == 30
     assert result["countries_reached"] == 2
     assert result["platforms_available"] == 1
-    assert result["audience_relationships"] == 125
+    assert result["audience_relationships"] == 120
+    assert result["audience_relationship_by_platform"][-1]["value"] == 5
     assert result["growth_pct"] == 20
-    assert "overlap" in result["audience_relationship_note"]
+    assert "not additive" in result["audience_relationship_note"]

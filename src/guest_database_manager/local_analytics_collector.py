@@ -332,6 +332,43 @@ def _spotify_dimension_schema(csv_text: str) -> str | None:
     return None
 
 
+def _visible_counter(page, label: str) -> int | None:
+    """Read a labelled provider counter without depending on presentation markup."""
+    text = page.locator("body").inner_text()
+    number = r"([0-9][0-9,.]*[KkMm]?)"
+    escaped = re.escape(label)
+    for pattern in (
+        rf"(?im)^\s*{escaped}\s*\n\s*{number}\s*$",
+        rf"(?im)^\s*{number}\s*\n\s*{escaped}\s*$",
+        rf"(?im)^\s*{escaped}\s+{number}\s*$",
+        rf"(?im)^\s*{number}\s+{escaped}\s*$",
+    ):
+        match = re.search(pattern, text)
+        if match:
+            raw = match.group(1).replace(",", "")
+            multiplier = 1
+            if raw[-1:].casefold() == "k":
+                multiplier, raw = 1_000, raw[:-1]
+            elif raw[-1:].casefold() == "m":
+                multiplier, raw = 1_000_000, raw[:-1]
+            return round(float(raw) * multiplier)
+    return None
+
+
+def _audience_snapshot_csv(*, snapshot_date: date, followers: int | None, listeners: int | None) -> str | None:
+    if followers is None and listeners is None:
+        return None
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=["Snapshot Date", "Followers", "Listeners"], lineterminator="\n")
+    writer.writeheader()
+    writer.writerow({
+        "Snapshot Date": snapshot_date.isoformat(),
+        "Followers": "" if followers is None else followers,
+        "Listeners": "" if listeners is None else listeners,
+    })
+    return output.getvalue()
+
+
 def _select_spotify_all_time(page) -> None:
     """Select Spotify's lifetime performance window before exporting."""
     labels = page.get_by_text("Last 30 days", exact=True)
@@ -510,7 +547,16 @@ def sync_once(
                         raise LocalCollectorError(
                             "The Apple Podcasts show analytics link was unavailable."
                         )
-                    episodes_url = urljoin(page.url, show_href).removesuffix("/overview") + "/episodes"
+                    show_url = urljoin(page.url, show_href)
+                    page.goto(show_url, wait_until="networkidle", timeout=90_000)
+                    apple_snapshot = _audience_snapshot_csv(
+                        snapshot_date=date.today(),
+                        followers=_visible_counter(page, "Followers"),
+                        listeners=_visible_counter(page, "Listeners"),
+                    )
+                    if apple_snapshot:
+                        uploads.append(("apple-audience-snapshot.csv", apple_snapshot))
+                    episodes_url = show_url.removesuffix("/overview") + "/episodes"
                     page.goto(episodes_url, wait_until="networkidle", timeout=90_000)
                     date_range = page.get_by_role("button", name="Choose a date range")
                     range_match = re.search(r"(\d+)\s+Days", date_range.inner_text(), re.I)
@@ -559,6 +605,13 @@ def sync_once(
                     # The old tab panel remains briefly in the DOM while Spotify
                     # hydrates the five audience export controls.
                     page.wait_for_timeout(2_500)
+                    spotify_snapshot = _audience_snapshot_csv(
+                        snapshot_date=date.today(),
+                        followers=_visible_counter(page, "Followers"),
+                        listeners=None,
+                    )
+                    if spotify_snapshot:
+                        uploads.append(("spotify-audience-snapshot.csv", spotify_snapshot))
                     # Spotify's audience exports are native buttons, but Chromium's
                     # CDP accessibility tree does not consistently expose their role.
                     audience_exports = page.locator("button").filter(

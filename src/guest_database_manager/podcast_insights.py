@@ -308,10 +308,20 @@ class PodcastInsights:
             and float(item.get("value") or 0) > 0
         }
         relationship_breakdown: dict[str, float] = {}
+        relationship_by_platform: list[dict[str, Any]] = []
         for item in audience_by_platform:
             metric = str(item.get("metric") or "")
             if metric in {"unique_listeners", "unique_viewers", "listeners", "followers", "subscribers"}:
-                relationship_breakdown[metric] = relationship_breakdown.get(metric, 0) + float(item.get("value") or 0)
+                value = float(item.get("value") or 0)
+                relationship_breakdown[metric] = relationship_breakdown.get(metric, 0) + value
+                relationship_by_platform.append({
+                    "provider": item.get("provider"), "metric": metric, "value": value,
+                    "period_end": item.get("period_end"),
+                })
+        durable_relationships = sum(
+            value for metric, value in relationship_breakdown.items()
+            if metric in {"followers", "subscribers"}
+        )
 
         recent = spotify_daily[-30:]
         previous = spotify_daily[-60:-30]
@@ -331,9 +341,10 @@ class PodcastInsights:
             "hours_coverage_note": "Apple listening plus YouTube watch time; Spotify does not expose lifetime listening duration.",
             "countries_reached": len(country_names),
             "platforms_available": sum(item.get("availability") == "available" for item in platforms),
-            "audience_relationships": sum(relationship_breakdown.values()),
+            "audience_relationships": durable_relationships,
             "audience_relationship_breakdown": relationship_breakdown,
-            "audience_relationship_note": "Latest listener, follower, and subscriber accounts; people may overlap across platforms.",
+            "audience_relationship_by_platform": relationship_by_platform,
+            "audience_relationship_note": "Known followers and subscriptions. Listener counts are shown separately by platform and period because they are not additive.",
             "growth_pct": growth_pct,
             "growth_current": recent_total if recent else None,
             "growth_previous": previous_total if previous else None,
