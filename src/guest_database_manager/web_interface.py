@@ -80,6 +80,7 @@ from guest_database_manager.partner_intelligence import PartnerIntelligence, Par
 from guest_database_manager.partner_discovery import curated_signals
 from guest_database_manager.partner_pitch_templates import list_pitch_templates
 from guest_database_manager.podcast_insights import PodcastInsights
+from guest_database_manager.podcast_advisory import PodcastAdvisory
 from guest_database_manager.growth_decision_intelligence import GrowthDecisionIntelligence
 from guest_database_manager.podcast_analytics_connectors import AnalyticsConnectorError, PodcastAnalyticsConnectors
 from guest_database_manager.podcast_source_monitor import PodcastSourceMonitor
@@ -898,6 +899,7 @@ class GuestWebService:
         self.rss_release_reconciler = RSSReleaseReconciler(self.db_path)
         self.growth_intelligence = GrowthIntelligence(self.db_path)
         self.podcast_insights = PodcastInsights(self.db_path)
+        self.podcast_advisory = PodcastAdvisory(self.db_path)
         self.growth_decision_intelligence = GrowthDecisionIntelligence(self.db_path)
         self.podcast_source_monitor = PodcastSourceMonitor(self.db_path)
         self.podcast_analytics_connectors = PodcastAnalyticsConnectors(self.db_path)
@@ -928,7 +930,48 @@ class GuestWebService:
         dashboard["decision_intelligence"] = self.growth_decision_intelligence.dashboard(
             dashboard.get("monthly_trends") or {}, self.recommendation_learning.status()
         )
+        dashboard["advisory"] = self.podcast_advisory.dashboard(dashboard)
         return dashboard
+
+    def export_podcast_reach_csv(self) -> str:
+        """Export a sponsor-safe summary without private collector or account details."""
+        dashboard = self.get_podcast_insights()
+        topline = (dashboard.get("summary") or {}).get("topline") or {}
+        rows: list[dict[str, Any]] = []
+
+        def add(section: str, metric: str, value: Any, period: str = "", note: str = "") -> None:
+            if value is not None:
+                rows.append({"section": section, "metric": metric, "value": value,
+                             "period_or_as_of": period, "definition_or_note": note})
+
+        add("Overview", "Downloads and plays", topline.get("downloads_plays"), "Lifetime available evidence",
+            "Podcast activity plus lifetime video views; source coverage varies by platform.")
+        add("Overview", "Listening and watch hours", topline.get("listening_watch_hours"), "Lifetime available evidence",
+            topline.get("hours_coverage_note") or "Only supported duration sources are included.")
+        add("Overview", "Countries reached", topline.get("countries_reached"), "Latest compatible reports",
+            "Distinct reported countries; unavailable geographies are not inferred.")
+        add("Overview", "Platforms available", topline.get("platforms_available"), "Current verification",
+            "Confirmed distribution destinations, not platforms with private analytics access.")
+        add("Overview", "Followers and subscribers", topline.get("audience_relationships"), "Latest provider counters",
+            "Known durable relationships; listener-period counts are not added to this total.")
+        add("Overview", "Growth trend percent", topline.get("growth_pct"), topline.get("growth_basis") or "Comparable periods")
+        for provider in dashboard.get("provider_strength") or []:
+            period = f"{provider.get('period_start') or ''} to {provider.get('period_end') or ''}".strip()
+            for metric, value in (provider.get("metrics") or {}).items():
+                add("Platform performance", f"{provider.get('provider')} — {metric}", value, period,
+                    "Latest source-backed provider measurement; definitions follow the provider.")
+        for country in (dashboard.get("countries") or [])[:20]:
+            add("Top geographies", str(country.get("name") or "Unknown"), country.get("value"),
+                str(country.get("period_end") or ""), "Provider-reported audience or activity units.")
+        for episode in (dashboard.get("episode_performance") or [])[:20]:
+            add("Episode performance", str(episode.get("title") or "Untitled episode"), episode.get("activity"),
+                f"{episode.get('period_start') or ''} to {episode.get('period_end') or ''}".strip(),
+                "Downloads, plays, and streams available for this episode; not a unique-person count.")
+        output = StringIO()
+        writer = DictWriter(output, fieldnames=("section", "metric", "value", "period_or_as_of", "definition_or_note"))
+        writer.writeheader()
+        writer.writerows(rows)
+        return output.getvalue()
 
     def begin_google_analytics_connection(self, *, actor: str, origin: str) -> Dict[str, Any]:
         return self.podcast_analytics_connectors.begin_google(actor=actor, origin=origin)
@@ -938,12 +981,16 @@ class GuestWebService:
 
     def sync_google_analytics(self, *, actor: str, force: bool = False,
                               connection_id: int | None = None) -> Dict[str, Any]:
-        return self.podcast_analytics_connectors.sync_google(
+        result = self.podcast_analytics_connectors.sync_google(
             actor=actor, force=force, connection_id=connection_id
         )
+        result["learning_outcomes"] = self._record_podcast_performance_learning_outcomes(actor=actor)
+        return result
 
     def sync_openpodcast_analytics(self, *, actor: str) -> Dict[str, Any]:
-        return self.podcast_analytics_connectors.sync_openpodcast(actor=actor)
+        result = self.podcast_analytics_connectors.sync_openpodcast(actor=actor)
+        result["learning_outcomes"] = self._record_podcast_performance_learning_outcomes(actor=actor)
+        return result
 
     def refresh_podcast_reach(self, *, actor: str) -> Dict[str, Any]:
         """Refresh every server-accessible reach source without hiding provider access needs."""
@@ -953,13 +1000,13 @@ class GuestWebService:
             "openpodcast": {"status": "not_configured"},
         }
         try:
-            result["youtube"] = self.podcast_analytics_connectors.sync_google(actor=actor, force=True)
+            result["youtube"] = self.sync_google_analytics(actor=actor, force=True)
         except AnalyticsConnectorError:
             result["youtube"] = {"status": "needs_setup"}
         openpodcast = self.podcast_analytics_connectors.status().get("openpodcast", {})
         if openpodcast.get("configured"):
             try:
-                result["openpodcast"] = self.podcast_analytics_connectors.sync_openpodcast(actor=actor)
+                result["openpodcast"] = self.sync_openpodcast_analytics(actor=actor)
             except AnalyticsConnectorError:
                 status = self.podcast_analytics_connectors.status().get("openpodcast", {})
                 result["openpodcast"] = {
@@ -985,12 +1032,65 @@ class GuestWebService:
     def ingest_local_analytics_export(
         self, payload: Dict[str, Any], *, token: str
     ) -> Dict[str, Any]:
-        return self.podcast_analytics_connectors.ingest_local_export(
+        result = self.podcast_analytics_connectors.ingest_local_export(
             provider=_normalize_text(payload.get("provider")),
             token=token,
             csv_text=str(payload.get("csv_text") or ""),
             source_reference=_normalize_text(payload.get("source_reference")),
         )
+        result["learning_outcomes"] = self._record_podcast_performance_learning_outcomes(
+            actor="local-analytics-collector"
+        )
+        return result
+
+    def _record_podcast_performance_learning_outcomes(self, *, actor: str) -> int:
+        """Link measured episode results to prior recommendations, without changing rankings."""
+        performance = self.podcast_insights.dashboard().get("episode_performance") or []
+        measured = [item for item in performance if float(item.get("activity") or 0) > 0]
+        if not measured:
+            return 0
+        ordered = sorted(float(item["activity"]) for item in measured)
+        recorded = 0
+        with connect_database(self.db_path) as conn:
+            eligible = {
+                int(row[0]) for row in conn.execute(
+                    """SELECT DISTINCT observation.episode_id
+                       FROM recommendation_observations observation
+                       JOIN episodes episode ON episode.id = observation.episode_id
+                       WHERE LOWER(TRIM(COALESCE(episode.release_status, ''))) = 'released'"""
+                ).fetchall()
+            }
+        for item in measured:
+            episode_id = int(item.get("episode_id") or 0)
+            if episode_id not in eligible:
+                continue
+            activity = float(item["activity"])
+            lower = sum(value < activity for value in ordered)
+            equal = sum(value == activity for value in ordered)
+            percentile = 0.5 if len(ordered) == 1 else (lower + (equal - 1) / 2) / (len(ordered) - 1)
+            period_end = _normalize_text(item.get("period_end"))
+            try:
+                self.recommendation_learning.record_outcome(
+                    episode_id,
+                    outcome_type="performance",
+                    value=max(0.0, min(1.0, percentile)),
+                    metadata={
+                        "measured_activity": activity,
+                        "comparison_episode_count": len(ordered),
+                        "providers": item.get("providers") or [],
+                        "period_start": item.get("period_start"),
+                        "period_end": period_end,
+                        "method": "midrank percentile of source-backed episode activity",
+                    },
+                    actor=actor,
+                    source="podcast_analytics_automation",
+                    occurred_at=period_end,
+                    idempotency_key=f"podcast-performance:{episode_id}:{period_end}",
+                )
+                recorded += 1
+            except (LearningError, ValueError):
+                logger.warning("Could not link podcast performance for episode_id=%s", episode_id)
+        return recorded
 
     def register_local_analytics_collector(
         self, payload: Dict[str, Any], *, token: str
@@ -1047,6 +1147,7 @@ class GuestWebService:
                     learned += 1
                 except (LearningError, ValueError):
                     logger.warning("Could not link growth outcome for episode_id=%s", episode_id)
+        learned += self._record_podcast_performance_learning_outcomes(actor=actor)
         return {**result, "learning_outcomes": learned}
 
     def preview_growth_observations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1061,10 +1162,12 @@ class GuestWebService:
         action_queue = self._build_action_queue()
         growth = self.get_growth_intelligence()
         operations_alerts = self._build_operations_alerts(self.database.list_interviews())
-        return build_exception_center(
+        result = build_exception_center(
             self.db_path, action_queue=action_queue, growth=growth,
             operations_alerts=operations_alerts,
         )
+        result["podcast_advisory"] = self.podcast_advisory.dashboard(self.podcast_insights.dashboard()).get("exception_management")
+        return result
 
     def search_workspace(self, query: str) -> Dict[str, Any]:
         action_queue = self._build_action_queue()
@@ -1313,16 +1416,14 @@ class GuestWebService:
                     except Exception:
                         logger.exception("Podcast source monitoring cycle failed")
                     try:
-                        self.podcast_analytics_connectors.sync_google(actor="podcast-analytics-automation")
+                        self.sync_google_analytics(actor="podcast-analytics-automation")
                     except AnalyticsConnectorError:
                         logger.warning("Private podcast analytics synchronization needs attention")
                     except Exception:
                         logger.exception("Private podcast analytics synchronization failed")
                     try:
                         if self.podcast_analytics_connectors.openpodcast_auto_sync_due():
-                            self.podcast_analytics_connectors.sync_openpodcast(
-                                actor="podcast-analytics-automation"
-                            )
+                            self.sync_openpodcast_analytics(actor="podcast-analytics-automation")
                     except AnalyticsConnectorError:
                         safe_status = self.podcast_analytics_connectors.status().get("openpodcast", {})
                         logger.warning(
@@ -1979,6 +2080,7 @@ class GuestWebService:
             "operational_metrics": build_operational_metrics(self.db_path),
             "action_queue": self._build_action_queue(),
             "team_members": self._team_members_payload(),
+            "podcast_advisory": self.podcast_advisory.dashboard(self.podcast_insights.dashboard()).get("operations"),
         })
 
     def retry_dead_letter_email(self, outbox_id: int) -> Dict[str, Any]:
@@ -2137,6 +2239,7 @@ class GuestWebService:
             "weekly_system": self._build_weekly_system_payload(),
             "action_queue": self._build_action_queue(),
             "team_members": self._team_members_payload(),
+            "podcast_advisory": self.podcast_advisory.dashboard(self.podcast_insights.dashboard()),
         })
 
     def list_planning_ai_copilot(self) -> Dict[str, Any]:
@@ -8576,6 +8679,17 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
                 return
             self._send_json(HTTPStatus.OK, self.service.get_podcast_insights())
+            return
+
+        if request_path == "/api/podcast-insights/export":
+            if not self._is_authorized_dashboard_request():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized dashboard request"})
+                return
+            self._send_csv(
+                HTTPStatus.OK,
+                self.service.export_podcast_reach_csv(),
+                filename=f"mirror-talk-podcast-reach-{date.today().isoformat()}.csv",
+            )
             return
 
         if request_path == "/api/analytics-connectors":

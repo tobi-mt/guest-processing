@@ -229,6 +229,21 @@ function renderEpisodePerformance(episodes, platformItems) {
   }).join("")}</tbody></table></div>`;
 }
 
+function renderPodcastAdvisory(advisory) {
+  const target = document.getElementById("podcast-advisory");
+  const category = advisory.release_planning?.category_benchmarks?.[0];
+  const promotion = advisory.promotion_planning?.recommendations?.[0];
+  const forecast = advisory.forecasting?.first_28_days || {};
+  const exceptions = advisory.exception_management?.items || [];
+  const cards = [
+    ["Release planning", category ? `${category.name} is the strongest current comparison set` : "Building comparable episode groups", advisory.release_planning?.guidance || "Episode-linked evidence will populate this automatically."],
+    ["Promotion planning", promotion?.action || "Building a source-backed promotion recommendation", promotion?.reason || "Platform and geography evidence remains visible without inventing missing data."],
+    ["28-day forecast", forecast.expected_activity == null ? "Needs more comparable episodes" : `${number(forecast.expected_activity)} expected activity`, `${number(forecast.comparable_episodes || 0)} comparable episodes · median-based, advisory only.`],
+    ["Exceptions", exceptions.length ? `${exceptions.length} meaningful change${exceptions.length === 1 ? "" : "s"} need attention` : "No unusual movement detected", exceptions[0]?.title || "Normal source refreshes stay out of the way."],
+  ];
+  target.innerHTML = cards.map(([label, title, detail]) => `<article class="advisory-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail)}</p></article>`).join("");
+}
+
 function render(payload) {
   latestPayload = payload;
   const summary = payload.summary || {}; const quality = payload.quality || {};
@@ -323,6 +338,7 @@ function render(payload) {
   renderOverallPerformance(dailyAudio);
   renderPlatformPerformance(global, payload.monthly_trends || {}, payload.listening_apps || [], audio);
   renderDecisionIntelligence(payload.decision_intelligence || {});
+  renderPodcastAdvisory(payload.advisory || {});
   const coverage = payload.source_coverage || {}; const publicSources = coverage.public || []; const privateSources = coverage.private || [];
   renderConnections(payload.analytics_connectors || {});
   const automated = privateSources.filter((source) => source.connection_mode === "automated"); const limited = privateSources.filter((source) => source.connection_mode === "provider_limited");
