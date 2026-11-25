@@ -125,3 +125,5 @@ def test_release_readiness_rejects_stale_source_and_analytics_periods(temp_db, m
     assert report["status"] == "not_ready"
     assert "public_sources_incomplete" in {item["code"] for item in report["blockers"]}
     assert "analytics_evidence_incomplete" in {item["code"] for item in report["blockers"]}
+    assert report["checks"]["analytics_evidence"]["resolution"] == "automatic"
+    assert report["checks"]["provider_collectors"]["resolution"] == "owner_action"

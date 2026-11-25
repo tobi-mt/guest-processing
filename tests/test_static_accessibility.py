@@ -390,9 +390,12 @@ def test_planning_learning_and_copilot_surfaces_are_dark_at_source() -> None:
 def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
+    javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261125.3" in html
-    assert "insights.js?v=20261125.5" in html
+    assert "insights.css?v=20261125.4" in html
+    assert "insights.js?v=20261125.6" in html
+    assert "Refreshing automatically" in javascript
+    assert "Owner action" in javascript
     assert "Downloads and plays over time" in html
     assert "Where your audience listens and watches" in html
     assert 'data-audio-range="all" class="active"' in html

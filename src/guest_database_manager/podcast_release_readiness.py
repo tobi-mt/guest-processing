@@ -106,6 +106,7 @@ class PodcastReachReleaseReadiness:
         distribution_ok = bool(expected) and not unresolved
         checks["distribution"] = {
             "status": "pass" if distribution_ok else "fail",
+            "resolution": "automatic",
             "available": len(available),
             "expected": len(expected),
             "coverage_pct": round(len(available) * 100 / len(expected), 1) if expected else 0.0,
@@ -130,6 +131,7 @@ class PodcastReachReleaseReadiness:
         public_ok = not stale_or_missing
         checks["public_sources"] = {
             "status": "pass" if public_ok else "fail",
+            "resolution": "automatic",
             "fresh_available": len(PUBLIC_SOURCES) - len(stale_or_missing),
             "expected": len(PUBLIC_SOURCES),
             "max_age_hours": int(PUBLIC_SOURCE_MAX_AGE.total_seconds() // 3600),
@@ -154,6 +156,7 @@ class PodcastReachReleaseReadiness:
         google_ok = bool(google["oauth_configured"] and fresh_google)
         checks["youtube_analytics"] = {
             "status": "pass" if google_ok else "fail",
+            "resolution": "owner_action",
             "oauth_configured": bool(google["oauth_configured"]),
             "fresh_connected_channels": len(fresh_google),
             "configured_connections": len(google_connections),
@@ -172,6 +175,7 @@ class PodcastReachReleaseReadiness:
         collectors_ok = bool(collectors["configured"] and not collector_failures)
         checks["provider_collectors"] = {
             "status": "pass" if collectors_ok else "fail",
+            "resolution": "owner_action",
             "credential_configured": bool(collectors["configured"]),
             "required": sorted(LOCAL_COLLECTOR_PROVIDERS),
             "not_connected": collector_failures,
@@ -202,6 +206,7 @@ class PodcastReachReleaseReadiness:
         evidence_ok = not stale_evidence
         checks["analytics_evidence"] = {
             "status": "pass" if evidence_ok else "fail",
+            "resolution": "automatic",
             "sources": evidence_detail,
             "stale_or_missing": stale_evidence,
         }
