@@ -885,7 +885,22 @@ def main() -> None:
     try:
         if args.command == "login":
             login(args.provider, profile_root=args.profile_root, url=url)
-            print(f"Local {args.provider} browser session retained; no password was stored by Mirror Talk.")
+            token = _collector_token()
+            if args.server and len(token) >= 32:
+                result = sync_once(
+                    args.provider, server=args.server, token=token,
+                    profile_root=args.profile_root, url=url, headed=True,
+                )
+                print(
+                    f"{args.provider} authentication verified and synchronization completed: "
+                    f"{result.get('inserted', 0)} inserted, {result.get('duplicates', 0)} duplicates."
+                )
+            else:
+                print(
+                    f"Local {args.provider} browser session retained; run sync once to verify it "
+                    "because no server or saved collector credential was available."
+                )
+            print(f"No {args.provider} password was stored by Mirror Talk.")
             return
         if args.command == "install-schedule":
             path = install_schedule(

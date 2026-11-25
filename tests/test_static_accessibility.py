@@ -393,7 +393,7 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
     assert "insights.css?v=20261126.1" in html
-    assert "insights.js?v=20261126.1" in html
+    assert "insights.js?v=20261126.2" in html
     assert "Connection health" in javascript
     assert "Verified · retrying check" in javascript
     assert "Temporarily unavailable" in javascript

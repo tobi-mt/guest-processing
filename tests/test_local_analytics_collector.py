@@ -116,6 +116,32 @@ def test_macos_apple_login_keeps_session_browser_resident(tmp_path: Path, monkey
     assert "leave that window open" in calls[1]
 
 
+def test_login_command_verifies_authentication_with_an_immediate_sync(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    calls = []
+    monkeypatch.setattr(
+        collector.sys, "argv",
+        ["collector", "login", "spotify", "--server", "https://podcast.example",
+         "--profile-root", str(tmp_path)],
+    )
+    monkeypatch.setattr(collector, "login", lambda provider, **kwargs: calls.append(("login", provider)))
+    monkeypatch.setattr(collector, "_collector_token", lambda: "x" * 40)
+    monkeypatch.setattr(
+        collector, "sync_once",
+        lambda provider, **kwargs: calls.append(("sync", provider, kwargs["server"], kwargs["headed"]))
+        or {"inserted": 4, "duplicates": 6},
+    )
+
+    collector.main()
+
+    assert calls == [
+        ("login", "spotify"),
+        ("sync", "spotify", "https://podcast.example", True),
+    ]
+    assert "authentication verified and synchronization completed: 4 inserted, 6 duplicates" in capsys.readouterr().out
+
+
 def test_sync_attaches_to_native_chrome_profile_over_cdp(tmp_path: Path, monkeypatch) -> None:
     calls = []
     profile = tmp_path / "spotify"
