@@ -193,11 +193,21 @@ class PodcastSourceMonitor:
                 """SELECT provider, metric_name, source_class, period_end FROM current_growth_metric_observations
                    ORDER BY period_end, id"""
             ).fetchall()]
+            platform_rows = [dict(row) for row in conn.execute(
+                """SELECT platform_key, status, last_verified_at
+                   FROM podcast_platform_registry"""
+            ).fetchall()]
+        platform_by_key = {str(row["platform_key"]): row for row in platform_rows}
         for row in public:
             try:
                 row["evidence"] = json.loads(row.pop("evidence_json") or "{}")
             except json.JSONDecodeError:
                 row["evidence"] = {}
+            platform_key = SOURCE_PLATFORM_KEYS.get(str(row["source_key"]))
+            platform = platform_by_key.get(platform_key or "") or {}
+            if row["status"] == "unavailable" and platform.get("status") == "available":
+                row["status"] = "retrying"
+                row["last_success_at"] = platform.get("last_verified_at")
         private = []
         for source in PRIVATE_SOURCES:
             tokens = self._provider_tokens(source["key"])
@@ -220,7 +230,7 @@ class PodcastSourceMonitor:
             })
         automated = [row for row in private if row["connection_mode"] == "automated"]
         limited = [row for row in private if row["connection_mode"] == "provider_limited"]
-        return {"public": public, "private": private, "public_available": sum(row["status"] == "available" for row in public),
+        return {"public": public, "private": private, "public_available": sum(row["status"] in {"available", "retrying"} for row in public),
                 "public_expected": len(PUBLIC_SOURCES), "private_connected": sum(row["status"] == "data_present" for row in private),
                 "private_expected": len(PRIVATE_SOURCES),
                 "automated_connected": sum(row["status"] == "data_present" for row in automated),

@@ -365,6 +365,12 @@ def test_transient_public_check_failure_preserves_verified_platform(temp_db, mon
         ).fetchone()
     assert tuple(row[:3]) == ("available", "verified", verified_at)
     assert row[3] == "TimeoutError"
+    listen_notes = next(
+        row for row in PodcastSourceMonitor(temp_db.db_path).status()["public"]
+        if row["source_key"] == "listen_notes_public"
+    )
+    assert listen_notes["status"] == "retrying"
+    assert listen_notes["last_success_at"] == verified_at
 
 
 def test_episode_performance_keeps_providers_and_missing_depth_explicit() -> None:
