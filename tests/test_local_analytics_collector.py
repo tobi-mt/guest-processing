@@ -261,6 +261,55 @@ def test_provider_audience_snapshot_preserves_durable_and_period_counters() -> N
     assert snapshot == "Snapshot Date,Followers,Listeners\n2026-11-25,4321,1234\n"
 
 
+def test_spotify_home_url_follows_current_show_route() -> None:
+    assert collector._spotify_home_url(
+        "https://creators.spotify.com/analytics/show/0trwqguYCic32smqh3Ny60/overview"
+    ) == "https://creators.spotify.com/home/show/0trwqguYCic32smqh3Ny60"
+    assert collector._spotify_home_url("https://creators.spotify.com/login") is None
+
+
+def test_spotify_all_time_uses_current_semantic_date_range_control() -> None:
+    calls = []
+
+    class Locator:
+        def __init__(self, *, count=0, visible=False):
+            self._count = count
+            self._visible = visible
+
+        def count(self):
+            return self._count
+
+        def nth(self, _index):
+            return self
+
+        def is_visible(self):
+            return self._visible
+
+        def click(self):
+            calls.append("click")
+
+    trigger = Locator(count=1, visible=True)
+    option = Locator(count=1, visible=True)
+
+    class Page:
+        def get_by_role(self, role, *, name):
+            calls.append((role, name.pattern))
+            return trigger
+
+        def get_by_text(self, text, *, exact):
+            assert exact is True
+            return option if text == "All time" else Locator()
+
+        def wait_for_timeout(self, milliseconds):
+            calls.append(("wait", milliseconds))
+
+    collector._select_spotify_all_time(Page())
+
+    assert calls[0] == ("button", "^Select date range$")
+    assert calls.count("click") == 2
+    assert calls[-1] == ("wait", 3_000)
+
+
 @pytest.mark.parametrize(
     ("csv_text", "schema"),
     [

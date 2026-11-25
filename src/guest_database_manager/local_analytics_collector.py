@@ -369,15 +369,36 @@ def _audience_snapshot_csv(*, snapshot_date: date, followers: int | None, listen
     return output.getvalue()
 
 
+def _spotify_home_url(analytics_url: str) -> str | None:
+    match = re.search(r"/analytics/show/([^/?#]+)", analytics_url)
+    if not match:
+        return None
+    return urljoin(analytics_url, f"/home/show/{match.group(1)}")
+
+
 def _select_spotify_all_time(page) -> None:
     """Select Spotify's lifetime performance window before exporting."""
+    semantic_trigger = page.get_by_role(
+        "button", name=re.compile(r"^Select date range$", re.I),
+    )
+    visible_semantic_triggers = [
+        semantic_trigger.nth(index)
+        for index in range(semantic_trigger.count())
+        if semantic_trigger.nth(index).is_visible()
+    ]
+    if len(visible_semantic_triggers) == 1:
+        trigger = visible_semantic_triggers[0]
+    elif len(visible_semantic_triggers) > 1:
+        raise LocalCollectorError("Spotify exposed multiple performance range controls.")
+    else:
+        trigger = None
     labels = page.get_by_text("Last 30 days", exact=True)
-    trigger = None
-    for index in range(labels.count()):
-        parent = labels.nth(index).locator("xpath=..")
-        if parent.evaluate("(node) => node.tagName") == "BUTTON" and parent.is_visible():
-            trigger = parent
-            break
+    if trigger is None:
+        for index in range(labels.count()):
+            parent = labels.nth(index).locator("xpath=..")
+            if parent.evaluate("(node) => node.tagName") == "BUTTON" and parent.is_visible():
+                trigger = parent
+                break
     if trigger is None:
         selected = page.get_by_text("All time", exact=True)
         for index in range(selected.count()):
@@ -525,6 +546,18 @@ def sync_once(
                         "Run the collector login command again."
                     )
                 if provider == "spotify":
+                    analytics_url = page.url
+                    home_url = _spotify_home_url(analytics_url)
+                    if home_url:
+                        page.goto(home_url, wait_until="networkidle", timeout=90_000)
+                        spotify_snapshot = _audience_snapshot_csv(
+                            snapshot_date=date.today(),
+                            followers=_visible_counter(page, "Followers"),
+                            listeners=None,
+                        )
+                        if spotify_snapshot:
+                            uploads.append(("spotify-audience-snapshot.csv", spotify_snapshot))
+                        page.goto(analytics_url, wait_until="networkidle", timeout=90_000)
                     _select_spotify_all_time(page)
                     performance_heading = page.get_by_role(
                         "heading", name="Performance", exact=True,
@@ -605,13 +638,6 @@ def sync_once(
                     # The old tab panel remains briefly in the DOM while Spotify
                     # hydrates the five audience export controls.
                     page.wait_for_timeout(2_500)
-                    spotify_snapshot = _audience_snapshot_csv(
-                        snapshot_date=date.today(),
-                        followers=_visible_counter(page, "Followers"),
-                        listeners=None,
-                    )
-                    if spotify_snapshot:
-                        uploads.append(("spotify-audience-snapshot.csv", spotify_snapshot))
                     # Spotify's audience exports are native buttons, but Chromium's
                     # CDP accessibility tree does not consistently expose their role.
                     audience_exports = page.locator("button").filter(
