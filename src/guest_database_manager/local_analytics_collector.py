@@ -7,6 +7,7 @@ Only downloaded CSV contents are sent to the configured Mirror Talk server.
 from __future__ import annotations
 
 import argparse
+import csv
 import getpass
 import os
 import plistlib
@@ -15,8 +16,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from contextlib import contextmanager
+from datetime import date, timedelta
+from io import StringIO
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -160,12 +165,162 @@ def _launch_browser_context(playwright, *, profile_path: Path, headless: bool):
     return playwright.chromium.launch_persistent_context(str(profile_path), **options)
 
 
+@contextmanager
+def _sync_browser_context(playwright, *, profile_path: Path, headless: bool):
+    """Reuse the owner's native Chrome session without a Playwright-owned launch.
+
+    Some provider identity systems accept the dedicated profile in normal Chrome but
+    invalidate the same session when Playwright launches the browser itself. Starting
+    Chrome normally and attaching over its supported DevTools endpoint preserves the
+    one-time owner login while keeping credentials and cookies on this computer.
+    """
+    native_chrome = _native_chrome_executable()
+    if not native_chrome:
+        context = _launch_browser_context(
+            playwright, profile_path=profile_path, headless=headless,
+        )
+        try:
+            yield context
+        finally:
+            context.close()
+        return
+
+    active_port_path = profile_path / "DevToolsActivePort"
+    try:
+        resident_port = int(active_port_path.read_text(encoding="utf-8").splitlines()[0])
+    except (FileNotFoundError, IndexError, ValueError):
+        resident_port = 0
+    if 1 <= resident_port <= 65535:
+        try:
+            resident_browser = playwright.chromium.connect_over_cdp(
+                f"http://127.0.0.1:{resident_port}", timeout=5_000,
+            )
+        except Exception:
+            resident_browser = None
+        if resident_browser is not None and resident_browser.contexts:
+            # Do not call browser.close(): Apple authentication is session-only, so
+            # this owner-started browser intentionally remains available to later runs.
+            yield resident_browser.contexts[0]
+            return
+
+    active_port_path.unlink(missing_ok=True)
+    arguments = [
+        native_chrome,
+        f"--user-data-dir={profile_path}",
+        "--no-first-run",
+        "--remote-debugging-port=0",
+    ]
+    if headless:
+        arguments.append("--headless=new")
+    arguments.append("about:blank")
+    process = subprocess.Popen(
+        arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    browser = None
+    try:
+        deadline = time.monotonic() + 20
+        port = 0
+        while time.monotonic() < deadline and process.poll() is None:
+            try:
+                port = int(active_port_path.read_text(encoding="utf-8").splitlines()[0])
+            except (FileNotFoundError, IndexError, ValueError):
+                time.sleep(0.1)
+                continue
+            if 1 <= port <= 65535:
+                break
+            port = 0
+        if not port:
+            raise LocalCollectorError("The dedicated Chrome analytics session could not start.")
+        browser = playwright.chromium.connect_over_cdp(
+            f"http://127.0.0.1:{port}", timeout=20_000,
+        )
+        if not browser.contexts:
+            raise LocalCollectorError("The dedicated Chrome analytics session was unavailable.")
+        yield browser.contexts[0]
+    finally:
+        if browser is not None:
+            browser.close()
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+
+def _annotate_apple_export(csv_text: str, *, range_days: int, today: date | None = None) -> str:
+    """Make Apple’s otherwise implicit analytics window explicit in every row."""
+    if not 1 <= range_days <= 366:
+        raise LocalCollectorError("Apple Podcasts returned an unsupported analytics date range.")
+    reader = csv.DictReader(StringIO(csv_text.lstrip("\ufeff")))
+    headers = list(reader.fieldnames or [])
+    if not headers:
+        raise LocalCollectorError("Apple Podcasts returned an unreadable analytics report.")
+    rows = list(reader)
+    end = today or date.today()
+    start = end - timedelta(days=range_days - 1)
+    period_headers = ["Analytics Period Start", "Analytics Period End"]
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=[*headers, *period_headers], lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({
+            **row,
+            "Analytics Period Start": start.isoformat(),
+            "Analytics Period End": end.isoformat(),
+        })
+    return output.getvalue()
+
+
+def _validate_provider_export(provider: str, csv_text: str) -> None:
+    """Fail closed before uploading a provider file whose schema changed."""
+    try:
+        headers = set(csv.DictReader(StringIO(csv_text.lstrip("\ufeff"))).fieldnames or [])
+    except csv.Error as exc:
+        raise LocalCollectorError("The provider download was not valid CSV.") from exc
+    if provider == "spotify":
+        required = {
+            "Date", "Plays & downloads", "Plays (on Spotify)",
+            "Downloads (everywhere else)", "Audience",
+        }
+        if not required.issubset(headers):
+            raise LocalCollectorError(
+                "Spotify returned a different analytics report; nothing was uploaded."
+            )
+    elif provider == "apple_podcasts":
+        legacy = {"Show ID", "Date"}.issubset(headers)
+        current = {
+            "Show Name", "Episode ID", "Episode Title", "Release Date",
+            "Unique Listeners", "Unique Engaged Listeners", "Plays",
+            "Average Consumption", "Analytics Period Start", "Analytics Period End",
+        }.issubset(headers)
+        if not legacy and not current:
+            raise LocalCollectorError(
+                "Apple Podcasts returned a different analytics report; nothing was uploaded."
+            )
+
+
 def login(provider: str, *, profile_root: Path, url: str) -> None:
     """Open a dedicated local browser for a user-controlled login and MFA ceremony."""
     profile = _profile_path(profile_root, provider)
     native_chrome = _native_chrome_executable()
     if native_chrome:
         if sys.platform == "darwin":
+            if provider == "apple_podcasts":
+                subprocess.Popen(
+                    [
+                        native_chrome, f"--user-data-dir={profile}", "--no-first-run",
+                        "--remote-debugging-port=0", url,
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                input(
+                    "Complete Apple login and MFA in the dedicated Chrome window, "
+                    "leave that window open for automatic sync, then press Enter here: "
+                )
+                return
             subprocess.Popen(
                 [
                     "/usr/bin/open", "-na", "Google Chrome", "--args",
@@ -215,57 +370,93 @@ def sync_once(
     sync_playwright = _playwright()
     try:
         with sync_playwright() as playwright, tempfile.TemporaryDirectory(prefix="mirror-talk-analytics-") as temp_dir:
-            context = _launch_browser_context(
+            with _sync_browser_context(
                 playwright,
                 profile_path=_profile_path(profile_root, provider),
                 headless=not headed,
-            )
-            page = context.pages[0] if context.pages else context.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=90_000)
-            page.wait_for_timeout(3_000)
-            password_fields = page.locator('input[type="password"]')
-            visible_password = any(
-                password_fields.nth(index).is_visible()
-                for index in range(password_fields.count())
-            )
-            if visible_password or re.search(r"/(?:login|signin|auth)(?:/|\?|$)", page.url, re.I):
-                login_path = urlsplit(page.url).path[:160]
-                context.close()
-                _status(server, token, provider, "reauth_required", "provider_login_required")
-                raise LocalCollectorError(
-                    f"Provider login or MFA is required at {login_path or '/'}. "
-                    "Run the collector login command again."
+            ) as context:
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+                page.wait_for_timeout(3_000)
+                password_fields = page.locator('input[type="password"]')
+                visible_password = any(
+                    password_fields.nth(index).is_visible()
+                    for index in range(password_fields.count())
                 )
-            export_control = page.get_by_role(
-                "button", name=re.compile(r"^(Export|Download CSV)$", re.I)
-            ).or_(page.get_by_role("link", name=re.compile(r"^(Export|Download CSV)$", re.I)))
-            visible = [export_control.nth(index) for index in range(export_control.count())
-                       if export_control.nth(index).is_visible()]
-            if not visible:
-                context.close()
-                _status(server, token, provider, "error", "export_control_changed")
-                raise LocalCollectorError(
-                    "The provider export control was not found; no control was clicked. "
-                    "Run a headed sync to review the provider page."
-                )
-            if len(visible) > 1 and provider != "spotify":
-                context.close()
-                _status(server, token, provider, "error", "multiple_export_controls")
-                raise LocalCollectorError(
-                    f"The provider page exposed {len(visible)} export controls; no control was clicked. "
-                    "The collector needs a more specific provider selector."
-                )
-            # Spotify currently exposes a show-performance export followed by an episode-table
-            # export. The first control is the supported daily show-level report.
-            export_target = visible[0]
-            with page.expect_download(timeout=90_000) as download_info:
-                export_target.click()
-            download = download_info.value
-            filename = Path(download.suggested_filename).name
-            destination = Path(temp_dir) / filename
-            download.save_as(destination)
-            csv_text = destination.read_text(encoding="utf-8-sig")
-            context.close()
+                if visible_password or re.search(r"/(?:login|signin|auth)(?:/|\?|$)", page.url, re.I):
+                    login_path = urlsplit(page.url).path[:160]
+                    _status(server, token, provider, "reauth_required", "provider_login_required")
+                    raise LocalCollectorError(
+                        f"Provider login or MFA is required at {login_path or '/'}. "
+                        "Run the collector login command again."
+                    )
+                if provider == "spotify":
+                    performance_heading = page.get_by_role(
+                        "heading", name="Performance", exact=True,
+                    )
+                    performance_heading.wait_for(state="visible", timeout=30_000)
+                    performance_section = performance_heading.locator(
+                        "xpath=ancestor::*[.//button[normalize-space()='Export']][1]"
+                    )
+                    export_control = performance_section.get_by_role(
+                        "button", name="Export", exact=True,
+                    )
+                    apple_range_days = 0
+                elif provider == "apple_podcasts":
+                    show_link = page.locator(
+                        'a[href*="/analytics/show/"][href$="/overview"]'
+                    ).first
+                    show_link.wait_for(state="visible", timeout=30_000)
+                    show_href = show_link.get_attribute("href") or ""
+                    if not show_href:
+                        raise LocalCollectorError(
+                            "The Apple Podcasts show analytics link was unavailable."
+                        )
+                    episodes_url = urljoin(page.url, show_href).removesuffix("/overview") + "/episodes"
+                    page.goto(episodes_url, wait_until="networkidle", timeout=90_000)
+                    date_range = page.get_by_role("button", name="Choose a date range")
+                    range_match = re.search(r"(\d+)\s+Days", date_range.inner_text(), re.I)
+                    if not range_match:
+                        raise LocalCollectorError(
+                            "The Apple Podcasts analytics date range could not be verified."
+                        )
+                    apple_range_days = int(range_match.group(1))
+                    export_control = page.locator('a[href^="blob:"]').first
+                    export_control.wait_for(state="visible", timeout=30_000)
+                else:
+                    apple_range_days = 0
+                    export_control = page.get_by_role(
+                        "button", name=re.compile(r"^(Export|Download CSV)$", re.I)
+                    ).or_(page.get_by_role("link", name=re.compile(r"^(Export|Download CSV)$", re.I)))
+                visible = [export_control.nth(index) for index in range(export_control.count())
+                           if export_control.nth(index).is_visible()]
+                if not visible:
+                    _status(server, token, provider, "error", "export_control_changed")
+                    raise LocalCollectorError(
+                        "The provider export control was not found; no control was clicked. "
+                        "Run a headed sync to review the provider page."
+                    )
+                if len(visible) > 1 and provider != "spotify":
+                    _status(server, token, provider, "error", "multiple_export_controls")
+                    raise LocalCollectorError(
+                        f"The provider page exposed {len(visible)} export controls; no control was clicked. "
+                        "The collector needs a more specific provider selector."
+                    )
+                # Spotify currently exposes a show-performance export followed by an episode-table
+                # export. The first control is the supported daily show-level report.
+                export_target = visible[0]
+                with page.expect_download(timeout=90_000) as download_info:
+                    export_target.click()
+                download = download_info.value
+                filename = Path(download.suggested_filename).name
+                destination = Path(temp_dir) / filename
+                download.save_as(destination)
+                csv_text = destination.read_text(encoding="utf-8-sig")
+                if provider == "apple_podcasts":
+                    csv_text = _annotate_apple_export(
+                        csv_text, range_days=apple_range_days,
+                    )
+                _validate_provider_export(provider, csv_text)
         return _post(server, token, "/api/analytics-connectors/local/ingest", {
             "provider": provider,
             "source_reference": filename,

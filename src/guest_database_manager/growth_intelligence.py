@@ -189,6 +189,37 @@ class GrowthIntelligence:
             return candidates
 
         apple_base = {"Show ID", "Date"}
+        apple_episode_export = {
+            "Show Name", "Episode ID", "Episode Title", "Release Date",
+            "Unique Listeners", "Unique Engaged Listeners", "Plays",
+            "Average Consumption", "Analytics Period Start", "Analytics Period End",
+        }
+        if provider_key == "apple_podcasts" and apple_episode_export.issubset(header_set):
+            metric_columns = {
+                "plays": "Plays",
+                "unique_listeners": "Unique Listeners",
+                "engaged_listeners": "Unique Engaged Listeners",
+                "consumption_depth_pct": "Average Consumption",
+            }
+            for row_number, raw in enumerate(raw_rows, 2):
+                for metric, column in metric_columns.items():
+                    value = _text(raw.get(column))
+                    if value in {"", "-", "0", "0.0", "0%", "0.0%"}:
+                        continue
+                    if metric == "consumption_depth_pct":
+                        value = value.removesuffix("%").strip()
+                    candidates.append((row_number, {
+                        "episode_title": raw.get("Episode Title"),
+                        "platform_content_id": raw.get("Episode ID"),
+                        "platform_content_title": raw.get("Episode Title"),
+                        "metric_name": metric,
+                        "metric_value": value,
+                        "period_start": raw.get("Analytics Period Start"),
+                        "period_end": raw.get("Analytics Period End"),
+                        "source_class": "provider_native",
+                        "overlap_group": f"apple_native_{metric}",
+                    }))
+            return candidates
         if provider_key == "apple_podcasts" and apple_base.issubset(header_set):
             def month_bounds(raw_date: Any) -> tuple[str, str]:
                 parsed = datetime.strptime(_text(raw_date), "%Y%m%d").date()

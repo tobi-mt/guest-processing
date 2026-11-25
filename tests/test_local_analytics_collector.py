@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import date
 
 import pytest
 
@@ -73,7 +74,27 @@ def test_login_uses_native_chrome_without_playwright_automation(tmp_path: Path, 
     assert "terminate" in calls
 
 
-def test_macos_login_forces_a_separate_chrome_instance(tmp_path: Path, monkeypatch) -> None:
+def test_macos_spotify_login_forces_a_separate_chrome_instance(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(collector.sys, "platform", "darwin")
+    monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(
+        collector.subprocess, "Popen",
+        lambda arguments, **kwargs: calls.append(arguments) or object(),
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: calls.append(prompt) or "")
+
+    collector.login(
+        "spotify", profile_root=tmp_path,
+        url="https://creators.spotify.com/analytics",
+    )
+
+    assert calls[0][:4] == ["/usr/bin/open", "-na", "Google Chrome", "--args"]
+    assert f"--user-data-dir={(tmp_path / 'spotify').resolve()}" in calls[0]
+    assert "close that window" in calls[1]
+
+
+def test_macos_apple_login_keeps_session_browser_resident(tmp_path: Path, monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(collector.sys, "platform", "darwin")
     monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
@@ -88,9 +109,131 @@ def test_macos_login_forces_a_separate_chrome_instance(tmp_path: Path, monkeypat
         url="https://podcastsconnect.apple.com/analytics",
     )
 
-    assert calls[0][:4] == ["/usr/bin/open", "-na", "Google Chrome", "--args"]
+    assert calls[0][0] == "/Applications/Chrome"
     assert f"--user-data-dir={(tmp_path / 'apple_podcasts').resolve()}" in calls[0]
-    assert "close that window" in calls[1]
+    assert "--remote-debugging-port=0" in calls[0]
+    assert "leave that window open" in calls[1]
+
+
+def test_sync_attaches_to_native_chrome_profile_over_cdp(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+    profile = tmp_path / "spotify"
+    profile.mkdir()
+
+    class Process:
+        def __init__(self):
+            (profile / "DevToolsActivePort").write_text("49152\n/browser-id\n", encoding="utf-8")
+            self.running = True
+
+        def poll(self):
+            return None if self.running else 0
+
+        def terminate(self):
+            calls.append("terminate")
+            self.running = False
+
+        def wait(self, timeout):
+            calls.append(("wait", timeout))
+            return 0
+
+    context = object()
+
+    class Browser:
+        contexts = [context]
+
+        def close(self):
+            calls.append("browser.close")
+
+    class Chromium:
+        def connect_over_cdp(self, endpoint, timeout):
+            calls.append((endpoint, timeout))
+            return Browser()
+
+    class Playwright:
+        chromium = Chromium()
+
+    monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(
+        collector.subprocess, "Popen",
+        lambda arguments, **kwargs: calls.append(arguments) or Process(),
+    )
+
+    with collector._sync_browser_context(
+        Playwright(), profile_path=profile, headless=True,
+    ) as opened_context:
+        assert opened_context is context
+
+    assert calls[0][0] == "/Applications/Chrome"
+    assert f"--user-data-dir={profile}" in calls[0]
+    assert "--headless=new" in calls[0]
+    assert ("http://127.0.0.1:49152", 20_000) in calls
+    assert "browser.close" in calls
+    assert "terminate" in calls
+
+
+def test_sync_reuses_resident_browser_without_closing_it(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "apple_podcasts"
+    profile.mkdir()
+    (profile / "DevToolsActivePort").write_text("49153\n/browser-id\n", encoding="utf-8")
+    calls = []
+    context = object()
+
+    class Browser:
+        contexts = [context]
+
+        def close(self):
+            calls.append("browser.close")
+
+    class Chromium:
+        def connect_over_cdp(self, endpoint, timeout):
+            calls.append((endpoint, timeout))
+            return Browser()
+
+    class Playwright:
+        chromium = Chromium()
+
+    monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(
+        collector.subprocess, "Popen",
+        lambda *args, **kwargs: pytest.fail("resident sessions must not launch another browser"),
+    )
+
+    with collector._sync_browser_context(
+        Playwright(), profile_path=profile, headless=True,
+    ) as opened_context:
+        assert opened_context is context
+
+    assert calls == [("http://127.0.0.1:49153", 5_000)]
+
+
+def test_provider_export_validation_rejects_the_wrong_spotify_report() -> None:
+    collector._validate_provider_export(
+        "spotify",
+        "Date,Plays & downloads,Plays (on Spotify),Downloads (everywhere else),Audience\n"
+        "11/25/2026,10,5,5,8\n",
+    )
+
+    with pytest.raises(LocalCollectorError, match="different analytics report"):
+        collector._validate_provider_export(
+            "spotify",
+            "Episode name,Publish date,Performance,Plays & downloads\nEpisode,11/25/2026,1,2\n",
+        )
+
+
+def test_apple_export_annotation_makes_the_implicit_window_explicit() -> None:
+    raw = (
+        "Show Name,Episode ID,Episode Title,Release Date,Unique Listeners,"
+        "Unique Engaged Listeners,Plays,Average Consumption\n"
+        "Mirror Talk,1001,Episode,2026-11-24,2,1,3,75%\n"
+    )
+
+    annotated = collector._annotate_apple_export(
+        raw, range_days=60, today=date(2026, 11, 25),
+    )
+
+    assert "Analytics Period Start,Analytics Period End" in annotated
+    assert "2026-09-27,2026-11-25" in annotated
+    collector._validate_provider_export("apple_podcasts", annotated)
 
 
 def test_launch_agent_runs_daily_sync_without_embedding_the_secret(tmp_path: Path) -> None:

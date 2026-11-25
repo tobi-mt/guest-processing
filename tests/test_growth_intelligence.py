@@ -342,6 +342,31 @@ def test_apple_country_export_preserves_month_and_location_grain(temp_db):
     assert preview["observations"][0]["period_end"] == "2026-09-30"
 
 
+def test_current_apple_episode_export_preserves_window_and_provider_identity(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    preview = intelligence.preview_csv(
+        "Show Name,Episode ID,Episode GUID,Episode Number,Episode Title,Release Date,Duration,"
+        "Unique Listeners,Unique Engaged Listeners,Plays,Average Consumption,"
+        "Analytics Period Start,Analytics Period End\n"
+        "Mirror Talk,1001,guid-1,468,Provider-only Episode,2026-11-24,3600,2,1,3,75%,"
+        "2026-09-27,2026-11-25\n",
+        provider="apple_podcasts",
+        source_reference="apple-episodes.csv",
+    )
+
+    assert preview["format"] == "provider"
+    assert preview["summary"] == {
+        "submitted": 4, "ready": 4, "invalid": 0, "duplicates": 0,
+        "linked_to_episode": 0, "unlinked": 4,
+    }
+    assert {row["metric_name"] for row in preview["observations"]} == {
+        "plays", "unique_listeners", "engaged_listeners", "consumption_depth_pct",
+    }
+    assert {row["period_start"] for row in preview["observations"]} == {"2026-09-27"}
+    assert {row["period_end"] for row in preview["observations"]} == {"2026-11-25"}
+    assert {row["platform_content_id"] for row in preview["observations"]} == {"1001"}
+
+
 def test_apple_episode_export_requires_unique_internal_title_match(temp_db):
     intelligence = GrowthIntelligence(temp_db.db_path)
     csv_text = (
