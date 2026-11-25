@@ -366,6 +366,15 @@ class PodcastAnalyticsConnectors:
             conn.commit()
         return {"provider": provider, "enabled": bool(enabled), "status": status}
 
+    def register_local_collector(self, provider: str, *, token: str) -> dict[str, Any]:
+        """Enable a collector during owner-run bootstrap using the ingestion credential."""
+        expected = self._config()["collector_token"]
+        if len(expected) < 32 or not secrets.compare_digest(str(token or ""), expected):
+            raise AnalyticsConnectorError("The local analytics collector credential is invalid.")
+        return self.set_local_collector(
+            provider, enabled=True, actor="local-analytics-bootstrap"
+        )
+
     def ingest_local_export(
         self, *, provider: str, token: str, csv_text: str, source_reference: str
     ) -> dict[str, Any]:

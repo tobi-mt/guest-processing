@@ -109,7 +109,11 @@ class PodcastInsights:
         apple_rows = [row for row in rows if str(row["provider"]).casefold() == "apple_podcasts"]
         apple_summary = self._apple_summary(apple_rows)
         apple_monthly = self._apple_monthly(apple_rows)
+        performance_trend = self._performance_trend(
+            rows, youtube_rows, expected_youtube_channels=identified_channels
+        )
         global_rollup = self._global_rollup(rows, spotify_window, youtube_rows)
+        self._apply_comparable_performance(global_rollup, performance_trend)
         audience_by_platform = []
         for card in provider_cards:
             for metric in AUDIENCE_METRICS:
@@ -147,6 +151,15 @@ class PodcastInsights:
             [row for row in rows if row.get("source_class") == "host_rss_delivery"],
             metric="downloads", label_fields=("app_name",)
         )
+        if any(item["name"] != "Unknown" for item in listening_apps):
+            listening_apps = [item for item in listening_apps if item["name"] != "Unknown"]
+        listening_app_total = sum(float(item["value"]) for item in listening_apps)
+        for item in listening_apps:
+            item["share_pct"] = (
+                round(float(item["value"]) * 100 / listening_app_total, 1)
+                if listening_app_total else None
+            )
+        listening_apps.sort(key=lambda item: -float(item["value"]))
         top_videos = self._top_platform_content(rows)
         trend = []
         trend_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -223,6 +236,7 @@ class PodcastInsights:
             "top_platform_content": top_videos,
             "trend": trend[-14:],
             "monthly_trends": {"spotify": spotify_monthly, "apple_podcasts": apple_monthly},
+            "performance_trend": performance_trend,
             "quality": {
                 "status": "no_data" if not rows else "partial" if len(provider_cards) < max(len(platforms), 1) else "covered",
                 "observation_count": len(rows),
@@ -246,6 +260,175 @@ class PodcastInsights:
                 "platform_strength": "The latest source-backed metrics for each provider, without a fabricated composite score.",
             },
         }
+
+    @classmethod
+    def _performance_trend(
+        cls, rows: list[dict[str, Any]], youtube_rows: list[dict[str, Any]],
+        *, expected_youtube_channels: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Reconcile audio and video into exact, comparable reporting windows."""
+        youtube_periods = sorted({
+            (row["period_start"], row["period_end"])
+            for row in youtube_rows if row["metric_name"] in {"plays", "streams"}
+        })
+        points = []
+        for period_start, period_end in youtube_periods:
+            start = datetime.fromisoformat(period_start).date()
+            end = datetime.fromisoformat(period_end).date()
+            youtube_period_rows = [
+                row for row in youtube_rows
+                if (row["period_start"], row["period_end"]) == (period_start, period_end)
+            ]
+            youtube_providers = {
+                str(row["provider"]) for row in youtube_period_rows
+                if str(row["provider"]).startswith("youtube:")
+            }
+            youtube_complete = bool(youtube_period_rows) and (
+                not expected_youtube_channels
+                or len(youtube_providers) >= expected_youtube_channels
+            )
+            video = sum(
+                cls._metric_total(youtube_period_rows, metric)
+                for metric in {"plays", "streams"}
+            )
+
+            daily_host = [
+                row for row in rows
+                if row["period_start"] == row["period_end"]
+                and start <= datetime.fromisoformat(row["period_end"]).date() <= end
+                and row["metric_name"] in {"downloads", "downloads_7d"}
+                and row.get("source_class") == "host_rss_delivery"
+            ]
+            exact_host = [
+                row for row in rows
+                if (row["period_start"], row["period_end"]) == (period_start, period_end)
+                and row["metric_name"] in {"downloads", "downloads_7d"}
+                and row.get("source_class") == "host_rss_delivery"
+            ]
+            host_rows = cls._prefer_aggregate_rows(daily_host or exact_host)
+            downloads = sum(
+                cls._metric_total(host_rows, metric) for metric in {"downloads", "downloads_7d"}
+            )
+
+            daily_spotify = [
+                row for row in rows
+                if str(row["provider"]).casefold() == "spotify"
+                and row["period_start"] == row["period_end"]
+                and start <= datetime.fromisoformat(row["period_end"]).date() <= end
+                and row["metric_name"] in {"plays", "streams"}
+                and row.get("source_class") == "provider_native"
+            ]
+            exact_spotify = [
+                row for row in rows
+                if str(row["provider"]).casefold() == "spotify"
+                and (row["period_start"], row["period_end"]) == (period_start, period_end)
+                and row["metric_name"] in {"plays", "streams"}
+                and row.get("source_class") == "provider_native"
+            ]
+            spotify_rows = cls._prefer_aggregate_rows(daily_spotify or exact_spotify)
+            spotify_plays = sum(
+                cls._metric_total(spotify_rows, metric) for metric in {"plays", "streams"}
+            )
+            present = {
+                key for key, available in (
+                    ("open_rss_downloads", bool(host_rows)),
+                    ("spotify_native_plays", bool(spotify_rows)),
+                    ("youtube_views", youtube_complete),
+                ) if available
+            }
+            audio = downloads + spotify_plays if host_rows or spotify_rows else None
+            total = (audio or 0.0) + video
+            points.append({
+                "period": period_end,
+                "period_start": period_start,
+                "period_end": period_end,
+                "total": total,
+                "audio": audio,
+                "video": video,
+                "open_rss_downloads": downloads if host_rows else None,
+                "spotify_native_plays": spotify_plays if spotify_rows else None,
+                "youtube_views": video,
+                "coverage": "complete" if len(present) == 3 else "partial",
+                "missing_components": sorted(
+                    {"open_rss_downloads", "spotify_native_plays", "youtube_views"} - present
+                ),
+            })
+        return points
+
+    @classmethod
+    def _apply_comparable_performance(
+        cls, rollup: dict[str, Any], trend: list[dict[str, Any]]
+    ) -> None:
+        comparable = [point for point in trend if point["coverage"] == "complete"]
+        if comparable:
+            current = comparable[-1]
+            rollup.update({
+                "measured_activity": current["total"],
+                "audio_starts": current["audio"],
+                "video_views": current["video"],
+                "period_start": current["period_start"],
+                "period_end": current["period_end"],
+                "coverage": "complete",
+                "period_alignment": "aligned",
+                "components": [
+                    {"key": "open_rss_downloads", "label": "Podcast-app downloads",
+                     "value": current["open_rss_downloads"], "period_start": current["period_start"],
+                     "period_end": current["period_end"], "source": "Podcast hosting delivery"},
+                    {"key": "spotify_native_plays", "label": "Spotify plays",
+                     "value": current["spotify_native_plays"], "period_start": current["period_start"],
+                     "period_end": current["period_end"], "source": "Spotify for Creators"},
+                    {"key": "youtube_views", "label": "YouTube views",
+                     "value": current["youtube_views"], "period_start": current["period_start"],
+                     "period_end": current["period_end"], "source": "YouTube Analytics"},
+                ],
+            })
+        rollup["comparison"] = cls._performance_comparison(comparable)
+
+    @staticmethod
+    def _performance_comparison(points: list[dict[str, Any]]) -> dict[str, Any]:
+        if len(points) < 2:
+            return {"available": False}
+        previous, current = points[-2:]
+
+        def compare(key: str) -> dict[str, float | None]:
+            current_value = float(current[key] or 0)
+            previous_value = float(previous[key] or 0)
+            delta = current_value - previous_value
+            return {
+                "current": current_value,
+                "previous": previous_value,
+                "delta": delta,
+                "delta_pct": round(delta * 100 / previous_value, 1) if previous_value else None,
+            }
+
+        return {
+            "available": True,
+            "current_period_start": current["period_start"],
+            "current_period_end": current["period_end"],
+            "previous_period_start": previous["period_start"],
+            "previous_period_end": previous["period_end"],
+            "total": compare("total"),
+            "audio": compare("audio"),
+            "video": compare("video"),
+            "components": {
+                key: compare(key) for key in (
+                    "open_rss_downloads", "spotify_native_plays", "youtube_views"
+                )
+            },
+        }
+
+    @staticmethod
+    def _prefer_aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        undimensional = [
+            row for row in rows
+            if not any(row.get(field) for field in (
+                "country_code", "city", "device_type", "app_name", "age_group",
+                "gender", "traffic_source", "platform_content_id",
+            ))
+        ]
+        return undimensional or rows
 
     @classmethod
     def _global_rollup(
@@ -642,6 +825,12 @@ class PodcastInsights:
             provider_rows = [row for row in candidates if str(row["provider"]) == provider]
             latest = max((row["period_end"] for row in provider_rows), default=None)
             latest_rows = [row for row in provider_rows if row["period_end"] == latest]
+            labelled_rows = [
+                row for row in latest_rows
+                if any(str(row.get(field) or "").strip() for field in label_fields)
+            ]
+            if labelled_rows:
+                latest_rows = labelled_rows
             total = sum(float(row["metric_value"]) for row in latest_rows)
             for row in latest_rows:
                 value = float(row["metric_value"])

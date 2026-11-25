@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+import guest_database_manager.local_analytics_collector as collector
+
 from guest_database_manager.local_analytics_collector import (
     LocalCollectorError,
     _collector_token,
@@ -60,3 +62,40 @@ def test_schedule_install_and_remove_are_user_scoped_and_reversible(tmp_path: Pa
     assert path.stat().st_mode & 0o777 == 0o600
     assert uninstall_schedule("apple_podcasts", launch_agent_dir=launch_agents, unload=False) is True
     assert not path.exists()
+
+
+def test_one_command_setup_registers_logs_in_and_schedules_both_providers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    token = "collector-token-with-at-least-thirty-two-characters"
+    posts = []
+    logins = []
+    schedules = []
+    monkeypatch.setattr(collector.sys, "platform", "darwin")
+    monkeypatch.setattr(collector, "_collector_token", lambda: token)
+    monkeypatch.setattr(
+        collector, "_post",
+        lambda server, supplied_token, path, payload: posts.append(
+            (server, supplied_token, path, payload)
+        ) or {"status": "waiting"},
+    )
+    monkeypatch.setattr(
+        collector, "login",
+        lambda provider, **kwargs: logins.append((provider, kwargs["url"])),
+    )
+
+    def fake_install(provider, **kwargs):
+        schedules.append((provider, kwargs["hour"], kwargs["minute"]))
+        return tmp_path / f"{provider}.plist"
+
+    monkeypatch.setattr(collector, "install_schedule", fake_install)
+
+    paths = collector.setup_automation(
+        server="https://guest-processing.example", profile_root=tmp_path / "profiles"
+    )
+
+    assert [item[3]["provider"] for item in posts] == ["spotify", "apple_podcasts"]
+    assert all(item[2] == "/api/analytics-connectors/local/register" for item in posts)
+    assert [item[0] for item in logins] == ["spotify", "apple_podcasts"]
+    assert schedules == [("spotify", 6, 15), ("apple_podcasts", 6, 30)]
+    assert paths == [tmp_path / "spotify.plist", tmp_path / "apple_podcasts.plist"]

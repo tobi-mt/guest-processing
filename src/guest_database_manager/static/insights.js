@@ -18,16 +18,17 @@ function linePath(values, width, height, maxValue) {
   }).join(" ");
 }
 
-function trendChart(title, rows, series) {
-  const selected = trendRange === 0 ? rows : rows.slice(-trendRange);
-  if (!selected.length) return `<article class="trend-card"><h3>${escapeHtml(title)}</h3>${empty("No monthly history is available.")}</article>`;
+function trendChart(title, rows, series, options = {}) {
+  const range = options.range ?? trendRange;
+  const selected = range === 0 ? rows : rows.slice(-range);
+  if (!selected.length) return `<article class="trend-card"><h3>${escapeHtml(title)}</h3>${empty(options.emptyMessage || "No comparable history is available yet.")}</article>`;
   const width = 720; const height = 210;
   const maxValue = Math.max(...selected.flatMap((row) => series.map((item) => Number(row[item.key] || 0))), 1);
   const first = selected[0].period; const middle = selected[Math.floor((selected.length - 1) / 2)].period; const last = selected.at(-1).period;
   const paths = series.map((item) => `<path class="trend-line ${item.className}" d="${linePath(selected.map((row) => row[item.key]), width, height, maxValue)}"></path>`).join("");
   const latest = selected.at(-1);
   const tableRows = selected.map((row) => `<tr><td>${escapeHtml(row.period)}</td>${series.map((item) => `<td>${number(row[item.key])}</td>`).join("")}</tr>`).join("");
-  return `<article class="trend-card"><div class="trend-card-heading"><div><h3>${escapeHtml(title)}</h3><p>${series.map((item) => `${escapeHtml(item.label)}: <strong>${number(latest[item.key])}</strong>`).join(" · ")} in ${escapeHtml(last)}</p></div><div class="trend-legend">${series.map((item) => `<span class="${item.className}">${escapeHtml(item.label)}</span>`).join("")}</div></div><svg class="line-chart" viewBox="0 0 ${width} ${height + 28}" role="img" aria-label="${escapeHtml(title)} monthly trend from ${escapeHtml(first)} to ${escapeHtml(last)}"><line x1="0" y1="${height}" x2="${width}" y2="${height}" class="chart-axis"></line>${paths}<text x="0" y="${height + 22}">${escapeHtml(first)}</text><text x="${width / 2}" y="${height + 22}" text-anchor="middle">${escapeHtml(middle)}</text><text x="${width}" y="${height + 22}" text-anchor="end">${escapeHtml(last)}</text></svg><details class="trend-data"><summary>View monthly values</summary><div class="trend-table-wrap"><table><thead><tr><th>Month</th>${series.map((item) => `<th>${escapeHtml(item.label)}</th>`).join("")}</tr></thead><tbody>${tableRows}</tbody></table></div></details></article>`;
+  return `<article class="trend-card ${options.className || ""}"><div class="trend-card-heading"><div><h3>${escapeHtml(title)}</h3><p>${series.map((item) => `${escapeHtml(item.label)}: <strong>${number(latest[item.key])}</strong>`).join(" · ")} through ${escapeHtml(last)}</p></div><div class="trend-legend">${series.map((item) => `<span class="${item.className}">${escapeHtml(item.label)}</span>`).join("")}</div></div><svg class="line-chart" viewBox="0 0 ${width} ${height + 28}" role="img" aria-label="${escapeHtml(title)} trend from ${escapeHtml(first)} to ${escapeHtml(last)}"><line x1="0" y1="${height}" x2="${width}" y2="${height}" class="chart-axis"></line>${paths}<text x="0" y="${height + 22}">${escapeHtml(first)}</text><text x="${width / 2}" y="${height + 22}" text-anchor="middle">${escapeHtml(middle)}</text><text x="${width}" y="${height + 22}" text-anchor="end">${escapeHtml(last)}</text></svg><details class="trend-data"><summary>View exact values</summary><div class="trend-table-wrap"><table><thead><tr><th>${escapeHtml(options.periodLabel || "Period")}</th>${series.map((item) => `<th>${escapeHtml(item.label)}</th>`).join("")}</tr></thead><tbody>${tableRows}</tbody></table></div></details></article>`;
 }
 
 function renderMonthlyTrends(monthly) {
@@ -35,6 +36,50 @@ function renderMonthlyTrends(monthly) {
   const target = document.getElementById("reach-trend");
   target.innerHTML = `<div class="trend-controls" aria-label="Trend range"><button type="button" data-trend-range="12" class="${trendRange === 12 ? "active" : ""}">12 months</button><button type="button" data-trend-range="24" class="${trendRange === 24 ? "active" : ""}">24 months</button><button type="button" data-trend-range="0" class="${trendRange === 0 ? "active" : ""}">All history</button></div><div class="monthly-trend-grid">${trendChart("Spotify activity", spotify, [{key:"downloads",label:"Downloads",className:"series-primary"},{key:"plays",label:"Spotify plays",className:"series-secondary"}])}${trendChart("Apple listening", apple, [{key:"plays",label:"Plays",className:"series-primary"},{key:"listeners",label:"Monthly listeners",className:"series-secondary"}])}</div>`;
   target.querySelectorAll("[data-trend-range]").forEach((button) => button.addEventListener("click", () => { trendRange = Number(button.dataset.trendRange); renderMonthlyTrends(monthly); }));
+}
+
+const changeLabel = (stat) => {
+  if (!stat || stat.delta_pct == null) return {text:"No prior comparable period", className:"neutral"};
+  const direction = Number(stat.delta_pct) > 0 ? "+" : "";
+  return {text:`${direction}${number(stat.delta_pct)}% vs prior period`, className:Number(stat.delta_pct) > 0 ? "positive" : Number(stat.delta_pct) < 0 ? "negative" : "neutral"};
+};
+
+function renderOverallPerformance(trend, global) {
+  const target = document.getElementById("overall-performance-trend");
+  const comparable = (trend || []).filter((item) => item.coverage === "complete");
+  const excluded = (trend || []).length - comparable.length;
+  const comparison = global.comparison || {};
+  const change = changeLabel(comparison.total);
+  target.innerHTML = `${comparison.available ? `<div class="performance-change ${change.className}"><strong>${escapeHtml(change.text)}</strong><span>${number(comparison.total.delta)} activity change · ${escapeHtml(comparison.current_period_start)}–${escapeHtml(comparison.current_period_end)} compared with ${escapeHtml(comparison.previous_period_start)}–${escapeHtml(comparison.previous_period_end)}</span></div>` : ""}${trendChart("Overall measured activity", comparable, [{key:"total",label:"Total activity",className:"series-total"},{key:"audio",label:"Audio starts",className:"series-primary"},{key:"video",label:"Video views",className:"series-secondary"}], {range:12,className:"overall-trend-card",periodLabel:"Window ending",emptyMessage:"Two fully covered reporting windows are needed to show reliable movement."})}${excluded ? `<p class="trend-quality-note">${number(excluded)} incomplete reporting window${excluded === 1 ? " was" : "s were"} excluded from growth comparisons.</p>` : ""}`;
+}
+
+function renderPlatformPerformance(global, monthly, listeningApps) {
+  const target = document.getElementById("platform-performance");
+  const total = Number(global.measured_activity || 0);
+  const components = Object.fromEntries((global.components || []).map((item) => [item.key, item]));
+  const comparison = global.comparison || {};
+  const componentStats = comparison.components || {};
+  const cards = [
+    ["open_rss_downloads", "Podcast apps (RSS)", "Downloads delivered across Apple Podcasts and every other RSS app."],
+    ["spotify_native_plays", "Spotify", "Native Spotify play starts."],
+    ["youtube_views", "YouTube", "Video and podcast views from connected channels."],
+  ].map(([key,label,description]) => {
+    const component = components[key] || {};
+    const value = component.value;
+    const share = value == null || !total ? null : Math.round(Number(value) * 1000 / total) / 10;
+    const change = changeLabel(componentStats[key]);
+    return `<article class="performance-platform-card"><div><span>${escapeHtml(label)}</span><strong>${number(value)}</strong></div><p>${escapeHtml(description)}</p><div class="platform-card-meta"><span>${share == null ? "Awaiting data" : `${number(share)}% of measured activity`}</span><span class="metric-change ${change.className}">${escapeHtml(change.text)}</span></div></article>`;
+  });
+  const appleRows = monthly.apple_podcasts || [];
+  const appleCurrent = appleRows.at(-1); const applePrevious = appleRows.at(-2);
+  const appleStat = appleCurrent && applePrevious ? {delta_pct:applePrevious.plays ? Math.round((Number(appleCurrent.plays) - Number(applePrevious.plays)) * 1000 / Number(applePrevious.plays)) / 10 : null} : null;
+  const appleChange = changeLabel(appleStat);
+  cards.push(`<article class="performance-platform-card diagnostic"><div><span>Apple Podcasts engagement</span><strong>${number(appleCurrent?.plays)}</strong></div><p>Apple-native plays for ${escapeHtml(appleCurrent?.period || "the latest reported month")}; shown separately to prevent double-counting RSS delivery.</p><div class="platform-card-meta"><span>${number(appleCurrent?.listeners)} listeners</span><span class="metric-change ${appleChange.className}">${escapeHtml(appleChange.text)}</span></div></article>`);
+  target.innerHTML = cards.join("");
+
+  const appTarget = document.getElementById("listening-app-summary");
+  const apps = (listeningApps || []).slice(0, 8);
+  appTarget.innerHTML = apps.length ? `<div class="listening-app-heading"><h3>Podcast-app breakdown</h3><p>Host-reported downloads already included in the RSS total above.</p></div><div class="listening-app-chips">${apps.map((item) => `<span><strong>${escapeHtml(item.name)}</strong>${number(item.value)} · ${number(item.share_pct)}%</span>`).join("")}</div>` : `<p class="platform-coverage-note">The RSS total covers all podcast apps. Per-app contribution will appear here when the hosting export provides listening-app detail.</p>`;
 }
 
 function renderDecisionIntelligence(intelligence) {
@@ -147,22 +192,22 @@ function render(payload) {
     button.textContent = original;
   };
   document.querySelectorAll("#refresh-podcast-reach,[data-refresh-reach]").forEach((button) => button.addEventListener("click", () => refreshReach(button)));
-  const spotify = summary.spotify_28d || {};
   const global = summary.global_rollup || {};
   const reach = global.reach_range || {};
   const reachValue = reach.minimum == null ? "Not yet measurable" : reach.maximum == null ? `At least ${number(reach.minimum)}` : `${number(reach.minimum)}–${number(reach.maximum)}`;
+  const totalChange = changeLabel(global.comparison?.total);
   const audioComponents = (global.components || []).filter((item) => item.key !== "youtube_views");
   const audioDetail = audioComponents.length
     ? audioComponents.map((item) => `${number(item.value)} ${String(item.label || "activity").toLowerCase()}`).join(" · ")
     : "Hosting data covers every RSS listening app";
   const activityDetail = global.measured_activity == null
     ? "Connect the hosting account and YouTube to calculate this"
-    : `${global.coverage === "complete" ? "All primary channels" : "Connected channels"} · ${global.period_alignment === "directional" ? "windows differ" : `through ${global.period_end}`}`;
+    : `${global.comparison?.available ? totalChange.text : global.coverage === "complete" ? "Latest comparable window" : "Connected channels"} · through ${global.period_end}`;
   document.getElementById("insights-summary").innerHTML = [
     ["Total measured activity", number(global.measured_activity), activityDetail, "global"],
     ["Audio starts", number(global.audio_starts), audioDetail],
     ["Video views", number(global.video_views), summary.plays_period_end ? `YouTube window through ${summary.plays_period_end}` : "Connect YouTube to begin"],
-    ["Places to listen", number(summary.verified_platforms), `${number(summary.distribution_coverage_pct)}% of known destinations confirmed`],
+    ["People reached", reachValue, reach.minimum == null ? "Awaiting compatible unique-audience reports" : `Bounded estimate through ${reach.period_end}`],
   ].map(([label,value,detail,className]) => `<article class="summary-card ${className || ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
   const youtubeDevices = (payload.devices || []).filter((item) => item.provider === "youtube" || item.provider.startsWith("youtube:"));
   const youtubeDeviceTotal = youtubeDevices.reduce((total, item) => total + Number(item.value || 0), 0);
@@ -171,14 +216,12 @@ function render(payload) {
   const hasViewDuration = youtubeChannels.some((item) => item.metrics?.average_view_duration_seconds != null);
   const weightedDuration = hasViewDuration ? youtubeChannels.reduce((total, item) => total + Number(item.metrics?.average_view_duration_seconds || 0) * Number(item.metrics?.plays || 0), 0) / Math.max(youtubeMetricTotal("plays"), 1) : null;
   document.getElementById("reach-highlights").innerHTML = [
-    ["People reached", reachValue, reach.minimum == null ? "Platforms do not expose one shared person ID. Compatible unique-audience reports are kept separate until a truthful range is possible." : reach.explanation],
+    ["Places to listen", `${number(summary.verified_platforms)} destinations`, `${number(summary.distribution_coverage_pct)}% of known destinations confirmed.`],
     ["How people watch", youtubeMobileShare == null ? "Connect YouTube for device mix" : `${youtubeMobileShare}% watch on mobile`, youtubeMobileShare == null ? "One connection unlocks mobile, TV, desktop, and tablet viewing." : `${number(youtubeMobileValue)} recent views came from mobile devices.`],
     ["How long they stay", hasViewDuration ? duration(weightedDuration) : "Watch-time detail unavailable", hasViewDuration ? "Average viewing time across connected channels." : "The connected source has not returned average viewing duration yet."],
   ].map(([label,value,detail]) => `<article class="highlight-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><p>${escapeHtml(detail)}</p></article>`).join("");
-  const spotifyLifetime = summary.spotify_lifetime || {};
-  const apple = summary.apple || {};
-  const totalCard = (label, value, detail) => `<div class="total-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`;
-  document.getElementById("platform-overviews").innerHTML = `<article class="platform-overview"><div class="platform-overview-heading"><div><span>Spotify for Creators</span><h2>Audio performance</h2></div><small>${escapeHtml(spotifyLifetime.period_start || "—")} – ${escapeHtml(spotifyLifetime.period_end || "—")}</small></div><div class="total-metric-grid">${totalCard("Lifetime downloads", number(spotifyLifetime.downloads), "Everywhere outside Spotify")}${totalCard("Lifetime Spotify plays", number(spotifyLifetime.plays), "Additive play starts")}${totalCard("Last 28 days", number((spotify.downloads || 0) + (spotify.plays || 0)), `${number(spotify.downloads)} downloads · ${number(spotify.plays)} plays`)}${totalCard("Latest daily audience", number(spotify.latest_daily_audience), `Single day ending ${spotify.period_end || "—"}; not a lifetime unique total`)}</div></article><article class="platform-overview"><div class="platform-overview-heading"><div><span>Apple Podcasts</span><h2>Listening performance</h2></div><small>${escapeHtml(apple.period_start || "—")} – ${escapeHtml(apple.period_end || "—")}</small></div><div class="total-metric-grid">${totalCard("Lifetime plays", number(apple.plays), "Additive country-month plays")}${totalCard("Lifetime listening time", apple.listening_time_hours == null ? "Unavailable" : `${number(Math.round(apple.listening_time_hours))}h`, "Summed listening seconds converted to hours")}${totalCard("Latest monthly listeners", number(apple.latest_month_listeners), `Reporting month ending ${apple.period_end || "—"}`)}${totalCard("Followers", number(apple.followers), "Latest net follower total")}</div></article>`;
+  renderOverallPerformance(payload.performance_trend || [], global);
+  renderPlatformPerformance(global, payload.monthly_trends || {}, payload.listening_apps || []);
   renderDecisionIntelligence(payload.decision_intelligence || {});
   const coverage = payload.source_coverage || {}; const publicSources = coverage.public || []; const privateSources = coverage.private || [];
   renderConnections(payload.analytics_connectors || {});

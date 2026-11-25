@@ -259,9 +259,36 @@ def uninstall_schedule(
     return False
 
 
+def setup_automation(*, server: str, profile_root: Path) -> list[Path]:
+    """Perform the one-time owner ceremony and install both daily collectors."""
+    if sys.platform != "darwin":
+        raise LocalCollectorError("One-command analytics setup is currently supported on macOS only.")
+    if len(_collector_token()) < 32:
+        save_collector_token()
+    token = _collector_token()
+    if len(token) < 32:
+        raise LocalCollectorError("The collector token was not available after secure setup.")
+
+    paths: list[Path] = []
+    for index, (provider, url) in enumerate(DEFAULT_URLS.items()):
+        _post(server, token, "/api/analytics-connectors/local/register", {"provider": provider})
+        login(provider, profile_root=profile_root, url=url)
+        paths.append(install_schedule(
+            provider,
+            server=server,
+            profile_root=profile_root,
+            hour=6,
+            minute=15 + index * 15,
+        ))
+    return paths
+
+
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Mirror Talk local private-analytics collector")
-    parser.add_argument("command", choices=("save-token", "login", "sync", "install-schedule", "uninstall-schedule"))
+    parser.add_argument(
+        "command",
+        choices=("setup", "save-token", "login", "sync", "install-schedule", "uninstall-schedule"),
+    )
     parser.add_argument("provider", nargs="?", choices=tuple(DEFAULT_URLS))
     parser.add_argument("--server", default=os.environ.get("MIRROR_TALK_PUBLIC_URL", ""))
     parser.add_argument("--url", default="")
@@ -277,6 +304,14 @@ def create_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = create_parser().parse_args()
+    if args.command == "setup":
+        try:
+            paths = setup_automation(server=args.server, profile_root=args.profile_root)
+            print(f"Podcast analytics automation is active for {len(paths)} providers.")
+        except LocalCollectorError as exc:
+            print(f"Collector stopped: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        return
     if args.command == "save-token":
         try:
             save_collector_token()

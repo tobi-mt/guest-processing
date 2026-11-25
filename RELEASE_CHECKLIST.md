@@ -49,6 +49,9 @@
 - On the authorized operations Mac, both collector LaunchAgents are loaded, their
   latest runs succeeded, and no collector token or provider session appears in the
   plist, application logs, or Railway logs.
+- For a new operations Mac, run the one-time `local_analytics_collector setup`
+  command and confirm it registers Spotify and Apple, completes both owner-controlled
+  login ceremonies, and installs the staggered 06:15/06:30 daily jobs.
 - Leave `MIRROR_TALK_OPENPODCAST_AUTO_SYNC` unset unless the optional OpenPodcast
   account has passed a manual endpoint sync. If enabled, verify a failure enters the
   20-hour backoff instead of retrying every worker cycle.

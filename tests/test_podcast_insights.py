@@ -119,6 +119,57 @@ def test_global_rollup_prefers_host_total_over_its_app_breakdown(temp_db):
     assert rollup["measured_activity"] == 100
 
 
+def test_performance_trend_reconciles_exact_windows_and_drives_headline_comparison(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    observations = []
+    for day, downloads, plays in (
+        ("2026-10-01", 10, 5), ("2026-10-02", 12, 6),
+        ("2026-10-03", 20, 8), ("2026-10-04", 22, 9),
+    ):
+        observations.extend([
+            {"provider": "spotify", "metric_name": "downloads", "metric_value": downloads,
+             "period_start": day, "period_end": day, "source_reference": "spotify.csv",
+             "source_class": "host_rss_delivery", "overlap_group": "open_rss_downloads"},
+            {"provider": "spotify", "metric_name": "plays", "metric_value": plays,
+             "period_start": day, "period_end": day, "source_reference": "spotify.csv",
+             "source_class": "provider_native", "overlap_group": "spotify_native_plays"},
+        ])
+    observations.extend([
+        {"provider": "youtube:channel", "metric_name": "plays", "metric_value": 30,
+         "period_start": "2026-10-01", "period_end": "2026-10-02", "source_reference": "youtube-api"},
+        {"provider": "youtube:channel", "metric_name": "plays", "metric_value": 50,
+         "period_start": "2026-10-03", "period_end": "2026-10-04", "source_reference": "youtube-api"},
+        {"provider": "youtube:channel", "metric_name": "plays", "metric_value": 70,
+         "period_start": "2026-10-05", "period_end": "2026-10-06", "source_reference": "youtube-api"},
+        {"provider": "apple_podcasts", "metric_name": "plays", "metric_value": 999,
+         "period_start": "2026-10-01", "period_end": "2026-10-31", "source_reference": "apple.csv"},
+    ])
+    service.record_growth_observations({"observations": observations}, actor="automation")
+
+    result = PodcastInsights(temp_db.db_path).dashboard()
+
+    assert result["performance_trend"] == [
+        {"period": "2026-10-02", "period_start": "2026-10-01", "period_end": "2026-10-02",
+         "total": 63.0, "audio": 33.0, "video": 30.0, "open_rss_downloads": 22.0,
+         "spotify_native_plays": 11.0, "youtube_views": 30.0, "coverage": "complete",
+         "missing_components": []},
+        {"period": "2026-10-04", "period_start": "2026-10-03", "period_end": "2026-10-04",
+         "total": 109.0, "audio": 59.0, "video": 50.0, "open_rss_downloads": 42.0,
+         "spotify_native_plays": 17.0, "youtube_views": 50.0, "coverage": "complete",
+         "missing_components": []},
+        {"period": "2026-10-06", "period_start": "2026-10-05", "period_end": "2026-10-06",
+         "total": 70.0, "audio": None, "video": 70.0, "open_rss_downloads": None,
+         "spotify_native_plays": None, "youtube_views": 70.0, "coverage": "partial",
+         "missing_components": ["open_rss_downloads", "spotify_native_plays"]},
+    ]
+    rollup = result["summary"]["global_rollup"]
+    assert rollup["measured_activity"] == 109
+    assert rollup["period_end"] == "2026-10-04"
+    assert rollup["comparison"]["total"] == {
+        "current": 109.0, "previous": 63.0, "delta": 46.0, "delta_pct": 73.0,
+    }
+
+
 def test_insights_support_source_backed_device_and_country_dimensions(temp_db):
     service = GuestWebService(temp_db.db_path)
     service.record_growth_observations({"observations": [
@@ -204,6 +255,12 @@ def test_insights_exposes_host_reported_listening_apps_without_treating_them_as_
         {"provider": "podcast_host", "metric_name": "downloads", "metric_value": 70,
          "period_start": "2026-11-01", "period_end": "2026-11-23", "source_reference": "host-export",
          "source_class": "host_rss_delivery", "app_name": "Apple Podcasts"},
+        {"provider": "podcast_host", "metric_name": "downloads", "metric_value": 100,
+         "period_start": "2026-11-01", "period_end": "2026-11-23", "source_reference": "host-total",
+         "source_class": "host_rss_delivery"},
+        {"provider": "another_host", "metric_name": "downloads", "metric_value": 100,
+         "period_start": "2026-11-01", "period_end": "2026-11-23", "source_reference": "other-total",
+         "source_class": "host_rss_delivery"},
     ]}, actor="automation")
 
     apps = PodcastInsights(temp_db.db_path).dashboard()["listening_apps"]

@@ -285,6 +285,15 @@ def test_local_collector_endpoint_uses_scoped_bearer_not_dashboard_cookie(monkey
     token = "local-collector-token-with-at-least-thirty-two-characters"
     monkeypatch.setenv(COLLECTOR_TOKEN_ENV, token)
     with running_server(temp_db.db_path) as base_url:
+        rejected_registration = requests.post(
+            f"{base_url}/api/analytics-connectors/local/register",
+            json={"provider": "spotify"}, headers={"Authorization": "Bearer wrong"}, timeout=5,
+        )
+        registered = requests.post(
+            f"{base_url}/api/analytics-connectors/local/register",
+            json={"provider": "spotify"},
+            headers={"Authorization": f"Bearer {token}"}, timeout=5,
+        )
         session = requests.Session()
         assert login(session, base_url).status_code == 200
         csrf = {"X-CSRF-Token": session.cookies["dashboard_csrf"]}
@@ -310,6 +319,9 @@ def test_local_collector_endpoint_uses_scoped_bearer_not_dashboard_cookie(monkey
             json=payload, headers={"Authorization": f"Bearer {token}"}, timeout=5,
         )
 
+        assert rejected_registration.status_code == 400
+        assert registered.status_code == 201
+        assert registered.json()["status"] == "waiting"
         assert rejected.status_code == 400
         assert accepted.status_code == 201
         assert accepted.json()["inserted"] == 3

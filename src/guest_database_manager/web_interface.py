@@ -992,6 +992,13 @@ class GuestWebService:
             source_reference=_normalize_text(payload.get("source_reference")),
         )
 
+    def register_local_analytics_collector(
+        self, payload: Dict[str, Any], *, token: str
+    ) -> Dict[str, Any]:
+        return self.podcast_analytics_connectors.register_local_collector(
+            _normalize_text(payload.get("provider")), token=token
+        )
+
     def report_local_analytics_collector_status(
         self, payload: Dict[str, Any], *, token: str
     ) -> Dict[str, Any]:
@@ -9166,21 +9173,26 @@ class GuestWebRequestHandler(BaseHTTPRequestHandler):
 
         if self.path in {
             "/api/analytics-connectors/local/ingest",
+            "/api/analytics-connectors/local/register",
             "/api/analytics-connectors/local/status",
         }:
             authorization = self.headers.get("Authorization", "")
             token = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
             try:
                 payload = self._read_json_payload(max_bytes=2_500_000)
-                result = (
-                    self.service.ingest_local_analytics_export(payload, token=token)
-                    if self.path.endswith("/ingest")
-                    else self.service.report_local_analytics_collector_status(payload, token=token)
-                )
+                if self.path.endswith("/ingest"):
+                    result = self.service.ingest_local_analytics_export(payload, token=token)
+                elif self.path.endswith("/register"):
+                    result = self.service.register_local_analytics_collector(payload, token=token)
+                else:
+                    result = self.service.report_local_analytics_collector_status(payload, token=token)
             except (AnalyticsConnectorError, GrowthIntelligenceError, WebInterfaceError, ValueError) as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
-            self._send_json(HTTPStatus.CREATED if self.path.endswith("/ingest") else HTTPStatus.OK, result)
+            self._send_json(
+                HTTPStatus.CREATED if self.path.endswith(("/ingest", "/register")) else HTTPStatus.OK,
+                result,
+            )
             return
 
         if self.path not in {"/api/intake", "/api/booking/confirm"}:

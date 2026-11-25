@@ -131,14 +131,14 @@ The executive roll-up uses one explicit accounting equation: hosting-reported op
 Authorized operations-machine setup:
 
 ```bash
-python3 -m guest_database_manager.local_analytics_collector save-token
-python3 -m guest_database_manager.local_analytics_collector login spotify
-python3 -m guest_database_manager.local_analytics_collector install-schedule spotify --server https://guest-processing-production.up.railway.app
-python3 -m guest_database_manager.local_analytics_collector login apple_podcasts
-python3 -m guest_database_manager.local_analytics_collector install-schedule apple_podcasts --server https://guest-processing-production.up.railway.app
+python3 -m guest_database_manager.local_analytics_collector setup \
+  --server https://guest-processing-production.up.railway.app
 ```
 
-The daily jobs keep credentials, MFA, cookies, and browser profiles on the owner-controlled Mac. Only validated CSV observations are uploaded to Railway.
+The one-time setup stores the Railway collector token in macOS Keychain, registers both
+collectors, opens Spotify and Apple for owner-controlled login/MFA, and installs staggered
+daily jobs. Credentials, MFA, cookies, and browser profiles remain on the owner-controlled
+Mac. Only validated CSV observations are uploaded to Railway.
 
 OpenPodcast is optional secondary evidence. Supplying its token and podcast ID does not start background requests. Set `MIRROR_TALK_OPENPODCAST_AUTO_SYNC=true` only after a manual sync has been verified against the configured OpenPodcast account; automatic failures back off for 20 hours.
 

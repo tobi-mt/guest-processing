@@ -81,6 +81,22 @@ def test_local_collector_keeps_browser_session_local_and_ingests_validated_expor
     assert token not in str(collector)
 
 
+def test_local_collector_bootstrap_registration_requires_the_ingestion_credential(temp_db, monkeypatch):
+    token = "collector-token-with-at-least-thirty-two-characters"
+    monkeypatch.setenv(COLLECTOR_TOKEN_ENV, token)
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+
+    with pytest.raises(AnalyticsConnectorError, match="credential is invalid"):
+        connectors.register_local_collector("spotify", token="wrong")
+
+    registered = connectors.register_local_collector("spotify", token=token)
+
+    assert registered == {"provider": "spotify", "enabled": True, "status": "waiting"}
+    connection = connectors.status()["local_collectors"]["connections"]["spotify"]
+    assert connection["enabled"] is True
+    assert connection["status"] == "waiting"
+
+
 def test_local_collector_fails_closed_for_bad_token_and_review_rows(temp_db, monkeypatch):
     token = "collector-token-with-at-least-thirty-two-characters"
     monkeypatch.setenv(COLLECTOR_TOKEN_ENV, token)
