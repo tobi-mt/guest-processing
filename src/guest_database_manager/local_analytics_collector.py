@@ -11,6 +11,7 @@ import getpass
 import os
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ DEFAULT_URLS = {
     "apple_podcasts": "https://podcastsconnect.apple.com/analytics",
 }
 LAUNCH_AGENT_PREFIX = "com.mirrortalk.analytics"
+BROWSER_CHANNEL_ENV = "MIRROR_TALK_ANALYTICS_BROWSER_CHANNEL"
 
 
 class LocalCollectorError(RuntimeError):
@@ -117,12 +119,74 @@ def _playwright():
     return sync_playwright
 
 
+def _browser_channel() -> str | None:
+    """Prefer the installed Chrome release for owner-controlled provider sessions."""
+    configured = os.environ.get(BROWSER_CHANNEL_ENV, "").strip()
+    if configured:
+        return None if configured.casefold() in {"bundled", "chromium"} else configured
+    if sys.platform == "darwin" and Path("/Applications/Google Chrome.app").is_dir():
+        return "chrome"
+    if sys.platform.startswith("win") and any(
+        (Path(root) / "Google/Chrome/Application/chrome.exe").is_file()
+        for root in filter(None, (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)")))
+    ):
+        return "chrome"
+    if shutil.which("google-chrome") or shutil.which("google-chrome-stable"):
+        return "chrome"
+    return None
+
+
+def _native_chrome_executable() -> str | None:
+    if sys.platform == "darwin":
+        candidate = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        return str(candidate) if candidate.is_file() else None
+    if sys.platform.startswith("win"):
+        for root in filter(None, (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"))):
+            candidate = Path(root) / "Google/Chrome/Application/chrome.exe"
+            if candidate.is_file():
+                return str(candidate)
+        return None
+    return shutil.which("google-chrome") or shutil.which("google-chrome-stable")
+
+
+def _launch_browser_context(playwright, *, profile_path: Path, headless: bool):
+    options = {
+        "headless": headless,
+        "accept_downloads": True,
+    }
+    channel = _browser_channel()
+    if channel:
+        options["channel"] = channel
+    return playwright.chromium.launch_persistent_context(str(profile_path), **options)
+
+
 def login(provider: str, *, profile_root: Path, url: str) -> None:
     """Open a dedicated local browser for a user-controlled login and MFA ceremony."""
+    profile = _profile_path(profile_root, provider)
+    native_chrome = _native_chrome_executable()
+    if native_chrome:
+        process = subprocess.Popen(
+            [native_chrome, f"--user-data-dir={profile}", "--no-first-run", url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            input("Complete provider login and MFA in Chrome, then press Enter here to retain the local session: ")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        return
+
     sync_playwright = _playwright()
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            str(_profile_path(profile_root, provider)), headless=False, accept_downloads=True
+        context = _launch_browser_context(
+            playwright,
+            profile_path=profile,
+            headless=False,
         )
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=90_000)
@@ -137,8 +201,10 @@ def sync_once(
     sync_playwright = _playwright()
     try:
         with sync_playwright() as playwright, tempfile.TemporaryDirectory(prefix="mirror-talk-analytics-") as temp_dir:
-            context = playwright.chromium.launch_persistent_context(
-                str(_profile_path(profile_root, provider)), headless=not headed, accept_downloads=True
+            context = _launch_browser_context(
+                playwright,
+                profile_path=_profile_path(profile_root, provider),
+                headless=not headed,
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=90_000)

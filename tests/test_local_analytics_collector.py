@@ -5,7 +5,9 @@ import pytest
 import guest_database_manager.local_analytics_collector as collector
 
 from guest_database_manager.local_analytics_collector import (
+    BROWSER_CHANNEL_ENV,
     LocalCollectorError,
+    _browser_channel,
     _collector_token,
     _launch_agent_payload,
     _profile_path,
@@ -32,6 +34,42 @@ def test_collector_profile_is_provider_scoped_and_owner_only(tmp_path: Path) -> 
 def test_collector_prefers_environment_token(monkeypatch) -> None:
     monkeypatch.setenv("MIRROR_TALK_ANALYTICS_COLLECTOR_TOKEN", "environment-secret")
     assert _collector_token() == "environment-secret"
+
+
+def test_collector_browser_channel_can_use_installed_chrome_or_explicit_bundled_browser(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(BROWSER_CHANNEL_ENV, "chrome-beta")
+    assert _browser_channel() == "chrome-beta"
+    monkeypatch.setenv(BROWSER_CHANNEL_ENV, "bundled")
+    assert _browser_channel() is None
+
+
+def test_login_uses_native_chrome_without_playwright_automation(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+
+    class Process:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            calls.append("terminate")
+
+        def wait(self, timeout):
+            calls.append(("wait", timeout))
+
+    monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(
+        collector.subprocess, "Popen",
+        lambda arguments, **kwargs: calls.append(arguments) or Process(),
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: calls.append(prompt) or "")
+
+    collector.login("spotify", profile_root=tmp_path, url="https://creators.spotify.com/analytics")
+
+    assert calls[0][0] == "/Applications/Chrome"
+    assert f"--user-data-dir={(tmp_path / 'spotify').resolve()}" in calls[0]
+    assert "terminate" in calls
 
 
 def test_launch_agent_runs_daily_sync_without_embedding_the_secret(tmp_path: Path) -> None:
