@@ -59,6 +59,7 @@ def test_login_uses_native_chrome_without_playwright_automation(tmp_path: Path, 
             calls.append(("wait", timeout))
 
     monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(collector.sys, "platform", "linux")
     monkeypatch.setattr(
         collector.subprocess, "Popen",
         lambda arguments, **kwargs: calls.append(arguments) or Process(),
@@ -70,6 +71,26 @@ def test_login_uses_native_chrome_without_playwright_automation(tmp_path: Path, 
     assert calls[0][0] == "/Applications/Chrome"
     assert f"--user-data-dir={(tmp_path / 'spotify').resolve()}" in calls[0]
     assert "terminate" in calls
+
+
+def test_macos_login_forces_a_separate_chrome_instance(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(collector.sys, "platform", "darwin")
+    monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(
+        collector.subprocess, "Popen",
+        lambda arguments, **kwargs: calls.append(arguments) or object(),
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: calls.append(prompt) or "")
+
+    collector.login(
+        "apple_podcasts", profile_root=tmp_path,
+        url="https://podcastsconnect.apple.com/analytics",
+    )
+
+    assert calls[0][:4] == ["/usr/bin/open", "-na", "Google Chrome", "--args"]
+    assert f"--user-data-dir={(tmp_path / 'apple_podcasts').resolve()}" in calls[0]
+    assert "close that window" in calls[1]
 
 
 def test_launch_agent_runs_daily_sync_without_embedding_the_secret(tmp_path: Path) -> None:

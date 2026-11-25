@@ -165,6 +165,20 @@ def login(provider: str, *, profile_root: Path, url: str) -> None:
     profile = _profile_path(profile_root, provider)
     native_chrome = _native_chrome_executable()
     if native_chrome:
+        if sys.platform == "darwin":
+            subprocess.Popen(
+                [
+                    "/usr/bin/open", "-na", "Google Chrome", "--args",
+                    f"--user-data-dir={profile}", "--no-first-run", url,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            input(
+                "Complete provider login and MFA in the separate Chrome window, "
+                "close that window, then press Enter here: "
+            )
+            return
         process = subprocess.Popen(
             [native_chrome, f"--user-data-dir={profile}", "--no-first-run", url],
             stdout=subprocess.DEVNULL,
@@ -208,24 +222,44 @@ def sync_once(
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=90_000)
-            if page.locator('input[type="password"]').count() or re.search(r"login|signin|auth", page.url, re.I):
+            page.wait_for_timeout(3_000)
+            password_fields = page.locator('input[type="password"]')
+            visible_password = any(
+                password_fields.nth(index).is_visible()
+                for index in range(password_fields.count())
+            )
+            if visible_password or re.search(r"/(?:login|signin|auth)(?:/|\?|$)", page.url, re.I):
+                login_path = urlsplit(page.url).path[:160]
                 context.close()
                 _status(server, token, provider, "reauth_required", "provider_login_required")
-                raise LocalCollectorError("Provider login or MFA is required. Run the collector login command again.")
+                raise LocalCollectorError(
+                    f"Provider login or MFA is required at {login_path or '/'}. "
+                    "Run the collector login command again."
+                )
             export_control = page.get_by_role(
                 "button", name=re.compile(r"^(Export|Download CSV)$", re.I)
             ).or_(page.get_by_role("link", name=re.compile(r"^(Export|Download CSV)$", re.I)))
             visible = [export_control.nth(index) for index in range(export_control.count())
                        if export_control.nth(index).is_visible()]
-            if len(visible) != 1:
+            if not visible:
                 context.close()
                 _status(server, token, provider, "error", "export_control_changed")
                 raise LocalCollectorError(
-                    "The provider export control was missing or ambiguous; no control was clicked. "
+                    "The provider export control was not found; no control was clicked. "
                     "Run a headed sync to review the provider page."
                 )
+            if len(visible) > 1 and provider != "spotify":
+                context.close()
+                _status(server, token, provider, "error", "multiple_export_controls")
+                raise LocalCollectorError(
+                    f"The provider page exposed {len(visible)} export controls; no control was clicked. "
+                    "The collector needs a more specific provider selector."
+                )
+            # Spotify currently exposes a show-performance export followed by an episode-table
+            # export. The first control is the supported daily show-level report.
+            export_target = visible[0]
             with page.expect_download(timeout=90_000) as download_info:
-                visible[0].click()
+                export_target.click()
             download = download_info.value
             filename = Path(download.suggested_filename).name
             destination = Path(temp_dir) / filename
