@@ -392,10 +392,13 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261125.6" in html
-    assert "insights.js?v=20261125.9" in html
+    assert "insights.css?v=20261125.7" in html
+    assert "insights.js?v=20261125.10" in html
     assert "Connection health" in javascript
     assert "Check failed" in javascript
+    assert 'id="insight-alerts"' in html
+    assert 'id="episode-performance"' in html
+    assert 'id="measurement-coverage"' in html
     assert "Downloads and plays over time" in html
     assert "Where your audience listens and watches" in html
     assert 'data-audio-range="all" class="active"' in html
@@ -606,7 +609,7 @@ def test_podcast_reach_uses_automatic_collection_and_keeps_reviews_in_planning()
     assert 'id="outcome-review-message" class="message" aria-live="polite"' in planning_html
     assert "planning-intelligence.js?v=20261018.1" in planning_html
     assert "Import provider reports" not in html
-    assert "Top measured content" in html
+    assert "What content is driving reach" in html
     assert "renderImportHistory" in javascript
     assert "renderOutcomeReviews" in javascript
     assert 'setMessage(message, "Saving your assessment…", "pending")' in javascript
@@ -733,7 +736,7 @@ def test_scheduling_intelligence_prioritizes_decisions_and_guides_evidence_impor
     assert 'id="demographic-breakdown"' in insights_html
     assert 'id="traffic-source-breakdown"' in insights_html
     assert 'id="listening-app-breakdown"' in insights_html
-    assert 'id="video-performance"' in insights_html
+    assert 'id="episode-performance"' in insights_html
     assert 'id="release-readiness"' in insights_html
     assert "Know what is growing. Decide what to do next." in insights_html
     assert "Open the audience and platform deep dive" in insights_html

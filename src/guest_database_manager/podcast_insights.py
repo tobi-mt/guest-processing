@@ -46,6 +46,15 @@ class PodcastInsights:
                 """SELECT COUNT(*) FROM analytics_oauth_connections
                    WHERE provider='google' AND youtube_channel_id != '' AND status != 'disconnected'"""
             ).fetchone()[0])
+            episode_titles = {
+                int(row["id"]): next((
+                    str(row[key]).strip() for key in ("published_title", "working_title", "episode_title")
+                    if row[key] and str(row[key]).strip()
+                ), f"Episode {row['id']}")
+                for row in conn.execute(
+                    "SELECT id, published_title, working_title, episode_title FROM episodes"
+                ).fetchall()
+            }
 
         scoped_youtube = {str(row["provider"]) for row in rows if str(row["provider"]).startswith("youtube:")}
         if identified_channels and len(scoped_youtube) >= identified_channels:
@@ -168,6 +177,7 @@ class PodcastInsights:
             )
         listening_apps.sort(key=lambda item: -float(item["value"]))
         top_videos = self._top_platform_content(rows)
+        episode_performance = self._episode_performance(rows, episode_titles)
         trend = []
         trend_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for row in spotify_rows:
@@ -211,6 +221,12 @@ class PodcastInsights:
             audience_by_platform=audience_by_platform, spotify_daily=spotify_daily,
             spotify_lifetime=spotify_lifetime, apple_summary=apple_summary,
         )
+        measurement_coverage = self._measurement_coverage(rows, provider_cards)
+        attention_items = self._attention_items(
+            spotify_daily=spotify_daily, stale_provider_count=stale,
+            missing_core_metrics=sorted({"downloads", "unique_listeners", "consumption_depth_pct"} - metric_names),
+            distribution_coverage_pct=round(available_expected * 100 / len(expected_platforms), 1) if expected_platforms else 0.0,
+        )
         return {
             "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "summary": {
@@ -247,6 +263,9 @@ class PodcastInsights:
             "traffic_sources": traffic_sources,
             "listening_apps": listening_apps,
             "top_platform_content": top_videos,
+            "episode_performance": episode_performance,
+            "measurement_coverage": measurement_coverage,
+            "attention_items": attention_items,
             "trend": trend[-14:],
             "monthly_trends": {"spotify": spotify_monthly, "apple_podcasts": apple_monthly},
             "daily_trends": {"spotify": spotify_daily},
@@ -277,6 +296,102 @@ class PodcastInsights:
                 "platform_strength": "The latest source-backed metrics for each provider, without a fabricated composite score.",
             },
         }
+
+    @classmethod
+    def _episode_performance(
+        cls, rows: list[dict[str, Any]], episode_titles: dict[int, str]
+    ) -> list[dict[str, Any]]:
+        """Return compact, source-backed episode comparisons without inventing missing metrics."""
+        grouped: dict[int, list[dict[str, Any]]] = {}
+        for row in rows:
+            if row.get("episode_id") is not None and row["metric_name"] in DISPLAY_METRICS:
+                grouped.setdefault(int(row["episode_id"]), []).append(row)
+        result = []
+        for episode_id, episode_rows in grouped.items():
+            latest_by_provider_metric: dict[tuple[str, str], dict[str, Any]] = {}
+            for row in episode_rows:
+                key = (str(row["provider"]), str(row["metric_name"]))
+                current = latest_by_provider_metric.get(key)
+                if current is None or (row["period_end"], row["imported_at"]) > (
+                    current["period_end"], current["imported_at"]
+                ):
+                    latest_by_provider_metric[key] = row
+            selected = list(latest_by_provider_metric.values())
+            metrics: dict[str, float] = {}
+            for metric in sorted({row["metric_name"] for row in selected}):
+                metrics[metric] = sum(
+                    float(row["metric_value"]) for row in selected if row["metric_name"] == metric
+                )
+            activity = sum(metrics.get(metric, 0) for metric in ("downloads", "plays", "streams"))
+            result.append({
+                "episode_id": episode_id,
+                "title": episode_titles.get(episode_id, f"Episode {episode_id}"),
+                "activity": activity,
+                "metrics": metrics,
+                "providers": sorted({str(row["provider"]) for row in selected}),
+                "period_start": min(row["period_start"] for row in selected),
+                "period_end": max(row["period_end"] for row in selected),
+                "freshness": cls._freshness(max(row["period_end"] for row in selected)),
+            })
+        return sorted(result, key=lambda item: (-item["activity"], item["title"]))[:20]
+
+    @staticmethod
+    def _measurement_coverage(
+        rows: list[dict[str, Any]], provider_cards: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        present = {str(row["metric_name"]) for row in rows}
+        definitions = (
+            ("Downloads and plays", {"downloads", "downloads_7d", "plays", "streams"}),
+            ("Listening and watch time", {"listening_time_hours", "watch_time_hours", "lifetime_watch_time_hours"}),
+            ("Listeners", {"unique_listeners", "listeners", "unique_viewers"}),
+            ("Followers and subscribers", {"followers", "subscribers"}),
+            ("Geography", set(), COUNTRY_PREFIX),
+            ("Devices", set(), DEVICE_PREFIX),
+            ("Completion and retention", {"consumption_depth_pct", "average_view_percentage"}),
+            ("Episode performance", set()),
+        )
+        result = []
+        for definition in definitions:
+            label, metrics, *prefix = definition
+            if label == "Episode performance":
+                available = any(row.get("episode_id") is not None for row in rows)
+            else:
+                available = bool(present & metrics) or bool(prefix and any(name.startswith(prefix[0]) for name in present))
+            providers = sorted({
+                str(row["provider"]) for row in rows
+                if row["metric_name"] in metrics or (prefix and str(row["metric_name"]).startswith(prefix[0]))
+                or (label == "Episode performance" and row.get("episode_id") is not None)
+            })
+            result.append({"label": label, "available": available, "providers": providers})
+        return result
+
+    @staticmethod
+    def _attention_items(
+        *, spotify_daily: list[dict[str, Any]], stale_provider_count: int,
+        missing_core_metrics: list[str], distribution_coverage_pct: float,
+    ) -> list[dict[str, str]]:
+        items: list[dict[str, str]] = []
+        totals = [float(row.get("downloads") or 0) + float(row.get("plays") or 0) for row in spotify_daily]
+        if len(totals) >= 35:
+            recent = sum(totals[-7:]) / 7
+            baseline = sum(totals[-35:-7]) / 28
+            if baseline:
+                change = (recent - baseline) * 100 / baseline
+                if abs(change) >= 25:
+                    direction = "above" if change > 0 else "below"
+                    items.append({
+                        "severity": "positive" if change > 0 else "warning",
+                        "title": f"Recent podcast activity is {abs(change):.0f}% {direction} its four-week baseline",
+                        "detail": "Latest 7-day daily average compared with the preceding 28 days.",
+                    })
+        if stale_provider_count:
+            items.append({"severity": "warning", "title": f"{stale_provider_count} source refresh is overdue", "detail": "Existing values remain visible with their source dates."})
+        if distribution_coverage_pct < 100:
+            items.append({"severity": "neutral", "title": f"Distribution confirmation is {distribution_coverage_pct:.1f}% complete", "detail": "Unconfirmed destinations continue to be checked automatically."})
+        if missing_core_metrics:
+            readable = ", ".join(metric.replace("_", " ") for metric in missing_core_metrics)
+            items.append({"severity": "neutral", "title": "Some providers do not expose every insight", "detail": f"Currently unavailable or incomplete: {readable}. Missing values are never shown as zero."})
+        return items[:3]
 
     @classmethod
     def _topline_summary(

@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/static/brand-system.css?v=20261018.1">
   <link rel="stylesheet" href="/static/styles.css?v=20261120.2">
   <link rel="stylesheet" href="/static/operations.css?v=20261120.2">
-  <link rel="stylesheet" href="/static/insights.css?v=20261125.6">
+  <link rel="stylesheet" href="/static/insights.css?v=20261125.7">
 </head>
 <body class="page-loading">
 <div class="page-loading-indicator" role="status" aria-live="polite"><span>Preparing podcast intelligence…</span></div>
@@ -19,6 +19,7 @@
   <main>
     <section id="insights-quality" class="panel insights-quality" aria-live="polite">Preparing your overview…</section>
     <section id="insights-summary" class="insights-summary" aria-label="Podcast reach summary"></section>
+    <section id="insight-alerts" class="attention-strip" aria-label="Changes worth attention"></section>
     <section class="panel overall-performance-panel" aria-labelledby="overall-performance-title"><div class="section-heading performance-heading"><div><p class="eyebrow">Podcast performance</p><h2 id="overall-performance-title">Downloads and plays over time</h2><p class="tool-copy">All open podcast apps are measured from hosting delivery; Spotify-native plays are reconciled without double-counting.</p></div><div id="reach-range-controls" class="range-controls" aria-label="Performance range"><button type="button" data-audio-range="7d">7 days</button><button type="button" data-audio-range="30d">30 days</button><button type="button" data-audio-range="90d">90 days</button><button type="button" data-audio-range="12m">12 months</button><button type="button" data-audio-range="all" class="active">All time</button></div></div><div id="overall-performance-trend"></div></section>
     <section class="panel" aria-labelledby="platform-performance-title"><div class="section-heading"><div><p class="eyebrow">Platform mix</p><h2 id="platform-performance-title">Where your audience listens and watches</h2><p class="tool-copy">Lifetime podcast-app distribution plus the latest comparable native-platform and video evidence.</p></div></div><div id="platform-performance" class="platform-performance-grid"></div><div id="listening-app-summary" class="listening-app-summary"></div></section>
     <section class="panel decision-panel" aria-labelledby="decision-intelligence-title"><div class="section-heading"><div><p class="eyebrow">Recommended next moves</p><h2 id="decision-intelligence-title">What to do now</h2></div><p id="decision-confidence"></p></div><div id="decision-intelligence" class="decision-intelligence"></div></section>
@@ -35,16 +36,16 @@
       <article class="panel"><div class="section-heading"><div><p class="eyebrow">Discovery</p><h2>Traffic sources</h2></div></div><div id="traffic-source-breakdown"></div></article>
       <article class="panel"><div class="section-heading"><div><p class="eyebrow">Open RSS delivery</p><h2>Listening apps</h2></div></div><div id="listening-app-breakdown"></div></article>
     </section>
-    <section class="panel"><div class="section-heading"><div><p class="eyebrow">Content intelligence</p><h2>Top measured content</h2></div></div><div id="video-performance"></div></section>
+    <section class="panel"><div class="section-heading"><div><p class="eyebrow">Episode intelligence</p><h2>What content is driving reach</h2><p class="tool-copy">Source-backed episode activity, with unavailable measures left blank.</p></div></div><div id="episode-performance"></div></section>
     <section class="panel"><div class="section-heading"><div><p class="eyebrow">Platform history</p><h2>Spotify and Apple trends</h2></div><button id="insights-refresh" class="secondary-button" type="button">Refresh</button></div><div id="reach-trend" class="reach-trend"></div></section>
     </div></details>
     <details class="panel disclosure-panel"><summary><span><span class="eyebrow">Availability</span><strong id="platform-title">Where people can find Mirror Talk</strong></span><span>Show platforms</span></summary><p class="disclosure-intro">A simple directory of confirmed listings and compatible podcast apps.</p><div id="platform-grid" class="platform-grid"></div></details>
     <details id="data-sources" class="panel disclosure-panel"><summary><span><span class="eyebrow">Automatic data</span><strong id="release-readiness-title">Keep every insight current</strong></span><span>Review connections</span></summary><p class="disclosure-intro">Podcast Reach refreshes connected hosting, native-platform, video, website, and public-distribution sources automatically.</p><div id="release-readiness" class="source-coverage" aria-live="polite"></div><div id="analytics-connections" class="analytics-connections" aria-live="polite">Loading connections…</div><div id="source-coverage" class="source-coverage"></div></details>
-    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">How it works</span><strong>Definitions and data safeguards</strong></span><span>Show details</span></summary><div id="metric-definitions" class="definition-grid"></div></details>
+    <details class="panel disclosure-panel"><summary><span><span class="eyebrow">How it works</span><strong>Coverage, definitions and safeguards</strong></span><span>Show details</span></summary><div id="measurement-coverage" class="measurement-coverage"></div><div id="metric-definitions" class="definition-grid"></div></details>
   </main>
 </div>
 <script src="/static/performance-utils.js?v=20261121.1"></script>
 <script src="/static/workspace-shell.js?v=20261120.2" defer></script>
-  <script src="/static/insights.js?v=20261125.9" defer></script>
+  <script src="/static/insights.js?v=20261125.10" defer></script>
 </body>
 </html>

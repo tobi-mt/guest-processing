@@ -196,10 +196,21 @@ function renderBars(items, target) {
   }).join("");
 }
 
-function renderTopPlatformContent(items) {
-  const target = document.getElementById("video-performance");
-  if (!items.length) { target.innerHTML = empty("Connected content sources have not returned item-level performance yet."); return; }
-  target.innerHTML = items.slice(0, 12).map((item) => `<article class="provider-row"><div><strong>${escapeHtml(item.title || item.platform_content_id)}</strong><span>${number(item.metrics?.video_views)} views</span></div><p class="metric-pairs"><span>Watch time<strong>${number(Number(item.metrics?.video_watch_time_hours || 0).toFixed(1))}h</strong></span><span>Average view<strong>${duration(item.metrics?.video_average_view_duration_seconds)}</strong></span></p><small>${escapeHtml(providerLabel(item.provider))} · through ${escapeHtml(item.period_end || "unknown")}</small></article>`).join("");
+function renderEpisodePerformance(episodes, platformItems) {
+  const target = document.getElementById("episode-performance");
+  const rows = episodes.length ? episodes : platformItems.map((item) => ({
+    title:item.title || item.platform_content_id,
+    activity:Number(item.metrics?.video_views || 0),
+    metrics:{plays:item.metrics?.video_views,watch_time_hours:item.metrics?.video_watch_time_hours,average_view_duration_seconds:item.metrics?.video_average_view_duration_seconds},
+    providers:[item.provider],period_end:item.period_end,freshness:"current",
+  }));
+  if (!rows.length) { target.innerHTML = empty("Connected sources have not returned episode-level performance yet."); return; }
+  target.innerHTML = `<div class="episode-table-wrap"><table class="episode-table"><thead><tr><th>Episode</th><th>Activity</th><th>Depth</th><th>Coverage</th></tr></thead><tbody>${rows.slice(0, 12).map((item) => {
+    const metrics = item.metrics || {};
+    const depth = metrics.consumption_depth_pct != null ? `${percentage(metrics.consumption_depth_pct)}% consumed` : metrics.average_view_duration_seconds != null ? duration(metrics.average_view_duration_seconds) : "Not provided";
+    const providerText = (item.providers || []).map(providerLabel).join(", ");
+    return `<tr><td><strong>${escapeHtml(item.title)}</strong><small>Through ${escapeHtml(item.period_end || "unknown")}</small></td><td><strong>${number(item.activity)}</strong><small>downloads, plays or views</small></td><td>${escapeHtml(depth)}</td><td><span class="freshness ${escapeHtml(item.freshness || "current")}">${escapeHtml(item.freshness === "stale" ? "Refresh needed" : "Current")}</span><small>${escapeHtml(providerText)}</small></td></tr>`;
+  }).join("")}</tbody></table></div>`;
 }
 
 function render(payload) {
@@ -280,6 +291,8 @@ function render(payload) {
     ["Audience relationships", number(topline.audience_relationships), `${relationshipDetail || "Follower and subscription counters are still syncing"}. Followers and subscribers chose an ongoing connection.${periodAudience ? ` Recent listeners measure period activity and are not added: ${periodAudience}` : ""}`],
     ["Growth trend", growthValue, topline.growth_basis || "Latest comparable podcast periods"],
   ].map(([label,value,detail,className]) => `<article class="summary-card ${className || ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
+  const attention = payload.attention_items || [];
+  document.getElementById("insight-alerts").innerHTML = attention.length ? `<div class="attention-heading"><span class="eyebrow">Changes worth attention</span><strong>${attention.length}</strong></div>${attention.map((item) => `<article class="attention-item ${escapeHtml(item.severity || "neutral")}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></article>`).join("")}` : `<div class="attention-heading"><span class="eyebrow">Changes worth attention</span></div><article class="attention-item positive"><strong>No unusual movement detected</strong><span>Connected sources are within their recent ranges.</span></article>`;
   const youtubeDevices = (payload.devices || []).filter((item) => item.provider === "youtube" || item.provider.startsWith("youtube:"));
   const youtubeDeviceTotal = youtubeDevices.reduce((total, item) => total + Number(item.value || 0), 0);
   const youtubeMobileValue = youtubeDevices.filter((item) => item.name === "Mobile").reduce((total, item) => total + Number(item.value || 0), 0);
@@ -315,8 +328,10 @@ function render(payload) {
   renderBars(payload.demographics || [], document.getElementById("demographic-breakdown"));
   renderBars(payload.traffic_sources || [], document.getElementById("traffic-source-breakdown"));
   renderBars(payload.listening_apps || [], document.getElementById("listening-app-breakdown"));
-  renderTopPlatformContent(payload.top_platform_content || []);
+  renderEpisodePerformance(payload.episode_performance || [], payload.top_platform_content || []);
   renderMonthlyTrends(payload.monthly_trends || {});
+  const coverageItems = payload.measurement_coverage || [];
+  document.getElementById("measurement-coverage").innerHTML = coverageItems.length ? `<div class="coverage-heading"><div><span class="eyebrow">Measurement coverage</span><h3>${coverageItems.filter((item) => item.available).length}/${coverageItems.length} insight groups available</h3></div><p>Unavailable provider metrics remain blank—not zero.</p></div><div class="coverage-grid">${coverageItems.map((item) => `<article><span class="coverage-dot ${item.available ? "available" : "missing"}"></span><div><strong>${escapeHtml(item.label)}</strong><small>${item.available ? escapeHtml((item.providers || []).map(providerLabel).join(", ") || "Connected source") : "Not exposed by connected sources"}</small></div></article>`).join("")}</div>` : "";
   document.getElementById("metric-definitions").innerHTML = Object.entries(payload.definitions || {}).map(([key,value]) => `<article><strong>${escapeHtml(key.replaceAll("_", " "))}</strong><p>${escapeHtml(value)}</p></article>`).join("") + `<article><strong>Reliability guardrails</strong><p>${(quality.limitations || []).map(escapeHtml).join(" ")}</p></article>`;
   document.querySelectorAll("[data-audio-range]").forEach((button) => {
     button.classList.toggle("active", button.dataset.audioRange === audioRange);

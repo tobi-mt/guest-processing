@@ -367,6 +367,40 @@ def test_transient_public_check_failure_preserves_verified_platform(temp_db, mon
     assert row[3] == "TimeoutError"
 
 
+def test_episode_performance_keeps_providers_and_missing_depth_explicit() -> None:
+    rows = [
+        {"episode_id": 7, "provider": "spotify", "metric_name": "downloads", "metric_value": 40,
+         "period_start": "2026-11-01", "period_end": "2026-11-25", "imported_at": "2026-11-25T10:00:00Z"},
+        {"episode_id": 7, "provider": "spotify", "metric_name": "plays", "metric_value": 10,
+         "period_start": "2026-11-01", "period_end": "2026-11-25", "imported_at": "2026-11-25T10:00:00Z"},
+    ]
+
+    result = PodcastInsights._episode_performance(rows, {7: "Measured episode"})
+
+    assert result[0]["title"] == "Measured episode"
+    assert result[0]["activity"] == 50
+    assert result[0]["providers"] == ["spotify"]
+    assert "consumption_depth_pct" not in result[0]["metrics"]
+
+
+def test_attention_items_detect_material_recent_change() -> None:
+    daily = [
+        {"period": f"2026-10-{day + 1:02d}", "downloads": 10, "plays": 0}
+        for day in range(28)
+    ] + [
+        {"period": f"2026-11-{day + 1:02d}", "downloads": 5, "plays": 0}
+        for day in range(7)
+    ]
+
+    items = PodcastInsights._attention_items(
+        spotify_daily=daily, stale_provider_count=0,
+        missing_core_metrics=[], distribution_coverage_pct=100,
+    )
+
+    assert items[0]["severity"] == "warning"
+    assert "50% below" in items[0]["title"]
+
+
 def test_web_insights_keeps_private_metrics_missing_without_public_checks(temp_db):
     result = GuestWebService(temp_db.db_path).get_podcast_insights()
 
