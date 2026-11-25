@@ -8,7 +8,10 @@ const metricLabel = (value) => String(value || "").replaceAll("_", " ").replace(
 const duration = (seconds) => seconds == null ? "Unavailable" : `${Math.floor(Number(seconds) / 60)}m ${Math.round(Number(seconds) % 60)}s`;
 let providerLabels = {};
 let trendRange = 24;
+let audioRange = "all";
+let latestPayload = null;
 const providerLabel = (provider) => providerLabels[provider] || metricLabel(provider);
+const formatDate = (value) => value ? new Intl.DateTimeFormat(undefined, {day:"numeric",month:"short",year:"numeric"}).format(new Date(`${value}T00:00:00`)) : "—";
 
 function linePath(values, width, height, maxValue) {
   if (!values.length) return "";
@@ -45,32 +48,79 @@ const changeLabel = (stat) => {
   return {text:`${direction}${number(stat.delta_pct)}% vs prior period`, className:Number(stat.delta_pct) > 0 ? "positive" : Number(stat.delta_pct) < 0 ? "negative" : "neutral"};
 };
 
-function renderOverallPerformance(trend, global) {
-  const target = document.getElementById("overall-performance-trend");
-  const comparable = (trend || []).filter((item) => item.coverage === "complete");
-  const excluded = (trend || []).length - comparable.length;
-  const comparison = global.comparison || {};
-  const change = changeLabel(comparison.total);
-  target.innerHTML = `${comparison.available ? `<div class="performance-change ${change.className}"><strong>${escapeHtml(change.text)}</strong><span>${number(comparison.total.delta)} activity change · ${escapeHtml(comparison.current_period_start)}–${escapeHtml(comparison.current_period_end)} compared with ${escapeHtml(comparison.previous_period_start)}–${escapeHtml(comparison.previous_period_end)}</span></div>` : ""}${trendChart("Overall measured activity", comparable, [{key:"total",label:"Total activity",className:"series-total"},{key:"audio",label:"Audio starts",className:"series-primary"},{key:"video",label:"Video views",className:"series-secondary"}], {range:12,className:"overall-trend-card",periodLabel:"Window ending",emptyMessage:"Two fully covered reporting windows are needed to show reliable movement."})}${excluded ? `<p class="trend-quality-note">${number(excluded)} incomplete reporting window${excluded === 1 ? " was" : "s were"} excluded from growth comparisons.</p>` : ""}`;
+function selectedAudioRows(rows) {
+  if (!rows.length || audioRange === "all") return rows;
+  const days = {"7d":7,"30d":30,"90d":90,"12m":365}[audioRange] || 30;
+  const latest = new Date(`${rows.at(-1).period}T00:00:00Z`);
+  latest.setDate(latest.getDate() - days + 1);
+  const cutoff = latest.toISOString().slice(0, 10);
+  return rows.filter((row) => row.period >= cutoff);
 }
 
-function renderPlatformPerformance(global, monthly, listeningApps) {
+function audioTotals(rows) {
+  const downloads = rows.reduce((total, row) => total + Number(row.downloads || 0), 0);
+  const plays = rows.reduce((total, row) => total + Number(row.plays || 0), 0);
+  return {downloads, plays, total:downloads + plays};
+}
+
+function audioView(rows) {
+  const selected = selectedAudioRows(rows);
+  const totals = audioTotals(selected);
+  const start = selected[0]?.period || null;
+  const end = selected.at(-1)?.period || null;
+  let comparison = null;
+  if (audioRange !== "all" && selected.length && start) {
+    const priorEnd = new Date(`${start}T00:00:00Z`);
+    priorEnd.setDate(priorEnd.getDate() - 1);
+    const priorStart = new Date(priorEnd);
+    priorStart.setDate(priorStart.getDate() - selected.length + 1);
+    const previous = rows.filter((row) => row.period >= priorStart.toISOString().slice(0, 10) && row.period <= priorEnd.toISOString().slice(0, 10));
+    const previousTotals = audioTotals(previous);
+    comparison = previousTotals.total ? {
+      delta: totals.total - previousTotals.total,
+      delta_pct: Math.round((totals.total - previousTotals.total) * 1000 / previousTotals.total) / 10,
+      previous_start: previous[0]?.period,
+      previous_end: previous.at(-1)?.period,
+    } : null;
+  }
+  return {rows:selected, ...totals, start, end, comparison};
+}
+
+function audioChartRows(rows) {
+  if (audioRange === "7d" || audioRange === "30d" || audioRange === "90d") {
+    return rows.map((row) => ({...row,total:Number(row.downloads || 0) + Number(row.plays || 0)}));
+  }
+  const months = new Map();
+  rows.forEach((row) => {
+    const period = row.period.slice(0, 7);
+    const current = months.get(period) || {period,downloads:0,plays:0,total:0};
+    current.downloads += Number(row.downloads || 0);
+    current.plays += Number(row.plays || 0);
+    current.total = current.downloads + current.plays;
+    months.set(period, current);
+  });
+  return [...months.values()];
+}
+
+function renderOverallPerformance(daily) {
+  const target = document.getElementById("overall-performance-trend");
+  const view = audioView(daily || []);
+  const change = changeLabel(view.comparison);
+  const periodText = view.start && view.end ? `${formatDate(view.start)} – ${formatDate(view.end)}` : "Waiting for lifetime hosting history";
+  target.innerHTML = `${view.comparison ? `<div class="performance-change ${change.className}"><strong>${escapeHtml(change.text)}</strong><span>${number(view.comparison.delta)} podcast activity change · previous period ${formatDate(view.comparison.previous_start)} – ${formatDate(view.comparison.previous_end)}</span></div>` : `<div class="performance-change neutral"><strong>${audioRange === "all" ? "Lifetime history" : "No prior comparable period"}</strong><span>${escapeHtml(periodText)}</span></div>`}${trendChart("Podcast downloads and plays", audioChartRows(view.rows), [{key:"total",label:"Downloads & plays",className:"series-total"},{key:"downloads",label:"Other podcast apps",className:"series-primary"},{key:"plays",label:"Spotify plays",className:"series-secondary"}], {range:0,className:"overall-trend-card",periodLabel:audioRange === "7d" || audioRange === "30d" || audioRange === "90d" ? "Date" : "Month",emptyMessage:"Lifetime hosting history is being collected automatically."})}`;
+  return view;
+}
+
+function renderPlatformPerformance(global, monthly, listeningApps, audio) {
   const target = document.getElementById("platform-performance");
-  const total = Number(global.measured_activity || 0);
   const components = Object.fromEntries((global.components || []).map((item) => [item.key, item]));
   const comparison = global.comparison || {};
   const componentStats = comparison.components || {};
   const cards = [
-    ["open_rss_downloads", "Podcast apps (RSS)", "Downloads delivered across Apple Podcasts and every other RSS app."],
-    ["spotify_native_plays", "Spotify", "Native Spotify play starts."],
-    ["youtube_views", "YouTube", "Video and podcast views from connected channels."],
-  ].map(([key,label,description]) => {
-    const component = components[key] || {};
-    const value = component.value;
-    const share = value == null || !total ? null : Math.round(Number(value) * 1000 / total) / 10;
-    const change = changeLabel(componentStats[key]);
-    return `<article class="performance-platform-card"><div><span>${escapeHtml(label)}</span><strong>${number(value)}</strong></div><p>${escapeHtml(description)}</p><div class="platform-card-meta"><span>${share == null ? "Awaiting data" : `${number(share)}% of measured activity`}</span><span class="metric-change ${change.className}">${escapeHtml(change.text)}</span></div></article>`;
-  });
+    ["Podcast apps (RSS)", audio.downloads, "Downloads delivered across Apple Podcasts and every other open podcast app.", audio.total ? `${percentage(audio.downloads * 100 / audio.total)}% of selected podcast activity` : "Awaiting data", audio.start && audio.end ? `${formatDate(audio.start)} – ${formatDate(audio.end)}` : ""],
+    ["Spotify", audio.plays, "Native Spotify play starts in the selected range.", audio.total ? `${percentage(audio.plays * 100 / audio.total)}% of selected podcast activity` : "Awaiting data", audio.start && audio.end ? `${formatDate(audio.start)} – ${formatDate(audio.end)}` : ""],
+    ["YouTube", components.youtube_views?.value, "Video and podcast views from connected channels.", "Latest comparable window", changeLabel(componentStats.youtube_views).text],
+  ].map(([label,value,description,meta,detail]) => `<article class="performance-platform-card"><div><span>${escapeHtml(label)}</span><strong>${number(value)}</strong></div><p>${escapeHtml(description)}</p><div class="platform-card-meta"><span>${escapeHtml(meta)}</span><span class="metric-change neutral">${escapeHtml(detail)}</span></div></article>`);
   const appleRows = monthly.apple_podcasts || [];
   const appleCurrent = appleRows.at(-1); const applePrevious = appleRows.at(-2);
   const appleStat = appleCurrent && applePrevious ? {delta_pct:applePrevious.plays ? Math.round((Number(appleCurrent.plays) - Number(applePrevious.plays)) * 1000 / Number(applePrevious.plays)) / 10 : null} : null;
@@ -80,7 +130,7 @@ function renderPlatformPerformance(global, monthly, listeningApps) {
 
   const appTarget = document.getElementById("listening-app-summary");
   const apps = (listeningApps || []).slice(0, 8);
-  appTarget.innerHTML = apps.length ? `<div class="listening-app-heading"><h3>Podcast-app breakdown</h3><p>Host-reported delivery already included in the RSS total above.</p></div><div class="listening-app-chips">${apps.map((item) => `<span><strong>${escapeHtml(item.name)}</strong>${item.is_percentage ? `${percentage(item.value)}%` : `${number(item.value)} · ${percentage(item.share_pct)}%`}</span>`).join("")}</div>` : `<p class="platform-coverage-note">The RSS total covers all podcast apps. Per-app contribution will appear here when the hosting source provides listening-app detail.</p>`;
+  appTarget.innerHTML = apps.length ? `<div class="listening-app-heading"><h3>Lifetime podcast-app mix</h3><p>Host-reported delivery already included in the selected podcast total.</p></div><div class="listening-app-chips">${apps.map((item) => `<span><strong>${escapeHtml(item.name)}</strong>${item.is_percentage ? `${percentage(item.value)}%` : `${number(item.value)} · ${percentage(item.share_pct)}%`}</span>`).join("")}</div>` : `<p class="platform-coverage-note">The podcast total covers every open app. The per-app mix will appear when the hosting source provides it.</p>`;
 }
 
 function renderDecisionIntelligence(intelligence) {
@@ -152,6 +202,7 @@ function renderTopPlatformContent(items) {
 }
 
 function render(payload) {
+  latestPayload = payload;
   const summary = payload.summary || {}; const quality = payload.quality || {};
   const release = payload.release_readiness || {};
   const providers = payload.provider_strength || [];
@@ -195,19 +246,14 @@ function render(payload) {
   const global = summary.global_rollup || {};
   const reach = global.reach_range || {};
   const reachValue = reach.minimum == null ? "Not yet measurable" : reach.maximum == null ? `At least ${number(reach.minimum)}` : `${number(reach.minimum)}–${number(reach.maximum)}`;
-  const totalChange = changeLabel(global.comparison?.total);
-  const audioComponents = (global.components || []).filter((item) => item.key !== "youtube_views");
-  const audioDetail = audioComponents.length
-    ? audioComponents.map((item) => `${number(item.value)} ${String(item.label || "activity").toLowerCase()}`).join(" · ")
-    : "Hosting data covers every RSS listening app";
-  const activityDetail = global.measured_activity == null
-    ? "Connect the hosting account and YouTube to calculate this"
-    : `${global.comparison?.available ? totalChange.text : global.coverage === "complete" ? "Latest comparable window" : "Connected channels"} · through ${global.period_end}`;
+  const dailyAudio = payload.daily_trends?.spotify || [];
+  const audio = audioView(dailyAudio);
+  const rangeLabel = audio.start && audio.end ? `${formatDate(audio.start)} – ${formatDate(audio.end)}` : "Automatic lifetime collection is starting";
   document.getElementById("insights-summary").innerHTML = [
-    ["Podcast downloads & plays", number(global.audio_starts), audioDetail, "global"],
-    ["All measured activity", number(global.measured_activity), activityDetail],
-    ["Video views", number(global.video_views), summary.plays_period_end ? `YouTube window through ${summary.plays_period_end}` : "Connect YouTube to begin"],
-    ["People reached", reachValue, reach.minimum == null ? "Awaiting compatible unique-audience reports" : `Bounded estimate through ${reach.period_end}`],
+    ["Podcast downloads & plays", number(audio.total), rangeLabel, "global"],
+    ["Other podcast apps", number(audio.downloads), "Hosting delivery across Apple Podcasts and every other RSS app"],
+    ["Spotify plays", number(audio.plays), `Native Spotify starts · ${rangeLabel}`],
+    ["Latest measured audience", reachValue, reach.minimum == null ? "Awaiting compatible audience reports" : `Cross-platform lower bound through ${reach.period_end}`],
   ].map(([label,value,detail,className]) => `<article class="summary-card ${className || ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
   const youtubeDevices = (payload.devices || []).filter((item) => item.provider === "youtube" || item.provider.startsWith("youtube:"));
   const youtubeDeviceTotal = youtubeDevices.reduce((total, item) => total + Number(item.value || 0), 0);
@@ -220,8 +266,8 @@ function render(payload) {
     ["How people watch", youtubeMobileShare == null ? "Connect YouTube for device mix" : `${youtubeMobileShare}% watch on mobile`, youtubeMobileShare == null ? "One connection unlocks mobile, TV, desktop, and tablet viewing." : `${number(youtubeMobileValue)} recent views came from mobile devices.`],
     ["How long they stay", hasViewDuration ? duration(weightedDuration) : "Watch-time detail unavailable", hasViewDuration ? "Average viewing time across connected channels." : "The connected source has not returned average viewing duration yet."],
   ].map(([label,value,detail]) => `<article class="highlight-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><p>${escapeHtml(detail)}</p></article>`).join("");
-  renderOverallPerformance(payload.performance_trend || [], global);
-  renderPlatformPerformance(global, payload.monthly_trends || {}, payload.listening_apps || []);
+  renderOverallPerformance(dailyAudio);
+  renderPlatformPerformance(global, payload.monthly_trends || {}, payload.listening_apps || [], audio);
   renderDecisionIntelligence(payload.decision_intelligence || {});
   const coverage = payload.source_coverage || {}; const publicSources = coverage.public || []; const privateSources = coverage.private || [];
   renderConnections(payload.analytics_connectors || {});
@@ -246,32 +292,20 @@ function render(payload) {
   renderTopPlatformContent(payload.top_platform_content || []);
   renderMonthlyTrends(payload.monthly_trends || {});
   document.getElementById("metric-definitions").innerHTML = Object.entries(payload.definitions || {}).map(([key,value]) => `<article><strong>${escapeHtml(key.replaceAll("_", " "))}</strong><p>${escapeHtml(value)}</p></article>`).join("") + `<article><strong>Reliability guardrails</strong><p>${(quality.limitations || []).map(escapeHtml).join(" ")}</p></article>`;
+  document.querySelectorAll("[data-audio-range]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.audioRange === audioRange);
+    button.setAttribute("aria-pressed", button.dataset.audioRange === audioRange ? "true" : "false");
+    button.onclick = () => {
+      audioRange = button.dataset.audioRange || "all";
+      if (latestPayload) render(latestPayload);
+    };
+  });
 }
 
 async function load() {
   render(await connectorRequest("/api/podcast-insights"));
 }
 document.getElementById("insights-refresh")?.addEventListener("click", () => load().catch((error) => { document.getElementById("insights-quality").textContent = error.message; }));
-document.getElementById("growth-experiment-form")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const message = document.getElementById("growth-experiment-message");
-  const button = form.querySelector("button[type='submit']");
-  button.disabled = true;
-  message.textContent = "Registering experiment…";
-  message.className = "message pending";
-  try {
-    const result = await connectorRequest("/api/growth-intelligence/experiments", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) });
-    message.textContent = `Registered ${result.name} as a draft experiment.`;
-    message.className = "message success";
-    form.reset();
-  } catch (error) {
-    message.textContent = error.message;
-    message.className = "message error";
-  } finally {
-    button.disabled = false;
-  }
-});
 window.addEventListener("growth-intelligence-changed", () => load().catch(() => {}));
 load()
   .catch((error) => { document.getElementById("insights-quality").textContent = error.message; })

@@ -105,6 +105,7 @@ class PodcastInsights:
             spotify_rows, {"downloads", "plays", "unique_listeners"}, days=28
         )
         spotify_lifetime = self._spotify_lifetime(spotify_rows)
+        spotify_daily = self._spotify_daily(spotify_rows)
         spotify_monthly = self._spotify_monthly(spotify_rows)
         apple_rows = [row for row in rows if str(row["provider"]).casefold() == "apple_podcasts"]
         apple_summary = self._apple_summary(apple_rows)
@@ -241,6 +242,7 @@ class PodcastInsights:
             "top_platform_content": top_videos,
             "trend": trend[-14:],
             "monthly_trends": {"spotify": spotify_monthly, "apple_podcasts": apple_monthly},
+            "daily_trends": {"spotify": spotify_daily},
             "performance_trend": performance_trend,
             "quality": {
                 "status": "no_data" if not rows else "partial" if len(provider_cards) < max(len(platforms), 1) else "covered",
@@ -253,7 +255,7 @@ class PodcastInsights:
                     "Public listings prove availability, not audience size.",
                     "Listener totals are reported per platform and are never summed across providers.",
                     "Downloads, plays, streams, and views remain distinct metrics unless a source defines them identically.",
-                    "Device and country breakdowns appear only when source-backed dimensional metrics are imported.",
+                    "Device and country breakdowns appear only when connected sources provide those dimensions.",
                     "Where show-level and episode-level rows overlap, the show-level total controls to prevent double-counting.",
                 ],
             },
@@ -708,6 +710,22 @@ class PodcastInsights:
             "downloads": cls._metric_total(daily, "downloads"),
             "plays": cls._metric_total(daily, "plays") + cls._metric_total(daily, "streams"),
         }
+
+    @classmethod
+    def _spotify_daily(cls, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        days: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            if (
+                row["period_start"] == row["period_end"]
+                and row["metric_name"] in {"downloads", "plays", "streams", "unique_listeners"}
+            ):
+                days.setdefault(row["period_end"], []).append(row)
+        return [{
+            "period": period,
+            "downloads": cls._metric_total(day_rows, "downloads"),
+            "plays": cls._metric_total(day_rows, "plays") + cls._metric_total(day_rows, "streams"),
+            "audience": cls._metric_total(day_rows, "unique_listeners"),
+        } for period, day_rows in sorted(days.items())]
 
     @classmethod
     def _spotify_monthly(cls, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

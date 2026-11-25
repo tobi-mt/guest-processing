@@ -255,6 +255,7 @@ def test_spotify_dimension_exports_receive_the_verified_performance_window() -> 
 @pytest.mark.parametrize(
     ("csv_text", "schema"),
     [
+        ("Date,Total,Returning,New\n11/24/2026,6,1,5\n", "audience"),
         ("Gender,Percentage\nFemale,12.9\n", "gender"),
         ("Age,Total percentage\n28-34,68.8\n", "age"),
         ("Geo,Percentage\nGermany,8\n", "geography"),

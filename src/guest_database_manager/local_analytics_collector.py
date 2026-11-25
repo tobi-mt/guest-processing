@@ -310,6 +310,7 @@ def _annotate_analytics_window(csv_text: str, *, start: date, end: date) -> str:
 def _spotify_dimension_schema(csv_text: str) -> str | None:
     headers = set(csv.DictReader(StringIO(csv_text.lstrip("\ufeff"))).fieldnames or [])
     for name, required in (
+        ("audience", {"Date", "Total", "Returning", "New"}),
         ("gender", {"Gender", "Percentage"}),
         ("age", {"Age", "Total percentage"}),
         ("geography", {"Geo", "Percentage"}),
@@ -318,6 +319,31 @@ def _spotify_dimension_schema(csv_text: str) -> str | None:
         if required.issubset(headers):
             return name
     return None
+
+
+def _select_spotify_all_time(page) -> None:
+    """Select Spotify's lifetime performance window before exporting."""
+    labels = page.get_by_text("Last 30 days", exact=True)
+    trigger = None
+    for index in range(labels.count()):
+        parent = labels.nth(index).locator("xpath=..")
+        if parent.evaluate("(node) => node.tagName") == "BUTTON" and parent.is_visible():
+            trigger = parent
+            break
+    if trigger is None:
+        selected = page.get_by_text("All time", exact=True)
+        for index in range(selected.count()):
+            parent = selected.nth(index).locator("xpath=..")
+            if parent.evaluate("(node) => node.tagName") == "BUTTON" and parent.is_visible():
+                return
+        raise LocalCollectorError("Spotify's performance range control was unavailable.")
+    trigger.click()
+    option = page.get_by_text("All time", exact=True)
+    visible = [option.nth(index) for index in range(option.count()) if option.nth(index).is_visible()]
+    if len(visible) != 1:
+        raise LocalCollectorError("Spotify's all-time performance option was unavailable or ambiguous.")
+    visible[0].click()
+    page.wait_for_timeout(3_000)
 
 
 def _download_csv(page, control, directory: Path, *, prefix: str = "") -> tuple[str, str]:
@@ -449,6 +475,7 @@ def sync_once(
                         "Run the collector login command again."
                     )
                 if provider == "spotify":
+                    _select_spotify_all_time(page)
                     performance_heading = page.get_by_role(
                         "heading", name="Performance", exact=True,
                     )
@@ -524,7 +551,7 @@ def sync_once(
                     audience_exports = page.locator("button").filter(
                         has_text=re.compile(r"^Export$")
                     )
-                    dimension_exports: dict[str, tuple[str, str]] = {}
+                    raw_audience_exports: dict[str, tuple[str, str]] = {}
                     for index in range(audience_exports.count()):
                         control = audience_exports.nth(index)
                         if not control.is_visible():
@@ -534,16 +561,26 @@ def sync_once(
                         )
                         schema = _spotify_dimension_schema(export_csv)
                         if schema:
-                            dimension_exports[schema] = (
-                                export_name,
-                                _annotate_analytics_window(
-                                    export_csv, start=window_start, end=window_end,
-                                ),
-                            )
-                    expected_dimensions = {"gender", "age", "geography", "apps"}
-                    if set(dimension_exports) != expected_dimensions:
+                            raw_audience_exports[schema] = (export_name, export_csv)
+                    expected_exports = {"audience", "gender", "age", "geography", "apps"}
+                    if set(raw_audience_exports) != expected_exports:
                         raise LocalCollectorError(
                             "Spotify did not expose every supported audience export; no partial dimension set was uploaded."
+                        )
+                    recent_start, recent_end = _spotify_reporting_window(
+                        raw_audience_exports["audience"][1]
+                    )
+                    dimension_exports = {}
+                    for name in ("gender", "age", "geography", "apps"):
+                        export_name, export_csv = raw_audience_exports[name]
+                        start, end = (
+                            (recent_start, recent_end)
+                            if name in {"gender", "age"}
+                            else (window_start, window_end)
+                        )
+                        dimension_exports[name] = (
+                            export_name,
+                            _annotate_analytics_window(export_csv, start=start, end=end),
                         )
                     uploads.extend(dimension_exports[name] for name in sorted(dimension_exports))
         totals = {"inserted": 0, "duplicates": 0, "submitted": 0}

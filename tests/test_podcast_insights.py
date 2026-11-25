@@ -556,3 +556,7 @@ def test_platform_totals_and_monthly_trends_preserve_additive_grain(temp_db):
         "apple_podcasts": [{"period": "2026-09", "plays": 7.0, "listening_time_hours": 1.0,
                             "listeners": 4.0, "engaged_listeners": 2.0}],
     }
+    assert result["daily_trends"]["spotify"] == [
+        {"period": "2026-08-31", "downloads": 10.0, "plays": 5.0, "audience": 0.0},
+        {"period": "2026-09-01", "downloads": 20.0, "plays": 0.0, "audience": 0.0},
+    ]

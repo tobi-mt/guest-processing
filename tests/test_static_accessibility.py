@@ -391,10 +391,11 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261125.1" in html
-    assert "insights.js?v=20261125.2" in html
-    assert "Overall performance" in html
-    assert "Performance by platform" in html
+    assert "insights.css?v=20261125.2" in html
+    assert "insights.js?v=20261125.3" in html
+    assert "Downloads and plays over time" in html
+    assert "Where your audience listens and watches" in html
+    assert 'data-audio-range="all" class="active"' in html
     assert ".freshness{" in styles
     assert "background:rgba(255,255,255,.08);color:var(--text)" in styles
     assert ".freshness.current{background:rgba(93,205,169,.14);color:#9ee5cd" in styles

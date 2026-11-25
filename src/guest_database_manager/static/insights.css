@@ -27,6 +27,11 @@
 .summary-card.global{border-color:rgba(93,205,169,.45);background:linear-gradient(145deg,rgba(30,100,81,.24),var(--panel-strong))}
 .summary-card.global strong{color:#9ee5cd}
 .overall-performance-panel{display:grid;gap:16px}
+.performance-heading{align-items:end}
+.range-controls{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+.range-controls button{min-height:40px;padding:7px 12px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--muted);font:inherit;font-size:.78rem;font-weight:800;cursor:pointer}
+.range-controls button:hover,.range-controls button:focus-visible{border-color:var(--accent);color:var(--text)}
+.range-controls button.active{border-color:var(--accent);background:var(--accent);color:var(--color-brand-ink)}
 .overall-trend-card{border:0;padding:0;background:transparent;box-shadow:none}
 .performance-change{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 14px;padding:12px 14px;margin-bottom:14px;border-radius:14px;background:var(--color-surface-interactive)}
 .performance-change strong{font-size:1.05rem}
@@ -194,6 +199,8 @@
 .total-metric-grid{grid-template-columns:1fr 1fr}
 .platform-overview-heading,.trend-card-heading{align-items:flex-start;flex-direction:column}
 .listening-app-heading{align-items:flex-start;flex-direction:column}
+.performance-heading{align-items:flex-start;flex-direction:column}
+.range-controls{justify-content:flex-start}
 .trend-controls{justify-content:flex-start;overflow-x:auto}
 .disclosure-panel>summary{align-items:flex-start;padding:18px;flex-direction:column}
 .disclosure-panel>.disclosure-intro,.disclosure-panel>.analytics-connections,.disclosure-panel>.source-coverage,.disclosure-panel>.definition-grid,.disclosure-panel>.platform-grid{margin:16px 18px 20px}
