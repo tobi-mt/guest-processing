@@ -516,7 +516,14 @@ def sync_once(
                     page.get_by_text("Audience breakdowns", exact=True).wait_for(
                         state="visible", timeout=30_000,
                     )
-                    audience_exports = page.get_by_role("button", name="Export", exact=True)
+                    # The old tab panel remains briefly in the DOM while Spotify
+                    # hydrates the five audience export controls.
+                    page.wait_for_timeout(2_500)
+                    # Spotify's audience exports are native buttons, but Chromium's
+                    # CDP accessibility tree does not consistently expose their role.
+                    audience_exports = page.locator("button").filter(
+                        has_text=re.compile(r"^Export$")
+                    )
                     dimension_exports: dict[str, tuple[str, str]] = {}
                     for index in range(audience_exports.count()):
                         control = audience_exports.nth(index)
