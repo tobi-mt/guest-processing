@@ -47,6 +47,7 @@ CANONICAL_METRICS = {
     "watch_time_hours": "count",
     "average_view_percentage": "percent",
     "viewer_percentage": "percent",
+    "app_share_pct": "percent",
     "traffic_source_views": "count",
     "video_views": "count",
     "video_watch_time_hours": "count",
@@ -186,6 +187,61 @@ class GrowthIntelligence:
                             "source_class": source_class,
                             "overlap_group": overlap_group,
                         }))
+            return candidates
+        spotify_window = {"Analytics Period Start", "Analytics Period End"}
+        if provider_key == "spotify" and {"Gender", "Percentage", *spotify_window}.issubset(header_set):
+            for row_number, raw in enumerate(raw_rows, 2):
+                if _text(raw.get("Gender")) and _text(raw.get("Percentage")):
+                    candidates.append((row_number, {
+                        "metric_name": "viewer_percentage",
+                        "metric_value": raw.get("Percentage"),
+                        "period_start": raw.get("Analytics Period Start"),
+                        "period_end": raw.get("Analytics Period End"),
+                        "gender": raw.get("Gender"),
+                        "source_class": "provider_native",
+                        "overlap_group": "spotify_audience_gender",
+                    }))
+            return candidates
+        if provider_key == "spotify" and {
+            "Age", "Total percentage", *spotify_window,
+        }.issubset(header_set):
+            for row_number, raw in enumerate(raw_rows, 2):
+                if _text(raw.get("Age")) and _text(raw.get("Total percentage")):
+                    candidates.append((row_number, {
+                        "metric_name": "viewer_percentage",
+                        "metric_value": raw.get("Total percentage"),
+                        "period_start": raw.get("Analytics Period Start"),
+                        "period_end": raw.get("Analytics Period End"),
+                        "age_group": raw.get("Age"),
+                        "source_class": "provider_native",
+                        "overlap_group": "spotify_audience_age",
+                    }))
+            return candidates
+        if provider_key == "spotify" and {"Geo", "Percentage", *spotify_window}.issubset(header_set):
+            for row_number, raw in enumerate(raw_rows, 2):
+                slug = cls._metric_slug(raw.get("Geo"))
+                if slug and _text(raw.get("Percentage")):
+                    candidates.append((row_number, {
+                        "metric_name": f"country_audience_share_pct_{slug}",
+                        "metric_value": raw.get("Percentage"),
+                        "period_start": raw.get("Analytics Period Start"),
+                        "period_end": raw.get("Analytics Period End"),
+                        "source_class": "provider_native",
+                        "overlap_group": "spotify_audience_geography",
+                    }))
+            return candidates
+        if provider_key == "spotify" and {"App", "Percentage", *spotify_window}.issubset(header_set):
+            for row_number, raw in enumerate(raw_rows, 2):
+                if _text(raw.get("App")) and _text(raw.get("Percentage")):
+                    candidates.append((row_number, {
+                        "metric_name": "app_share_pct",
+                        "metric_value": raw.get("Percentage"),
+                        "period_start": raw.get("Analytics Period Start"),
+                        "period_end": raw.get("Analytics Period End"),
+                        "app_name": raw.get("App"),
+                        "source_class": "host_rss_delivery",
+                        "overlap_group": "spotify_host_app_share",
+                    }))
             return candidates
 
         apple_base = {"Show ID", "Date"}

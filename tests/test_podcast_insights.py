@@ -271,6 +271,35 @@ def test_insights_exposes_host_reported_listening_apps_without_treating_them_as_
     ]
 
 
+def test_insights_exposes_spotify_host_app_geography_and_demographic_shares(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    common = {
+        "provider": "spotify", "period_start": "2026-10-27", "period_end": "2026-11-25",
+        "source_reference": "spotify-audience", "source_class": "provider_native",
+    }
+    service.record_growth_observations({"observations": [
+        {**common, "metric_name": "country_audience_share_pct_united_states", "metric_value": 57.9},
+        {**common, "metric_name": "viewer_percentage", "metric_value": 68.8,
+         "age_group": "28-34"},
+        {**common, "metric_name": "viewer_percentage", "metric_value": 86.6,
+         "gender": "male"},
+        {**common, "metric_name": "app_share_pct", "metric_value": 8.7,
+         "app_name": "Apple Podcasts", "source_class": "host_rss_delivery"},
+        {**common, "metric_name": "app_share_pct", "metric_value": 3.5,
+         "app_name": "Audible", "source_class": "host_rss_delivery"},
+    ]}, actor="automation")
+
+    result = PodcastInsights(temp_db.db_path).dashboard()
+
+    assert result["countries"][0]["name"] == "United States"
+    assert result["countries"][0]["is_percentage"] is True
+    assert {item["dimension_group"] for item in result["demographics"]} == {"Age Group", "Gender"}
+    assert [(item["name"], item["value"]) for item in result["listening_apps"]] == [
+        ("Apple Podcasts", 8.7), ("Audible", 3.5),
+    ]
+    assert all(item["is_percentage"] for item in result["listening_apps"])
+
+
 def test_source_coverage_never_treats_public_listing_as_private_analytics(temp_db):
     coverage = PodcastSourceMonitor(temp_db.db_path).status()
 

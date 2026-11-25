@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -273,6 +273,63 @@ def _annotate_apple_export(csv_text: str, *, range_days: int, today: date | None
     return output.getvalue()
 
 
+def _spotify_reporting_window(csv_text: str) -> tuple[date, date]:
+    reader = csv.DictReader(StringIO(csv_text.lstrip("\ufeff")))
+    dates = []
+    for row in reader:
+        value = str(row.get("Date") or "").strip()
+        for date_format in ("%m/%d/%Y", "%Y-%m-%d"):
+            try:
+                dates.append(datetime.strptime(value, date_format).date())
+                break
+            except ValueError:
+                continue
+    if not dates:
+        raise LocalCollectorError("Spotify returned an analytics report without a valid reporting window.")
+    return min(dates), max(dates)
+
+
+def _annotate_analytics_window(csv_text: str, *, start: date, end: date) -> str:
+    reader = csv.DictReader(StringIO(csv_text.lstrip("\ufeff")))
+    headers = list(reader.fieldnames or [])
+    if not headers:
+        raise LocalCollectorError("The provider returned an unreadable analytics report.")
+    output = StringIO()
+    period_headers = ["Analytics Period Start", "Analytics Period End"]
+    writer = csv.DictWriter(output, fieldnames=[*headers, *period_headers], lineterminator="\n")
+    writer.writeheader()
+    for row in reader:
+        writer.writerow({
+            **row,
+            "Analytics Period Start": start.isoformat(),
+            "Analytics Period End": end.isoformat(),
+        })
+    return output.getvalue()
+
+
+def _spotify_dimension_schema(csv_text: str) -> str | None:
+    headers = set(csv.DictReader(StringIO(csv_text.lstrip("\ufeff"))).fieldnames or [])
+    for name, required in (
+        ("gender", {"Gender", "Percentage"}),
+        ("age", {"Age", "Total percentage"}),
+        ("geography", {"Geo", "Percentage"}),
+        ("apps", {"App", "Percentage"}),
+    ):
+        if required.issubset(headers):
+            return name
+    return None
+
+
+def _download_csv(page, control, directory: Path, *, prefix: str = "") -> tuple[str, str]:
+    with page.expect_download(timeout=90_000) as download_info:
+        control.click()
+    download = download_info.value
+    filename = Path(download.suggested_filename).name
+    destination = directory / f"{prefix}{filename}"
+    download.save_as(destination)
+    return filename, destination.read_text(encoding="utf-8-sig")
+
+
 def _validate_provider_export(provider: str, csv_text: str) -> None:
     """Fail closed before uploading a provider file whose schema changed."""
     try:
@@ -369,6 +426,7 @@ def sync_once(
     """Download one explicitly labelled provider CSV and upload it through the safe ingestion boundary."""
     sync_playwright = _playwright()
     try:
+        uploads: list[tuple[str, str]] = []
         with sync_playwright() as playwright, tempfile.TemporaryDirectory(prefix="mirror-talk-analytics-") as temp_dir:
             with _sync_browser_context(
                 playwright,
@@ -445,23 +503,52 @@ def sync_once(
                 # Spotify currently exposes a show-performance export followed by an episode-table
                 # export. The first control is the supported daily show-level report.
                 export_target = visible[0]
-                with page.expect_download(timeout=90_000) as download_info:
-                    export_target.click()
-                download = download_info.value
-                filename = Path(download.suggested_filename).name
-                destination = Path(temp_dir) / filename
-                download.save_as(destination)
-                csv_text = destination.read_text(encoding="utf-8-sig")
+                filename, csv_text = _download_csv(page, export_target, Path(temp_dir))
                 if provider == "apple_podcasts":
                     csv_text = _annotate_apple_export(
                         csv_text, range_days=apple_range_days,
                     )
                 _validate_provider_export(provider, csv_text)
-        return _post(server, token, "/api/analytics-connectors/local/ingest", {
-            "provider": provider,
-            "source_reference": filename,
-            "csv_text": csv_text,
-        })
+                uploads.append((filename, csv_text))
+                if provider == "spotify":
+                    window_start, window_end = _spotify_reporting_window(csv_text)
+                    page.get_by_role("tab", name="Audience", exact=True).click()
+                    page.get_by_text("Audience breakdowns", exact=True).wait_for(
+                        state="visible", timeout=30_000,
+                    )
+                    audience_exports = page.get_by_role("button", name="Export", exact=True)
+                    dimension_exports: dict[str, tuple[str, str]] = {}
+                    for index in range(audience_exports.count()):
+                        control = audience_exports.nth(index)
+                        if not control.is_visible():
+                            continue
+                        export_name, export_csv = _download_csv(
+                            page, control, Path(temp_dir), prefix=f"audience-{index}-",
+                        )
+                        schema = _spotify_dimension_schema(export_csv)
+                        if schema:
+                            dimension_exports[schema] = (
+                                export_name,
+                                _annotate_analytics_window(
+                                    export_csv, start=window_start, end=window_end,
+                                ),
+                            )
+                    expected_dimensions = {"gender", "age", "geography", "apps"}
+                    if set(dimension_exports) != expected_dimensions:
+                        raise LocalCollectorError(
+                            "Spotify did not expose every supported audience export; no partial dimension set was uploaded."
+                        )
+                    uploads.extend(dimension_exports[name] for name in sorted(dimension_exports))
+        totals = {"inserted": 0, "duplicates": 0, "submitted": 0}
+        for upload_name, upload_csv in uploads:
+            result = _post(server, token, "/api/analytics-connectors/local/ingest", {
+                "provider": provider,
+                "source_reference": upload_name,
+                "csv_text": upload_csv,
+            })
+            for key in totals:
+                totals[key] += int(result.get(key) or 0)
+        return {"status": "completed", **totals}
     except LocalCollectorError:
         raise
     except Exception as exc:
@@ -487,12 +574,19 @@ def _launch_agent_payload(
             python_executable or sys.executable,
             "-m", "guest_database_manager.local_analytics_collector",
             "sync", provider,
+            # Provider analytics portals deliberately vary or suppress export controls
+            # in headless Chrome. A normal, owner-visible Chrome session also reuses
+            # the authentication ceremony that the collector is designed to retain.
+            "--headed",
             "--server", server,
             "--profile-root", str(profile_root.expanduser().resolve()),
         ],
         "RunAtLoad": True,
         "StartCalendarInterval": {"Hour": hour, "Minute": minute},
-        "ProcessType": "Background",
+        # The collector drives an owner-visible provider portal. Marking it as a
+        # background process causes macOS to background-throttle Chrome and some
+        # portals omit their authenticated export UI under that launch context.
+        "ProcessType": "Interactive",
         "StandardOutPath": str(logs / f"{provider}.log"),
         "StandardErrorPath": str(logs / f"{provider}.error.log"),
     }

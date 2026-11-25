@@ -151,6 +151,11 @@ class PodcastInsights:
             [row for row in rows if row.get("source_class") == "host_rss_delivery"],
             metric="downloads", label_fields=("app_name",)
         )
+        if not any(item["name"] != "Unknown" for item in listening_apps):
+            listening_apps = self._structured_dimension_breakdown(
+                [row for row in rows if row.get("source_class") == "host_rss_delivery"],
+                metric="app_share_pct", label_fields=("app_name",), percentage_values=True,
+            )
         if any(item["name"] != "Unknown" for item in listening_apps):
             listening_apps = [item for item in listening_apps if item["name"] != "Unknown"]
         listening_app_total = sum(float(item["value"]) for item in listening_apps)
@@ -776,16 +781,24 @@ class PodcastInsights:
             latest = max((row["period_end"] for row in provider_metric_rows), default=None)
             relevant = [row for row in provider_metric_rows if row["period_end"] == latest]
             show_rows = [row for row in relevant if row.get("episode_id") is None]
-            values.append({"name": metric[len(prefix):].replace("_", " ").title(),
+            percentage_prefix = f"{prefix}audience_share_pct_"
+            is_percentage = metric.startswith(percentage_prefix)
+            name = metric[len(percentage_prefix):] if is_percentage else metric[len(prefix):]
+            values.append({"name": name.replace("_", " ").title(),
                            "value": sum(float(row["metric_value"]) for row in (show_rows or relevant)),
-                           "provider": provider, "period_end": latest})
+                           "provider": provider, "period_end": latest,
+                           "is_percentage": is_percentage,
+                           "measure": "audience share" if is_percentage else "audience"})
         provider_totals = {
             provider: sum(item["value"] for item in values if item["provider"] == provider)
             for provider in {item["provider"] for item in values}
         }
         for item in values:
             total = provider_totals[item["provider"]]
-            item["share_pct"] = round(item["value"] * 100 / total, 1) if total else None
+            item["share_pct"] = (
+                round(item["value"], 1) if item["is_percentage"]
+                else round(item["value"] * 100 / total, 1) if total else None
+            )
         return sorted(values, key=lambda item: (item["provider"], -item["value"]))
 
     @staticmethod
@@ -821,8 +834,16 @@ class PodcastInsights:
     ) -> list[dict[str, Any]]:
         candidates = [row for row in rows if row["metric_name"] == metric]
         values = []
-        for provider in sorted({str(row["provider"]) for row in candidates}):
-            provider_rows = [row for row in candidates if str(row["provider"]) == provider]
+        candidate_groups = {
+            (str(row["provider"]), tuple(field for field in label_fields if str(row.get(field) or "").strip()))
+            for row in candidates
+        }
+        for provider, dimension_fields in sorted(candidate_groups):
+            provider_rows = [
+                row for row in candidates
+                if str(row["provider"]) == provider
+                and tuple(field for field in label_fields if str(row.get(field) or "").strip()) == dimension_fields
+            ]
             latest = max((row["period_end"] for row in provider_rows), default=None)
             latest_rows = [row for row in provider_rows if row["period_end"] == latest]
             labelled_rows = [
@@ -837,7 +858,7 @@ class PodcastInsights:
                 labels = []
                 for field in label_fields:
                     raw_label = str(row.get(field) or "unknown")
-                    age_match = re.fullmatch(r"age(\d+)[_-](\d+|plus)", raw_label, re.I) if field == "age_group" else None
+                    age_match = re.fullmatch(r"(?:age)?(\d+)[_-](\d+|plus)", raw_label, re.I) if field == "age_group" else None
                     labels.append(
                         f"{age_match.group(1)}–{age_match.group(2)}" if age_match
                         else raw_label.replace("_", " ").title()
@@ -847,6 +868,10 @@ class PodcastInsights:
                     "period_end": latest,
                     "share_pct": round(value, 1) if percentage_values else round(value * 100 / total, 1) if total else None,
                     "measure": "audience share" if percentage_values else "views",
+                    "dimension_group": " & ".join(
+                        field.replace("_", " ").title() for field in dimension_fields
+                    ),
+                    "is_percentage": percentage_values,
                 })
         return sorted(values, key=lambda item: (item["provider"], -item["value"]))
 

@@ -391,8 +391,8 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261124.3" in html
-    assert "insights.js?v=20261124.10" in html
+    assert "insights.css?v=20261125.1" in html
+    assert "insights.js?v=20261125.1" in html
     assert "Overall performance" in html
     assert "Performance by platform" in html
     assert ".freshness{" in styles
@@ -473,12 +473,13 @@ def test_partner_recipient_filter_reveals_actions_and_preserves_selected_recipie
     assert "partners.js?v=20261016.1" in html
 
 
-def test_growth_dashboard_preserves_zero_values_and_has_import_status() -> None:
+def test_growth_dashboard_preserves_zero_values_without_manual_import_ui() -> None:
     html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning.js").read_text(encoding="utf-8")
 
-    assert 'id="analytics-import-message" class="message" aria-live="polite"' in html
-    assert 'planning-intelligence.js?v=20261018.1' in html
+    assert 'id="analytics-import-form"' not in html
+    assert "Import provider reports" not in html
+    assert "planning-intelligence.js" not in html
     assert 'return String(value ?? "")' in javascript
     assert "escapeHtml(reach.organic ?? 0)" in javascript
     assert "escapeHtml(reach.paid ?? 0)" in javascript
@@ -581,20 +582,19 @@ def test_account_surfaces_have_labeled_fields_and_status_regions() -> None:
     assert 'auth.css?v=20261120.2' in settings
 
 
-def test_guided_import_replaces_raw_json_and_exposes_history_and_reviews() -> None:
+def test_podcast_reach_uses_automatic_collection_and_keeps_reviews_in_planning() -> None:
     html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     planning_html = (STATIC_ROOT / "planning.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "planning-intelligence.js").read_text(encoding="utf-8")
-    styles = (STATIC_ROOT / "operations.css").read_text(encoding="utf-8")
     assert "Observation JSON" not in html
-    assert 'id="analytics-import-history"' in html
+    assert 'id="analytics-import-history"' not in html
+    assert 'id="data-sources" class="panel disclosure-panel"' in html
+    assert "Podcast Reach refreshes connected hosting" in html
     assert 'id="outcome-review-queue"' in planning_html
     assert 'id="outcome-review-message" class="message" aria-live="polite"' in planning_html
     assert "planning-intelligence.js?v=20261018.1" in planning_html
-    assert "Spotify for Creators" in html
-    assert "another host" in html
-    assert "Do not import the same reporting period twice" in html
-    assert "repeat(auto-fit, minmax(min(100%, 18rem), 1fr))" in styles
+    assert "Import provider reports" not in html
+    assert "Top measured content" in html
     assert "renderImportHistory" in javascript
     assert "renderOutcomeReviews" in javascript
     assert 'setMessage(message, "Saving your assessment…", "pending")' in javascript
@@ -715,13 +715,9 @@ def test_scheduling_intelligence_prioritizes_decisions_and_guides_evidence_impor
 
     assert 'id="exception-center" class="exception-center" aria-live="polite"' in html
     assert 'id="analytics-import-form"' not in html
-    assert 'id="analytics-import-form"' in insights_html
-    assert 'class="provider-export-grid"' in insights_html
-    assert 'data-import-provider="spotify"' in insights_html
-    assert 'data-import-provider="apple_podcasts"' in insights_html
-    assert 'data-import-provider="podcast_host"' in insights_html
-    assert 'id="analytics-mapping-fields"' in insights_html
-    assert 'id="analytics-preview" class="analytics-preview hidden" aria-live="polite"' in insights_html
+    assert 'id="analytics-import-form"' not in insights_html
+    assert 'class="provider-export-grid"' not in insights_html
+    assert 'id="data-sources" class="panel disclosure-panel"' in insights_html
     assert 'id="demographic-breakdown"' in insights_html
     assert 'id="traffic-source-breakdown"' in insights_html
     assert 'id="listening-app-breakdown"' in insights_html
@@ -729,7 +725,7 @@ def test_scheduling_intelligence_prioritizes_decisions_and_guides_evidence_impor
     assert 'id="release-readiness"' in insights_html
     assert "Know what is growing. Decide what to do next." in insights_html
     assert "Open the audience and platform deep dive" in insights_html
-    assert 'id="analytics-import" class="panel disclosure-panel analytics-import-panel"' in insights_html
+    assert "Import provider reports" not in insights_html
     assert 'class="operations-tool scheduling-admin-hub"' in html
     assert 'id="recommendation-comparison-grid"' in html
     assert 'request("/api/growth-intelligence/preview"' in javascript

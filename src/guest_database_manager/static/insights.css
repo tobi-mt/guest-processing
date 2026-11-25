@@ -5,7 +5,6 @@
 .insights-nav{display:grid;gap:10px;align-content:start}
 .insights-nav a{min-height:44px}
 .insights-shell main{display:grid;gap:20px}
-.analytics-import-panel{scroll-margin-top:20px}
 .import-content,.deep-dive-content{display:grid;gap:20px;padding:20px 24px 24px}
 .deep-dive-content>.panel{box-shadow:none}
 .reach-import-form,.reach-experiment-form{margin-top:0}

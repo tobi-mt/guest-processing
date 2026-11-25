@@ -196,9 +196,9 @@ def build_exception_center(
             severity="high",
             category="evidence",
             title="Growth intelligence has no evidence",
-            reason="Recommendations cannot learn from release outcomes until verified analytics are imported.",
-            href="/insights#analytics-import",
-            action_label="Import analytics",
+            reason="Recommendations cannot learn from release outcomes until automatic analytics collection succeeds.",
+            href="/insights#data-sources",
+            action_label="Review automatic sources",
         ))
     elif growth.get("freshness") == "stale":
         items.append(_item(
@@ -206,8 +206,8 @@ def build_exception_center(
             severity="normal",
             category="evidence",
             title="Growth evidence is stale",
-            reason=f"The latest imported period ended {growth.get('latest_period_end') or 'on an unknown date'}.",
-            href="/planning?tab=scheduling_intelligence#analytics-import",
+            reason=f"The latest collected period ended {growth.get('latest_period_end') or 'on an unknown date'}.",
+            href="/insights#data-sources",
             action_label="Refresh evidence",
         ))
     incomplete_scores = sum(
@@ -221,7 +221,7 @@ def build_exception_center(
             category="evidence",
             title="Episodes missing complete Mirror Fan Score evidence",
             reason=f"{incomplete_scores} episode{'s' if incomplete_scores != 1 else ''} lack one or more required outcome dimensions.",
-            href="/planning?tab=scheduling_intelligence#analytics-import",
+            href="/insights#data-sources",
             action_label="Review evidence",
             count=incomplete_scores,
         ))

@@ -303,6 +303,46 @@ def test_spotify_all_time_export_is_detected_without_double_counting_combined_co
     }
 
 
+@pytest.mark.parametrize(
+    ("csv_text", "expected"),
+    [
+        (
+            "Gender,Percentage,Analytics Period Start,Analytics Period End\n"
+            "Female,12.9,2026-10-27,2026-11-25\n",
+            ("viewer_percentage", "gender", "female", 12.9),
+        ),
+        (
+            "Age,Total percentage,Analytics Period Start,Analytics Period End\n"
+            "28-34,68.8,2026-10-27,2026-11-25\n",
+            ("viewer_percentage", "age_group", "28_34", 68.8),
+        ),
+        (
+            "Geo,Percentage,Analytics Period Start,Analytics Period End\n"
+            "United States,57.9,2026-10-27,2026-11-25\n",
+            ("country_audience_share_pct_united_states", None, "", 57.9),
+        ),
+        (
+            "App,Percentage,Analytics Period Start,Analytics Period End\n"
+            "Apple Podcasts,8.7,2026-10-27,2026-11-25\n",
+            ("app_share_pct", "app_name", "Apple Podcasts", 8.7),
+        ),
+    ],
+)
+def test_spotify_audience_dimension_exports_are_normalized(temp_db, csv_text, expected):
+    preview = GrowthIntelligence(temp_db.db_path).preview_csv(
+        csv_text, provider="spotify", source_reference="spotify-audience.csv",
+    )
+
+    assert preview["format"] == "provider"
+    assert preview["summary"]["ready"] == 1
+    row = preview["observations"][0]
+    metric, dimension, dimension_value, value = expected
+    assert row["metric_name"] == metric
+    assert row["metric_value"] == value
+    if dimension:
+        assert row[dimension] == dimension_value
+
+
 def test_provider_export_accepts_more_than_legacy_500_row_limit(temp_db):
     intelligence = GrowthIntelligence(temp_db.db_path)
     rows = [

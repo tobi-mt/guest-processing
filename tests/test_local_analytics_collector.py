@@ -236,6 +236,35 @@ def test_apple_export_annotation_makes_the_implicit_window_explicit() -> None:
     collector._validate_provider_export("apple_podcasts", annotated)
 
 
+def test_spotify_dimension_exports_receive_the_verified_performance_window() -> None:
+    performance = (
+        "Date,Plays & downloads,Plays (on Spotify),Downloads (everywhere else),Audience\n"
+        "10/27/2026,10,2,8,6\n11/25/2026,20,4,16,9\n"
+    )
+    start, end = collector._spotify_reporting_window(performance)
+    annotated = collector._annotate_analytics_window(
+        "App,Percentage\nApple Podcasts,8.7\nSpotify,24.2\n",
+        start=start, end=end,
+    )
+
+    assert (start, end) == (date(2026, 10, 27), date(2026, 11, 25))
+    assert collector._spotify_dimension_schema(annotated) == "apps"
+    assert "2026-10-27,2026-11-25" in annotated
+
+
+@pytest.mark.parametrize(
+    ("csv_text", "schema"),
+    [
+        ("Gender,Percentage\nFemale,12.9\n", "gender"),
+        ("Age,Total percentage\n28-34,68.8\n", "age"),
+        ("Geo,Percentage\nGermany,8\n", "geography"),
+        ("App,Percentage\nAudible,3.5\n", "apps"),
+    ],
+)
+def test_spotify_dimension_exports_are_classified_by_schema(csv_text: str, schema: str) -> None:
+    assert collector._spotify_dimension_schema(csv_text) == schema
+
+
 def test_launch_agent_runs_daily_sync_without_embedding_the_secret(tmp_path: Path) -> None:
     payload = _launch_agent_payload(
         "spotify", server="https://guest-processing.example",
@@ -248,6 +277,8 @@ def test_launch_agent_runs_daily_sync_without_embedding_the_secret(tmp_path: Pat
         "/opt/mirror-talk/bin/python", "-m",
         "guest_database_manager.local_analytics_collector", "sync",
     ]
+    assert "--headed" in payload["ProgramArguments"]
+    assert payload["ProcessType"] == "Interactive"
     assert "environment-secret" not in repr(payload)
     assert payload["RunAtLoad"] is True
 
