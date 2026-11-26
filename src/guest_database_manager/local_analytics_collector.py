@@ -211,6 +211,13 @@ def _sync_browser_context(
             return
 
     active_port_path.unlink(missing_ok=True)
+    profile_lock_path = profile_path / "SingletonLock"
+    if profile_lock_path.exists() or profile_lock_path.is_symlink():
+        raise LocalCollectorError(
+            "The dedicated Chrome window is open without collector access. Close that "
+            "dedicated provider window once, then run the login command again. Future "
+            "synchronizations will reuse the authenticated window automatically."
+        )
     arguments = [
         native_chrome,
         f"--user-data-dir={profile_path}",
@@ -459,31 +466,17 @@ def login(provider: str, *, profile_root: Path, url: str) -> None:
     native_chrome = _native_chrome_executable()
     if native_chrome:
         if sys.platform == "darwin":
-            if provider == "apple_podcasts":
-                subprocess.Popen(
-                    [
-                        native_chrome, f"--user-data-dir={profile}", "--no-first-run",
-                        "--remote-debugging-port=0", url,
-                    ],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                input(
-                    "Complete Apple login and MFA in the dedicated Chrome window, "
-                    "leave that window open for automatic sync, then press Enter here: "
-                )
-                return
             subprocess.Popen(
                 [
-                    "/usr/bin/open", "-na", "Google Chrome", "--args",
-                    f"--user-data-dir={profile}", "--no-first-run", url,
+                    native_chrome, f"--user-data-dir={profile}", "--no-first-run",
+                    "--remote-debugging-port=0", url,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
             input(
-                "Complete provider login and MFA in the separate Chrome window, "
-                "close that window, then press Enter here: "
+                "Complete provider login and MFA in the dedicated Chrome window, "
+                "leave that window open or minimized for automatic sync, then press Enter here: "
             )
             return
         process = subprocess.Popen(

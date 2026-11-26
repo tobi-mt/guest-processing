@@ -75,7 +75,7 @@ def test_login_uses_native_chrome_without_playwright_automation(tmp_path: Path, 
     assert "terminate" in calls
 
 
-def test_macos_spotify_login_forces_a_separate_chrome_instance(tmp_path: Path, monkeypatch) -> None:
+def test_macos_spotify_login_keeps_attachable_session_resident(tmp_path: Path, monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(collector.sys, "platform", "darwin")
     monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
@@ -90,9 +90,10 @@ def test_macos_spotify_login_forces_a_separate_chrome_instance(tmp_path: Path, m
         url="https://creators.spotify.com/analytics",
     )
 
-    assert calls[0][:4] == ["/usr/bin/open", "-na", "Google Chrome", "--args"]
+    assert calls[0][0] == "/Applications/Chrome"
     assert f"--user-data-dir={(tmp_path / 'spotify').resolve()}" in calls[0]
-    assert "close that window" in calls[1]
+    assert "--remote-debugging-port=0" in calls[0]
+    assert "leave that window open or minimized" in calls[1]
 
 
 def test_macos_apple_login_keeps_session_browser_resident(tmp_path: Path, monkeypatch) -> None:
@@ -231,6 +232,32 @@ def test_sync_reuses_resident_browser_without_closing_it(tmp_path: Path, monkeyp
         assert opened_context is context
 
     assert calls == [("http://127.0.0.1:49153", 5_000)]
+
+
+def test_sync_explains_non_attachable_resident_profile(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "spotify"
+    profile.mkdir()
+    (profile / "SingletonLock").symlink_to("computer-12345")
+
+    class Chromium:
+        @staticmethod
+        def connect_over_cdp(*args, **kwargs):
+            pytest.fail("a profile without DevToolsActivePort cannot be attached")
+
+    class Playwright:
+        chromium = Chromium()
+
+    monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(
+        collector.subprocess, "Popen",
+        lambda *args, **kwargs: pytest.fail("a locked profile must not launch a second Chrome"),
+    )
+
+    with pytest.raises(LocalCollectorError, match="open without collector access"):
+        with collector._sync_browser_context(
+            Playwright(), profile_path=profile, headless=False,
+        ):
+            pass
 
 
 def test_provider_export_validation_rejects_the_wrong_spotify_report() -> None:
