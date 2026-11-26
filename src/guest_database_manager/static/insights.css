@@ -150,8 +150,20 @@
 .series-total{color:#9ee5cd}
 .line-chart{display:block;width:100%;height:auto;margin-top:16px;overflow:visible}
 .line-chart text{fill:var(--muted);font-size:11px}
+.line-chart .axis-title{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
 .chart-axis{stroke:var(--border);stroke-width:1}
+.chart-gridline{stroke:var(--border);stroke-width:1;stroke-dasharray:3 5;opacity:.6}
 .trend-line{fill:none;stroke:currentColor;stroke-width:4;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.chart-interactive{position:relative}
+.trend-point{fill:var(--panel-strong);stroke:currentColor;stroke-width:3;opacity:0;pointer-events:none;transition:opacity .12s ease,r .12s ease}
+.trend-point.active{opacity:1;r:5px}
+.trend-hit-target{fill:transparent;cursor:crosshair;outline:none}
+.trend-hit-target:focus{fill:rgba(158,229,205,.06)}
+.trend-tooltip{position:absolute;z-index:3;top:4px;display:grid;min-width:170px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--color-surface-raised);box-shadow:0 12px 32px rgba(0,0,0,.28);pointer-events:none;transform:translateX(-50%)}
+.trend-tooltip[hidden]{display:none}
+.trend-tooltip strong{margin-bottom:5px;color:var(--text);font-size:.78rem}
+.trend-tooltip span{display:flex;justify-content:space-between;gap:16px;color:var(--muted);font-size:.72rem;line-height:1.55}
+.trend-tooltip b{color:var(--text)}
 .trend-data{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
 .trend-data summary{display:flex;align-items:center;min-height:44px;color:var(--accent);font-size:.78rem;font-weight:800;cursor:pointer}
 .trend-table-wrap{max-height:320px;margin-top:10px;overflow:auto}

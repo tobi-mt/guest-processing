@@ -392,8 +392,13 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261126.1" in html
-    assert "insights.js?v=20261126.2" in html
+    assert "insights.css?v=20261126.4" in html
+    assert "insights.js?v=20261126.4" in html
+    assert 'class="trend-hit-target"' in javascript
+    assert 'tabindex="0" role="button"' in javascript
+    assert "attachTrendInteractions(target)" in javascript
+    assert ".chart-gridline" in styles
+    assert ".trend-tooltip" in styles
     assert "Connection health" in javascript
     assert "Verified · retrying check" in javascript
     assert "Temporarily unavailable" in javascript

@@ -14,32 +14,82 @@ const providerLabel = (provider) => providerLabels[provider] || metricLabel(prov
 const formatDate = (value) => value ? new Intl.DateTimeFormat(undefined, {day:"numeric",month:"short",year:"numeric"}).format(new Date(`${value}T00:00:00`)) : "—";
 const formatTimestamp = (value) => value ? new Intl.DateTimeFormat(undefined, {day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}).format(new Date(value)) : "Not checked yet";
 
-function linePath(values, width, height, maxValue) {
+function linePath(values, xScale, yScale) {
   if (!values.length) return "";
   return values.map((value, index) => {
-    const x = values.length === 1 ? width / 2 : index * width / (values.length - 1);
-    const y = height - (Number(value || 0) / Math.max(maxValue, 1)) * height;
+    const x = xScale(index);
+    const y = yScale(Number(value || 0));
     return `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
 }
+
+const compactNumber = (value) => new Intl.NumberFormat(undefined, {notation:"compact",maximumFractionDigits:1}).format(Number(value || 0));
+const chartPeriodLabel = (value) => {
+  if (!value) return "—";
+  const text = String(value);
+  const date = new Date(text.length === 7 ? `${text}-01T00:00:00Z` : `${text}T00:00:00Z`);
+  return new Intl.DateTimeFormat(undefined, text.length === 7 ? {month:"short",year:"numeric",timeZone:"UTC"} : {day:"numeric",month:"short",timeZone:"UTC"}).format(date);
+};
 
 function trendChart(title, rows, series, options = {}) {
   const range = options.range ?? trendRange;
   const selected = range === 0 ? rows : rows.slice(-range);
   if (!selected.length) return `<article class="trend-card"><h3>${escapeHtml(title)}</h3>${empty(options.emptyMessage || "No comparable history is available yet.")}</article>`;
-  const width = 720; const height = 210;
-  const maxValue = Math.max(...selected.flatMap((row) => series.map((item) => Number(row[item.key] || 0))), 1);
-  const first = selected[0].period; const middle = selected[Math.floor((selected.length - 1) / 2)].period; const last = selected.at(-1).period;
-  const paths = series.map((item) => `<path class="trend-line ${item.className}" d="${linePath(selected.map((row) => row[item.key]), width, height, maxValue)}"></path>`).join("");
+  const width = 720; const height = 210; const left = 58; const right = 14; const top = 12; const bottom = 38;
+  const plotWidth = width - left - right; const plotHeight = height - top - bottom;
+  const rawMax = Math.max(...selected.flatMap((row) => series.map((item) => Number(row[item.key] || 0))), 1);
+  const magnitude = 10 ** Math.floor(Math.log10(rawMax));
+  const niceMax = Math.ceil(rawMax / magnitude * 2) / 2 * magnitude;
+  const xScale = (index) => selected.length === 1 ? left + plotWidth / 2 : left + index * plotWidth / (selected.length - 1);
+  const yScale = (value) => top + plotHeight - (value / Math.max(niceMax, 1)) * plotHeight;
+  const first = selected[0].period; const last = selected.at(-1).period;
+  const paths = series.map((item) => `<path class="trend-line ${item.className}" d="${linePath(selected.map((row) => row[item.key]), xScale, yScale)}"></path>`).join("");
+  const yAxis = Array.from({length:5}, (_, index) => niceMax * index / 4).map((value) => { const y = yScale(value); return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="chart-gridline"></line><text x="${left - 10}" y="${y + 4}" text-anchor="end">${escapeHtml(compactNumber(value))}</text>`; }).join("");
+  const xTickCount = Math.min(5, selected.length);
+  const xIndexes = [...new Set(Array.from({length:xTickCount}, (_, index) => Math.round(index * (selected.length - 1) / Math.max(xTickCount - 1, 1))))];
+  const xAxis = xIndexes.map((index) => `<line x1="${xScale(index)}" y1="${height - bottom}" x2="${xScale(index)}" y2="${height - bottom + 5}" class="chart-axis"></line><text x="${xScale(index)}" y="${height - 13}" text-anchor="middle">${escapeHtml(chartPeriodLabel(selected[index].period))}</text>`).join("");
+  const points = selected.flatMap((row, index) => series.map((item) => `<circle class="trend-point ${item.className}" data-point-index="${index}" cx="${xScale(index)}" cy="${yScale(Number(row[item.key] || 0))}" r="4"></circle>`)).join("");
+  const hitWidth = selected.length === 1 ? plotWidth : Math.max(12, plotWidth / (selected.length - 1));
+  const hitTargets = selected.map((row, index) => {
+    const values = series.map((item) => ({label:item.label,value:Number(row[item.key] || 0)}));
+    const spoken = values.map((item) => `${item.label} ${number(item.value)}`).join(", ");
+    const x = Math.max(left, xScale(index) - hitWidth / 2);
+    return `<rect class="trend-hit-target" data-trend-index="${index}" data-period="${escapeHtml(String(row.period))}" data-values="${escapeHtml(JSON.stringify(values))}" x="${x}" y="${top}" width="${Math.min(hitWidth, width - right - x)}" height="${plotHeight}" tabindex="0" role="button" aria-label="${escapeHtml(`${chartPeriodLabel(row.period)}: ${spoken}`)}"></rect>`;
+  }).join("");
   const latest = selected.at(-1);
   const tableRows = selected.map((row) => `<tr><td>${escapeHtml(row.period)}</td>${series.map((item) => `<td>${number(row[item.key])}</td>`).join("")}</tr>`).join("");
-  return `<article class="trend-card ${options.className || ""}"><div class="trend-card-heading"><div><h3>${escapeHtml(title)}</h3><p>${series.map((item) => `${escapeHtml(item.label)}: <strong>${number(latest[item.key])}</strong>`).join(" · ")} through ${escapeHtml(last)}</p></div><div class="trend-legend">${series.map((item) => `<span class="${item.className}">${escapeHtml(item.label)}</span>`).join("")}</div></div><svg class="line-chart" viewBox="0 0 ${width} ${height + 28}" role="img" aria-label="${escapeHtml(title)} trend from ${escapeHtml(first)} to ${escapeHtml(last)}"><line x1="0" y1="${height}" x2="${width}" y2="${height}" class="chart-axis"></line>${paths}<text x="0" y="${height + 22}">${escapeHtml(first)}</text><text x="${width / 2}" y="${height + 22}" text-anchor="middle">${escapeHtml(middle)}</text><text x="${width}" y="${height + 22}" text-anchor="end">${escapeHtml(last)}</text></svg><details class="trend-data"><summary>View exact values</summary><div class="trend-table-wrap"><table><thead><tr><th>${escapeHtml(options.periodLabel || "Period")}</th>${series.map((item) => `<th>${escapeHtml(item.label)}</th>`).join("")}</tr></thead><tbody>${tableRows}</tbody></table></div></details></article>`;
+  return `<article class="trend-card ${options.className || ""}"><div class="trend-card-heading"><div><h3>${escapeHtml(title)}</h3><p>${series.map((item) => `${escapeHtml(item.label)}: <strong>${number(latest[item.key])}</strong>`).join(" · ")} through ${escapeHtml(last)}</p></div><div class="trend-legend">${series.map((item) => `<span class="${item.className}">${escapeHtml(item.label)}</span>`).join("")}</div></div><div class="chart-interactive"><svg class="line-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)} trend from ${escapeHtml(first)} to ${escapeHtml(last)}"><text class="axis-title" x="14" y="${top + plotHeight / 2}" text-anchor="middle" transform="rotate(-90 14 ${top + plotHeight / 2})">${escapeHtml(options.yAxisLabel || "Count")}</text>${yAxis}<line x1="${left}" y1="${top}" x2="${left}" y2="${height - bottom}" class="chart-axis"></line><line x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}" class="chart-axis"></line>${xAxis}${paths}${points}${hitTargets}</svg><div class="trend-tooltip" role="status" aria-live="polite" hidden></div></div><details class="trend-data"><summary>View exact values</summary><div class="trend-table-wrap"><table><thead><tr><th>${escapeHtml(options.periodLabel || "Period")}</th>${series.map((item) => `<th>${escapeHtml(item.label)}</th>`).join("")}</tr></thead><tbody>${tableRows}</tbody></table></div></details></article>`;
+}
+
+function attachTrendInteractions(root) {
+  root.querySelectorAll(".chart-interactive").forEach((chart) => {
+    const tooltip = chart.querySelector(".trend-tooltip");
+    const points = [...chart.querySelectorAll(".trend-point")];
+    const show = (target) => {
+      const index = Number(target.dataset.trendIndex);
+      const values = JSON.parse(target.dataset.values || "[]");
+      points.forEach((point) => point.classList.toggle("active", Number(point.dataset.pointIndex) === index));
+      tooltip.innerHTML = `<strong>${escapeHtml(chartPeriodLabel(target.dataset.period))}</strong>${values.map((item) => `<span>${escapeHtml(item.label)} <b>${number(item.value)}</b></span>`).join("")}`;
+      tooltip.hidden = false;
+      const chartBox = chart.getBoundingClientRect(); const targetBox = target.getBoundingClientRect();
+      const x = targetBox.left + targetBox.width / 2 - chartBox.left;
+      tooltip.style.left = `${Math.min(Math.max(x, 90), Math.max(chartBox.width - 90, 90))}px`;
+    };
+    const hide = () => { tooltip.hidden = true; points.forEach((point) => point.classList.remove("active")); };
+    chart.querySelectorAll("[data-trend-index]").forEach((target) => {
+      target.addEventListener("mouseenter", () => show(target));
+      target.addEventListener("focus", () => show(target));
+      target.addEventListener("mouseleave", hide);
+      target.addEventListener("blur", hide);
+    });
+  });
 }
 
 function renderMonthlyTrends(monthly) {
   const spotify = monthly.spotify || []; const apple = monthly.apple_podcasts || [];
   const target = document.getElementById("reach-trend");
   target.innerHTML = `<div class="trend-controls" aria-label="Trend range"><button type="button" data-trend-range="12" class="${trendRange === 12 ? "active" : ""}">12 months</button><button type="button" data-trend-range="24" class="${trendRange === 24 ? "active" : ""}">24 months</button><button type="button" data-trend-range="0" class="${trendRange === 0 ? "active" : ""}">All history</button></div><div class="monthly-trend-grid">${trendChart("Spotify activity", spotify, [{key:"downloads",label:"Downloads",className:"series-primary"},{key:"plays",label:"Spotify plays",className:"series-secondary"}])}${trendChart("Apple listening", apple, [{key:"plays",label:"Plays",className:"series-primary"},{key:"listeners",label:"Monthly listeners",className:"series-secondary"}])}</div>`;
+  attachTrendInteractions(target);
   target.querySelectorAll("[data-trend-range]").forEach((button) => button.addEventListener("click", () => { trendRange = Number(button.dataset.trendRange); renderMonthlyTrends(monthly); }));
 }
 
@@ -109,6 +159,7 @@ function renderOverallPerformance(daily) {
   const change = changeLabel(view.comparison);
   const periodText = view.start && view.end ? `${formatDate(view.start)} – ${formatDate(view.end)}` : "Waiting for lifetime hosting history";
   target.innerHTML = `${view.comparison ? `<div class="performance-change ${change.className}"><strong>${escapeHtml(change.text)}</strong><span>${number(view.comparison.delta)} podcast activity change · previous period ${formatDate(view.comparison.previous_start)} – ${formatDate(view.comparison.previous_end)}</span></div>` : `<div class="performance-change neutral"><strong>${audioRange === "all" ? "Lifetime history" : "No prior comparable period"}</strong><span>${escapeHtml(periodText)}</span></div>`}${trendChart("Podcast downloads and plays", audioChartRows(view.rows), [{key:"total",label:"Downloads & plays",className:"series-total"},{key:"downloads",label:"Other podcast apps",className:"series-primary"},{key:"plays",label:"Spotify plays",className:"series-secondary"}], {range:0,className:"overall-trend-card",periodLabel:audioRange === "7d" || audioRange === "30d" || audioRange === "90d" ? "Date" : "Month",emptyMessage:"Lifetime hosting history is being collected automatically."})}`;
+  attachTrendInteractions(target);
   return view;
 }
 
