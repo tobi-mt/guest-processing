@@ -247,6 +247,9 @@ class PodcastInsights:
             spotify_daily=spotify_daily, stale_provider_count=stale,
             missing_core_metrics=sorted({"downloads", "unique_listeners", "consumption_depth_pct"} - metric_names),
             distribution_coverage_pct=round(available_expected * 100 / len(expected_platforms), 1) if expected_platforms else 0.0,
+            unconfirmed_destinations=[
+                str(row["display_name"]) for row in expected_platforms if row["status"] != "available"
+            ],
         )
         return {
             "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -258,6 +261,9 @@ class PodcastInsights:
                 "catalog_listings": sum(row["distribution_mode"] == "catalog_listing" for row in platform_rows),
                 "rss_subscription_targets": sum(row["distribution_mode"] == "rss_subscription" for row in platform_rows),
                 "known_missing_platforms": sum(row["distribution_mode"] == "expected_missing" for row in platform_rows),
+                "unconfirmed_destinations": [
+                    str(row["display_name"]) for row in expected_platforms if row["status"] != "available"
+                ],
                 "distribution_coverage_pct": round(available_expected * 100 / len(expected_platforms), 1) if expected_platforms else 0.0,
                 "platforms_with_private_analytics": len(provider_cards),
                 "latest_period_start": latest_common_period[0] if latest_common_period else None,
@@ -459,16 +465,28 @@ class PodcastInsights:
             }),
         )
         result = []
+        episode_metrics = {
+            "downloads", "plays", "streams", "plays_downloads", "consumption_depth_pct",
+            "video_views", "video_lifetime_views", "web_player_play_starts", "web_player_completions",
+        }
         for definition in definitions:
             label, metrics, *prefix = definition
             if label == "Episode performance":
-                available = any(row.get("episode_id") is not None for row in rows)
+                available = any(
+                    (row.get("episode_id") is not None or row.get("platform_content_id"))
+                    and row.get("metric_name") in episode_metrics
+                    for row in rows
+                )
             else:
                 available = bool(present & metrics) or bool(prefix and any(name.startswith(prefix[0]) for name in present))
             providers = sorted({
                 str(row["provider"]) for row in rows
                 if row["metric_name"] in metrics or (prefix and str(row["metric_name"]).startswith(prefix[0]))
-                or (label == "Episode performance" and row.get("episode_id") is not None)
+                or (
+                    label == "Episode performance"
+                    and (row.get("episode_id") is not None or row.get("platform_content_id"))
+                    and row.get("metric_name") in episode_metrics
+                )
             })
             result.append({"label": label, "available": available, "providers": providers})
         return result
@@ -477,6 +495,7 @@ class PodcastInsights:
     def _attention_items(
         *, spotify_daily: list[dict[str, Any]], stale_provider_count: int,
         missing_core_metrics: list[str], distribution_coverage_pct: float,
+        unconfirmed_destinations: list[str] | None = None,
     ) -> list[dict[str, str]]:
         items: list[dict[str, str]] = []
         totals = [float(row.get("downloads") or 0) + float(row.get("plays") or 0) for row in spotify_daily]
@@ -495,7 +514,16 @@ class PodcastInsights:
         if stale_provider_count:
             items.append({"severity": "warning", "title": f"{stale_provider_count} source refresh is overdue", "detail": "Existing values remain visible with their source dates."})
         if distribution_coverage_pct < 100:
-            items.append({"severity": "neutral", "title": f"Distribution confirmation is {distribution_coverage_pct:.1f}% complete", "detail": "Unconfirmed destinations continue to be checked automatically."})
+            names = sorted(set(unconfirmed_destinations or []))
+            named_gap = ", ".join(names[:3])
+            items.append({
+                "severity": "neutral",
+                "title": f"Distribution confirmation is {distribution_coverage_pct:.1f}% complete",
+                "detail": (
+                    f"Still being confirmed automatically: {named_gap}."
+                    if named_gap else "Unconfirmed destinations continue to be checked automatically."
+                ),
+            })
         if missing_core_metrics:
             readable = ", ".join(metric.replace("_", " ") for metric in missing_core_metrics)
             items.append({"severity": "neutral", "title": "Some providers do not expose every insight", "detail": f"Currently unavailable or incomplete: {readable}. Missing values are never shown as zero."})
@@ -520,8 +548,8 @@ class PodcastInsights:
                 if str(row["provider"]).startswith("youtube")
                 and row["metric_name"] in {"lifetime_plays", "lifetime_watch_time_hours"}
             ]
-        video_views = cls._metric_total(video_lifetime, "lifetime_plays")
-        video_hours = cls._metric_total(video_lifetime, "lifetime_watch_time_hours")
+        video_views = cls._latest_cumulative_total(video_lifetime, "lifetime_plays")
+        video_hours = cls._latest_cumulative_total(video_lifetime, "lifetime_watch_time_hours")
         podcast_activity = (
             float((spotify_lifetime or {}).get("downloads") or 0)
             + float((spotify_lifetime or {}).get("plays") or 0)
@@ -955,6 +983,28 @@ class PodcastInsights:
             total += sum(float(row["metric_value"]) for row in controlling_rows)
         return total
 
+    @classmethod
+    def _latest_cumulative_total(cls, rows: list[dict[str, Any]], metric: str) -> float:
+        """Sum one latest lifetime snapshot per provider without accumulating sync history."""
+        total = 0.0
+        candidates = [row for row in rows if row.get("metric_name") == metric]
+        for provider in {str(row.get("provider") or "") for row in candidates}:
+            provider_rows = [row for row in candidates if str(row.get("provider") or "") == provider]
+            latest_period = max(
+                ((str(row.get("period_start") or ""), str(row.get("period_end") or "")) for row in provider_rows),
+                default=None, key=lambda value: (value[1], value[0]),
+            )
+            period_rows = [
+                row for row in provider_rows
+                if latest_period and (str(row.get("period_start") or ""), str(row.get("period_end") or "")) == latest_period
+            ]
+            latest_import = max((str(row.get("imported_at") or "") for row in period_rows), default="")
+            snapshot_rows = [
+                row for row in period_rows if str(row.get("imported_at") or "") == latest_import
+            ]
+            total += cls._metric_total(snapshot_rows, metric)
+        return total
+
     @staticmethod
     def _prefer_authoritative_overlap_sources(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Keep one authoritative source family for explicitly overlapping evidence."""
@@ -1028,14 +1078,14 @@ class PodcastInsights:
 
     @classmethod
     def _spotify_lifetime(cls, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-        daily = [row for row in rows if row["period_start"] == row["period_end"]]
+        daily = cls._spotify_daily(rows)
         if not daily:
             return None
         return {
-            "period_start": min(row["period_start"] for row in daily),
-            "period_end": max(row["period_end"] for row in daily),
-            "downloads": cls._metric_total(daily, "downloads"),
-            "plays": cls._metric_total(daily, "plays") + cls._metric_total(daily, "streams"),
+            "period_start": min(row["period"] for row in daily),
+            "period_end": max(row["period"] for row in daily),
+            "downloads": sum(float(row.get("downloads") or 0) for row in daily),
+            "plays": sum(float(row.get("plays") or 0) for row in daily),
         }
 
     @classmethod

@@ -407,6 +407,19 @@ def test_attention_items_detect_material_recent_change() -> None:
     assert "50% below" in items[0]["title"]
 
 
+def test_attention_items_name_the_unconfirmed_destination() -> None:
+    items = PodcastInsights._attention_items(
+        spotify_daily=[], stale_provider_count=0, missing_core_metrics=[],
+        distribution_coverage_pct=97.2, unconfirmed_destinations=["Listen Notes"],
+    )
+
+    assert items == [{
+        "severity": "neutral",
+        "title": "Distribution confirmation is 97.2% complete",
+        "detail": "Still being confirmed automatically: Listen Notes.",
+    }]
+
+
 def test_web_insights_keeps_private_metrics_missing_without_public_checks(temp_db):
     result = GuestWebService(temp_db.db_path).get_podcast_insights()
 
@@ -778,6 +791,48 @@ def test_show_level_web_player_total_controls_over_page_breakdowns():
     ]
 
     assert PodcastInsights._metric_total(rows, "web_player_play_starts") == 320
+
+
+def test_latest_cumulative_total_uses_one_snapshot_per_provider():
+    rows = [
+        {"provider": "youtube:one", "metric_name": "lifetime_plays", "metric_value": 700,
+         "period_start": "2005-04-23", "period_end": "2026-11-25", "imported_at": "2026-11-25T10:00:00Z"},
+        {"provider": "youtube:one", "metric_name": "lifetime_plays", "metric_value": 800,
+         "period_start": "2005-04-23", "period_end": "2026-11-27", "imported_at": "2026-11-27T10:00:00Z"},
+        {"provider": "youtube:two", "metric_name": "lifetime_plays", "metric_value": 50,
+         "period_start": "2005-04-23", "period_end": "2026-11-27", "imported_at": "2026-11-27T10:00:00Z"},
+    ]
+
+    assert PodcastInsights._latest_cumulative_total(rows, "lifetime_plays") == 850
+
+
+def test_spotify_lifetime_is_exactly_the_sum_of_the_displayed_daily_series():
+    rows = [
+        {"provider": "spotify", "metric_name": "downloads", "metric_value": 10,
+         "period_start": "2026-11-25", "period_end": "2026-11-25", "imported_at": "2026-11-25T10:00:00Z",
+         "overlap_group": "open_rss_downloads", "source_class": "host_rss_delivery", "source_reference": "first.csv"},
+        {"provider": "spotify", "metric_name": "downloads", "metric_value": 20,
+         "period_start": "2026-11-26", "period_end": "2026-11-26", "imported_at": "2026-11-26T10:00:00Z",
+         "overlap_group": "open_rss_downloads", "source_class": "host_rss_delivery", "source_reference": "second.csv"},
+    ]
+
+    daily = PodcastInsights._spotify_daily(rows)
+    lifetime = PodcastInsights._spotify_lifetime(rows)
+
+    assert lifetime["downloads"] == 30
+    assert lifetime["downloads"] == sum(item["downloads"] for item in daily)
+
+
+def test_episode_measurement_coverage_includes_platform_content_without_internal_link():
+    rows = [{
+        "provider": "youtube:one", "metric_name": "video_lifetime_views",
+        "platform_content_id": "video-1", "episode_id": None,
+    }]
+
+    coverage = PodcastInsights._measurement_coverage(rows, [])
+    episode = next(item for item in coverage if item["label"] == "Episode performance")
+
+    assert episode == {"label": "Episode performance", "available": True, "providers": ["youtube:one"]}
 
 
 def test_top_platform_content_prefers_lifetime_video_activity():
