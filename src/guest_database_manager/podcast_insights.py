@@ -974,6 +974,7 @@ class PodcastInsights:
     @staticmethod
     def _metric_total(rows: list[dict[str, Any]], metric: str) -> float:
         selected = [row for row in rows if row["metric_name"] == metric]
+        selected = PodcastInsights._latest_rows_by_natural_grain(selected)
         selected = PodcastInsights._prefer_authoritative_overlap_sources(selected)
         total = 0.0
         for provider in {str(row["provider"]) for row in selected}:
@@ -982,6 +983,27 @@ class PodcastInsights:
             controlling_rows = PodcastInsights._prefer_aggregate_rows(show_rows or provider_rows)
             total += sum(float(row["metric_value"]) for row in controlling_rows)
         return total
+
+    @staticmethod
+    def _latest_rows_by_natural_grain(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Collapse repeated full-history imports without trusting changing source metadata.
+
+        Provider exports are immutable snapshots, but collector upgrades can change source
+        references, source classes, or overlap groups. Those fields must not make the same
+        provider/date/content observation additive.
+        """
+        dimensions = (
+            "episode_id", "provider", "metric_name", "traffic_scope", "period_start", "period_end",
+            "country_code", "city", "device_type", "app_name", "age_group", "gender",
+            "traffic_source", "platform_content_id",
+        )
+        latest: dict[tuple[str, ...], dict[str, Any]] = {}
+        for row in rows:
+            key = tuple(str(row.get(field) or "") for field in dimensions)
+            current = latest.get(key)
+            if current is None or str(row.get("imported_at") or "") > str(current.get("imported_at") or ""):
+                latest[key] = row
+        return list(latest.values())
 
     @classmethod
     def _latest_cumulative_total(cls, rows: list[dict[str, Any]], metric: str) -> float:

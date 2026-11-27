@@ -823,6 +823,24 @@ def test_spotify_lifetime_is_exactly_the_sum_of_the_displayed_daily_series():
     assert lifetime["downloads"] == sum(item["downloads"] for item in daily)
 
 
+def test_repeated_spotify_full_history_imports_are_not_added_together():
+    common = {
+        "provider": "spotify", "metric_name": "downloads", "metric_value": 100,
+        "period_start": "2026-11-25", "period_end": "2026-11-25", "episode_id": None,
+        "country_code": "", "city": "", "device_type": "", "app_name": "", "age_group": "",
+        "gender": "", "traffic_source": "", "platform_content_id": "",
+    }
+    rows = [
+        {**common, "imported_at": "2026-11-25T10:00:00Z", "source_reference": "legacy.csv",
+         "source_class": "provider_native", "overlap_group": ""},
+        {**common, "imported_at": "2026-11-27T10:00:00Z", "source_reference": "current.csv",
+         "source_class": "host_rss_delivery", "overlap_group": "open_rss_downloads"},
+    ]
+
+    assert PodcastInsights._metric_total(rows, "downloads") == 100
+    assert PodcastInsights._spotify_lifetime(rows)["downloads"] == 100
+
+
 def test_episode_measurement_coverage_includes_platform_content_without_internal_link():
     rows = [{
         "provider": "youtube:one", "metric_name": "video_lifetime_views",
