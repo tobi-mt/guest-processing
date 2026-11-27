@@ -6,6 +6,7 @@ import logging
 import requests
 
 from guest_database_manager.ai_assistant import AIAssistant
+from guest_database_manager.openai_config import DEFAULT_OPENAI_MODEL
 
 
 def _guest():
@@ -307,7 +308,7 @@ def test_openai_http_error_logs_safe_provider_metadata(monkeypatch, caplog):
 
 
 def test_reasoning_models_omit_temperature_for_chat_completions(monkeypatch):
-    assistant = AIAssistant(api_key="test", model="gpt-5")
+    assistant = AIAssistant(api_key="test", model=DEFAULT_OPENAI_MODEL)
     captured = {}
 
     class Response:
@@ -327,6 +328,10 @@ def test_reasoning_models_omit_temperature_for_chat_completions(monkeypatch):
     assert assistant._call_openai([{"role": "user", "content": "Hello"}]) == "OK"
     assert "temperature" not in captured["payload"]
     assert captured["timeout"] == (10, 120.0)
+
+
+def test_default_model_is_supported_gpt_6_replacement():
+    assert AIAssistant().model == "gpt-6-luna"
 
 
 def test_email_subjects_are_stable_human_and_free_of_clickbait():

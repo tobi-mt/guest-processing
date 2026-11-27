@@ -57,6 +57,7 @@ from guest_database_manager.episode_planner import build_editorial_fit, build_re
 from guest_database_manager.google_calendar_sync import GoogleCalendarSyncClient, GoogleCalendarSyncError
 from guest_database_manager.google_service_account_calendar import GoogleServiceAccountCalendarClient
 from guest_database_manager.openai_scheduling_copilot import OpenAISchedulingCopilot
+from guest_database_manager.openai_config import DEFAULT_OPENAI_MODEL
 from guest_database_manager.rss_release_reconciliation import RSSReleaseReconciler
 
 
@@ -1143,6 +1144,21 @@ def test_planning_uses_guest_research_as_copilot_context(monkeypatch, temp_db):
     assert "public work in healing, leadership" in episode["copy_assist"]["summary"].lower()
 
 
+def test_direct_web_openai_clients_use_supported_default_model(monkeypatch, temp_db):
+    service = GuestWebService(temp_db.db_path)
+    monkeypatch.setenv(web_interface.OPENAI_API_KEY_ENV_VAR, "test-key")
+    monkeypatch.delenv(web_interface.OPENAI_MODEL_ENV_VAR, raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    assistant = service._get_ai_assistant()
+    copilot = service._build_openai_scheduling_copilot()
+
+    assert assistant is not None
+    assert copilot is not None
+    assert assistant.model == DEFAULT_OPENAI_MODEL
+    assert copilot.model == DEFAULT_OPENAI_MODEL
+
+
 def test_planning_can_attach_openai_scheduling_copilot(monkeypatch, temp_db):
     """Planning recommendations should expose optional OpenAI scheduling copilot evidence."""
     service = GuestWebService(temp_db.db_path)
@@ -1164,7 +1180,7 @@ def test_planning_can_attach_openai_scheduling_copilot(monkeypatch, temp_db):
             for item in recommendations:
                 enriched_item = dict(item)
                 enriched_item["ai_copilot"] = {
-                    "model": "gpt-5",
+                    "model": "gpt-6-luna",
                     "alignment_score": 82,
                     "summary": "Research-backed fit for the current release window.",
                     "why_now": ["guest research supports a timely healing angle"],
@@ -1176,7 +1192,7 @@ def test_planning_can_attach_openai_scheduling_copilot(monkeypatch, temp_db):
             return {
                 "status": "active",
                 "message": "AI copilot enriched the recommendations.",
-                "model": "gpt-5",
+                "model": "gpt-6-luna",
                 "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
                 "recommendations": enriched,
             }
@@ -1193,7 +1209,7 @@ def test_planning_can_attach_openai_scheduling_copilot(monkeypatch, temp_db):
     assert ai_planning["ai_scheduling_enabled"] is True
     assert ai_planning["ai_copilot_status"]["status"] == "active"
     assert ai_planning["ai_copilot_status"]["current_month_context"]["theme"] == "Renewal, resurrection, and new life"
-    assert recommendation["ai_copilot"]["model"] == "gpt-5"
+    assert recommendation["ai_copilot"]["model"] == "gpt-6-luna"
     assert recommendation["ai_copilot"]["alignment_score"] == 82
 
 
@@ -1238,7 +1254,7 @@ def test_planning_ai_copilot_auto_researches_top_candidates(monkeypatch, temp_db
             return {
                 "status": "active",
                 "message": "AI copilot enriched the recommendations.",
-                "model": "gpt-5",
+                "model": "gpt-6-luna",
                 "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
                 "recommendations": recommendations,
             }
@@ -1308,7 +1324,7 @@ def test_planning_ai_copilot_does_not_rerun_existing_auto_research(monkeypatch, 
             return {
                 "status": "active",
                 "message": "AI copilot enriched the recommendations.",
-                "model": "gpt-5",
+                "model": "gpt-6-luna",
                 "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
                 "recommendations": recommendations,
             }
@@ -1339,7 +1355,7 @@ def test_planning_ai_copilot_thin_context_message_explains_candidate_coverage(mo
             return {
                 "status": "thin_context",
                 "message": "AI copilot was configured, but the current candidates had too little grounded context to add trustworthy guidance.",
-                "model": "gpt-5",
+                "model": "gpt-6-luna",
                 "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
                 "recommendations": recommendations,
             }
@@ -1385,7 +1401,7 @@ def test_planning_ai_copilot_can_research_episode_directly_without_guest_match(m
             return {
                 "status": "active",
                 "message": "AI copilot enriched the recommendations.",
-                "model": "gpt-5",
+                "model": "gpt-6-luna",
                 "current_month_context": {"month_label": "April 2026", "theme": "Renewal, resurrection, and new life"},
                 "recommendations": recommendations,
             }
@@ -1400,7 +1416,7 @@ def test_planning_ai_copilot_can_research_episode_directly_without_guest_match(m
 
 def test_openai_scheduling_copilot_builds_grounded_fallback_when_model_returns_no_analyses():
     """Researched candidates should still get cautious copilot guidance when the model returns an empty analysis list."""
-    copilot = OpenAISchedulingCopilot(api_key="test", model="gpt-5")
+    copilot = OpenAISchedulingCopilot(api_key="test", model="gpt-6-luna")
 
     recommendations = [
         {
@@ -1439,7 +1455,7 @@ def test_openai_scheduling_copilot_builds_grounded_fallback_when_model_returns_n
 
 
 def test_openai_copilot_preserves_unreviewed_horizon_recommendations():
-    copilot = OpenAISchedulingCopilot(api_key="test", model="gpt-5", live_month_signals_enabled=False)
+    copilot = OpenAISchedulingCopilot(api_key="test", model="gpt-6-luna", live_month_signals_enabled=False)
     recommendations = [
         {
             "id": index,
@@ -1502,7 +1518,7 @@ def test_openai_scheduling_copilot_adds_cached_live_month_signals(monkeypatch):
 
     copilot = OpenAISchedulingCopilot(
         api_key="test",
-        model="gpt-5",
+        model="gpt-6-luna",
         live_month_signals_enabled=True,
         live_month_signals_timeout_seconds=2,
         live_month_signals_ttl_seconds=3600,
@@ -2977,7 +2993,7 @@ def test_ai_scheduling_copilot_receives_imported_queue_candidates(monkeypatch, t
             return {
                 "status": "active",
                 "message": "AI copilot enriched the recommendations.",
-                "model": "gpt-5",
+                "model": "gpt-6-luna",
                 "current_month_context": {"month_label": "June 2026", "theme": "Identity, fatherhood, resilience, and community"},
                 "recommendations": recommendations,
             }
@@ -3881,7 +3897,7 @@ def test_ai_scheduling_fallback_uses_filtered_recommendations(monkeypatch, temp_
             return {
                 "status": "fallback",
                 "message": "AI unavailable; use deterministic recommendations.",
-                "model": "gpt-5",
+                "model": "gpt-6-luna",
                 "current_month_context": {"month_label": "June 2026", "theme": "Health, freedom, and summer renewal"},
             }
 

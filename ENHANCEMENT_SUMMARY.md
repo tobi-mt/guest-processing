@@ -39,7 +39,7 @@ Your Guest Database Manager has been significantly enhanced with **performance o
 #### Smart Email Draft Generation
 - **One-click AI email drafts** for acceptance/rejection emails
 - Personalized based on guest background, topics, and profession
-- Uses GPT-4o-mini for cost-effective, high-quality responses
+- Uses GPT-6 Luna for cost-effective, high-quality responses
 - Shows draft preview before sending
 
 #### Intelligent Guest Scoring
@@ -279,7 +279,7 @@ The app now uses:
 
 ## 💰 Cost Considerations
 
-### OpenAI API Costs (GPT-4o-mini)
+### OpenAI API Costs (GPT-6 Luna)
 
 Approximate costs per operation:
 - **Email draft generation**: $0.001-0.003 per email

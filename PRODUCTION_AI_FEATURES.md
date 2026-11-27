@@ -20,7 +20,7 @@ GET /api/ai/status
 {
   "available": true,
   "configured": true,
-  "model": "gpt-4o-mini"
+  "model": "gpt-6-luna"
 }
 ```
 

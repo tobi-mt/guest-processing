@@ -85,6 +85,7 @@ from guest_database_manager.growth_decision_intelligence import GrowthDecisionIn
 from guest_database_manager.podcast_analytics_connectors import AnalyticsConnectorError, PodcastAnalyticsConnectors
 from guest_database_manager.podcast_source_monitor import PodcastSourceMonitor
 from guest_database_manager.podcast_release_readiness import PodcastReachReleaseReadiness
+from guest_database_manager.openai_config import DEFAULT_OPENAI_MODEL
 from guest_database_manager.production_governance import POLICY_VERSION, classify_focus
 from guest_database_manager.recommendation_learning import (
     FEATURE_SCHEMA_VERSION,
@@ -7473,7 +7474,7 @@ class GuestWebService:
     def _build_openai_scheduling_copilot() -> Optional[OpenAISchedulingCopilot]:
         """Build the optional OpenAI scheduling copilot from environment configuration."""
         api_key = os.environ.get(OPENAI_API_KEY_ENV_VAR, "").strip()
-        model = os.environ.get(OPENAI_MODEL_ENV_VAR, "").strip() or "gpt-4o-mini"
+        model = os.environ.get(OPENAI_MODEL_ENV_VAR, "").strip() or DEFAULT_OPENAI_MODEL
         if not api_key:
             return None
         timeout_raw = os.environ.get(OPENAI_TIMEOUT_ENV_VAR, "12").strip() or "12"
@@ -8058,7 +8059,7 @@ class GuestWebService:
         if not api_key:
             return None
         
-        model = os.getenv(OPENAI_MODEL_ENV_VAR, "gpt-4o-mini")
+        model = os.getenv(OPENAI_MODEL_ENV_VAR, "").strip() or DEFAULT_OPENAI_MODEL
         return AIAssistant(api_key=api_key, model=model)
 
     def _get_apollo_client(self) -> Optional[ApolloClient]:
@@ -8337,7 +8338,7 @@ class GuestWebService:
         return {
             "available": AI_ASSISTANT_AVAILABLE,
             "configured": ai_assistant is not None,
-            "model": os.getenv(OPENAI_MODEL_ENV_VAR, "gpt-4o-mini") if ai_assistant else None
+            "model": (os.getenv(OPENAI_MODEL_ENV_VAR, "").strip() or DEFAULT_OPENAI_MODEL) if ai_assistant else None
         }
 
 

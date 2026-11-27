@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from guest_database_manager.db_connection import connect_database
+from guest_database_manager.openai_config import DEFAULT_OPENAI_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class AIAssistant:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gpt-4o-mini",
+        model: str = DEFAULT_OPENAI_MODEL,
         request_timeout_seconds: Optional[float] = None,
     ):
         """Initialize AI assistant with OpenAI API key."""
@@ -63,12 +64,12 @@ class AIAssistant:
                 "messages": messages,
                 **({"response_format": response_format} if response_format else {}),
             }
-            # GPT-5 and reasoning-model Chat Completions requests reject custom
+            # Current reasoning-model Chat Completions requests reject custom
             # sampling settings.  Omitting temperature uses the provider default
             # and keeps the assistant compatible with the model configured at run
-            # time, rather than assuming the legacy gpt-4o-mini default.
+            # time.
             model_name = self.model.lower()
-            if not model_name.startswith(("gpt-5", "o1", "o3", "o4")):
+            if not model_name.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
                 request_payload["temperature"] = temperature
             response = requests.post(
                 self.base_url,

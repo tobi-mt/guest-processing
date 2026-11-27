@@ -160,7 +160,7 @@ After deployment:
 
 2. **[ ] Check AI Status**
    - Sidebar should show "AI Features" card
-   - Status: "✅ AI Enabled (gpt-4o-mini)"
+   - Status: "✅ AI Enabled (gpt-6-luna)"
 
 3. **[ ] Test AI Buttons Visible**
    - Open any guest card
@@ -204,7 +204,7 @@ Expected response:
 {
   "available": true,
   "configured": true,
-  "model": "gpt-4o-mini"
+  "model": "gpt-6-luna"
 }
 ```
 
