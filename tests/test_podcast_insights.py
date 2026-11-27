@@ -710,6 +710,11 @@ def test_topline_summary_reconciles_six_metrics_without_claiming_unique_people()
     )
 
     assert result["downloads_plays"] == 1_550
+    assert result["open_rss_downloads"] == 1_000
+    assert result["spotify_native_plays"] == 500
+    assert result["video_views"] == 50
+    assert "counted once" in result["activity_coverage_note"]
+    assert "never added again" in result["activity_coverage_note"]
     assert result["listening_watch_hours"] == 30
     assert result["countries_reached"] == 2
     assert result["platforms_available"] == 1

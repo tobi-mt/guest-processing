@@ -526,6 +526,8 @@ class PodcastInsights:
             float((spotify_lifetime or {}).get("downloads") or 0)
             + float((spotify_lifetime or {}).get("plays") or 0)
         )
+        open_rss_downloads = float((spotify_lifetime or {}).get("downloads") or 0)
+        spotify_native_plays = float((spotify_lifetime or {}).get("plays") or 0)
         apple_hours = float((apple_summary or {}).get("listening_time_hours") or 0)
         country_names = {
             re.sub(r"\s+", " ", str(item.get("name") or "").strip()).casefold()
@@ -563,7 +565,15 @@ class PodcastInsights:
                 if spotify_lifetime is not None or video_lifetime else None
             ),
             "podcast_downloads_plays": podcast_activity,
+            "open_rss_downloads": open_rss_downloads,
+            "spotify_native_plays": spotify_native_plays,
             "video_views": video_views,
+            "activity_coverage_note": (
+                "Open podcast apps (hosting/RSS) are counted once, then separate Spotify-native "
+                "plays and YouTube views are added. App breakdowns decompose the hosting total and "
+                "are never added again. Web-player starts remain separate unless verified outside "
+                "hosting delivery."
+            ),
             "listening_watch_hours": (
                 apple_hours + video_hours
                 if apple_summary is not None or video_lifetime else None

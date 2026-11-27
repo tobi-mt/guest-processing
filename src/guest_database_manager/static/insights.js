@@ -162,7 +162,7 @@ function renderOverallPerformance(daily) {
   const view = audioView(daily || []);
   const change = changeLabel(view.comparison);
   const periodText = view.start && view.end ? `${formatDate(view.start)} – ${formatDate(view.end)}` : "Waiting for lifetime hosting history";
-  target.innerHTML = `${view.comparison ? `<div class="performance-change ${change.className}"><strong>${escapeHtml(change.text)}</strong><span>${number(view.comparison.delta)} podcast activity change · previous period ${formatDate(view.comparison.previous_start)} – ${formatDate(view.comparison.previous_end)}</span></div>` : `<div class="performance-change neutral"><strong>${audioRange === "all" ? "Lifetime history" : "No prior comparable period"}</strong><span>${escapeHtml(periodText)}</span></div>`}${trendChart("Podcast downloads and plays", audioChartRows(view.rows), [{key:"total",label:"Downloads & plays",className:"series-total"},{key:"downloads",label:"Other podcast apps",className:"series-primary"},{key:"plays",label:"Spotify plays",className:"series-secondary"}], {range:0,className:"overall-trend-card",periodLabel:audioRange === "7d" || audioRange === "30d" || audioRange === "90d" ? "Date" : "Month",emptyMessage:"Lifetime hosting history is being collected automatically."})}`;
+  target.innerHTML = `${view.comparison ? `<div class="performance-change ${change.className}"><strong>${escapeHtml(change.text)}</strong><span>${number(view.comparison.delta)} podcast activity change · previous period ${formatDate(view.comparison.previous_start)} – ${formatDate(view.comparison.previous_end)}</span></div>` : `<div class="performance-change neutral"><strong>${audioRange === "all" ? "Lifetime history" : "No prior comparable period"}</strong><span>${escapeHtml(periodText)}</span></div>`}${trendChart("Podcast downloads and plays", audioChartRows(view.rows), [{key:"total",label:"Downloads & plays",className:"series-total"},{key:"downloads",label:"Open podcast apps (hosting/RSS)",className:"series-primary"},{key:"plays",label:"Spotify-native plays",className:"series-secondary"}], {range:0,className:"overall-trend-card",periodLabel:audioRange === "7d" || audioRange === "30d" || audioRange === "90d" ? "Date" : "Month",emptyMessage:"Lifetime hosting history is being collected automatically."})}`;
   attachTrendInteractions(target);
   return view;
 }
@@ -173,8 +173,8 @@ function renderPlatformPerformance(global, monthly, listeningApps, audio, platfo
   const comparison = global.comparison || {};
   const componentStats = comparison.components || {};
   const cards = [
-    ["Podcast apps (RSS)", audio.downloads, "Downloads delivered across Apple Podcasts and every other open podcast app.", audio.total ? `${percentage(audio.downloads * 100 / audio.total)}% of selected podcast activity` : "Awaiting data", audio.start && audio.end ? `${formatDate(audio.start)} – ${formatDate(audio.end)}` : ""],
-    ["Spotify", audio.plays, "Native Spotify play starts in the selected range.", audio.total ? `${percentage(audio.plays * 100 / audio.total)}% of selected podcast activity` : "Awaiting data", audio.start && audio.end ? `${formatDate(audio.start)} – ${formatDate(audio.end)}` : ""],
+    ["Open podcast apps (hosting/RSS)", audio.downloads, "Authoritative downloads delivered across Apple Podcasts and every other open-RSS app; counted once.", audio.total ? `${percentage(audio.downloads * 100 / audio.total)}% of selected podcast activity` : "Awaiting data", audio.start && audio.end ? `${formatDate(audio.start)} – ${formatDate(audio.end)}` : ""],
+    ["Spotify-native", audio.plays, "Native Spotify play starts outside the open-RSS download component.", audio.total ? `${percentage(audio.plays * 100 / audio.total)}% of selected podcast activity` : "Awaiting data", audio.start && audio.end ? `${formatDate(audio.start)} – ${formatDate(audio.end)}` : ""],
     ["YouTube", components.youtube_views?.value, "Video and podcast views from connected channels.", "Latest comparable window", changeLabel(componentStats.youtube_views).text],
   ].map(([label,value,description,meta,detail]) => `<article class="performance-platform-card"><div><span>${escapeHtml(label)}</span><strong>${number(value)}</strong></div><p>${escapeHtml(description)}</p><div class="platform-card-meta"><span>${escapeHtml(meta)}</span><span class="metric-change neutral">${escapeHtml(detail)}</span></div></article>`);
   const appleRows = monthly.apple_podcasts || [];
@@ -394,6 +394,11 @@ function render(payload) {
   const growth = topline.growth_pct;
   const growthValue = growth == null ? "—" : `${Number(growth) > 0 ? "+" : ""}${percentage(growth)}%`;
   const relationshipBreakdown = topline.audience_relationship_breakdown || {};
+  const activityComponents = [
+    topline.open_rss_downloads ? `${number(topline.open_rss_downloads)} open-RSS downloads` : "",
+    topline.spotify_native_plays ? `${number(topline.spotify_native_plays)} Spotify-native plays` : "",
+    topline.video_views ? `${number(topline.video_views)} YouTube views` : "",
+  ].filter(Boolean).join(" + ");
   const relationshipDetail = [
     relationshipBreakdown.subscribers ? `${number(relationshipBreakdown.subscribers)} subscriptions` : "",
     relationshipBreakdown.followers ? `${number(relationshipBreakdown.followers)} followers` : "",
@@ -403,7 +408,7 @@ function render(payload) {
     .map((item) => `${providerLabel(item.provider)}: ${number(item.value)} ${metricLabel(item.metric).toLowerCase()} in its latest reported period through ${item.period_end || "unknown"}`)
     .join(" · ");
   document.getElementById("insights-summary").innerHTML = [
-    ["Downloads & plays", topline.downloads_plays == null ? "—" : number(topline.downloads_plays), topline.downloads_plays == null ? "Lifetime totals are still being collected from connected sources" : `${lifetimeRange} · podcast and lifetime video activity`, "global"],
+    ["Downloads & plays", topline.downloads_plays == null ? "—" : number(topline.downloads_plays), topline.downloads_plays == null ? "Lifetime totals are still being collected from connected sources" : `${lifetimeRange} · ${activityComponents || topline.activity_coverage_note || "source-backed activity"}`, "global"],
     ["Listening & watch hours", topline.listening_watch_hours == null ? "—" : percentage(topline.listening_watch_hours), topline.hours_coverage_note || "Awaiting duration data"],
     ["Countries reached", number(topline.countries_reached), "Distinct countries across connected audience reports"],
     ["Platforms available", number(topline.platforms_available), "Confirmed listening and watching destinations"],
