@@ -717,3 +717,44 @@ def test_topline_summary_reconciles_six_metrics_without_claiming_unique_people()
     assert result["audience_relationship_by_platform"][-1]["value"] == 5
     assert result["growth_pct"] == 20
     assert "not additive" in result["audience_relationship_note"]
+
+
+def test_platform_measurement_covers_every_available_rss_destination_without_inventing_detail():
+    platforms = [
+        {"key": "spotify", "name": "Spotify", "availability": "available", "analytics_mode": "host_and_provider_export"},
+        {"key": "pocket_casts", "name": "Pocket Casts", "availability": "available", "analytics_mode": "host_rss_only"},
+        {"key": "deezer", "name": "Deezer", "availability": "available", "analytics_mode": "host_rss_only"},
+        {"key": "luminary", "name": "Luminary", "availability": "unavailable", "analytics_mode": "host_rss_only"},
+    ]
+    rows = [{
+        "provider": "spotify", "metric_name": "downloads", "source_class": "host_rss_delivery",
+        "app_name": "Pocket Casts",
+    }]
+    coverage = PodcastInsights._platform_measurement_coverage(
+        platforms, rows, [{"provider": "spotify"}]
+    )
+
+    assert coverage["available_count"] == 3
+    assert coverage["covered_count"] == 3
+    assert coverage["uncovered_available_count"] == 0
+    assert {item["key"]: item["status"] for item in coverage["platforms"]} == {
+        "spotify": "direct_measured",
+        "pocket_casts": "app_measured",
+        "deezer": "aggregate_measured",
+        "luminary": "not_available",
+    }
+
+
+def test_monthly_trends_include_arbitrary_measured_providers():
+    rows = [
+        {"provider": "deezer", "metric_name": "plays", "metric_value": 10,
+         "period_start": "2026-10-01", "period_end": "2026-10-31", "episode_id": None,
+         "overlap_group": "", "source_class": "provider_native", "source_reference": "deezer"},
+        {"provider": "deezer", "metric_name": "listeners", "metric_value": 7,
+         "period_start": "2026-10-01", "period_end": "2026-10-31", "episode_id": None,
+         "overlap_group": "", "source_class": "provider_native", "source_reference": "deezer"},
+    ]
+
+    assert PodcastInsights._provider_monthly_trends(rows) == {
+        "deezer": [{"period": "2026-10", "activity": 10.0, "listeners": 7.0}]
+    }

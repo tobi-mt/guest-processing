@@ -86,9 +86,13 @@ function attachTrendInteractions(root) {
 }
 
 function renderMonthlyTrends(monthly) {
-  const spotify = monthly.spotify || []; const apple = monthly.apple_podcasts || [];
   const target = document.getElementById("reach-trend");
-  target.innerHTML = `<div class="trend-controls" aria-label="Trend range"><button type="button" data-trend-range="12" class="${trendRange === 12 ? "active" : ""}">12 months</button><button type="button" data-trend-range="24" class="${trendRange === 24 ? "active" : ""}">24 months</button><button type="button" data-trend-range="0" class="${trendRange === 0 ? "active" : ""}">All history</button></div><div class="monthly-trend-grid">${trendChart("Spotify activity", spotify, [{key:"downloads",label:"Downloads",className:"series-primary"},{key:"plays",label:"Spotify plays",className:"series-secondary"}])}${trendChart("Apple listening", apple, [{key:"plays",label:"Plays",className:"series-primary"},{key:"listeners",label:"Monthly listeners",className:"series-secondary"}])}</div>`;
+  const charts = Object.entries(monthly || {}).filter(([, rows]) => rows?.length).map(([provider, rows]) => {
+    if (provider === "spotify") return trendChart("Spotify activity", rows, [{key:"downloads",label:"Downloads",className:"series-primary"},{key:"plays",label:"Spotify plays",className:"series-secondary"}]);
+    if (provider === "apple_podcasts") return trendChart("Apple Podcasts activity", rows, [{key:"plays",label:"Plays",className:"series-primary"},{key:"listeners",label:"Monthly listeners",className:"series-secondary"}]);
+    return trendChart(`${providerLabel(provider)} activity`, rows, [{key:"activity",label:"Measured activity",className:"series-primary"},{key:"listeners",label:"Reported audience",className:"series-secondary"}]);
+  });
+  target.innerHTML = `<div class="trend-controls" aria-label="Trend range"><button type="button" data-trend-range="12" class="${trendRange === 12 ? "active" : ""}">12 months</button><button type="button" data-trend-range="24" class="${trendRange === 24 ? "active" : ""}">24 months</button><button type="button" data-trend-range="0" class="${trendRange === 0 ? "active" : ""}">All history</button></div><div class="monthly-trend-grid">${charts.join("") || empty("No provider has returned comparable monthly history yet.")}</div>`;
   attachTrendInteractions(target);
   target.querySelectorAll("[data-trend-range]").forEach((button) => button.addEventListener("click", () => { trendRange = Number(button.dataset.trendRange); renderMonthlyTrends(monthly); }));
 }
@@ -163,7 +167,7 @@ function renderOverallPerformance(daily) {
   return view;
 }
 
-function renderPlatformPerformance(global, monthly, listeningApps, audio) {
+function renderPlatformPerformance(global, monthly, listeningApps, audio, platformMeasurement) {
   const target = document.getElementById("platform-performance");
   const components = Object.fromEntries((global.components || []).map((item) => [item.key, item]));
   const comparison = global.comparison || {};
@@ -182,7 +186,9 @@ function renderPlatformPerformance(global, monthly, listeningApps, audio) {
 
   const appTarget = document.getElementById("listening-app-summary");
   const apps = (listeningApps || []).slice(0, 8);
-  appTarget.innerHTML = apps.length ? `<div class="listening-app-heading"><h3>Lifetime podcast-app mix</h3><p>Host-reported delivery already included in the selected podcast total.</p></div><div class="listening-app-chips">${apps.map((item) => `<span><strong>${escapeHtml(item.name)}</strong>${item.is_percentage ? `${percentage(item.value)}%` : `${number(item.value)} · ${percentage(item.share_pct)}%`}</span>`).join("")}</div>` : `<p class="platform-coverage-note">The podcast total covers every open app. The per-app mix will appear when the hosting source provides it.</p>`;
+  const scope = platformMeasurement || {};
+  const scopeNote = `<p class="platform-coverage-note"><strong>${number(scope.covered_count)} of ${number(scope.available_count)} confirmed destinations are included in measured totals.</strong> ${escapeHtml(scope.note || "Separate app figures appear only when the source provides them.")}</p>`;
+  appTarget.innerHTML = scopeNote + (apps.length ? `<div class="listening-app-heading"><h3>Lifetime podcast-app mix</h3><p>Host-reported delivery already included in the selected podcast total.</p></div><div class="listening-app-chips">${apps.map((item) => `<span><strong>${escapeHtml(item.name)}</strong>${item.is_percentage ? `${percentage(item.value)}%` : `${number(item.value)} · ${percentage(item.share_pct)}%`}</span>`).join("")}</div>` : `<p class="platform-coverage-note">The podcast total covers every open app. The per-app mix will appear when the hosting source provides it.</p>`);
 }
 
 function renderDecisionIntelligence(intelligence) {
@@ -310,11 +316,12 @@ function render(payload) {
   const connections = payload.analytics_connectors?.google?.connections || [];
   providerLabels = Object.fromEntries(connections.filter((item) => item.youtube_channel_id).map((item) => [`youtube:${String(item.youtube_channel_id).toLowerCase()}`, item.youtube_channel_title || item.youtube_channel_id]));
   const releaseReady = release.status === "ready";
+  const platformMeasurement = payload.platform_measurement || {};
   const measuredSourcesCurrent = providers.length > 0 && providers.every((item) => item.freshness === "current");
   const rawSetupItems = release.blockers || [];
   const sourceSetupPending = rawSetupItems.some((item) => ["youtube_analytics_not_ready", "provider_collectors_not_ready"].includes(item.code));
   const visibleSetupItems = rawSetupItems.filter((item) => item.code !== "analytics_evidence_incomplete" || !sourceSetupPending);
-  document.getElementById("insights-quality").innerHTML = `<div class="overview-status"><span class="coverage-pill ${measuredSourcesCurrent ? "covered" : "building"}">${measuredSourcesCurrent ? "Live data" : "Connecting data"}</span><div><strong>${number(summary.verified_platforms)} listening destinations tracked</strong><p>${measuredSourcesCurrent ? "All contributing analytics sources are current." : "Automatic collection is active; unavailable source details are never estimated."}</p></div></div><div><strong>Latest audience data</strong><p>${escapeHtml(quality.latest_period_end || "Automatic collection is starting")}</p></div><button id="refresh-podcast-reach" class="primary-button" type="button">Refresh now</button>`;
+  document.getElementById("insights-quality").innerHTML = `<div class="overview-status"><span class="coverage-pill ${measuredSourcesCurrent ? "covered" : "building"}">${measuredSourcesCurrent ? "Live data" : "Connecting data"}</span><div><strong>${number(platformMeasurement.covered_count)} of ${number(platformMeasurement.available_count)} confirmed destinations measured</strong><p>${escapeHtml(platformMeasurement.note || (measuredSourcesCurrent ? "All contributing analytics sources are current." : "Automatic collection is active; unavailable source details are never estimated."))}</p></div></div><div><strong>Latest audience data</strong><p>${escapeHtml(quality.latest_period_end || "Automatic collection is starting")}</p></div><button id="refresh-podcast-reach" class="primary-button" type="button">Refresh now</button>`;
   const releaseChecks = Object.entries(release.checks || {});
   const setupLabels = {
     distribution_incomplete: ["Refresh platform availability", "We will recheck every known listing and podcast app."],
@@ -371,7 +378,7 @@ function render(payload) {
     .map((item) => `${providerLabel(item.provider)}: ${number(item.value)} ${metricLabel(item.metric).toLowerCase()} in its latest reported period through ${item.period_end || "unknown"}`)
     .join(" · ");
   document.getElementById("insights-summary").innerHTML = [
-    ["Downloads & plays", number(topline.downloads_plays), `${lifetimeRange} · podcast and lifetime video activity`, "global"],
+    ["Downloads & plays", topline.downloads_plays == null ? "—" : number(topline.downloads_plays), topline.downloads_plays == null ? "Lifetime totals are still being collected from connected sources" : `${lifetimeRange} · podcast and lifetime video activity`, "global"],
     ["Listening & watch hours", topline.listening_watch_hours == null ? "—" : percentage(topline.listening_watch_hours), topline.hours_coverage_note || "Awaiting duration data"],
     ["Countries reached", number(topline.countries_reached), "Distinct countries across connected audience reports"],
     ["Platforms available", number(topline.platforms_available), "Confirmed listening and watching destinations"],
@@ -392,7 +399,7 @@ function render(payload) {
     ["How long they stay", hasViewDuration ? duration(weightedDuration) : "Watch-time detail unavailable", hasViewDuration ? "Average viewing time across connected channels." : "The connected source has not returned average viewing duration yet."],
   ].map(([label,value,detail]) => `<article class="highlight-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><p>${escapeHtml(detail)}</p></article>`).join("");
   renderOverallPerformance(dailyAudio);
-  renderPlatformPerformance(global, payload.monthly_trends || {}, payload.listening_apps || [], audio);
+  renderPlatformPerformance(global, payload.monthly_trends || {}, payload.listening_apps || [], audio, platformMeasurement);
   renderDecisionIntelligence(payload.decision_intelligence || {});
   renderPodcastAdvisory(payload.advisory || {});
   const coverage = payload.source_coverage || {}; const publicSources = coverage.public || []; const privateSources = coverage.private || [];
@@ -400,11 +407,13 @@ function render(payload) {
   const automated = privateSources.filter((source) => source.connection_mode === "automated"); const limited = privateSources.filter((source) => source.connection_mode === "provider_limited");
   const sourceRow = (source) => { const metrics = source.metrics_present?.length ? source.metrics_present : source.metrics || []; const shown = metrics.slice(0, 5); const active = source.status === "data_present"; return `<article class="source-row"><div><strong>${escapeHtml(source.name)}</strong><span class="source-status ${active ? "data_present" : "provider_access_required"}">${active ? "Current" : "Connecting"}</span></div><small>${active ? `${Number(source.observation_count || 0)} data points · through ${escapeHtml(source.latest_period_end || "unknown")}` : "The automatic collector is waiting for owner-approved provider access."}</small><p>${source.metrics_present?.length ? "Available" : "Expected"}: ${shown.map(metricLabel).map(escapeHtml).join(", ")}${metrics.length > shown.length ? ` +${metrics.length - shown.length} more` : ""}</p></article>`; };
   document.getElementById("source-coverage").innerHTML = `<div class="source-column"><h3>Public availability <span>${Number(coverage.public_available || 0)}/${Number(coverage.public_expected || 0)}</span></h3>${publicSources.length ? publicSources.map((source) => { const retrying = source.status === "retrying"; const available = source.status === "available"; return `<article class="source-row"><div><strong>${escapeHtml(source.source_name)}</strong><span class="source-status ${available ? "data_present" : retrying ? "refreshing" : "unavailable"}">${available ? "Verified" : retrying ? "Verified · retrying check" : "Temporarily unavailable"}</span></div><small>${escapeHtml(retrying && source.last_success_at ? `Verified ${formatTimestamp(source.last_success_at)} · retry attempted ${formatTimestamp(source.checked_at)}` : formatTimestamp(source.checked_at))}</small></article>`; }).join("") : empty("The first availability check will run automatically.")}</div><div class="source-column"><h3>Connected sources <span>${Number(coverage.automated_connected || 0)}/${Number(coverage.automated_expected || 0)}</span></h3>${automated.map(sourceRow).join("")}</div><div class="source-column"><h3>Private analytics <span>${limited.filter((source) => source.status === "data_present").length}/${limited.length}</span></h3>${limited.map(sourceRow).join("")}</div>`;
+  const platformCoverageByKey = Object.fromEntries((platformMeasurement.platforms || []).map((item) => [item.key, item]));
   document.getElementById("platform-grid").innerHTML = (payload.platforms || []).map((platform) => {
     const status = platform.availability === "available" ? "Confirmed" : platform.distribution_mode === "expected_missing" ? "Not listed" : "Being checked";
     const mode = {direct_listing:"Official listing",direct_video:"Video channel",catalog_listing:"Podcast directory",rss_subscription:"Opens with RSS",expected_missing:"Optional destination"}[platform.distribution_mode] || "Podcast destination";
     const checked = platform.verified_on ? `Checked ${String(platform.verified_on).slice(0, 10)}` : "Automatic check scheduled";
-    return `<a class="platform-card" href="${escapeHtml(safeUrl(platform.url))}" target="_blank" rel="noopener noreferrer"><span>${escapeHtml(mode)}</span><strong>${escapeHtml(platform.name)}</strong><small>${escapeHtml(status)} · ${escapeHtml(checked)}</small></a>`;
+    const measurement = platformCoverageByKey[platform.key];
+    return `<a class="platform-card" href="${escapeHtml(safeUrl(platform.url))}" target="_blank" rel="noopener noreferrer"><span>${escapeHtml(mode)}</span><strong>${escapeHtml(platform.name)}</strong><small>${escapeHtml(status)} · ${escapeHtml(checked)}</small>${measurement ? `<small>${escapeHtml(measurement.detail)}</small>` : ""}</a>`;
   }).join("");
   document.getElementById("provider-strength").innerHTML = providers.length ? providers.map((item) => `<article class="provider-row"><div><strong>${escapeHtml(providerLabel(item.provider))}</strong><span class="freshness ${escapeHtml(item.freshness)}">${item.freshness === "current" ? "Up to date" : "Refresh needed"}</span></div><p class="metric-pairs">${Object.entries(item.metrics || {}).map(([key,value]) => `<span>${escapeHtml(metricLabel(key))}<strong>${number(value)}</strong></span>`).join("")}</p><small>${escapeHtml(item.period_start)} – ${escapeHtml(item.period_end)}</small></article>`).join("") : empty("Connect a provider to see its performance here.");
   const audience = payload.audience_by_platform || [];

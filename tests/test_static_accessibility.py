@@ -393,7 +393,7 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
     assert "insights.css?v=20261126.4" in html
-    assert "insights.js?v=20261126.5" in html
+    assert "insights.js?v=20261127.2" in html
     assert "Copy browser reset" in javascript
     assert "MirrorTalkAnalyticsCollector/${profileName}" in javascript
     assert 'provider === "apple_podcasts" ? "apple_podcasts"' in javascript

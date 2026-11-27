@@ -124,6 +124,11 @@ class PodcastInsights:
         apple_rows = [row for row in rows if str(row["provider"]).casefold() == "apple_podcasts"]
         apple_summary = self._apple_summary(apple_rows)
         apple_monthly = self._apple_monthly(apple_rows)
+        provider_monthly = self._provider_monthly_trends(rows)
+        if spotify_monthly:
+            provider_monthly["spotify"] = spotify_monthly
+        if apple_monthly:
+            provider_monthly["apple_podcasts"] = apple_monthly
         performance_trend = self._performance_trend(
             rows, youtube_rows, expected_youtube_channels=identified_channels
         )
@@ -226,6 +231,9 @@ class PodcastInsights:
             spotify_lifetime=spotify_lifetime, apple_summary=apple_summary,
         )
         measurement_coverage = self._measurement_coverage(rows, provider_cards)
+        platform_measurement = self._platform_measurement_coverage(
+            platforms, rows, provider_cards
+        )
         attention_items = self._attention_items(
             spotify_daily=spotify_daily, stale_provider_count=stale,
             missing_core_metrics=sorted({"downloads", "unique_listeners", "consumption_depth_pct"} - metric_names),
@@ -269,13 +277,18 @@ class PodcastInsights:
             "top_platform_content": top_videos,
             "episode_performance": episode_performance,
             "measurement_coverage": measurement_coverage,
+            "platform_measurement": platform_measurement,
             "attention_items": attention_items,
             "trend": trend[-14:],
-            "monthly_trends": {"spotify": spotify_monthly, "apple_podcasts": apple_monthly},
+            "monthly_trends": provider_monthly,
             "daily_trends": {"spotify": spotify_daily},
             "performance_trend": performance_trend,
             "quality": {
-                "status": "no_data" if not rows else "partial" if len(provider_cards) < max(len(platforms), 1) else "covered",
+                "status": (
+                    "no_data" if not rows else "covered"
+                    if platform_measurement["available_count"] > 0
+                    and platform_measurement["uncovered_available_count"] == 0 else "partial"
+                ),
                 "observation_count": len(rows),
                 "latest_period_end": latest_end,
                 "stale_provider_count": stale,
@@ -298,7 +311,80 @@ class PodcastInsights:
                 "subscribers": "People who chose an ongoing subscription relationship on a provider. This is a current relationship counter, not a listening total.",
                 "audience_relationships": "Current followers and subscribers summed across connected providers. Recent listeners are excluded because they measure consumption during a provider-specific period.",
                 "platform_strength": "The latest source-backed metrics for each provider, without a fabricated composite score.",
+                "platform_coverage": "Every confirmed open-RSS destination is covered by the hosting total. A destination is shown separately only when its source supplies a trustworthy per-app or native-platform breakdown.",
             },
+        }
+
+    @staticmethod
+    def _platform_measurement_coverage(
+        platforms: list[dict[str, Any]], rows: list[dict[str, Any]],
+        provider_cards: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Explain how every known destination participates without inventing app totals."""
+        providers = {str(item.get("provider") or "").casefold() for item in provider_cards}
+        host_rows = [
+            row for row in rows
+            if row.get("source_class") == "host_rss_delivery"
+            and row.get("metric_name") in {"downloads", "downloads_7d"}
+        ]
+        host_available = bool(host_rows)
+
+        def normalized(value: Any) -> str:
+            return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+        measured_apps = {
+            normalized(row.get("app_name")) for row in host_rows if normalized(row.get("app_name"))
+        }
+        entries = []
+        for platform in platforms:
+            key = str(platform.get("key") or "").casefold()
+            name = str(platform.get("name") or "")
+            mode = str(platform.get("analytics_mode") or "host_rss_only")
+            available = platform.get("availability") == "available"
+            direct = (
+                key in providers
+                or (key == "youtube" and any(provider.startswith("youtube") for provider in providers))
+                or (key == "apple_podcasts" and "apple" in providers)
+            )
+            app_detail = normalized(name) in measured_apps
+            rss_covered = available and mode in {"host_rss_only", "website_and_host_rss", "host_and_provider_export"} and host_available
+            if not available:
+                status = "not_available"
+            elif direct:
+                status = "direct_measured"
+            elif app_detail:
+                status = "app_measured"
+            elif rss_covered:
+                status = "aggregate_measured"
+            else:
+                status = "availability_only"
+            entries.append({
+                "key": key, "name": name, "status": status,
+                "analytics_mode": mode,
+                "included_in_total": status in {"direct_measured", "app_measured", "aggregate_measured"},
+                "detail": {
+                    "direct_measured": "Direct provider analytics",
+                    "app_measured": "Hosting analytics with an app breakdown",
+                    "aggregate_measured": "Included in the open-RSS hosting total",
+                    "availability_only": "Listing confirmed; the destination does not expose separate analytics",
+                    "not_available": "Not currently listed",
+                }[status],
+            })
+        available_entries = [item for item in entries if item["status"] != "not_available"]
+        covered = [item for item in available_entries if item["included_in_total"]]
+        direct = [item for item in available_entries if item["status"] in {"direct_measured", "app_measured"}]
+        return {
+            "platforms": entries,
+            "available_count": len(available_entries),
+            "covered_count": len(covered),
+            "direct_detail_count": len(direct),
+            "aggregate_covered_count": sum(item["status"] == "aggregate_measured" for item in available_entries),
+            "uncovered_available_count": len(available_entries) - len(covered),
+            "host_aggregate_available": host_available,
+            "note": (
+                "All confirmed RSS destinations are included once in hosting delivery. "
+                "Separate platform figures appear only where a source provides them."
+            ),
         }
 
     @classmethod
@@ -405,19 +491,19 @@ class PodcastInsights:
         apple_summary: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Build the six defensible, all-source executive metrics."""
-        youtube_lifetime = [
+        video_lifetime = [
             row for row in rows
-            if str(row["provider"]).startswith("youtube:")
+            if row.get("source_class") == "video_platform_consumption"
             and row["metric_name"] in {"lifetime_plays", "lifetime_watch_time_hours"}
         ]
-        if not youtube_lifetime:
-            youtube_lifetime = [
+        if not video_lifetime:
+            video_lifetime = [
                 row for row in rows
-                if row["provider"] == "youtube"
+                if str(row["provider"]).startswith("youtube")
                 and row["metric_name"] in {"lifetime_plays", "lifetime_watch_time_hours"}
             ]
-        youtube_views = cls._metric_total(youtube_lifetime, "lifetime_plays")
-        youtube_hours = cls._metric_total(youtube_lifetime, "lifetime_watch_time_hours")
+        video_views = cls._metric_total(video_lifetime, "lifetime_plays")
+        video_hours = cls._metric_total(video_lifetime, "lifetime_watch_time_hours")
         podcast_activity = (
             float((spotify_lifetime or {}).get("downloads") or 0)
             + float((spotify_lifetime or {}).get("plays") or 0)
@@ -454,13 +540,20 @@ class PodcastInsights:
             if previous_total and len(recent) == 30 and len(previous) == 30 else None
         )
         return {
-            "downloads_plays": podcast_activity + youtube_views,
+            "downloads_plays": (
+                podcast_activity + video_views
+                if spotify_lifetime is not None or video_lifetime else None
+            ),
             "podcast_downloads_plays": podcast_activity,
-            "video_views": youtube_views,
-            "listening_watch_hours": apple_hours + youtube_hours,
+            "video_views": video_views,
+            "listening_watch_hours": (
+                apple_hours + video_hours
+                if apple_summary is not None or video_lifetime else None
+            ),
             "apple_listening_hours": apple_hours,
-            "youtube_watch_hours": youtube_hours,
-            "hours_coverage_note": "Apple listening plus YouTube watch time; Spotify does not expose lifetime listening duration.",
+            "video_watch_hours": video_hours,
+            "youtube_watch_hours": video_hours,
+            "hours_coverage_note": "Listening and watch time from every connected source that exposes a lifetime duration; unavailable provider durations remain blank.",
             "countries_reached": len(country_names),
             "platforms_available": sum(item.get("availability") == "available" for item in platforms),
             "audience_relationships": durable_relationships,
@@ -943,6 +1036,39 @@ class PodcastInsights:
             "downloads": cls._metric_total(month_rows, "downloads"),
             "plays": cls._metric_total(month_rows, "plays") + cls._metric_total(month_rows, "streams"),
         } for month, month_rows in sorted(months.items())]
+
+    @classmethod
+    def _provider_monthly_trends(
+        cls, rows: list[dict[str, Any]]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return history for every provider that supplies comparable activity evidence."""
+        result: dict[str, list[dict[str, Any]]] = {}
+        for provider in sorted({str(row["provider"]) for row in rows}):
+            provider_rows = [row for row in rows if str(row["provider"]) == provider]
+            months: dict[str, list[dict[str, Any]]] = {}
+            for row in provider_rows:
+                if row["metric_name"] in {
+                    "downloads", "downloads_7d", "plays", "streams", "watch_time_hours",
+                    "unique_listeners", "listeners", "unique_viewers",
+                }:
+                    months.setdefault(str(row["period_end"])[:7], []).append(row)
+            points = []
+            for month, month_rows in sorted(months.items()):
+                daily = [row for row in month_rows if row["period_start"] == row["period_end"]]
+                activity_rows = daily or month_rows
+                activity = sum(
+                    cls._metric_total(activity_rows, metric)
+                    for metric in {"downloads", "downloads_7d", "plays", "streams"}
+                )
+                listeners = sum(
+                    cls._metric_total(month_rows, metric)
+                    for metric in {"unique_listeners", "listeners", "unique_viewers"}
+                )
+                if activity or listeners:
+                    points.append({"period": month, "activity": activity, "listeners": listeners})
+            if points:
+                result[provider] = points
+        return result
 
     @staticmethod
     def _apple_summary(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
