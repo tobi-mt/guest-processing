@@ -23,6 +23,9 @@ DISPLAY_METRICS = {
     "consumption_depth_pct", "engaged_listeners", "unique_viewers",
     "new_listeners", "returning_listeners",
     "lifetime_plays", "lifetime_watch_time_hours",
+    "web_player_play_starts", "web_player_unique_users", "web_player_pauses",
+    "web_player_progress_25", "web_player_progress_50", "web_player_progress_75",
+    "web_player_completions", "web_player_referral_users",
 }
 
 
@@ -167,6 +170,9 @@ class PodcastInsights:
         traffic_sources = self._structured_dimension_breakdown(
             rows, metric="traffic_source_views", label_fields=("traffic_source",)
         )
+        traffic_sources.extend(self._structured_dimension_breakdown(
+            rows, metric="web_player_referral_users", label_fields=("traffic_source",)
+        ))
         listening_apps = self._structured_dimension_breakdown(
             [row for row in rows if row.get("source_class") == "host_rss_delivery"],
             metric="downloads", label_fields=("app_name",)
@@ -345,6 +351,7 @@ class PodcastInsights:
                 key in providers
                 or (key == "youtube" and any(provider.startswith("youtube") for provider in providers))
                 or (key == "apple_podcasts" and "apple" in providers)
+                or (key == "mirror_talk_web" and bool(providers & {"website", "ga4", "google_analytics"}))
             )
             app_detail = normalized(name) in measured_apps
             rss_covered = available and mode in {"host_rss_only", "website_and_host_rss", "host_and_provider_export"} and host_available
@@ -439,6 +446,10 @@ class PodcastInsights:
             ("Devices", set(), DEVICE_PREFIX),
             ("Completion and retention", {"consumption_depth_pct", "average_view_percentage"}),
             ("Episode performance", set()),
+            ("Web-player engagement", {
+                "web_player_play_starts", "web_player_progress_25", "web_player_progress_50",
+                "web_player_progress_75", "web_player_completions",
+            }),
         )
         result = []
         for definition in definitions:
@@ -923,7 +934,8 @@ class PodcastInsights:
         for provider in {str(row["provider"]) for row in selected}:
             provider_rows = [row for row in selected if str(row["provider"]) == provider]
             show_rows = [row for row in provider_rows if row.get("episode_id") is None]
-            total += sum(float(row["metric_value"]) for row in (show_rows or provider_rows))
+            controlling_rows = PodcastInsights._prefer_aggregate_rows(show_rows or provider_rows)
+            total += sum(float(row["metric_value"]) for row in controlling_rows)
         return total
 
     @staticmethod
@@ -1243,7 +1255,10 @@ class PodcastInsights:
     def _top_platform_content(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         candidates = [
             row for row in rows
-            if row["metric_name"].startswith("video_") and str(row.get("platform_content_id") or "")
+            if (
+                row["metric_name"].startswith("video_")
+                or row["metric_name"].startswith("web_player_")
+            ) and str(row.get("platform_content_id") or "")
         ]
         grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
         for row in candidates:
@@ -1261,4 +1276,7 @@ class PodcastInsights:
                 "title": next((str(row.get("platform_content_title") or "") for row in content_rows if row.get("platform_content_title")), content_id),
                 "period_end": period_end, "metrics": metrics,
             })
-        return sorted(result, key=lambda item: -item["metrics"].get("video_views", 0))[:20]
+        return sorted(result, key=lambda item: -sum(
+            item["metrics"].get(metric, 0)
+            for metric in ("video_views", "web_player_play_starts", "web_player_completions")
+        ))[:20]

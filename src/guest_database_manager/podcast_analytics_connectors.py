@@ -32,6 +32,14 @@ OPENPODCAST_AUTO_SYNC_ENV = "MIRROR_TALK_OPENPODCAST_AUTO_SYNC"
 OPENPODCAST_API_BASE = "https://api.openpodcast.dev/analytics/v1"
 LOCAL_COLLECTOR_PROVIDERS = {"spotify", "apple_podcasts"}
 LOCAL_COLLECTOR_STALE_AFTER = timedelta(days=2)
+WEB_PLAYER_EVENTS = {
+    "audio_play": "web_player_play_starts",
+    "audio_pause": "web_player_pauses",
+    "audio_progress_25": "web_player_progress_25",
+    "audio_progress_50": "web_player_progress_50",
+    "audio_progress_75": "web_player_progress_75",
+    "audio_complete": "web_player_completions",
+}
 
 GOOGLE_SCOPES = (
     "openid",
@@ -807,6 +815,8 @@ class PodcastAnalyticsConnectors:
                          "traffic_scope": "organic", "source_reference": "ga4-data-api"})
             rows.extend(self._ga4_dimensions(access_token, property_id, start, end, "deviceCategory", "device"))
             rows.extend(self._ga4_dimensions(access_token, property_id, start, end, "country", "country"))
+            rows.extend(self._ga4_web_player_events(access_token, property_id, start, end))
+            rows.extend(self._ga4_web_player_referrals(access_token, property_id, start, end))
         return rows
 
     def _youtube_dimension(self, token: str, start: date, end: date, dimension: str, prefix: str,
@@ -903,12 +913,98 @@ class PodcastAnalyticsConnectors:
         return observations
 
     def _ga4_report(self, token: str, property_id: str, start: date, end: date,
-                    dimensions: list[str], metrics: list[str]) -> dict[str, Any]:
-        body = json.dumps({"dateRanges": [{"startDate": start.isoformat(), "endDate": end.isoformat()}],
-                           "dimensions": [{"name": item} for item in dimensions],
-                           "metrics": [{"name": item} for item in metrics], "limit": "100"}).encode()
+                    dimensions: list[str], metrics: list[str],
+                    dimension_filter: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "dateRanges": [{"startDate": start.isoformat(), "endDate": end.isoformat()}],
+            "dimensions": [{"name": item} for item in dimensions],
+            "metrics": [{"name": item} for item in metrics], "limit": "10000",
+        }
+        if dimension_filter:
+            payload["dimensionFilter"] = dimension_filter
+        body = json.dumps(payload).encode()
         return self._request_json(f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport",
                                   token, data=body)
+
+    @staticmethod
+    def _ga4_metric_value(row: dict[str, Any], index: int) -> float:
+        values = row.get("metricValues") or []
+        try:
+            return float((values[index] or {}).get("value") or 0)
+        except (IndexError, TypeError, ValueError):
+            return 0.0
+
+    def _ga4_web_player_events(
+        self, token: str, property_id: str, start: date, end: date,
+    ) -> list[dict[str, Any]]:
+        event_filter = {
+            "filter": {"fieldName": "eventName", "inListFilter": {"values": list(WEB_PLAYER_EVENTS)}}
+        }
+        data = self._ga4_report(
+            token, property_id, start, end, ["eventName"], ["eventCount", "totalUsers"],
+            dimension_filter=event_filter,
+        )
+        observations = []
+        for row in data.get("rows") or []:
+            event_name = str(((row.get("dimensionValues") or [{}])[0]).get("value") or "")
+            metric_name = WEB_PLAYER_EVENTS.get(event_name)
+            if not metric_name:
+                continue
+            common = {
+                "provider": "website", "period_start": start.isoformat(),
+                "period_end": end.isoformat(), "traffic_scope": "all",
+                "source_reference": "ga4-data-api:web-player", "source_class": "website",
+            }
+            observations.append({
+                **common, "metric_name": metric_name,
+                "metric_value": self._ga4_metric_value(row, 0),
+            })
+            if event_name == "audio_play":
+                observations.append({
+                    **common, "metric_name": "web_player_unique_users",
+                    "metric_value": self._ga4_metric_value(row, 1),
+                })
+        content = self._ga4_report(
+            token, property_id, start, end, ["eventName", "pagePath"], ["eventCount"],
+            dimension_filter=event_filter,
+        )
+        for row in content.get("rows") or []:
+            dimensions = row.get("dimensionValues") or []
+            if len(dimensions) < 2:
+                continue
+            event_name = str((dimensions[0] or {}).get("value") or "")
+            page_path = str((dimensions[1] or {}).get("value") or "")[:160]
+            metric_name = WEB_PLAYER_EVENTS.get(event_name)
+            if not metric_name or not page_path:
+                continue
+            observations.append({
+                "provider": "website", "metric_name": metric_name,
+                "metric_value": self._ga4_metric_value(row, 0),
+                "period_start": start.isoformat(), "period_end": end.isoformat(),
+                "traffic_scope": "all", "source_reference": "ga4-data-api:web-player",
+                "source_class": "website", "platform_content_id": page_path,
+                "platform_content_title": page_path,
+            })
+        return observations
+
+    def _ga4_web_player_referrals(
+        self, token: str, property_id: str, start: date, end: date,
+    ) -> list[dict[str, Any]]:
+        data = self._ga4_report(
+            token, property_id, start, end, ["sessionSourceMedium"], ["activeUsers"],
+            dimension_filter={"filter": {"fieldName": "eventName", "stringFilter": {"value": "audio_play"}}},
+        )
+        observations = []
+        for row in data.get("rows") or []:
+            source = str(((row.get("dimensionValues") or [{}])[0]).get("value") or "direct")
+            observations.append({
+                "provider": "website", "metric_name": "web_player_referral_users",
+                "metric_value": self._ga4_metric_value(row, 0),
+                "period_start": start.isoformat(), "period_end": end.isoformat(),
+                "traffic_scope": "all", "source_reference": "ga4-data-api:web-player",
+                "source_class": "website", "traffic_source": self._slug(source),
+            })
+        return observations
 
     def _ga4_dimensions(self, token: str, property_id: str, start: date, end: date,
                         dimension: str, prefix: str) -> list[dict[str, Any]]:

@@ -725,23 +725,25 @@ def test_platform_measurement_covers_every_available_rss_destination_without_inv
         {"key": "pocket_casts", "name": "Pocket Casts", "availability": "available", "analytics_mode": "host_rss_only"},
         {"key": "deezer", "name": "Deezer", "availability": "available", "analytics_mode": "host_rss_only"},
         {"key": "luminary", "name": "Luminary", "availability": "unavailable", "analytics_mode": "host_rss_only"},
+        {"key": "mirror_talk_web", "name": "Mirror Talk Web Player", "availability": "available", "analytics_mode": "website_and_host_rss"},
     ]
     rows = [{
         "provider": "spotify", "metric_name": "downloads", "source_class": "host_rss_delivery",
         "app_name": "Pocket Casts",
     }]
     coverage = PodcastInsights._platform_measurement_coverage(
-        platforms, rows, [{"provider": "spotify"}]
+        platforms, rows, [{"provider": "spotify"}, {"provider": "website"}]
     )
 
-    assert coverage["available_count"] == 3
-    assert coverage["covered_count"] == 3
+    assert coverage["available_count"] == 4
+    assert coverage["covered_count"] == 4
     assert coverage["uncovered_available_count"] == 0
     assert {item["key"]: item["status"] for item in coverage["platforms"]} == {
         "spotify": "direct_measured",
         "pocket_casts": "app_measured",
         "deezer": "aggregate_measured",
         "luminary": "not_available",
+        "mirror_talk_web": "direct_measured",
     }
 
 
@@ -758,3 +760,16 @@ def test_monthly_trends_include_arbitrary_measured_providers():
     assert PodcastInsights._provider_monthly_trends(rows) == {
         "deezer": [{"period": "2026-10", "activity": 10.0, "listeners": 7.0}]
     }
+
+
+def test_show_level_web_player_total_controls_over_page_breakdowns():
+    rows = [
+        {"provider": "website", "metric_name": "web_player_play_starts", "metric_value": 320,
+         "episode_id": None, "platform_content_id": "", "country_code": "", "city": "",
+         "device_type": "", "app_name": "", "age_group": "", "gender": "", "traffic_source": ""},
+        {"provider": "website", "metric_name": "web_player_play_starts", "metric_value": 120,
+         "episode_id": None, "platform_content_id": "/episodes/example", "country_code": "", "city": "",
+         "device_type": "", "app_name": "", "age_group": "", "gender": "", "traffic_source": ""},
+    ]
+
+    assert PodcastInsights._metric_total(rows, "web_player_play_starts") == 320

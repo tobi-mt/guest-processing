@@ -95,7 +95,7 @@ PRIVATE_SOURCES = (
     {"key": "apple_connect", "name": "Apple Podcasts Connect", "metrics": ["listeners", "engaged listeners", "plays", "consumption", "devices", "geography"], "access": "Provider export required; Apple does not offer third-party analytics access.", "connection_mode": "provider_limited"},
     {"key": "youtube_analytics", "name": "YouTube Analytics", "metrics": ["plays", "watch time", "subscribers", "devices", "geography", "retention"], "access": "Automated read-only Google OAuth sync.", "connection_mode": "automated"},
     {"key": "podcast_host", "name": "Podcast hosting analytics", "metrics": ["IAB downloads", "unique listeners", "apps", "devices", "geography"], "access": "Use the Spotify for Creators export when it contains hosting-wide downloads; otherwise use the verified host export.", "connection_mode": "provider_limited"},
-    {"key": "website_analytics", "name": "Mirror Talk website analytics", "metrics": ["active users", "countries", "devices", "referrals", "conversions"], "access": "Automated read-only GA4 API sync.", "connection_mode": "automated"},
+    {"key": "website_analytics", "name": "Mirror Talk website analytics", "metrics": ["player starts", "unique users", "25/50/75% progress", "completions", "countries", "devices", "referrals"], "access": "Automated read-only GA4 API sync.", "connection_mode": "automated"},
 )
 
 

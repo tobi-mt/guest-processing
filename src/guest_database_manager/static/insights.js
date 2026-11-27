@@ -182,6 +182,8 @@ function renderPlatformPerformance(global, monthly, listeningApps, audio, platfo
   const appleStat = appleCurrent && applePrevious ? {delta_pct:applePrevious.plays ? Math.round((Number(appleCurrent.plays) - Number(applePrevious.plays)) * 1000 / Number(applePrevious.plays)) / 10 : null} : null;
   const appleChange = changeLabel(appleStat);
   cards.push(`<article class="performance-platform-card diagnostic"><div><span>Apple Podcasts engagement</span><strong>${number(appleCurrent?.plays)}</strong></div><p>Apple-native plays for ${escapeHtml(appleCurrent?.period || "the latest reported month")}; shown separately to prevent double-counting RSS delivery.</p><div class="platform-card-meta"><span>${number(appleCurrent?.listeners)} listeners</span><span class="metric-change ${appleChange.className}">${escapeHtml(appleChange.text)}</span></div></article>`);
+  const website = (latestPayload?.provider_strength || []).find((item) => ["website", "ga4", "google_analytics"].includes(item.provider));
+  if (website) cards.push(`<article class="performance-platform-card diagnostic"><div><span>Mirror Talk Web Player</span><strong>${number(website.metrics?.web_player_play_starts)}</strong></div><p>Player starts on the Mirror Talk website; kept separate from hosting downloads to prevent double-counting.</p><div class="platform-card-meta"><span>${number(website.metrics?.web_player_completions)} completions</span><span>${number(website.metrics?.web_player_unique_users)} users</span></div></article>`);
   target.innerHTML = cards.join("");
 
   const appTarget = document.getElementById("listening-app-summary");
@@ -218,6 +220,20 @@ async function connectorRequest(path, options = {}) {
   }
 }
 
+function bindCopyButtons(target) {
+  target.querySelectorAll("[data-copy-command]").forEach((button) => button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(button.dataset.copyCommand);
+      button.textContent = "Copied";
+    } catch (_error) {
+      button.textContent = "Copy unavailable — use the text shown below";
+      const command = document.createElement("code");
+      command.textContent = button.dataset.copyCommand;
+      button.parentElement.append(command);
+    }
+  }));
+}
+
 function renderConnections(connectors) {
   const target = document.getElementById("analytics-connections");
   const google = connectors.google || {}; const connections = google.connections || (google.connection ? [google.connection] : []);
@@ -247,17 +263,7 @@ function renderConnections(connectors) {
   target.querySelectorAll("[data-sync-google]").forEach((button) => button.addEventListener("click", async () => { try { await connectorRequest("/api/analytics-connectors/google/sync", {method:"POST", body:JSON.stringify({connection_id:Number(button.dataset.syncGoogle)})}); await load(); } catch (error) { target.prepend(Object.assign(document.createElement("p"), {className:"message error", textContent:error.message})); } }));
   target.querySelectorAll("[data-disconnect-google]").forEach((button) => button.addEventListener("click", async () => { if (!window.confirm("Disconnect this channel and delete only its retained refresh token?")) return; try { await connectorRequest(`/api/analytics-connectors/google?connection_id=${encodeURIComponent(button.dataset.disconnectGoogle)}`, {method:"DELETE"}); await load(); } catch (error) { target.prepend(Object.assign(document.createElement("p"), {className:"message error", textContent:error.message})); } }));
   target.querySelectorAll("[data-local-provider]").forEach((button) => button.addEventListener("click", async () => { try { await connectorRequest("/api/analytics-connectors/local/configure", {method:"POST", body:JSON.stringify({provider:button.dataset.localProvider, enabled:button.dataset.localEnabled === "true"})}); await load(); } catch (error) { target.prepend(Object.assign(document.createElement("p"), {className:"message error", textContent:error.message})); } }));
-  target.querySelectorAll("[data-copy-command]").forEach((button) => button.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(button.dataset.copyCommand);
-      button.textContent = "Copied — run in Terminal";
-    } catch (_error) {
-      button.textContent = "Copy unavailable — use the command shown below";
-      const command = document.createElement("code");
-      command.textContent = button.dataset.copyCommand;
-      button.parentElement.append(command);
-    }
-  }));
+  bindCopyButtons(target);
 }
 
 function renderBars(items, target) {
@@ -276,12 +282,18 @@ function renderBars(items, target) {
 
 function renderEpisodePerformance(episodes, platformItems) {
   const target = document.getElementById("episode-performance");
-  const rows = episodes.length ? episodes : platformItems.map((item) => ({
+  const platformRows = platformItems.map((item) => ({
     title:item.title || item.platform_content_id,
-    activity:Number(item.metrics?.video_views || 0),
-    metrics:{plays:item.metrics?.video_views,watch_time_hours:item.metrics?.video_watch_time_hours,average_view_duration_seconds:item.metrics?.video_average_view_duration_seconds},
+    activity:Number(item.metrics?.video_views || item.metrics?.web_player_play_starts || 0),
+    metrics:{
+      plays:item.metrics?.video_views ?? item.metrics?.web_player_play_starts,
+      watch_time_hours:item.metrics?.video_watch_time_hours,
+      average_view_duration_seconds:item.metrics?.video_average_view_duration_seconds,
+      consumption_depth_pct:item.metrics?.web_player_play_starts ? Number(item.metrics?.web_player_completions || 0) * 100 / Number(item.metrics.web_player_play_starts) : null,
+    },
     providers:[item.provider],period_end:item.period_end,freshness:"current",
   }));
+  const rows = [...episodes, ...platformRows];
   if (!rows.length) { target.innerHTML = empty("Connected sources have not returned episode-level performance yet."); return; }
   target.innerHTML = `<div class="episode-table-wrap"><table class="episode-table"><thead><tr><th>Episode</th><th>Activity</th><th>Depth</th><th>Coverage</th></tr></thead><tbody>${rows.slice(0, 12).map((item) => {
     const metrics = item.metrics || {};
@@ -405,8 +417,9 @@ function render(payload) {
   const coverage = payload.source_coverage || {}; const publicSources = coverage.public || []; const privateSources = coverage.private || [];
   renderConnections(payload.analytics_connectors || {});
   const automated = privateSources.filter((source) => source.connection_mode === "automated"); const limited = privateSources.filter((source) => source.connection_mode === "provider_limited");
-  const sourceRow = (source) => { const metrics = source.metrics_present?.length ? source.metrics_present : source.metrics || []; const shown = metrics.slice(0, 5); const active = source.status === "data_present"; return `<article class="source-row"><div><strong>${escapeHtml(source.name)}</strong><span class="source-status ${active ? "data_present" : "provider_access_required"}">${active ? "Current" : "Connecting"}</span></div><small>${active ? `${Number(source.observation_count || 0)} data points · through ${escapeHtml(source.latest_period_end || "unknown")}` : "The automatic collector is waiting for owner-approved provider access."}</small><p>${source.metrics_present?.length ? "Available" : "Expected"}: ${shown.map(metricLabel).map(escapeHtml).join(", ")}${metrics.length > shown.length ? ` +${metrics.length - shown.length} more` : ""}</p></article>`; };
+  const sourceRow = (source) => { const metrics = source.metrics_present?.length ? source.metrics_present : source.metrics || []; const shown = metrics.slice(0, 5); const active = source.status === "data_present"; const playerSetup = source.key === "website_analytics" ? `<div class="connection-actions"><button class="ghost-button" type="button" data-copy-command="${escapeHtml(`<script defer src="${window.location.origin}/static/web-player-analytics.js?v=20261127.1"></script>`)}">Copy player tracking snippet</button></div>` : ""; return `<article class="source-row"><div><strong>${escapeHtml(source.name)}</strong><span class="source-status ${active ? "data_present" : "provider_access_required"}">${active ? "Current" : "Connecting"}</span></div><small>${active ? `${Number(source.observation_count || 0)} data points · through ${escapeHtml(source.latest_period_end || "unknown")}` : "The automatic collector is waiting for owner-approved provider access."}</small><p>${source.metrics_present?.length ? "Available" : "Expected"}: ${shown.map(metricLabel).map(escapeHtml).join(", ")}${metrics.length > shown.length ? ` +${metrics.length - shown.length} more` : ""}</p>${playerSetup}</article>`; };
   document.getElementById("source-coverage").innerHTML = `<div class="source-column"><h3>Public availability <span>${Number(coverage.public_available || 0)}/${Number(coverage.public_expected || 0)}</span></h3>${publicSources.length ? publicSources.map((source) => { const retrying = source.status === "retrying"; const available = source.status === "available"; return `<article class="source-row"><div><strong>${escapeHtml(source.source_name)}</strong><span class="source-status ${available ? "data_present" : retrying ? "refreshing" : "unavailable"}">${available ? "Verified" : retrying ? "Verified · retrying check" : "Temporarily unavailable"}</span></div><small>${escapeHtml(retrying && source.last_success_at ? `Verified ${formatTimestamp(source.last_success_at)} · retry attempted ${formatTimestamp(source.checked_at)}` : formatTimestamp(source.checked_at))}</small></article>`; }).join("") : empty("The first availability check will run automatically.")}</div><div class="source-column"><h3>Connected sources <span>${Number(coverage.automated_connected || 0)}/${Number(coverage.automated_expected || 0)}</span></h3>${automated.map(sourceRow).join("")}</div><div class="source-column"><h3>Private analytics <span>${limited.filter((source) => source.status === "data_present").length}/${limited.length}</span></h3>${limited.map(sourceRow).join("")}</div>`;
+  bindCopyButtons(document.getElementById("source-coverage"));
   const platformCoverageByKey = Object.fromEntries((platformMeasurement.platforms || []).map((item) => [item.key, item]));
   document.getElementById("platform-grid").innerHTML = (payload.platforms || []).map((platform) => {
     const status = platform.availability === "available" ? "Confirmed" : platform.distribution_mode === "expected_missing" ? "Not listed" : "Being checked";

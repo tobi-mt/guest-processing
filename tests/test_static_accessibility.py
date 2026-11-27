@@ -389,14 +389,28 @@ def test_planning_learning_and_copilot_surfaces_are_dark_at_source() -> None:
 
 def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
-    styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
     assert "insights.css?v=20261126.4" in html
-    assert "insights.js?v=20261127.2" in html
+    assert "insights.js?v=20261127.3" in html
     assert "Copy browser reset" in javascript
     assert "MirrorTalkAnalyticsCollector/${profileName}" in javascript
     assert 'provider === "apple_podcasts" ? "apple_podcasts"' in javascript
+
+
+def test_web_player_analytics_contract_is_copyable_and_tracks_completion_milestones() -> None:
+    html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
+    insights = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
+    tracker = (STATIC_ROOT / "web-player-analytics.js").read_text(encoding="utf-8")
+    javascript = insights
+    styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
+
+    assert "insights.js?v=20261127.3" in html
+    assert "Copy player tracking snippet" in insights
+    assert "web-player-analytics.js?v=20261127.1" in insights
+    for event in ("audio_play", "audio_pause", "audio_progress_25", "audio_progress_50", "audio_progress_75", "audio_complete"):
+        assert event in tracker or (event.startswith("audio_progress_") and "audio_progress_${threshold}" in tracker)
+    assert 'typeof window.gtag !== "function"' in tracker
     assert 'class="trend-hit-target"' in javascript
     assert 'tabindex="0" role="button"' in javascript
     assert "attachTrendInteractions(target)" in javascript

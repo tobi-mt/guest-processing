@@ -1,5 +1,6 @@
 import hashlib
 import sqlite3
+from datetime import date
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -447,7 +448,7 @@ def test_google_collector_keeps_platform_metrics_source_backed(temp_db, monkeypa
         raise AssertionError(url)
 
     monkeypatch.setattr(connectors, "_get_json", google_response)
-    monkeypatch.setattr(connectors, "_ga4_report", lambda token, property_id, start, end, dimensions, metrics: (
+    monkeypatch.setattr(connectors, "_ga4_report", lambda token, property_id, start, end, dimensions, metrics, **_kwargs: (
         {"rows": [{"dimensionValues": [{"value": "mobile"}], "metricValues": [{"value": "25"}]}]}
         if dimensions else {"rows": [{"metricValues": [{"value": "40"}]}]}
     ))
@@ -466,3 +467,34 @@ def test_google_collector_keeps_platform_metrics_source_backed(temp_db, monkeypa
     assert values[("youtube", "video_views")] == 80
     assert values[("website", "organic_reach")] == 40
     assert values[("website", "device_mobile")] == 25
+
+
+def test_ga4_web_player_events_are_normalized_without_becoming_downloads(temp_db, monkeypatch):
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    captured = []
+
+    def report(_token, _property_id, _start, _end, dimensions, metrics, **kwargs):
+        captured.append((dimensions, metrics, kwargs.get("dimension_filter")))
+        return {"rows": [
+            {"dimensionValues": [{"value": "audio_play"}],
+             "metricValues": [{"value": "42"}, {"value": "31"}]},
+            {"dimensionValues": [{"value": "audio_progress_50"}],
+             "metricValues": [{"value": "24"}, {"value": "20"}]},
+            {"dimensionValues": [{"value": "audio_complete"}],
+             "metricValues": [{"value": "18"}, {"value": "16"}]},
+        ]}
+
+    monkeypatch.setattr(connectors, "_ga4_report", report)
+    observations = connectors._ga4_web_player_events(
+        "token", "123", date(2026, 11, 1), date(2026, 11, 28)
+    )
+
+    assert {(row["metric_name"], row["metric_value"]) for row in observations} == {
+        ("web_player_play_starts", 42.0),
+        ("web_player_unique_users", 31.0),
+        ("web_player_progress_50", 24.0),
+        ("web_player_completions", 18.0),
+    }
+    assert all(row["provider"] == "website" and row["source_class"] == "website" for row in observations)
+    assert not {row["metric_name"] for row in observations} & {"downloads", "plays"}
+    assert captured[0][2]["filter"]["fieldName"] == "eventName"
