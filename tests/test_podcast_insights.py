@@ -773,3 +773,19 @@ def test_show_level_web_player_total_controls_over_page_breakdowns():
     ]
 
     assert PodcastInsights._metric_total(rows, "web_player_play_starts") == 320
+
+
+def test_top_platform_content_prefers_lifetime_video_activity():
+    rows = [
+        {"provider": "youtube:one", "metric_name": "video_views", "metric_value": 12,
+         "platform_content_id": "video-1", "platform_content_title": "Episode one", "period_end": "2026-11-27"},
+        {"provider": "youtube:one", "metric_name": "video_lifetime_views", "metric_value": 1200,
+         "platform_content_id": "video-1", "platform_content_title": "Episode one", "period_end": "2026-11-27"},
+        {"provider": "youtube:one", "metric_name": "video_lifetime_views", "metric_value": 800,
+         "platform_content_id": "video-2", "platform_content_title": "Episode two", "period_end": "2026-11-27"},
+    ]
+
+    result = PodcastInsights._top_platform_content(rows)
+
+    assert [item["title"] for item in result] == ["Episode one", "Episode two"]
+    assert result[0]["metrics"]["video_lifetime_views"] == 1200

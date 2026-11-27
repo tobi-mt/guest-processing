@@ -267,9 +267,9 @@ def _sync_browser_context(
                 process.wait(timeout=5)
 
 
-def _annotate_apple_export(csv_text: str, *, range_days: int, today: date | None = None) -> str:
+def _annotate_apple_export(csv_text: str, *, range_days: int | None, today: date | None = None) -> str:
     """Make Apple’s otherwise implicit analytics window explicit in every row."""
-    if not 1 <= range_days <= 366:
+    if range_days is not None and not 1 <= range_days <= 366:
         raise LocalCollectorError("Apple Podcasts returned an unsupported analytics date range.")
     reader = csv.DictReader(StringIO(csv_text.lstrip("\ufeff")))
     headers = list(reader.fieldnames or [])
@@ -277,7 +277,21 @@ def _annotate_apple_export(csv_text: str, *, range_days: int, today: date | None
         raise LocalCollectorError("Apple Podcasts returned an unreadable analytics report.")
     rows = list(reader)
     end = today or date.today()
-    start = end - timedelta(days=range_days - 1)
+    if range_days is None:
+        release_dates = []
+        for row in rows:
+            raw = str(row.get("Release Date") or "").strip()
+            for date_format in ("%Y-%m-%d", "%m/%d/%Y", "%Y%m%d"):
+                try:
+                    release_dates.append(datetime.strptime(raw[:10], date_format).date())
+                    break
+                except ValueError:
+                    continue
+        if not release_dates:
+            raise LocalCollectorError("Apple Podcasts lifetime analytics did not include episode release dates.")
+        start = min(release_dates)
+    else:
+        start = end - timedelta(days=range_days - 1)
     period_headers = ["Analytics Period Start", "Analytics Period End"]
     output = StringIO()
     writer = csv.DictWriter(output, fieldnames=[*headers, *period_headers], lineterminator="\n")
@@ -288,6 +302,35 @@ def _annotate_apple_export(csv_text: str, *, range_days: int, today: date | None
             "Analytics Period Start": start.isoformat(),
             "Analytics Period End": end.isoformat(),
         })
+    return output.getvalue()
+
+
+def _annotate_spotify_episode_export(csv_text: str, *, today: date | None = None) -> str:
+    """Attach an explicit lifetime window to Spotify's episode ranking export."""
+    reader = csv.DictReader(StringIO(csv_text.lstrip("\ufeff")))
+    headers = list(reader.fieldnames or [])
+    required = {"Episode name", "Publish date", "Plays & downloads"}
+    if not required.issubset(headers):
+        raise LocalCollectorError("Spotify returned a different episode analytics report; nothing was uploaded.")
+    rows = list(reader)
+    end = today or date.today()
+    output = StringIO()
+    period_headers = ["Analytics Period Start", "Analytics Period End"]
+    writer = csv.DictWriter(output, fieldnames=[*headers, *period_headers], lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        raw = str(row.get("Publish date") or "").strip()
+        published = None
+        for date_format in ("%m/%d/%Y", "%Y-%m-%d", "%b %d, %Y"):
+            try:
+                published = datetime.strptime(raw, date_format).date()
+                break
+            except ValueError:
+                continue
+        if published is None:
+            raise LocalCollectorError("Spotify's episode export contained an unreadable publish date.")
+        writer.writerow({**row, "Analytics Period Start": published.isoformat(),
+                         "Analytics Period End": end.isoformat()})
     return output.getvalue()
 
 
@@ -422,6 +465,21 @@ def _select_spotify_all_time(page) -> None:
     page.wait_for_timeout(3_000)
 
 
+def _select_apple_all_time(page) -> None:
+    """Select Apple's lifetime episode window and fail closed if it is unavailable."""
+    trigger = page.get_by_role("button", name="Choose a date range")
+    trigger.wait_for(state="visible", timeout=30_000)
+    if re.search(r"all\s*time", trigger.inner_text(), re.I):
+        return
+    trigger.click()
+    option = page.get_by_text(re.compile(r"^All\s+Time$", re.I), exact=False)
+    visible = [option.nth(index) for index in range(option.count()) if option.nth(index).is_visible()]
+    if len(visible) != 1:
+        raise LocalCollectorError("Apple Podcasts did not expose an unambiguous all-time analytics option.")
+    visible[0].click()
+    page.wait_for_timeout(3_000)
+
+
 def _download_csv(page, control, directory: Path, *, prefix: str = "") -> tuple[str, str]:
     with page.expect_download(timeout=90_000) as download_info:
         control.click()
@@ -439,11 +497,15 @@ def _validate_provider_export(provider: str, csv_text: str) -> None:
     except csv.Error as exc:
         raise LocalCollectorError("The provider download was not valid CSV.") from exc
     if provider == "spotify":
-        required = {
+        show_report = {
             "Date", "Plays & downloads", "Plays (on Spotify)",
             "Downloads (everywhere else)", "Audience",
         }
-        if not required.issubset(headers):
+        episode_report = {
+            "Episode name", "Publish date", "Plays & downloads",
+            "Analytics Period Start", "Analytics Period End",
+        }
+        if not show_report.issubset(headers) and not episode_report.issubset(headers):
             raise LocalCollectorError(
                 "Spotify returned a different analytics report; nothing was uploaded."
             )
@@ -562,6 +624,14 @@ def sync_once(
                     export_control = performance_section.get_by_role(
                         "button", name="Export", exact=True,
                     )
+                    trends_heading = page.get_by_role("heading", name="Trends", exact=True)
+                    trends_heading.wait_for(state="visible", timeout=30_000)
+                    trends_section = trends_heading.locator(
+                        "xpath=ancestor::*[.//button[normalize-space()='Export']][1]"
+                    )
+                    spotify_episode_export = trends_section.get_by_role(
+                        "button", name="Export", exact=True,
+                    )
                     apple_range_days = 0
                 elif provider == "apple_podcasts":
                     show_link = page.locator(
@@ -584,13 +654,8 @@ def sync_once(
                         uploads.append(("apple-audience-snapshot.csv", apple_snapshot))
                     episodes_url = show_url.removesuffix("/overview") + "/episodes"
                     page.goto(episodes_url, wait_until="networkidle", timeout=90_000)
-                    date_range = page.get_by_role("button", name="Choose a date range")
-                    range_match = re.search(r"(\d+)\s+Days", date_range.inner_text(), re.I)
-                    if not range_match:
-                        raise LocalCollectorError(
-                            "The Apple Podcasts analytics date range could not be verified."
-                        )
-                    apple_range_days = int(range_match.group(1))
+                    _select_apple_all_time(page)
+                    apple_range_days = None
                     export_control = page.locator('a[href^="blob:"]').first
                     export_control.wait_for(state="visible", timeout=30_000)
                 else:
@@ -624,6 +689,12 @@ def sync_once(
                 uploads.append((filename, csv_text))
                 if provider == "spotify":
                     window_start, window_end = _spotify_reporting_window(csv_text)
+                    episode_name, episode_csv = _download_csv(
+                        page, spotify_episode_export, Path(temp_dir), prefix="episodes-",
+                    )
+                    episode_csv = _annotate_spotify_episode_export(episode_csv)
+                    _validate_provider_export(provider, episode_csv)
+                    uploads.append((episode_name, episode_csv))
                     page.get_by_role("tab", name="Audience", exact=True).click()
                     page.get_by_text("Audience breakdowns", exact=True).wait_for(
                         state="visible", timeout=30_000,

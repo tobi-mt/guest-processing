@@ -260,17 +260,25 @@ def test_sync_explains_non_attachable_resident_profile(tmp_path: Path, monkeypat
             pass
 
 
-def test_provider_export_validation_rejects_the_wrong_spotify_report() -> None:
+def test_provider_export_validation_accepts_supported_spotify_reports() -> None:
     collector._validate_provider_export(
         "spotify",
         "Date,Plays & downloads,Plays (on Spotify),Downloads (everywhere else),Audience\n"
         "11/25/2026,10,5,5,8\n",
     )
 
-    with pytest.raises(LocalCollectorError, match="different analytics report"):
-        collector._validate_provider_export(
-            "spotify",
-            "Episode name,Publish date,Performance,Plays & downloads\nEpisode,11/25/2026,1,2\n",
+    episode_report = collector._annotate_spotify_episode_export(
+        "Episode name,Publish date,Performance,Plays & downloads\nEpisode,11/25/2026,1,2\n",
+        today=date(2026, 11, 27),
+    )
+    collector._validate_provider_export("spotify", episode_report)
+    assert "2026-11-25,2026-11-27" in episode_report
+
+
+def test_spotify_episode_export_rejects_unreadable_lifetime_start() -> None:
+    with pytest.raises(LocalCollectorError, match="unreadable publish date"):
+        collector._annotate_spotify_episode_export(
+            "Episode name,Publish date,Performance,Plays & downloads\nEpisode,unknown,1,2\n"
         )
 
 
@@ -287,6 +295,22 @@ def test_apple_export_annotation_makes_the_implicit_window_explicit() -> None:
 
     assert "Analytics Period Start,Analytics Period End" in annotated
     assert "2026-09-27,2026-11-25" in annotated
+    collector._validate_provider_export("apple_podcasts", annotated)
+
+
+def test_apple_lifetime_export_uses_earliest_episode_release_date() -> None:
+    raw = (
+        "Show Name,Episode ID,Episode Title,Release Date,Unique Listeners,"
+        "Unique Engaged Listeners,Plays,Average Consumption\n"
+        "Mirror Talk,1001,Older Episode,2020-06-12,2,1,30,75%\n"
+        "Mirror Talk,1002,Newer Episode,2026-11-24,3,2,10,80%\n"
+    )
+
+    annotated = collector._annotate_apple_export(
+        raw, range_days=None, today=date(2026, 11, 27),
+    )
+
+    assert "2020-06-12,2026-11-27" in annotated
     collector._validate_provider_export("apple_podcasts", annotated)
 
 

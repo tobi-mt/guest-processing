@@ -284,22 +284,35 @@ function renderEpisodePerformance(episodes, platformItems) {
   const target = document.getElementById("episode-performance");
   const platformRows = platformItems.map((item) => ({
     title:item.title || item.platform_content_id,
-    activity:Number(item.metrics?.video_views || item.metrics?.web_player_play_starts || 0),
+    activity:Number(item.metrics?.plays_downloads || item.metrics?.video_lifetime_views || item.metrics?.video_views || item.metrics?.web_player_play_starts || 0),
     metrics:{
-      plays:item.metrics?.video_views ?? item.metrics?.web_player_play_starts,
-      watch_time_hours:item.metrics?.video_watch_time_hours,
-      average_view_duration_seconds:item.metrics?.video_average_view_duration_seconds,
+      plays:item.metrics?.plays_downloads ?? item.metrics?.video_lifetime_views ?? item.metrics?.video_views ?? item.metrics?.web_player_play_starts,
+      watch_time_hours:item.metrics?.video_lifetime_watch_time_hours ?? item.metrics?.video_watch_time_hours,
+      average_view_duration_seconds:item.metrics?.video_lifetime_average_view_duration_seconds ?? item.metrics?.video_average_view_duration_seconds,
       consumption_depth_pct:item.metrics?.web_player_play_starts ? Number(item.metrics?.web_player_completions || 0) * 100 / Number(item.metrics.web_player_play_starts) : null,
     },
     providers:[item.provider],period_end:item.period_end,freshness:"current",
   }));
-  const rows = [...episodes, ...platformRows];
+  const combined = new Map();
+  [...episodes, ...platformRows].forEach((item) => {
+    const key = String(item.title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() || `content:${item.platform_content_id || combined.size}`;
+    const current = combined.get(key);
+    if (!current) { combined.set(key, {...item, providers:[...(item.providers || [])]}); return; }
+    current.activity = Number(current.activity || 0) + Number(item.activity || 0);
+    current.providers = [...new Set([...(current.providers || []), ...(item.providers || [])])];
+    current.period_end = [current.period_end, item.period_end].filter(Boolean).sort().at(-1);
+    current.period_start = [current.period_start, item.period_start].filter(Boolean).sort()[0];
+    Object.entries(item.metrics || {}).forEach(([metric, value]) => {
+      if (value != null && current.metrics?.[metric] == null) current.metrics[metric] = value;
+    });
+  });
+  const rows = [...combined.values()].sort((left, right) => Number(right.activity || 0) - Number(left.activity || 0));
   if (!rows.length) { target.innerHTML = empty("Connected sources have not returned episode-level performance yet."); return; }
   target.innerHTML = `<div class="episode-table-wrap"><table class="episode-table"><thead><tr><th>Episode</th><th>Activity</th><th>Depth</th><th>Coverage</th></tr></thead><tbody>${rows.slice(0, 12).map((item) => {
     const metrics = item.metrics || {};
     const depth = metrics.consumption_depth_pct != null ? `${percentage(metrics.consumption_depth_pct)}% consumed` : metrics.average_view_duration_seconds != null ? duration(metrics.average_view_duration_seconds) : "Not provided";
     const providerText = (item.providers || []).map(providerLabel).join(", ");
-    return `<tr><td><strong>${escapeHtml(item.title)}</strong><small>Through ${escapeHtml(item.period_end || "unknown")}</small></td><td><strong>${number(item.activity)}</strong><small>downloads, plays or views</small></td><td>${escapeHtml(depth)}</td><td><span class="freshness ${escapeHtml(item.freshness || "current")}">${escapeHtml(item.freshness === "stale" ? "Refresh needed" : "Current")}</span><small>${escapeHtml(providerText)}</small></td></tr>`;
+    return `<tr><td><strong>${escapeHtml(item.title)}</strong><small>Lifetime through ${escapeHtml(item.period_end || "unknown")}</small></td><td><strong>${number(item.activity)}</strong><small>measured lifetime downloads, plays or views</small></td><td>${escapeHtml(depth)}</td><td><span class="freshness ${escapeHtml(item.freshness || "current")}">${escapeHtml(item.freshness === "stale" ? "Refresh needed" : "Current")}</span><small>${escapeHtml(providerText)}</small></td></tr>`;
   }).join("")}</tbody></table></div>`;
 }
 

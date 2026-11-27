@@ -23,6 +23,9 @@ DISPLAY_METRICS = {
     "consumption_depth_pct", "engaged_listeners", "unique_viewers",
     "new_listeners", "returning_listeners",
     "lifetime_plays", "lifetime_watch_time_hours",
+    "video_lifetime_views", "video_lifetime_watch_time_hours",
+    "video_lifetime_average_view_duration_seconds",
+    "plays_downloads",
     "web_player_play_starts", "web_player_unique_users", "web_player_pauses",
     "web_player_progress_25", "web_player_progress_50", "web_player_progress_75",
     "web_player_completions", "web_player_referral_users",
@@ -419,7 +422,11 @@ class PodcastInsights:
                 metrics[metric] = sum(
                     float(row["metric_value"]) for row in selected if row["metric_name"] == metric
                 )
-            activity = sum(metrics.get(metric, 0) for metric in ("downloads", "plays", "streams"))
+            audio_activity = metrics.get("plays_downloads")
+            if audio_activity is None:
+                audio_activity = sum(metrics.get(metric, 0) for metric in ("downloads", "plays", "streams"))
+            video_activity = metrics.get("video_lifetime_views", metrics.get("video_views", 0))
+            activity = audio_activity + video_activity + metrics.get("web_player_play_starts", 0)
             result.append({
                 "episode_id": episode_id,
                 "title": episode_titles.get(episode_id, f"Episode {episode_id}"),
@@ -1258,6 +1265,7 @@ class PodcastInsights:
             if (
                 row["metric_name"].startswith("video_")
                 or row["metric_name"].startswith("web_player_")
+                or row["metric_name"] == "plays_downloads"
             ) and str(row.get("platform_content_id") or "")
         ]
         grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -1278,5 +1286,5 @@ class PodcastInsights:
             })
         return sorted(result, key=lambda item: -sum(
             item["metrics"].get(metric, 0)
-            for metric in ("video_views", "web_player_play_starts", "web_player_completions")
+            for metric in ("plays_downloads", "video_lifetime_views", "video_views", "web_player_play_starts", "web_player_completions")
         ))[:20]

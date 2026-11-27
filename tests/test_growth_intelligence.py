@@ -303,6 +303,24 @@ def test_spotify_all_time_export_is_detected_without_double_counting_combined_co
     }
 
 
+def test_spotify_lifetime_episode_export_is_rankable_without_inflating_show_totals(temp_db):
+    intelligence = GrowthIntelligence(temp_db.db_path)
+    preview = intelligence.preview_csv(
+        "Episode name,Publish date,Performance,Plays & downloads,Analytics Period Start,Analytics Period End\n"
+        "A Source-backed Episode,06/12/2020,1,4321,2020-06-12,2026-11-27\n",
+        provider="spotify",
+        source_reference="spotify-episodes.csv",
+    )
+
+    assert preview["format"] == "provider"
+    assert preview["summary"]["ready"] == 1
+    row = preview["observations"][0]
+    assert (row["metric_name"], row["metric_value"]) == ("plays_downloads", 4321.0)
+    assert row["platform_content_title"] == "A Source-backed Episode"
+    assert row["platform_content_id"] == "title:a source backed episode"
+    assert row["episode_id"] is None
+
+
 @pytest.mark.parametrize("provider", ["spotify", "apple_podcasts"])
 def test_provider_audience_snapshot_keeps_followers_and_listeners_distinct(temp_db, provider):
     preview = GrowthIntelligence(temp_db.db_path).preview_csv(

@@ -54,8 +54,12 @@ CANONICAL_METRICS = {
     "app_share_pct": "percent",
     "traffic_source_views": "count",
     "video_views": "count",
+    "video_lifetime_views": "count",
     "video_watch_time_hours": "count",
+    "video_lifetime_watch_time_hours": "count",
     "video_average_view_duration_seconds": "seconds",
+    "video_lifetime_average_view_duration_seconds": "seconds",
+    "plays_downloads": "count",
     "web_player_play_starts": "count",
     "web_player_unique_users": "count",
     "web_player_pauses": "count",
@@ -214,6 +218,27 @@ class GrowthIntelligence:
                             "source_class": source_class,
                             "overlap_group": overlap_group,
                         }))
+            return candidates
+        if provider_key == "spotify" and {
+            "Episode name", "Publish date", "Plays & downloads",
+            "Analytics Period Start", "Analytics Period End",
+        }.issubset(header_set):
+            for row_number, raw in enumerate(raw_rows, 2):
+                value = _text(raw.get("Plays & downloads"))
+                title = _text(raw.get("Episode name"))
+                if value in {"", "-"} or not title:
+                    continue
+                candidates.append((row_number, {
+                    "episode_title": title,
+                    "platform_content_id": f"title:{cls._identity_key(title)}",
+                    "platform_content_title": title,
+                    "metric_name": "plays_downloads",
+                    "metric_value": value,
+                    "period_start": raw.get("Analytics Period Start"),
+                    "period_end": raw.get("Analytics Period End"),
+                    "source_class": "host_cross_platform_aggregate",
+                    "overlap_group": "spotify_episode_combined_activity",
+                }))
             return candidates
         if provider_key == "spotify" and {
             "Date", "Total", "Returning", "New",

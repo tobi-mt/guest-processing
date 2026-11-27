@@ -465,6 +465,7 @@ def test_google_collector_keeps_platform_metrics_source_backed(temp_db, monkeypa
     assert values[("youtube", "average_view_percentage")] == 55.5
     assert values[("youtube", "traffic_source_views")] == 44
     assert values[("youtube", "video_views")] == 80
+    assert values[("youtube", "video_lifetime_views")] == 80
     assert values[("website", "organic_reach")] == 40
     assert values[("website", "device_mobile")] == 25
 

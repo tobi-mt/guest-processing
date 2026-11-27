@@ -806,6 +806,10 @@ class PodcastAnalyticsConnectors:
         rows.extend(self._youtube_video_performance(
             access_token, start, end, channel_selector, youtube_provider, youtube_reference
         ))
+        rows.extend(self._youtube_video_performance(
+            access_token, lifetime_start, end, channel_selector, youtube_provider,
+            youtube_reference, lifetime=True,
+        ))
 
         property_id = self._config()["ga4_property_id"]
         if property_id and sync_ga4:
@@ -870,7 +874,7 @@ class PodcastAnalyticsConnectors:
 
     def _youtube_video_performance(
         self, token: str, start: date, end: date, channel_selector: str,
-        provider: str, source_reference: str,
+        provider: str, source_reference: str, *, lifetime: bool = False,
     ) -> list[dict[str, Any]]:
         try:
             data = self._get_json("https://youtubeanalytics.googleapis.com/v2/reports?" + urlencode({
@@ -898,10 +902,11 @@ class PodcastAnalyticsConnectors:
         observations = []
         for item in analytics_rows:
             video_id = str(item[0] or "").strip()
+            prefix = "video_lifetime" if lifetime else "video"
             for metric, value in (
-                ("video_views", item[1]),
-                ("video_watch_time_hours", float(item[2]) / 60),
-                ("video_average_view_duration_seconds", item[3]),
+                (f"{prefix}_views", item[1]),
+                (f"{prefix}_watch_time_hours", float(item[2]) / 60),
+                (f"{prefix}_average_view_duration_seconds", item[3]),
             ):
                 observations.append({
                     "provider": provider, "metric_name": metric, "metric_value": value,
