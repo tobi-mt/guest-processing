@@ -15,7 +15,7 @@ from guest_database_manager.podcast_analytics_connectors import (
 from guest_database_manager.podcast_source_monitor import PUBLIC_SOURCES
 
 
-REQUIRED_SCHEMA_VERSION = 46
+REQUIRED_SCHEMA_VERSION = 47
 PUBLIC_SOURCE_MAX_AGE = timedelta(hours=48)
 GOOGLE_SYNC_MAX_AGE = timedelta(hours=48)
 ANALYTICS_PERIOD_MAX_AGE = {

@@ -1,6 +1,6 @@
 """Release contract tests for Podcast Reach."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from guest_database_manager.db_connection import connect_database
 from guest_database_manager.growth_intelligence import GrowthIntelligence
@@ -22,7 +22,7 @@ def test_release_readiness_fails_closed_when_collection_is_not_configured(temp_d
 
 def test_release_readiness_reports_outdated_schema_without_querying_new_contract(temp_db):
     with connect_database(temp_db.db_path) as conn:
-        conn.execute("DELETE FROM schema_migrations WHERE version=46")
+        conn.execute("DELETE FROM schema_migrations WHERE version=47")
         conn.commit()
 
     report = PodcastReachReleaseReadiness(temp_db.db_path).report()
@@ -30,14 +30,15 @@ def test_release_readiness_reports_outdated_schema_without_querying_new_contract
     assert report["status"] == "not_ready"
     assert report["blockers"] == [{
         "code": "schema_outdated",
-        "message": "Database migration 46 has not been applied.",
+        "message": "Database migration 47 has not been applied.",
     }]
-    assert report["checks"]["schema"]["current_version"] == 45
+    assert report["checks"]["schema"]["current_version"] == 46
 
 
 def test_release_readiness_passes_only_with_fresh_distribution_and_private_evidence(temp_db, monkeypatch):
-    now = datetime(2026, 11, 24, 12, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
     now_text = now.isoformat().replace("+00:00", "Z")
+    recent_period = (now - timedelta(days=1)).date().isoformat()
     monkeypatch.setenv("MIRROR_TALK_GOOGLE_ANALYTICS_CLIENT_ID", "client")
     monkeypatch.setenv("MIRROR_TALK_GOOGLE_ANALYTICS_CLIENT_SECRET", "secret")
     monkeypatch.setenv("MIRROR_TALK_ANALYTICS_TOKEN_ENCRYPTION_KEY", "x" * 32)
@@ -78,19 +79,20 @@ def test_release_readiness_passes_only_with_fresh_distribution_and_private_evide
 
     observations = [
         {"provider": "youtube:uc-release", "metric_name": "plays", "metric_value": 10,
-         "period_start": "2026-11-01", "period_end": "2026-11-23", "source_reference": "youtube-api"},
+         "period_start": "2026-11-01", "period_end": recent_period, "source_reference": "youtube-api"},
         {"provider": "spotify", "metric_name": "plays", "metric_value": 11,
-         "period_start": "2026-11-01", "period_end": "2026-11-23", "source_reference": "spotify-export"},
+         "period_start": "2026-11-01", "period_end": recent_period, "source_reference": "spotify-export"},
         {"provider": "spotify", "metric_name": "downloads", "metric_value": 12,
-         "period_start": "2026-11-01", "period_end": "2026-11-23", "source_reference": "spotify-export",
+         "period_start": "2026-11-01", "period_end": recent_period, "source_reference": "spotify-export",
          "source_class": "host_rss_delivery"},
         {"provider": "apple_podcasts", "metric_name": "plays", "metric_value": 13,
-         "period_start": "2026-11-01", "period_end": "2026-11-23", "source_reference": "apple-export"},
+         "period_start": "2026-11-01", "period_end": recent_period, "source_reference": "apple-export"},
     ]
     GrowthIntelligence(temp_db.db_path).record_observations(observations, actor="test")
 
     report = PodcastReachReleaseReadiness(temp_db.db_path).report(now=now)
 
+    assert not report["blockers"], report
     assert report["status"] == "ready"
     assert report["blocker_count"] == 0
     assert report["checks"]["distribution"]["coverage_pct"] == 100.0

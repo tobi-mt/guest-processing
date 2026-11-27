@@ -4,7 +4,11 @@ import pytest
 
 from guest_database_manager.recommendation_learning import LearningError, RecommendationLearning, apply_active_policy
 from guest_database_manager.web_interface import GuestWebRequestHandler, GuestWebService
-from guest_database_manager.rss_release_reconciliation import RSSReconciliationError, RSSReleaseReconciler
+from guest_database_manager.rss_release_reconciliation import (
+    RSSReconciliationError,
+    RSSReleaseReconciler,
+    _decode_transcript,
+)
 
 
 def _recommendation(episode_id, score, *, readiness=60, watchouts=0):
@@ -456,6 +460,124 @@ def test_rss_automatic_release_rejects_multiple_feed_items_for_one_episode(temp_
     assert result["lifecycle_updates"] == 0
     assert result["counts"] == {"conflict": 2}
     assert temp_db.get_episode_by_id(episode_id)["release_status"] == "scheduled"
+
+
+def test_rss_transcript_parser_normalizes_srt_vtt_and_json():
+    srt = b"1\n00:00:00,000 --> 00:00:02,000\nHello &amp; welcome.\n\n2\n00:00:02,000 --> 00:00:04,000\n<b>Welcome</b> back.\n"
+    vtt = b"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nFirst thought.\n\n00:00:02.000 --> 00:00:04.000\nSecond thought.\n"
+    structured = b'{"segments":[{"start":0,"text":"One"},{"start":2,"text":"Two"}]}'
+
+    assert _decode_transcript(srt, "application/x-subrip") == "Hello & welcome.\nWelcome back."
+    assert _decode_transcript(vtt, "text/vtt") == "First thought.\nSecond thought."
+    assert _decode_transcript(structured, "application/json") == "One\nTwo"
+
+
+def test_unique_rss_identity_imports_transcript_once_with_provenance(monkeypatch, temp_db):
+    episode_id, _ = temp_db.upsert_episode({
+        "guest_name": "Transcript Guest", "episode_title": "A Transcript Release",
+        "release_status": "released", "release_date": "2026-09-21",
+    })
+    feed = """<?xml version="1.0"?>
+    <rss xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel><item>
+      <guid>transcript-release</guid><title>A Transcript Release</title>
+      <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+      <podcast:transcript url="https://cdn.example.com/transcript.srt"
+        type="application/x-subrip" language="en"/>
+    </item></channel></rss>"""
+    calls = []
+
+    def fetch_transcript(self, source, **kwargs):
+        calls.append(dict(source))
+        return "A safely normalized RSS transcript.", "a" * 64
+
+    monkeypatch.setattr(RSSReleaseReconciler, "fetch_transcript", fetch_transcript)
+    reconciler = RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml")
+    first = reconciler.reconcile(actor="rss-release-automation", payload=feed, apply_lifecycle=True)
+    second = reconciler.reconcile(actor="rss-release-automation", payload=feed, apply_lifecycle=True)
+
+    episode = temp_db.get_episode_by_id(episode_id)
+    assert first["transcript_imports"] == 1
+    assert second["transcript_imports"] == 0
+    assert len(calls) == 1
+    assert episode["transcript_text"] == "A safely normalized RSS transcript."
+    assert episode["transcript_source_id"].startswith("rss:")
+    assert episode["transcript_source_version"] == "a" * 64
+    assert episode["transcript_source_approved_at"]
+    with sqlite3.connect(temp_db.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        item = dict(conn.execute("SELECT * FROM rss_feed_items").fetchone())
+        assert item["transcript_status"] == "imported"
+        assert item["transcript_url"] == "https://cdn.example.com/transcript.srt"
+        assert item["transcript_attempts"] == 1
+        audit = conn.execute(
+            """SELECT source, event_type FROM audit_events
+               WHERE entity_type = 'episode' AND entity_id = ? AND source = 'podcast_rss'
+               ORDER BY id DESC LIMIT 1""",
+            (episode_id,),
+        ).fetchone()
+        assert tuple(audit) == ("podcast_rss", "transcript_source_approved")
+
+
+def test_ambiguous_rss_match_persists_transcript_for_review_without_fetch(monkeypatch, temp_db):
+    for guest_name in ("First Guest", "Second Guest"):
+        temp_db.upsert_episode({
+            "guest_name": guest_name, "episode_title": "A Shared Conversation",
+            "release_status": "released", "release_date": "2026-09-21",
+        })
+    feed = """<?xml version="1.0"?>
+    <rss xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel><item>
+      <guid>ambiguous-transcript</guid><title>A Shared Conversation</title>
+      <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+      <podcast:transcript url="https://cdn.example.com/transcript.vtt" type="text/vtt"/>
+    </item></channel></rss>"""
+
+    def forbidden_fetch(*args, **kwargs):
+        raise AssertionError("ambiguous transcript must not be fetched")
+
+    monkeypatch.setattr(RSSReleaseReconciler, "fetch_transcript", forbidden_fetch)
+    result = RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml").reconcile(
+        actor="rss-release-automation", payload=feed, apply_lifecycle=True
+    )
+
+    assert result["counts"] == {"review_required": 1}
+    assert all(not episode["transcript_text"] for episode in temp_db.list_episodes())
+    with sqlite3.connect(temp_db.db_path) as conn:
+        assert conn.execute("SELECT transcript_status FROM rss_feed_items").fetchone()[0] == "review_required"
+
+
+def test_rss_transcript_failure_is_bounded_and_retried_idempotently(monkeypatch, temp_db):
+    temp_db.upsert_episode({
+        "guest_name": "Retry Guest", "episode_title": "Retry Transcript",
+        "release_status": "released", "release_date": "2026-09-21",
+    })
+    feed = """<?xml version="1.0"?>
+    <rss xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel><item>
+      <guid>retry-transcript</guid><title>Retry Transcript</title>
+      <pubDate>Mon, 21 Sep 2026 12:00:00 GMT</pubDate>
+      <podcast:transcript url="https://cdn.example.com/transcript.json" type="application/json"/>
+    </item></channel></rss>"""
+    outcomes = [RSSReconciliationError("Transcript could not be fetched"), ("Recovered transcript.", "b" * 64)]
+
+    def flaky_fetch(self, source, **kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(RSSReleaseReconciler, "fetch_transcript", flaky_fetch)
+    reconciler = RSSReleaseReconciler(temp_db.db_path, feed_url="https://example.com/feed.xml")
+    first = reconciler.reconcile(actor="rss-release-automation", payload=feed, apply_lifecycle=True)
+    with sqlite3.connect(temp_db.db_path) as conn:
+        row = conn.execute(
+            "SELECT transcript_status, transcript_attempts, transcript_last_error_code FROM rss_feed_items"
+        ).fetchone()
+        assert row == ("failed", 1, "fetch_failed")
+        conn.execute("UPDATE rss_feed_items SET transcript_next_attempt_at = datetime('now', '-1 minute')")
+    second = reconciler.reconcile(actor="rss-release-automation", payload=feed, apply_lifecycle=True)
+
+    assert first["transcript_failures"] == 1
+    assert second["transcript_imports"] == 1
+    assert temp_db.list_episodes()[0]["transcript_text"] == "Recovered transcript."
 
 
 def test_invalid_persisted_policy_weights_fail_safe(temp_db):

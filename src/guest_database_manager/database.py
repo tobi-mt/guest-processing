@@ -1951,6 +1951,7 @@ class GuestDatabase:
         published_title: str = "",
         approve_source: bool = False,
         overwrite_existing: bool = False,
+        source: str = "ask_mirror_talk",
         actor: str,
         correlation_id: str,
     ) -> Dict[str, Any]:
@@ -2000,7 +2001,8 @@ class GuestDatabase:
             ) else "transcript_synced"
             self._append_audit_event_conn(
                 conn, entity_type="episode", entity_id=episode_id, event_type=event_type,
-                actor=actor, source="ask_mirror_talk", reason="Transcript provenance synchronized.",
+                actor=actor, source=str(source or "transcript_sync").strip(),
+                reason="Transcript provenance synchronized.",
                 correlation_id=correlation_id, before=before, after=after,
             )
             conn.commit()

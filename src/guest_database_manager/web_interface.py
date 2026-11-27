@@ -1212,7 +1212,10 @@ class GuestWebService:
 
     def reconcile_rss_releases(self, *, actor: str, apply_lifecycle: bool = False) -> Dict[str, Any]:
         """Reconcile RSS evidence and optionally apply tightly governed releases."""
-        return self.rss_release_reconciler.reconcile(actor=actor, apply_lifecycle=apply_lifecycle)
+        result = self.rss_release_reconciler.reconcile(actor=actor, apply_lifecycle=apply_lifecycle)
+        if result.get("lifecycle_updates") or result.get("transcript_imports"):
+            self._invalidate_payload_cache("planning", "planning_ai_copilot", "operations")
+        return result
 
     def evaluate_recommendation_policy(self, *, actor: str) -> Dict[str, Any]:
         return self.recommendation_learning.evaluate(actor=actor)

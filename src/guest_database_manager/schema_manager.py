@@ -1892,6 +1892,27 @@ class SchemaManager:
             "CREATE INDEX IF NOT EXISTS idx_analytics_job_leases_expiry ON analytics_job_leases(lease_until)"
         )
 
+    @staticmethod
+    def _migration_047_rss_transcript_ingestion(conn: sqlite3.Connection) -> None:
+        """Persist governed RSS transcript discovery, retries, and provenance."""
+        for name, declaration in (
+            ("transcript_sources_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("transcript_url", "TEXT NOT NULL DEFAULT ''"),
+            ("transcript_type", "TEXT NOT NULL DEFAULT ''"),
+            ("transcript_language", "TEXT NOT NULL DEFAULT ''"),
+            ("transcript_status", "TEXT NOT NULL DEFAULT 'unavailable'"),
+            ("transcript_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ("transcript_next_attempt_at", "TIMESTAMP"),
+            ("transcript_last_error_code", "TEXT NOT NULL DEFAULT ''"),
+            ("transcript_imported_at", "TIMESTAMP"),
+            ("transcript_content_hash", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            SchemaManager._add_column_if_missing(conn, "rss_feed_items", name, declaration)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rss_feed_transcript_retry "
+            "ON rss_feed_items(transcript_status, transcript_next_attempt_at)"
+        )
+
 
     @staticmethod
     def _run_migrations(conn: sqlite3.Connection) -> None:
@@ -1945,6 +1966,7 @@ class SchemaManager:
             (44, "podcast_reach_reliability", SchemaManager._migration_044_podcast_reach_reliability),
             (45, "expanded_podcast_distribution", SchemaManager._migration_045_expanded_podcast_distribution),
             (46, "podcast_reach_release_hardening", SchemaManager._migration_046_podcast_reach_release_hardening),
+            (47, "rss_transcript_ingestion", SchemaManager._migration_047_rss_transcript_ingestion),
         )
         applied = {int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()}
         for version, name, migration in migrations:
