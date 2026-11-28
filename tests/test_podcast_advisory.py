@@ -84,3 +84,17 @@ def test_episode_analytics_automatically_link_to_the_prior_recommendation(temp_d
     assert outcome[0] == "podcast_analytics_automation"
     assert outcome[1] is not None
     assert "midrank percentile" in outcome[2]
+
+
+def test_promotion_advice_names_connected_youtube_channel(temp_db):
+    insights = {
+        "provider_strength": [{"provider": "youtube:ucabc", "metrics": {"plays": 50}}],
+        "analytics_connectors": {"google": {"connections": [
+            {"youtube_channel_id": "UCabc", "youtube_channel_title": "Mirror Talk"},
+        ]}},
+    }
+
+    result = PodcastAdvisory(temp_db.db_path).dashboard(insights)
+
+    actions = [item["action"] for item in result["promotion_planning"]["recommendations"]]
+    assert "Prioritize the next measured promotion check on YouTube (Mirror Talk)." in actions

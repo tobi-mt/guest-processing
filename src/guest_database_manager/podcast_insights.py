@@ -18,6 +18,7 @@ AUDIENCE_METRICS = {
     "listeners", "followers", "subscribers",
 }
 RATING_METRICS = {"rating_average", "rating_count"}
+CONTENT_NON_ADDITIVE_METRICS = {"unique_listeners", "engaged_listeners", "unique_viewers"}
 DEVICE_PREFIX = "device_"
 COUNTRY_PREFIX = "country_"
 
@@ -140,8 +141,22 @@ class PodcastInsights:
             metrics: dict[str, float] = {}
             for metric in {row["metric_name"] for row in latest}:
                 # Per-video averages describe individual videos; their sum is not a channel average.
-                if metric in DISPLAY_METRICS and metric != "video_lifetime_average_view_duration_seconds":
-                    metrics[metric] = self._metric_total(latest, metric)
+                if metric not in DISPLAY_METRICS or metric == "video_lifetime_average_view_duration_seconds":
+                    continue
+                metric_latest = [row for row in latest if row["metric_name"] == metric]
+                content_only = all(
+                    row.get("episode_id") is not None or row.get("platform_content_id")
+                    for row in metric_latest
+                )
+                if content_only and metric in CONTENT_NON_ADDITIVE_METRICS:
+                    # One person who hears several episodes appears in each episode's count.
+                    continue
+                if content_only and metric == "consumption_depth_pct":
+                    weighted = self._play_weighted_depth(metric_latest, latest)
+                    if weighted is not None:
+                        metrics[metric] = weighted
+                    continue
+                metrics[metric] = self._metric_total(latest, metric)
             visible_latest = [row for row in latest if row["metric_name"] in metrics]
             provider_cards.append({
                 "provider": provider,
@@ -796,7 +811,15 @@ class PodcastInsights:
     def _performance_comparison(points: list[dict[str, Any]]) -> dict[str, Any]:
         if len(points) < 2:
             return {"available": False}
-        previous, current = points[-2:]
+        current = points[-1]
+        # Rolling windows overlap; "prior period" must be the latest window that ends before
+        # the current one starts, not the same window shifted by one day.
+        previous = next((
+            point for point in reversed(points[:-1])
+            if str(point["period_end"]) < str(current["period_start"])
+        ), None)
+        if previous is None:
+            return {"available": False}
 
         def compare(key: str) -> dict[str, float | None]:
             current_value = float(current[key] or 0)
@@ -1140,6 +1163,27 @@ class PodcastInsights:
             ]
             total += cls._metric_total(snapshot_rows, metric)
         return total
+
+    @staticmethod
+    def _play_weighted_depth(
+        depth_rows: list[dict[str, Any]], rows: list[dict[str, Any]],
+    ) -> float | None:
+        """Average per-episode consumption, weighting each episode by its plays."""
+        def identity(row: dict[str, Any]) -> tuple[str, str, str, str]:
+            return (
+                str(row.get("episode_id") or ""), str(row.get("platform_content_id") or ""),
+                str(row.get("period_start") or ""), str(row.get("period_end") or ""),
+            )
+
+        plays = {identity(row): float(row["metric_value"]) for row in rows if row["metric_name"] == "plays"}
+        weighted = total = 0.0
+        for row in depth_rows:
+            weight = plays.get(identity(row), 0.0)
+            weighted += float(row["metric_value"]) * weight
+            total += weight
+        if total:
+            return weighted / total
+        return None
 
     @staticmethod
     def _prefer_primary_evidence(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

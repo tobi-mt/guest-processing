@@ -85,7 +85,10 @@ class PodcastAdvisory:
         if activity_providers:
             strongest, _ = max(activity_providers, key=lambda item: item[1])
             promotion.append({
-                "action": f"Prioritize the next measured promotion check on {self._label(strongest.get('provider'))}.",
+                "action": (
+                    "Prioritize the next measured promotion check on "
+                    f"{self._provider_label(strongest.get('provider'), insights)}."
+                ),
                 "reason": "It has the strongest latest source-backed activity among currently measured providers.",
                 "confidence": "directional",
             })
@@ -152,6 +155,20 @@ class PodcastAdvisory:
     @staticmethod
     def _label(value: Any) -> str:
         return str(value or "provider").replace("_", " ").title()
+
+    @classmethod
+    def _provider_label(cls, provider: Any, insights: dict[str, Any]) -> str:
+        """Name a provider as owners know it, including connected YouTube channel titles."""
+        key = str(provider or "").casefold()
+        if key.startswith("youtube:"):
+            connections = ((insights.get("analytics_connectors") or {}).get("google") or {}).get("connections") or []
+            title = next((
+                str(item.get("youtube_channel_title") or "").strip()
+                for item in connections
+                if f"youtube:{str(item.get('youtube_channel_id') or '').casefold()}" == key
+            ), "")
+            return f"YouTube ({title})" if title else "YouTube"
+        return {"youtube": "YouTube", "apple_podcasts": "Apple Podcasts", "ga4": "Website"}.get(key) or cls._label(provider)
 
     @staticmethod
     def _forecasts(daily: list[dict[str, Any]], episodes: dict[int, dict[str, Any]]) -> dict[str, Any]:

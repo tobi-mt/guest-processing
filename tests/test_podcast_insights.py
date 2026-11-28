@@ -1017,3 +1017,43 @@ def test_aggregator_copies_only_fill_measures_without_primary_provider_evidence(
         {"provider": "spotify", "metric_name": "spotify_home_impressions", "source_class": "aggregator_copy"},
     ])
     assert len(retained) == 1
+
+
+def test_provider_card_does_not_sum_per_episode_listeners_or_depth(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    rows = []
+    for content_id, plays, listeners, depth in (("1001", 300, 200, 80), ("1002", 100, 90, 40)):
+        for metric, value in (("plays", plays), ("unique_listeners", listeners), ("consumption_depth_pct", depth)):
+            rows.append({
+                "provider": "apple_podcasts", "metric_name": metric, "metric_value": value,
+                "period_start": "2020-06-01", "period_end": "2026-11-20", "source_reference": "apple.csv",
+                "source_class": "provider_native", "overlap_group": f"apple_native_{metric}",
+                "platform_content_id": content_id, "platform_content_title": f"Episode {content_id}",
+            })
+    service.record_growth_observations({"observations": rows}, actor="automation")
+
+    card = {
+        item["provider"]: item for item in PodcastInsights(temp_db.db_path).dashboard()["provider_strength"]
+    }["apple_podcasts"]
+
+    assert card["metrics"]["plays"] == 400
+    assert "unique_listeners" not in card["metrics"]
+    assert card["metrics"]["consumption_depth_pct"] == 70
+
+
+def test_headline_comparison_uses_prior_non_overlapping_window():
+    def point(start, end, total):
+        return {"period_start": start, "period_end": end, "total": total, "audio": total, "video": 0,
+                "open_rss_downloads": total, "spotify_native_plays": 0, "youtube_views": 0}
+
+    rolling = [
+        point("2026-10-01", "2026-10-28", 4751), point("2026-10-02", "2026-10-29", 4856),
+        point("2026-10-28", "2026-11-24", 4207), point("2026-10-29", "2026-11-25", 4125),
+    ]
+
+    comparison = PodcastInsights._performance_comparison(rolling)
+
+    assert comparison["previous_period_start"] == "2026-10-01"
+    assert comparison["previous_period_end"] == "2026-10-28"
+    assert comparison["total"]["delta_pct"] == -13.2
+    assert PodcastInsights._performance_comparison(rolling[-2:]) == {"available": False}
