@@ -996,6 +996,11 @@ class GuestWebService:
         result["learning_outcomes"] = self._record_podcast_performance_learning_outcomes(actor=actor)
         return result
 
+    def sync_website_player_analytics(self, *, actor: str) -> Dict[str, Any]:
+        result = self.podcast_analytics_connectors.sync_website_player(actor=actor)
+        result["learning_outcomes"] = self._record_podcast_performance_learning_outcomes(actor=actor)
+        return result
+
     def refresh_podcast_reach(self, *, actor: str) -> Dict[str, Any]:
         """Refresh every server-accessible reach source without hiding provider access needs."""
         result: Dict[str, Any] = {
@@ -1003,6 +1008,7 @@ class GuestWebService:
             "public_distribution": self.podcast_source_monitor.run(actor=actor, force=True),
             "youtube": {"status": "not_connected"},
             "openpodcast": {"status": "not_configured"},
+            "website_player": {"status": "not_configured"},
         }
         try:
             result["youtube"] = self.sync_google_analytics(actor=actor, force=True)
@@ -1017,6 +1023,13 @@ class GuestWebService:
                 result["openpodcast"] = {
                     "status": "needs_setup",
                     "error_code": status.get("last_error_code") or "sync_failed",
+                }
+        if self.podcast_analytics_connectors.status().get("website_player", {}).get("configured"):
+            try:
+                result["website_player"] = self.sync_website_player_analytics(actor=actor)
+            except AnalyticsConnectorError as exc:
+                result["website_player"] = {
+                    "status": "needs_setup", "error_code": getattr(exc, "code", "") or "sync_failed",
                 }
         result["local_collectors"] = self.podcast_analytics_connectors.status()["local_collectors"]
         return result
@@ -1440,6 +1453,16 @@ class GuestWebService:
                         )
                     except Exception:
                         logger.exception("OpenPodcast analytics synchronization failed")
+                    try:
+                        if self.podcast_analytics_connectors.website_player_sync_due():
+                            self.sync_website_player_analytics(actor="podcast-analytics-automation")
+                    except AnalyticsConnectorError as exc:
+                        logger.warning(
+                            "Website player analytics synchronization needs attention (%s)",
+                            getattr(exc, "code", "") or "sync_failed",
+                        )
+                    except Exception:
+                        logger.exception("Website player analytics synchronization failed")
                 try:
                     self._schedule_public_ratings(actor="podcast-analytics-automation")
                 except Exception:

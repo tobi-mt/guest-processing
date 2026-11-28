@@ -646,3 +646,112 @@ def test_partial_collector_run_is_degraded_not_failed(temp_db, monkeypatch):
     assert connection["status"] == "degraded"
     assert connection["missing_reports"] == ["age", "gender"]
     assert connection["consecutive_failures"] == 0
+
+
+def _website_player_report(start="2026-10-29", end="2026-11-27", **totals):
+    counts = {"plays": 12, "pauses": 4, "meaningful_listens": 7, "completions": 3,
+              "progress_25": 9, "progress_50": 6, "progress_75": 4, **totals}
+    return {
+        "source": "mirror-talk-website-first-party", "period_start": start, "period_end": end,
+        "totals": counts,
+        "episodes": [
+            {"episode_id": "", "episode_title": "  Rachel Richards on Making Finance Fun ", "plays": 8,
+             "pauses": 0, "meaningful_listens": 5, "completions": 2, "progress_25": 6,
+             "progress_50": 4, "progress_75": 3},
+            {"episode_id": "", "episode_title": "", "plays": 4},
+        ],
+    }
+
+
+def test_website_player_sync_imports_first_party_counts_into_web_player_card(temp_db, monkeypatch):
+    from guest_database_manager.podcast_analytics_connectors import (
+        WEBSITE_PLAYER_PASSWORD_ENV, WEBSITE_PLAYER_USER_ENV,
+    )
+    from guest_database_manager.podcast_insights import PodcastInsights
+
+    monkeypatch.setenv(WEBSITE_PLAYER_USER_ENV, "reach-reader")
+    monkeypatch.setenv(WEBSITE_PLAYER_PASSWORD_ENV, "abcd EFGH ijkl MNOP")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    requests = []
+
+    def fake_get(url, user, password):
+        requests.append((url, user, password))
+        return _website_player_report()
+
+    monkeypatch.setattr(connectors, "_get_website_player_json", fake_get)
+    assert connectors.status()["website_player"]["status"] == "ready"
+    assert connectors.website_player_sync_due() is True
+
+    first = connectors.sync_website_player(actor="admin", end=date(2026, 11, 27))
+    second = connectors.sync_website_player(actor="admin", end=date(2026, 11, 27))
+
+    query = parse_qs(urlsplit(requests[0][0]).query)
+    assert requests[0][0].startswith("https://mirrortalkpodcast.com/wp-json/mirror-talk/v1/intelligence/podcast-player?")
+    assert query == {"start": ["2026-10-29"], "end": ["2026-11-27"]}
+    assert requests[0][1:] == ("reach-reader", "abcdEFGHijklMNOP")
+    assert first["status"] == "completed" and first["inserted"] == first["observations"] == 11
+    assert second["inserted"] == 0 and second["duplicates"] == 11
+
+    status = connectors.status()["website_player"]
+    assert status["status"] == "connected" and status["latest_period_end"] == "2026-11-27"
+    assert "abcd" not in str(status) and connectors.website_player_sync_due() is False
+
+    payload = PodcastInsights(temp_db.db_path).dashboard()
+    website = next(card for card in payload["provider_strength"] if card["provider"] == "website")
+    assert website["metrics"]["web_player_play_starts"] == 12
+    assert website["metrics"]["web_player_completions"] == 3
+    episode = next(item for item in payload["top_platform_content"] if item["provider"] == "website")
+    assert episode["title"] == "Rachel Richards on Making Finance Fun"
+    assert episode["metrics"]["web_player_play_starts"] == 8
+
+
+@pytest.mark.parametrize("report", [
+    _website_player_report(start="2026-10-28"),
+    _website_player_report(plays=-1),
+    _website_player_report(plays="12"),
+    {"period_start": "2026-10-29", "period_end": "2026-11-27", "totals": None},
+])
+def test_website_player_sync_rejects_mismatched_or_invalid_reports_and_backs_off(temp_db, monkeypatch, report):
+    from guest_database_manager.podcast_analytics_connectors import (
+        WEBSITE_PLAYER_PASSWORD_ENV, WEBSITE_PLAYER_USER_ENV,
+    )
+
+    monkeypatch.setenv(WEBSITE_PLAYER_USER_ENV, "reach-reader")
+    monkeypatch.setenv(WEBSITE_PLAYER_PASSWORD_ENV, "server-only-password")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    monkeypatch.setattr(connectors, "_get_website_player_json", lambda *_args: report)
+
+    with pytest.raises(AnalyticsConnectorError, match="unexpected player report"):
+        connectors.sync_website_player(actor="podcast-analytics-automation", end=date(2026, 11, 27))
+
+    status = connectors.status()["website_player"]
+    assert status["status"] == "error" and status["last_error_code"] == "invalid_response"
+    assert connectors.website_player_sync_due() is False
+    with sqlite3.connect(temp_db.db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM growth_metric_observations WHERE source_reference LIKE 'mirror-talk-website:%'"
+        ).fetchone()[0] == 0
+
+
+def test_website_player_credential_rejection_is_reported_without_secret(temp_db, monkeypatch):
+    from urllib.error import HTTPError
+
+    from guest_database_manager.podcast_analytics_connectors import (
+        WEBSITE_PLAYER_PASSWORD_ENV, WEBSITE_PLAYER_USER_ENV,
+    )
+
+    monkeypatch.setenv(WEBSITE_PLAYER_USER_ENV, "reach-reader")
+    monkeypatch.setenv(WEBSITE_PLAYER_PASSWORD_ENV, "server-only-password")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+
+    def rejected(request, timeout):
+        assert request.get_header("Authorization").startswith("Basic ")
+        raise HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr("guest_database_manager.podcast_analytics_connectors.urlopen", rejected)
+    with pytest.raises(AnalyticsConnectorError, match="rejected the configured analytics credential"):
+        connectors.sync_website_player(actor="admin", end=date(2026, 11, 27))
+
+    status = connectors.status()["website_player"]
+    assert status["last_error_code"] == "credential_rejected"
+    assert "server-only-password" not in str(status)

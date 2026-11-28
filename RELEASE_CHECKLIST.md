@@ -52,6 +52,9 @@
 - For a new operations Mac, run the one-time `local_analytics_collector setup`
   command and confirm it registers Spotify and Apple, completes both owner-controlled
   login ceremonies, and installs the staggered 06:15/06:30 daily jobs.
+- Website player analytics needs the theme's `podcast-player` report deployed and a
+  WordPress Application Password in `MIRROR_TALK_WEBSITE_ANALYTICS_USER` and
+  `MIRROR_TALK_WEBSITE_ANALYTICS_APP_PASSWORD`; leave them unset to keep the card in setup state.
 - Leave `MIRROR_TALK_OPENPODCAST_AUTO_SYNC` unset unless the optional OpenPodcast
   account has passed a manual endpoint sync. If enabled, verify a failure enters the
   20-hour backoff instead of retrying every worker cycle.

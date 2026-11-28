@@ -34,6 +34,22 @@ OPENPODCAST_DAILY_CHUNK_DAYS = 7
 OPENPODCAST_ENDPOINTS = (
     "episodesDailyMetrics", "podcastFollowers", "spotifyImpressionsSources", "spotifyCountries",
 )
+WEBSITE_PLAYER_URL_ENV = "MIRROR_TALK_WEBSITE_ANALYTICS_URL"
+WEBSITE_PLAYER_USER_ENV = "MIRROR_TALK_WEBSITE_ANALYTICS_USER"
+WEBSITE_PLAYER_PASSWORD_ENV = "MIRROR_TALK_WEBSITE_ANALYTICS_APP_PASSWORD"
+WEBSITE_PLAYER_DEFAULT_URL = "https://mirrortalkpodcast.com"
+WEBSITE_PLAYER_ROUTE = "/wp-json/mirror-talk/v1/intelligence/podcast-player"
+WEBSITE_PLAYER_SOURCE = "mirror-talk-website"
+WEBSITE_PLAYER_WINDOW_DAYS = 30
+# First-party WordPress counters -> the same metrics the GA4 player events populate.
+WEBSITE_PLAYER_METRICS = {
+    "plays": "web_player_play_starts",
+    "pauses": "web_player_pauses",
+    "progress_25": "web_player_progress_25",
+    "progress_50": "web_player_progress_50",
+    "progress_75": "web_player_progress_75",
+    "completions": "web_player_completions",
+}
 LOCAL_COLLECTOR_PROVIDERS = {"spotify", "apple_podcasts"}
 LOCAL_COLLECTOR_STALE_AFTER = timedelta(days=2)
 WEB_PLAYER_EVENTS = {
@@ -56,6 +72,14 @@ GOOGLE_SCOPES = (
 
 class AnalyticsConnectorError(ValueError):
     """A safe, user-facing connector failure."""
+
+
+class WebsitePlayerError(AnalyticsConnectorError):
+    """A website-player sync failure carrying a non-sensitive status code."""
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class OpenPodcastQueryError(AnalyticsConnectorError):
@@ -102,6 +126,12 @@ class PodcastAnalyticsConnectors:
             "openpodcast_auto_sync": os.environ.get(
                 OPENPODCAST_AUTO_SYNC_ENV, "false"
             ).strip().casefold() == "true",
+            "website_player_url": (
+                os.environ.get(WEBSITE_PLAYER_URL_ENV, "").strip() or WEBSITE_PLAYER_DEFAULT_URL
+            ).rstrip("/"),
+            "website_player_user": os.environ.get(WEBSITE_PLAYER_USER_ENV, "").strip(),
+            # WordPress displays application passwords in spaced groups; both forms authenticate.
+            "website_player_password": os.environ.get(WEBSITE_PLAYER_PASSWORD_ENV, "").replace(" ", "").strip(),
         }
 
     @classmethod
@@ -142,6 +172,12 @@ class PodcastAnalyticsConnectors:
                      AND event_type IN ('analytics_sync_completed', 'analytics_sync_failed')
                    ORDER BY id DESC LIMIT 1"""
             ).fetchone()
+            website_player_event = conn.execute(
+                """SELECT event_type, after_json, created_at FROM audit_events
+                   WHERE entity_type = 'analytics_connector' AND entity_id = 'website_player'
+                     AND event_type IN ('analytics_sync_completed', 'analytics_sync_failed')
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
         connections = [dict(row) for row in rows]
         for connection in connections:
             connection["scopes"] = json.loads(connection.pop("scopes_json") or "[]")
@@ -179,6 +215,24 @@ class PodcastAnalyticsConnectors:
                    WHERE source_reference LIKE 'openpodcast-api:%'
                    ORDER BY imported_at DESC, id DESC LIMIT 1"""
             ).fetchall()]
+            website_player_rows = [dict(row) for row in conn.execute(
+                """SELECT imported_at, period_end FROM current_growth_metric_observations
+                   WHERE source_reference LIKE ?
+                   ORDER BY imported_at DESC, id DESC LIMIT 1""",
+                (f"{WEBSITE_PLAYER_SOURCE}:%",),
+            ).fetchall()]
+        website_player_ready = bool(config["website_player_user"] and config["website_player_password"])
+        website_player_details = (
+            json.loads(website_player_event["after_json"] or "{}") if website_player_event else {}
+        )
+        website_player_failed = bool(
+            website_player_event and website_player_event["event_type"] == "analytics_sync_failed"
+        )
+        website_player_status = (
+            "error" if website_player_ready and website_player_failed else
+            "connected" if website_player_rows else
+            "ready" if website_player_ready else "not_configured"
+        )
         openpodcast_ready = bool(config["openpodcast_token"] and config["openpodcast_podcast_id"].isdigit())
         openpodcast_auto_sync = bool(config["openpodcast_auto_sync"])
         openpodcast_event_details = json.loads(openpodcast_event["after_json"] or "{}") if openpodcast_event else {}
@@ -224,6 +278,16 @@ class PodcastAnalyticsConnectors:
                     OPENPODCAST_AUTO_SYNC_ENV,
                 ],
             },
+            "website_player": {
+                "configured": website_player_ready,
+                "status": website_player_status,
+                "site_url": config["website_player_url"],
+                "last_success_at": website_player_rows[0]["imported_at"] if website_player_rows else None,
+                "latest_period_end": website_player_rows[0]["period_end"] if website_player_rows else None,
+                "last_error_code": website_player_details.get("error_code", "") if website_player_failed else "",
+                "last_error_at": website_player_event["created_at"] if website_player_failed else None,
+                "required_environment": [WEBSITE_PLAYER_USER_ENV, WEBSITE_PLAYER_PASSWORD_ENV],
+            },
             "google": {
                 "oauth_configured": oauth_ready,
                 "ga4_configured": bool(config["ga4_property_id"]),
@@ -264,6 +328,132 @@ class PodcastAnalyticsConnectors:
             ) if parsed is not None
         ]
         return not reference_times or (now or _now()) - max(reference_times) >= cooldown
+
+    def website_player_sync_due(
+        self, *, now: datetime | None = None, cooldown: timedelta = timedelta(hours=20)
+    ) -> bool:
+        status = self.status().get("website_player", {})
+        if not status.get("configured"):
+            return False
+        reference_times = [
+            parsed for parsed in (
+                _parse_datetime(status.get("last_success_at")),
+                _parse_datetime(status.get("last_error_at")),
+            ) if parsed is not None
+        ]
+        return not reference_times or (now or _now()) - max(reference_times) >= cooldown
+
+    def sync_website_player(self, *, actor: str, end: date | None = None) -> dict[str, Any]:
+        """Collect first-party Mirror Talk website player counts for the last complete 30 days."""
+        config = self._config()
+        if not (config["website_player_user"] and config["website_player_password"]):
+            raise AnalyticsConnectorError("Website player analytics is not configured in production.")
+        end = end or _now().date() - timedelta(days=1)
+        start = end - timedelta(days=WEBSITE_PLAYER_WINDOW_DAYS - 1)
+        url = f"{config['website_player_url']}{WEBSITE_PLAYER_ROUTE}?" + urlencode(
+            {"start": start.isoformat(), "end": end.isoformat()}
+        )
+        try:
+            payload = self._get_website_player_json(
+                url, config["website_player_user"], config["website_player_password"]
+            )
+            observations = self._normalize_website_player(payload, start=start, end=end)
+        except AnalyticsConnectorError as exc:
+            self._audit_website_player(actor, "analytics_sync_failed", {
+                "error_code": getattr(exc, "code", "") or "sync_failed",
+                "period_start": start.isoformat(), "period_end": end.isoformat(),
+            })
+            raise
+        result = self.growth.record_observations(
+            observations, actor=actor, correlation_id=f"website-player-{start.isoformat()}-{end.isoformat()}"
+        )
+        self._audit_website_player(actor, "analytics_sync_completed", {
+            "period_start": start.isoformat(), "period_end": end.isoformat(),
+            "observation_count": len(observations),
+            "inserted": int(result.get("inserted") or 0), "duplicates": int(result.get("duplicates") or 0),
+        })
+        return {
+            **result, "status": "completed", "observations": len(observations),
+            "period_start": start.isoformat(), "period_end": end.isoformat(),
+        }
+
+    def _audit_website_player(self, actor: str, event_type: str, details: dict[str, Any]) -> None:
+        with connect_database(self.db_path) as conn:
+            self._audit(
+                conn, event_type, actor, "First-party website player analytics synchronization",
+                {"provider": "website_player", **details},
+            )
+            conn.commit()
+
+    @staticmethod
+    def _get_website_player_json(url: str, user: str, password: str) -> dict[str, Any]:
+        credential = base64.b64encode(f"{user}:{password}".encode()).decode()
+        request = Request(url, headers={"Authorization": f"Basic {credential}", "Accept": "application/json"})
+        try:
+            with urlopen(request, timeout=25) as response:  # noqa: S310 - configured first-party site
+                payload = json.loads(response.read(2_000_000))
+        except HTTPError as exc:
+            if exc.code in {401, 403}:
+                raise WebsitePlayerError(
+                    "The website rejected the configured analytics credential.", "credential_rejected"
+                ) from exc
+            if exc.code == 404:
+                raise WebsitePlayerError(
+                    "The website has not published the podcast player report yet.", "report_unavailable"
+                ) from exc
+            raise WebsitePlayerError("Website player analytics could not be synchronized.", "http_error") from exc
+        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise WebsitePlayerError("Website player analytics could not be synchronized.", "unreachable") from exc
+        if not isinstance(payload, dict):
+            raise WebsitePlayerError("The website returned an unexpected player report.", "invalid_response")
+        return payload
+
+    @staticmethod
+    def _normalize_website_player(payload: dict[str, Any], *, start: date, end: date) -> list[dict[str, Any]]:
+        if (
+            payload.get("period_start") != start.isoformat()
+            or payload.get("period_end") != end.isoformat()
+            or not isinstance(payload.get("totals"), dict)
+            or not isinstance(payload.get("episodes", []), list)
+        ):
+            raise WebsitePlayerError("The website returned an unexpected player report.", "invalid_response")
+
+        def counts(values: dict[str, Any]) -> dict[str, int]:
+            parsed = {}
+            for field, metric in WEBSITE_PLAYER_METRICS.items():
+                value = values.get(field, 0)
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                    raise WebsitePlayerError("The website returned an unexpected player report.", "invalid_response")
+                parsed[metric] = int(value)
+            return parsed
+
+        common = {
+            "provider": "website", "period_start": start.isoformat(), "period_end": end.isoformat(),
+            "traffic_scope": "all", "source_class": "website",
+            "source_reference": f"{WEBSITE_PLAYER_SOURCE}:first-party-player",
+        }
+        # A verified zero is real evidence from this first-party source, so totals are always stored.
+        observations = [
+            {**common, "metric_name": metric, "metric_value": value}
+            for metric, value in counts(payload["totals"]).items()
+        ]
+        for episode in payload.get("episodes") or []:
+            if not isinstance(episode, dict):
+                continue
+            title = re.sub(r"\s+", " ", str(episode.get("episode_title") or "")).strip()[:300]
+            if not title:
+                continue
+            reference = str(episode.get("episode_id") or "").strip()[:160]
+            content_id = f"site:{reference}" if reference else "site-title:" + hashlib.sha256(
+                title.casefold().encode()
+            ).hexdigest()[:24]
+            for metric, value in counts(episode).items():
+                if value:
+                    observations.append({
+                        **common, "metric_name": metric, "metric_value": value,
+                        "platform_content_id": content_id, "platform_content_title": title,
+                    })
+        return observations
 
     def sync_openpodcast(self, *, actor: str, start: date | None = None, end: date | None = None) -> dict[str, Any]:
         """Collect read-only, show-level OpenPodcast evidence without persisting its bearer token."""

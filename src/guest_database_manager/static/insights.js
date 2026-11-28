@@ -184,9 +184,19 @@ function renderPlatformPerformance(global, monthly, listeningApps, audio, platfo
   const appleChange = changeLabel(appleStat);
   cards.push(`<article class="performance-platform-card diagnostic"><div><span>Apple Podcasts engagement</span><strong>${number(appleCurrent?.plays)}</strong></div><p>Apple-native plays for ${escapeHtml(appleCurrent?.period || "the latest reported month")}; shown separately to prevent double-counting RSS delivery.</p><div class="platform-card-meta"><span>${number(appleCurrent?.listeners)} listeners</span><span class="metric-change ${appleChange.className}">${escapeHtml(appleChange.text)}</span></div></article>`);
   const website = (latestPayload?.provider_strength || []).find((item) => ["website", "ga4", "google_analytics"].includes(item.provider));
-  if (website) {
-    const hasPlayerEvents = website.metrics?.web_player_play_starts != null;
-    cards.push(`<article class="performance-platform-card diagnostic"><div><span>Mirror Talk Web Player</span><strong>${hasPlayerEvents ? number(website.metrics.web_player_play_starts) : "Awaiting events"}</strong></div><p>${hasPlayerEvents ? "Player starts on the Mirror Talk website; kept separate from hosting downloads to prevent double-counting." : "Website analytics is connected, but no audio-player event has arrived. Install the supplied player-tracking snippet on the web player, then play one episode to verify collection."}</p><div class="platform-card-meta"><span>${hasPlayerEvents ? `${number(website.metrics?.web_player_completions)} completions` : "No value is shown as zero"}</span><span>${hasPlayerEvents ? `${number(website.metrics?.web_player_unique_users)} users` : "Tracking action required"}</span></div></article>`);
+  const playerFeed = latestPayload?.analytics_connectors?.website_player || {};
+  if (website || playerFeed.configured) {
+    const metrics = website?.metrics || {};
+    const hasPlayerEvents = metrics.web_player_play_starts != null;
+    const awaiting = playerFeed.status === "error"
+      ? `The website player report could not be read (${playerFeed.last_error_code || "sync failed"}). Check the website analytics application password and that the podcast-player report is published.`
+      : playerFeed.configured
+        ? "The first-party website player feed is configured; the next scheduled sync will import the last 30 complete days."
+        : "Set the website analytics user and application password in production so player starts, progress, and completions are collected automatically.";
+    const completionRate = hasPlayerEvents && Number(metrics.web_player_play_starts) > 0
+      ? `${Math.round(Number(metrics.web_player_completions || 0) * 1000 / Number(metrics.web_player_play_starts)) / 10}% completion rate`
+      : "Tracking action required";
+    cards.push(`<article class="performance-platform-card diagnostic"><div><span>Mirror Talk Web Player</span><strong>${hasPlayerEvents ? number(metrics.web_player_play_starts) : "Awaiting events"}</strong></div><p>${hasPlayerEvents ? "Player starts on the Mirror Talk website; kept separate from hosting downloads to prevent double-counting." : escapeHtml(awaiting)}</p><div class="platform-card-meta"><span>${hasPlayerEvents ? `${number(metrics.web_player_completions)} completions` : "No value is shown as zero"}</span><span>${hasPlayerEvents ? (metrics.web_player_unique_users != null ? `${number(metrics.web_player_unique_users)} users` : escapeHtml(completionRate)) : "Tracking action required"}</span></div></article>`);
   }
   target.innerHTML = cards.join("");
 
@@ -384,6 +394,7 @@ function render(payload) {
     notices.push(`${connection.youtube_channel_title || "Google Analytics"}: connection needs attention.`);
   }
   if (connectors.openpodcast?.status === "error") notices.push(`OpenPodcast: sync failed (${connectors.openpodcast.last_error_code || "no error code"}).`);
+  if (connectors.website_player?.status === "error") notices.push(`Website player: sync failed (${connectors.website_player.last_error_code || "no error code"}).`);
   if (connectors.openpodcast?.status === "degraded") notices.push(`OpenPodcast: partial sync (${(connectors.openpodcast.failed_endpoints || []).join(", ") || connectors.openpodcast.last_error_code || "some reports"} unavailable).`);
   if (connectors.public_ratings?.status === "error") notices.push("Apple public ratings: last check failed.");
   if (connectors.public_ratings?.status === "waiting" && !connectors.public_ratings.last_run_at) notices.push("Apple public ratings: awaiting first check.");
