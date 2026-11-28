@@ -444,11 +444,11 @@ def test_current_apple_episode_export_preserves_window_and_provider_identity(tem
 
     assert preview["format"] == "provider"
     assert preview["summary"] == {
-        "submitted": 3, "ready": 3, "invalid": 0, "duplicates": 0,
-        "linked_to_episode": 0, "unlinked": 3,
+        "submitted": 4, "ready": 4, "invalid": 0, "duplicates": 0,
+        "linked_to_episode": 0, "unlinked": 4,
     }
     assert {row["metric_name"] for row in preview["observations"]} == {
-        "plays", "unique_listeners", "engaged_listeners",
+        "plays", "unique_listeners", "engaged_listeners", "consumption_depth_pct",
     }
     assert {row["period_start"] for row in preview["observations"]} == {"2026-09-27"}
     assert {row["period_end"] for row in preview["observations"]} == {"2026-11-25"}
@@ -502,3 +502,20 @@ def test_dashboard_groups_import_history_by_correlation_id(temp_db):
     assert history[0]["batch_key"] == "batch-42"
     assert history[0]["observation_count"] == 2
     assert history[0]["actor"] == "producer"
+
+
+def test_apple_episode_export_scales_average_consumption_ratio_to_percent(temp_db):
+    preview = GrowthIntelligence(temp_db.db_path).preview_csv(
+        "Show Name,Episode ID,Episode Title,Release Date,"
+        "Unique Listeners,Unique Engaged Listeners,Plays,Average Consumption,"
+        "Analytics Period Start,Analytics Period End\n"
+        "Mirror Talk,1000533839699,Rachel Richards,2021-08-31,18,10,453,1.7616308243727599,"
+        "2020-06-12,2026-11-28\n",
+        provider="apple_podcasts",
+        source_reference="apple-episodes.csv",
+    )
+
+    depth = next(row for row in preview["observations"] if row["metric_name"] == "consumption_depth_pct")
+    # Apple Podcasts Connect shows this episode's average consumption as 176%.
+    assert round(float(depth["metric_value"])) == 176
+    assert depth["overlap_group"] == "apple_native_average_consumption_pct"

@@ -77,6 +77,9 @@ CANONICAL_METRICS = {
     "rating_average": "rating",
     "rating_count": "count",
 }
+# Rows stored under the former "apple_native_consumption_depth_pct" group hold Apple's raw
+# ratio (1.76 = 176%); a new group keeps correctly scaled percentages from mixing with them.
+APPLE_AVERAGE_CONSUMPTION_GROUP = "apple_native_average_consumption_pct"
 MFS_COMPONENTS = ("organic_reach", "consumption_depth_pct", "conversion_rate_pct", "return_rate_pct")
 
 CSV_FIELD_ALIASES = {
@@ -144,7 +147,11 @@ def _metric_value(metric: str, value: Any) -> float:
         raise GrowthIntelligenceError("metric_value must be numeric.") from exc
     if not math.isfinite(number) or number < 0:
         raise GrowthIntelligenceError("metric_value must be a finite non-negative number.")
-    if CANONICAL_METRICS.get(metric) == "percent" and number > 100:
+    if metric == "consumption_depth_pct":
+        # Apple measures consumption per device, so replays legitimately exceed 100%.
+        if number > 10_000:
+            raise GrowthIntelligenceError("Consumption percentage is implausibly large.")
+    elif CANONICAL_METRICS.get(metric) == "percent" and number > 100:
         raise GrowthIntelligenceError("Percentage metrics cannot exceed 100.")
     if CANONICAL_METRICS.get(metric) == "rating" and number > 5:
         raise GrowthIntelligenceError("Rating averages cannot exceed 5.")
@@ -327,21 +334,28 @@ class GrowthIntelligence:
             "Average Consumption", "Analytics Period Start", "Analytics Period End",
         }
         if provider_key == "apple_podcasts" and apple_episode_export.issubset(header_set):
-            # "Average Consumption" in this export is not a percentage of the episode: lifetime
-            # values of 1-4 contradict Apple's own listening time (~27% per play), so it is
-            # not imported until its unit is confirmed.
             metric_columns = {
                 "plays": "Plays",
                 "unique_listeners": "Unique Listeners",
                 "engaged_listeners": "Unique Engaged Listeners",
+                "consumption_depth_pct": "Average Consumption",
             }
             for row_number, raw in enumerate(raw_rows, 2):
                 for metric, column in metric_columns.items():
                     value = _text(raw.get(column))
                     if value in {"", "-", "0", "0.0", "0%", "0.0%"}:
                         continue
+                    overlap_group = f"apple_native_{metric}"
                     if metric == "consumption_depth_pct":
-                        value = value.removesuffix("%").strip()
+                        overlap_group = APPLE_AVERAGE_CONSUMPTION_GROUP
+                        if value.endswith("%"):
+                            value = value.removesuffix("%").strip()
+                        else:
+                            # Apple exports a ratio: 1.7616 is the 176% shown in Podcasts Connect.
+                            try:
+                                value = str(round(float(value) * 100, 4))
+                            except ValueError:
+                                pass
                     candidates.append((row_number, {
                         "episode_title": raw.get("Episode Title"),
                         "platform_content_id": raw.get("Episode ID"),
@@ -351,7 +365,7 @@ class GrowthIntelligence:
                         "period_start": raw.get("Analytics Period Start"),
                         "period_end": raw.get("Analytics Period End"),
                         "source_class": "provider_native",
-                        "overlap_group": f"apple_native_{metric}",
+                        "overlap_group": overlap_group,
                     }))
             return candidates
         if provider_key == "apple_podcasts" and apple_base.issubset(header_set):

@@ -1027,22 +1027,23 @@ def test_provider_card_does_not_sum_per_episode_listeners_or_depth(temp_db):
             rows.append({
                 "provider": "apple_podcasts", "metric_name": metric, "metric_value": value,
                 "period_start": "2020-06-01", "period_end": "2026-11-20", "source_reference": "apple.csv",
-                "source_class": "provider_native", "overlap_group": f"apple_native_{metric}",
+                "source_class": "provider_native",
+                "overlap_group": "apple_native_average_consumption_pct" if metric == "consumption_depth_pct"
+                else f"apple_native_{metric}",
                 "platform_content_id": content_id, "platform_content_title": f"Episode {content_id}",
             })
+    # A row from before ratio scaling (1.5 meant 150%) must not distort the scaled values.
+    rows.append({**rows[-1], "platform_content_id": "1003", "platform_content_title": "Episode 1003",
+                 "metric_value": 1.5, "overlap_group": "apple_native_consumption_depth_pct"})
     service.record_growth_observations({"observations": rows}, actor="automation")
-    insights = PodcastInsights(temp_db.db_path)
 
-    card = {item["provider"]: item for item in insights.dashboard()["provider_strength"]}["apple_podcasts"]
+    card = {
+        item["provider"]: item for item in PodcastInsights(temp_db.db_path).dashboard()["provider_strength"]
+    }["apple_podcasts"]
 
     assert card["metrics"]["plays"] == 400
     assert "unique_listeners" not in card["metrics"]
-    # Apple's export "Average Consumption" has an unconfirmed unit, so stored rows are not shown.
-    assert "consumption_depth_pct" not in card["metrics"]
-    weighted = PodcastInsights._play_weighted_depth(
-        [row for row in rows if row["metric_name"] == "consumption_depth_pct"], rows,
-    )
-    assert weighted == 70
+    assert card["metrics"]["consumption_depth_pct"] == 70
 
 
 def test_headline_comparison_uses_prior_non_overlapping_window():

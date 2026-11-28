@@ -19,8 +19,8 @@ AUDIENCE_METRICS = {
 }
 RATING_METRICS = {"rating_average", "rating_count"}
 CONTENT_NON_ADDITIVE_METRICS = {"unique_listeners", "engaged_listeners", "unique_viewers"}
-# Apple's episode-export "Average Consumption" was imported as a percentage, but its values
-# (1-4) contradict Apple's own listening time; previously stored rows are not displayed.
+# Rows imported before Apple's "Average Consumption" ratio was scaled to a percentage
+# (1.76 stored for Apple's 176%); they are superseded by the next Apple sync.
 UNVERIFIED_UNIT_OVERLAP_GROUPS = {"apple_native_consumption_depth_pct"}
 DEVICE_PREFIX = "device_"
 COUNTRY_PREFIX = "country_"
