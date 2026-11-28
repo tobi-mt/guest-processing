@@ -52,8 +52,9 @@ All copies remain immutable and auditable even when they are not selected for a 
 - Read-only Google OAuth for YouTube Analytics, YouTube Data API, and GA4
 - Spotify for Creators official CSV exports collected by the local authorized collector
 - Apple Podcasts Connect official exports collected by the local authorized collector
+- Daily public Apple Podcasts star ratings per storefront, collected server-side without credentials
 - Optional server-side analytics aggregation API, treated as secondary evidence
-- Manual import remains a supervised recovery path for provider UI or collector failures
+- No routine manual imports: every source above is scheduled. Manual import remains only a supervised recovery path for provider UI or collector failures
 
 ### Evidence plane
 
@@ -140,6 +141,31 @@ collectors, opens Spotify and Apple for owner-controlled login/MFA, and installs
 daily jobs. Credentials, MFA, cookies, and browser profiles remain on the owner-controlled
 Mac. Only validated CSV observations are uploaded to Railway.
 
+Reports upload individually. If the dashboard does not acknowledge an upload, earlier
+reports may already be saved; rerunning skips observations already imported unchanged.
+
+Spotify suppresses some audience breakdowns below privacy thresholds or while its UI
+loads. A missing breakdown no longer blocks the run: the show, episode, and available
+breakdown reports are saved, the collector reports a `degraded` state naming the missing
+reports (shown as "Partial reports" in Podcast Reach, not counted as a failure), and the
+scheduled job retries. Age and gender share the window stated only by the audience
+export, so they are skipped when that export is missing.
+
+The scheduled job posts a macOS notification to the owner when sign-in/MFA is required
+or when every automatic retry fails. Notification text is passed as data, never as script.
+
+Public Apple Podcasts ratings are collected by the Railway worker leader every 20 hours
+(6-hour backoff after a failure) from each storefront's structured page data. Storefronts
+come from core markets, previously rated storefronts, and every country with measured
+audience, with no storefront cap, so new markets are tracked automatically. Each run is
+bounded to two minutes; storefronts not reached because of that limit or a network error
+are recorded as pending, checked first on the next run, and make that run due after
+6 hours instead of 20. A rating is accepted only when the structured
+URL names the requested storefront and show, because Apple redirects unknown storefronts.
+Ratings are stored as `apple_podcasts_public` observations, kept out of reach totals,
+provider freshness, and countries reached. Spotify's public show page exposes no rating,
+so Spotify ratings are not collected.
+
 OpenPodcast is optional secondary evidence. Supplying its token and podcast ID does not start background requests. Set `MIRROR_TALK_OPENPODCAST_AUTO_SYNC=true` only after a manual sync has been verified against the configured OpenPodcast account; automatic failures back off for 20 hours.
 
 Acceptance:
@@ -151,12 +177,13 @@ Acceptance:
 
 ### Workstream D — Episode identity
 
-Status: RSS reconciliation exists; platform-content IDs are now retained. Cross-platform content mapping remains rollout work.
+Status: RSS reconciliation exists; platform-content IDs are retained. Spotify title-only exports are disambiguated by publish date; content already linked to an internal episode is not surfaced a second time, and unlinked platform content is not merged by title. Cross-platform content mapping remains rollout work.
 
 - Canonical identity order: RSS GUID, enclosure identity, provider episode/video ID, then reviewable metadata evidence.
 - Add a platform-content mapping table with confidence, method, reviewer, and timestamps.
 - Match exact GUID or explicit provider link automatically.
 - Keep title/date/duration matches in review unless the evidence is uniquely strong.
+- Do not merge or add unlinked platform content to internal episodes by title alone.
 - Never identify an episode by episode number alone.
 
 Acceptance:
@@ -197,7 +224,8 @@ Service objectives:
 
 - Public listing verification: daily, 99.5% monthly success
 - YouTube/GA4: daily, data no older than 48 hours
-- Spotify/Apple exports: daily where provider sessions remain authorized; otherwise explicit stale/reauth state
+- Spotify/Apple exports: daily where provider sessions remain authorized; otherwise explicit partial, stale, or reauth state with an owner notification
+- Apple public ratings: daily, automatic, no credentials
 - Dashboard availability: existing application SLO
 - Duplicate inflation: zero known overlap groups
 - Silent data loss: zero; rejected and quarantined records are counted and auditable

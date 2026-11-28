@@ -176,7 +176,8 @@ class PodcastReachReleaseReadiness:
         collector_failures = []
         for provider in sorted(LOCAL_COLLECTOR_PROVIDERS):
             item = collector_connections.get(provider) or {}
-            if not item.get("enabled") or item.get("status") != "connected" or not item.get("last_success_at"):
+            # Partial runs saved the core reports; missing breakdowns are retried, not an owner action.
+            if not item.get("enabled") or item.get("status") not in {"connected", "degraded"} or not item.get("last_success_at"):
                 collector_failures.append(provider)
         collectors_ok = bool(collectors["configured"] and not collector_failures)
         checks["provider_collectors"] = {

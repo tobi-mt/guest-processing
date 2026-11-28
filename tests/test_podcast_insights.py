@@ -2,7 +2,7 @@ import json
 
 from guest_database_manager.db_connection import connect_database
 from guest_database_manager.growth_intelligence import GrowthIntelligence
-from guest_database_manager.podcast_insights import PodcastInsights
+from guest_database_manager.podcast_insights import PodcastInsights, _canonical_country_key
 from guest_database_manager.podcast_source_monitor import PodcastSourceMonitor
 from guest_database_manager.web_interface import GuestWebService
 
@@ -598,6 +598,13 @@ def test_apple_country_plays_are_aggregated_across_months_with_clean_labels(temp
     ]
 
 
+def test_country_identity_canonicalizes_names_and_iso_codes() -> None:
+    assert _canonical_country_key("DE") == _canonical_country_key("Germany") == "de"
+    assert _canonical_country_key("USA") == _canonical_country_key("United States") == "us"
+    assert _canonical_country_key("  United   Kingdom ") == "gb"
+    assert _canonical_country_key("unknown") == ""
+
+
 def test_apple_city_plays_are_available_as_a_separate_drilldown(temp_db):
     service = GuestWebService(temp_db.db_path)
     service.record_growth_observations({"observations": [
@@ -710,7 +717,10 @@ def test_topline_summary_reconciles_six_metrics_without_claiming_unique_people()
         platforms=[{"availability": "available"}, {"availability": "unavailable"}],
         countries=[
             {"name": "Germany", "value": 4}, {"name": " germany ", "value": 3},
-            {"name": "Canada", "value": 2}, {"name": "Unknown", "value": 5},
+            {"name": "DE", "value": 8}, {"name": "DEU", "value": 9},
+            {"name": "Canada", "value": 2}, {"name": "CA", "value": 3},
+            {"name": "USA", "value": 7}, {"name": "United States", "value": 8},
+            {"name": "Unknown", "value": 5},
         ],
         audience_by_platform=[
             {"provider": "youtube:one", "metric": "subscribers", "value": 100, "period_end": "2026-11-25"},
@@ -729,7 +739,7 @@ def test_topline_summary_reconciles_six_metrics_without_claiming_unique_people()
     assert "counted once" in result["activity_coverage_note"]
     assert "never added again" in result["activity_coverage_note"]
     assert result["listening_watch_hours"] == 30
-    assert result["countries_reached"] == 2
+    assert result["countries_reached"] == 3
     assert result["platforms_available"] == 1
     assert result["audience_relationships"] == 120
     assert result["audience_relationship_by_platform"][-1]["value"] == 5
@@ -867,3 +877,38 @@ def test_top_platform_content_prefers_lifetime_video_activity():
 
     assert [item["title"] for item in result] == ["Episode one", "Episode two"]
     assert result[0]["metrics"]["video_lifetime_views"] == 1200
+    assert result[0]["freshness"] == "current"
+
+
+def test_spotify_episode_content_uses_publish_date_and_omits_linked_duplicate():
+    rows = [
+        {"provider": "spotify", "metric_name": "plays_downloads", "metric_value": 100,
+         "platform_content_id": "title:shared title", "platform_content_title": "Shared title",
+         "period_start": "2020-06-12", "period_end": "2026-11-27", "episode_id": None},
+        {"provider": "spotify", "metric_name": "plays_downloads", "metric_value": 200,
+         "platform_content_id": "title:shared title", "platform_content_title": "Shared title",
+         "period_start": "2020-07-12", "period_end": "2026-11-27", "episode_id": None},
+        {"provider": "spotify", "metric_name": "plays_downloads", "metric_value": 300,
+         "platform_content_id": "title:linked title", "platform_content_title": "Linked title",
+         "period_start": "2020-08-12", "period_end": "2026-11-27", "episode_id": 7},
+    ]
+
+    result = PodcastInsights._top_platform_content(rows)
+
+    assert {
+        (item["title"], item["period_start"], item["metrics"]["plays_downloads"])
+        for item in result
+    } == {
+        ("Shared title", "2020-06-12", 100.0),
+        ("Shared title", "2020-07-12", 200.0),
+    }
+
+
+def test_unlinked_platform_content_exposes_stale_reporting_period():
+    result = PodcastInsights._top_platform_content([{
+        "provider": "youtube:one", "metric_name": "video_views", "metric_value": 10,
+        "platform_content_id": "video-1", "platform_content_title": "Older episode",
+        "period_start": "2000-01-01", "period_end": "2000-01-31", "episode_id": None,
+    }])
+
+    assert result[0]["freshness"] == "stale"

@@ -149,9 +149,17 @@ class PodcastAnalyticsConnectors:
             })
         for item in collectors.values():
             item["enabled"] = bool(item["enabled"])
+            if item.get("status") == "connected" and str(item.get("last_error_code") or "").startswith(
+                "missing_reports_"
+            ):
+                item["status"] = "degraded"
+                item["missing_reports"] = [
+                    name for name in str(item["last_error_code"]).removeprefix("missing_reports_").split("_")
+                    if name
+                ]
             last_seen = _parse_datetime(item.get("last_seen_at"))
             if (
-                item["enabled"] and item.get("status") == "connected" and last_seen
+                item["enabled"] and item.get("status") in {"connected", "degraded"} and last_seen
                 and _now() - last_seen > LOCAL_COLLECTOR_STALE_AFTER
             ):
                 item["status"] = "stale"
@@ -459,7 +467,7 @@ class PodcastAnalyticsConnectors:
         if len(expected) < 32 or not secrets.compare_digest(str(token or ""), expected):
             raise AnalyticsConnectorError("The local analytics collector credential is invalid.")
         normalized_status = str(status or "").strip().casefold()
-        if normalized_status not in {"waiting", "connected", "error", "reauth_required"}:
+        if normalized_status not in {"waiting", "connected", "degraded", "error", "reauth_required"}:
             raise AnalyticsConnectorError("The local collector reported an unsupported status.")
         safe_error = re.sub(r"[^a-z0-9_]+", "_", str(error_code or "").casefold()).strip("_")[:80]
         now = _iso(_now())
@@ -470,12 +478,18 @@ class PodcastAnalyticsConnectors:
             if not row or not bool(row[0]):
                 raise AnalyticsConnectorError("This local analytics collector is disabled in Podcast Reach.")
             failed = normalized_status in {"error", "reauth_required"}
+            # Degraded runs saved reports but missed optional breakdowns; keep the reason visible
+            # without counting the run as a failure.
+            explained = failed or normalized_status == "degraded"
+            stored_status = "connected" if normalized_status == "degraded" else normalized_status
+            if normalized_status == "degraded" and not safe_error.startswith("missing_reports_"):
+                raise AnalyticsConnectorError("A degraded collector run must name its missing reports.")
             conn.execute(
                 """UPDATE analytics_browser_collectors SET status=?, last_seen_at=?,
                    last_error_code=?, last_error_at=?,
                    consecutive_failures=CASE WHEN ? THEN consecutive_failures+1 ELSE 0 END,
                    updated_at=? WHERE provider=?""",
-                (normalized_status, now, safe_error if failed else "", now if failed else None,
+                (stored_status, now, safe_error if explained else "", now if explained else None,
                  int(failed), now, provider),
             )
             conn.commit()

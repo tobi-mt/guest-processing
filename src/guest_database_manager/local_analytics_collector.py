@@ -14,6 +14,7 @@ import os
 import plistlib
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,8 @@ DEFAULT_URLS = {
 }
 LAUNCH_AGENT_PREFIX = "com.mirrortalk.analytics"
 BROWSER_CHANNEL_ENV = "MIRROR_TALK_ANALYTICS_BROWSER_CHANNEL"
+COLLECTOR_DEBUG_PORT_FILE = "CollectorDebugPort"
+SPOTIFY_AUDIENCE_EXPORTS = ("age", "apps", "audience", "gender", "geography")
 
 
 class LocalCollectorError(RuntimeError):
@@ -159,6 +162,31 @@ def _native_chrome_executable() -> str | None:
     return shutil.which("google-chrome") or shutil.which("google-chrome-stable")
 
 
+def _available_loopback_port() -> int:
+    """Select an ephemeral loopback port for the Chrome endpoint."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _collector_debug_port(
+    profile_path: Path, *, create: bool = False, refresh: bool = False,
+) -> int:
+    path = profile_path / COLLECTOR_DEBUG_PORT_FILE
+    try:
+        port = int(path.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError):
+        port = 0
+    if not refresh and 1 <= port <= 65535:
+        return port
+    if not create:
+        return 0
+    port = _available_loopback_port()
+    path.write_text(str(port), encoding="utf-8")
+    path.chmod(0o600)
+    return port
+
+
 def _launch_browser_context(playwright, *, profile_path: Path, headless: bool):
     options = {
         "headless": headless,
@@ -193,10 +221,12 @@ def _sync_browser_context(
         return
 
     active_port_path = profile_path / "DevToolsActivePort"
-    try:
-        resident_port = int(active_port_path.read_text(encoding="utf-8").splitlines()[0])
-    except (FileNotFoundError, IndexError, ValueError):
-        resident_port = 0
+    resident_port = _collector_debug_port(profile_path)
+    if not resident_port:
+        try:
+            resident_port = int(active_port_path.read_text(encoding="utf-8").splitlines()[0])
+        except (FileNotFoundError, IndexError, ValueError):
+            resident_port = 0
     if 1 <= resident_port <= 65535:
         try:
             resident_browser = playwright.chromium.connect_over_cdp(
@@ -218,11 +248,14 @@ def _sync_browser_context(
             "dedicated provider window once, then run the login command again. Future "
             "synchronizations will reuse the authenticated window automatically."
         )
+    debug_port = _collector_debug_port(
+        profile_path, create=True, refresh=bool(resident_port),
+    )
     arguments = [
         native_chrome,
         f"--user-data-dir={profile_path}",
         "--no-first-run",
-        "--remote-debugging-port=0",
+        f"--remote-debugging-port={debug_port}",
     ]
     if headless:
         arguments.append("--headless=new")
@@ -237,21 +270,19 @@ def _sync_browser_context(
     browser = None
     try:
         deadline = time.monotonic() + 20
-        port = 0
+        port = debug_port
         while time.monotonic() < deadline and process.poll() is None:
             try:
-                port = int(active_port_path.read_text(encoding="utf-8").splitlines()[0])
-            except (FileNotFoundError, IndexError, ValueError):
+                browser = playwright.chromium.connect_over_cdp(
+                    f"http://127.0.0.1:{port}", timeout=1_000,
+                )
+                break
+            except Exception:
+                browser = None
                 time.sleep(0.1)
                 continue
-            if 1 <= port <= 65535:
-                break
-            port = 0
-        if not port:
+        if browser is None:
             raise LocalCollectorError("The dedicated Chrome analytics session could not start.")
-        browser = playwright.chromium.connect_over_cdp(
-            f"http://127.0.0.1:{port}", timeout=20_000,
-        )
         if not browser.contexts:
             raise LocalCollectorError("The dedicated Chrome analytics session was unavailable.")
         yield browser.contexts[0]
@@ -528,10 +559,11 @@ def login(provider: str, *, profile_root: Path, url: str) -> None:
     native_chrome = _native_chrome_executable()
     if native_chrome:
         if sys.platform == "darwin":
+            debug_port = _collector_debug_port(profile, create=True)
             subprocess.Popen(
                 [
                     native_chrome, f"--user-data-dir={profile}", "--no-first-run",
-                    "--remote-debugging-port=0", url,
+                    f"--remote-debugging-port={debug_port}", url,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -570,14 +602,45 @@ def login(provider: str, *, profile_root: Path, url: str) -> None:
         context.close()
 
 
+def _select_spotify_audience_exports(
+    raw_exports: dict[str, tuple[str, str]], *, window_start: date, window_end: date,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Annotate available Spotify breakdowns and name the ones that cannot be uploaded.
+
+    Spotify suppresses some breakdowns below its privacy thresholds or while its UI
+    hydrates. Missing breakdowns must not block the show and episode reports; each
+    uploaded breakdown still carries its own exact window. Audience, gender and age
+    share the recent window that only the audience export states.
+    """
+    recent_window = (
+        _spotify_reporting_window(raw_exports["audience"][1]) if "audience" in raw_exports else None
+    )
+    selected: dict[str, tuple[str, str]] = {}
+    for name in SPOTIFY_AUDIENCE_EXPORTS:
+        if name not in raw_exports:
+            continue
+        if name in {"audience", "gender", "age"}:
+            if recent_window is None:
+                continue
+            start, end = recent_window
+        else:
+            start, end = window_start, window_end
+        export_name, export_csv = raw_exports[name]
+        selected[name] = (export_name, _annotate_analytics_window(export_csv, start=start, end=end))
+    missing = sorted(set(SPOTIFY_AUDIENCE_EXPORTS) - set(selected))
+    return [selected[name] for name in sorted(selected)], missing
+
+
 def sync_once(
     provider: str, *, server: str, token: str, profile_root: Path, url: str,
     headed: bool = False, quiet_window: bool = False,
 ) -> dict:
     """Download one explicitly labelled provider CSV and upload it through the safe ingestion boundary."""
     sync_playwright = _playwright()
+    stage = "browser_session"
     try:
         uploads: list[tuple[str, str]] = []
+        missing_reports: list[str] = []
         with sync_playwright() as playwright, tempfile.TemporaryDirectory(prefix="mirror-talk-analytics-") as temp_dir:
             with _sync_browser_context(
                 playwright,
@@ -586,6 +649,7 @@ def sync_once(
                 quiet_window=quiet_window,
             ) as context:
                 page = context.pages[0] if context.pages else context.new_page()
+                stage = "provider_page"
                 page.goto(url, wait_until="domcontentloaded", timeout=90_000)
                 page.wait_for_timeout(3_000)
                 password_fields = page.locator('input[type="password"]')
@@ -601,6 +665,7 @@ def sync_once(
                         "Run the collector login command again."
                     )
                 if provider == "spotify":
+                    stage = "spotify_overview"
                     analytics_url = page.url
                     home_url = _spotify_home_url(analytics_url)
                     if home_url:
@@ -680,6 +745,7 @@ def sync_once(
                 # Spotify currently exposes a show-performance export followed by an episode-table
                 # export. The first control is the supported daily show-level report.
                 export_target = visible[0]
+                stage = f"{provider}_show_export"
                 filename, csv_text = _download_csv(page, export_target, Path(temp_dir))
                 if provider == "apple_podcasts":
                     csv_text = _annotate_apple_export(
@@ -689,12 +755,14 @@ def sync_once(
                 uploads.append((filename, csv_text))
                 if provider == "spotify":
                     window_start, window_end = _spotify_reporting_window(csv_text)
+                    stage = "spotify_episode_export"
                     episode_name, episode_csv = _download_csv(
                         page, spotify_episode_export, Path(temp_dir), prefix="episodes-",
                     )
                     episode_csv = _annotate_spotify_episode_export(episode_csv)
                     _validate_provider_export(provider, episode_csv)
                     uploads.append((episode_name, episode_csv))
+                    stage = "spotify_audience_exports"
                     page.get_by_role("tab", name="Audience", exact=True).click()
                     page.get_by_text("Audience breakdowns", exact=True).wait_for(
                         state="visible", timeout=30_000,
@@ -718,28 +786,12 @@ def sync_once(
                         schema = _spotify_dimension_schema(export_csv)
                         if schema:
                             raw_audience_exports[schema] = (export_name, export_csv)
-                    expected_exports = {"audience", "gender", "age", "geography", "apps"}
-                    if set(raw_audience_exports) != expected_exports:
-                        raise LocalCollectorError(
-                            "Spotify did not expose every supported audience export; no partial dimension set was uploaded."
-                        )
-                    recent_start, recent_end = _spotify_reporting_window(
-                        raw_audience_exports["audience"][1]
+                    dimension_uploads, missing_reports = _select_spotify_audience_exports(
+                        raw_audience_exports, window_start=window_start, window_end=window_end,
                     )
-                    dimension_exports = {}
-                    for name in ("audience", "gender", "age", "geography", "apps"):
-                        export_name, export_csv = raw_audience_exports[name]
-                        start, end = (
-                            (recent_start, recent_end)
-                            if name in {"audience", "gender", "age"}
-                            else (window_start, window_end)
-                        )
-                        dimension_exports[name] = (
-                            export_name,
-                            _annotate_analytics_window(export_csv, start=start, end=end),
-                        )
-                    uploads.extend(dimension_exports[name] for name in sorted(dimension_exports))
+                    uploads.extend(dimension_uploads)
         totals = {"inserted": 0, "duplicates": 0, "submitted": 0}
+        stage = "dashboard_upload"
         for upload_name, upload_csv in uploads:
             result = _post(server, token, "/api/analytics-connectors/local/ingest", {
                 "provider": provider,
@@ -748,15 +800,31 @@ def sync_once(
             })
             for key in totals:
                 totals[key] += int(result.get(key) or 0)
+        if missing_reports:
+            stage = "dashboard_status"
+            _status(
+                server, token, provider, "degraded",
+                "missing_reports_" + "_".join(missing_reports),
+            )
+            return {"status": "degraded", "missing_reports": missing_reports, **totals}
         return {"status": "completed", **totals}
     except LocalCollectorError:
         raise
     except Exception as exc:
+        safe_stage = re.sub(r"[^a-z0-9_]+", "_", stage.casefold()).strip("_")[:64] or "unknown"
+        detail = (
+            "Reports may already have been saved; rerunning the collector skips duplicates."
+            if stage == "dashboard_upload"
+            else "Reports were saved, but the dashboard did not record which reports were missing."
+            if stage == "dashboard_status" else "No reports were uploaded."
+        )
         try:
-            _status(server, token, provider, "error", "collector_run_failed")
-        except LocalCollectorError:
-            pass
-        raise LocalCollectorError("The local provider collection run failed safely.") from exc
+            _status(server, token, provider, "error", f"collector_failed:{safe_stage}")
+        except (LocalCollectorError, requests.exceptions.RequestException):
+            detail += " The dashboard did not acknowledge the failure status."
+        raise LocalCollectorError(
+            f"The local provider collection failed during {safe_stage.replace('_', ' ')}. {detail}"
+        ) from exc
 
 
 def scheduled_sync(
@@ -775,23 +843,60 @@ def scheduled_sync(
         except BlockingIOError:
             return {"status": "already_running", "inserted": 0, "duplicates": 0}
         last_error: LocalCollectorError | None = None
+        last_result: dict | None = None
         for attempt in range(attempts):
             try:
-                return sync_once(
+                result = sync_once(
                     provider, server=server, token=token, profile_root=profile_root,
                     url=url, headed=True, quiet_window=True,
                 )
             except ReauthenticationRequired:
                 # MFA and login are owner actions. Repeating them in the background
                 # only creates noise and can trigger provider security controls.
+                _notify_owner(
+                    provider,
+                    "Sign-in or MFA is required. Run the collector login command once to resume daily updates.",
+                )
                 raise
             except LocalCollectorError as exc:
-                last_error = exc
-                if attempt + 1 >= attempts:
-                    break
-                delay = retry_delays[min(attempt, len(retry_delays) - 1)] if retry_delays else 0
-                time.sleep(max(0, delay))
+                last_error, last_result = exc, None
+            else:
+                if result.get("status") != "degraded":
+                    return result
+                # Saved reports are kept; a later attempt may expose the missing breakdowns.
+                last_error, last_result = None, result
+            if attempt + 1 >= attempts:
+                break
+            delay = retry_delays[min(attempt, len(retry_delays) - 1)] if retry_delays else 0
+            time.sleep(max(0, delay))
+        if last_result is not None:
+            return last_result
+        _notify_owner(
+            provider,
+            "Daily analytics collection failed after automatic retries. Check Podcast Reach for details.",
+        )
         raise last_error or LocalCollectorError("The scheduled collector did not complete.")
+
+
+def _notify_owner(provider: str, message: str) -> None:
+    """Show a local macOS notification; never let alerting break collection."""
+    if sys.platform != "darwin":
+        return
+    label = {"spotify": "Spotify", "apple_podcasts": "Apple Podcasts"}.get(provider, "Podcast")
+    try:
+        # Values are passed as argv so they are never interpreted as AppleScript.
+        subprocess.run(
+            [
+                "osascript",
+                "-e", "on run argv",
+                "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+                "-e", "end run",
+                f"Mirror Talk {label} analytics", message,
+            ],
+            check=False, capture_output=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def _launch_agent_payload(

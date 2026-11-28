@@ -244,3 +244,35 @@ def test_public_account_entry_pages_are_responsive_and_keyboard_accessible(visua
                     failures.append(f"{viewport_name} {route}: keyboard focus did not enter the page")
         browser.close()
     assert failures == []
+
+
+def test_reach_keeps_expanded_chart_and_episode_table_inside_a_narrow_viewport(visual_server):
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as runtime:
+        browser = runtime.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 320, "height": 844})
+        page.route("**/api/podcast-insights", lambda route: route.fulfill(json={
+            "daily_trends": {"spotify": [
+                {"period": "2026-10-31", "downloads": 5, "plays": 7},
+                {"period": "2026-11-01", "downloads": 6, "plays": 8},
+            ]},
+            "top_platform_content": [{
+                "provider": "spotify", "title": "QA episode", "period_end": "2026-10-01",
+                "metrics": {"plays_downloads": 10}, "freshness": "stale",
+            }],
+        }))
+        page.goto(f"{visual_server}/insights")
+        page.get_by_label("Username").fill("visual-qa")
+        page.get_by_label("Password").fill("local-only")
+        page.get_by_role("button", name="Sign In").click()
+        page.wait_for_url(f"{visual_server}/insights")
+
+        trend = page.locator("#overall-performance-trend")
+        trend.get_by_text("View exact values").click()
+        assert trend.locator("table").is_visible()
+        page.get_by_text("Explore performance", exact=True).click()
+        badge = page.get_by_text("Refresh needed", exact=True)
+        assert badge.is_visible()
+        assert page.evaluate("document.documentElement.scrollWidth - innerWidth") == 0
+        assert badge.evaluate("el => el.getClientRects().length") == 1
+        browser.close()

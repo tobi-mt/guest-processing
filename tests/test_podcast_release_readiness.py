@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from guest_database_manager.db_connection import connect_database
 from guest_database_manager.growth_intelligence import GrowthIntelligence
 from guest_database_manager.podcast_release_readiness import PodcastReachReleaseReadiness
@@ -35,7 +37,11 @@ def test_release_readiness_reports_outdated_schema_without_querying_new_contract
     assert report["checks"]["schema"]["current_version"] == 46
 
 
-def test_release_readiness_passes_only_with_fresh_distribution_and_private_evidence(temp_db, monkeypatch):
+# A partial Spotify run saved its core reports; missing breakdowns must not demand a reconnect.
+@pytest.mark.parametrize("collector_error_code", ["", "missing_reports_age_gender"])
+def test_release_readiness_passes_only_with_fresh_distribution_and_private_evidence(
+    temp_db, monkeypatch, collector_error_code,
+):
     now = datetime.now(timezone.utc).replace(microsecond=0)
     now_text = now.isoformat().replace("+00:00", "Z")
     recent_period = (now - timedelta(days=1)).date().isoformat()
@@ -71,9 +77,14 @@ def test_release_readiness_passes_only_with_fresh_distribution_and_private_evide
         )
         conn.executemany(
             """INSERT INTO analytics_browser_collectors
-               (provider, enabled, status, last_seen_at, last_sync_at, last_success_at, updated_at)
-               VALUES (?, 1, 'connected', ?, ?, ?, ?)""",
-            [(provider, now_text, now_text, now_text, now_text) for provider in ("spotify", "apple_podcasts")],
+               (provider, enabled, status, last_seen_at, last_sync_at, last_success_at,
+                last_error_code, updated_at)
+               VALUES (?, 1, 'connected', ?, ?, ?, ?, ?)""",
+            [
+                (provider, now_text, now_text, now_text,
+                 collector_error_code if provider == "spotify" else "", now_text)
+                for provider in ("spotify", "apple_podcasts")
+            ],
         )
         conn.commit()
 

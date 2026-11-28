@@ -391,8 +391,8 @@ def test_insight_freshness_badges_have_explicit_dark_theme_contrast() -> None:
     html = (STATIC_ROOT / "insights.html").read_text(encoding="utf-8")
     javascript = (STATIC_ROOT / "insights.js").read_text(encoding="utf-8")
 
-    assert "insights.css?v=20261126.4" in html
-    assert "insights.js?v=20261128.1" in html
+    assert "insights.css?v=20261128.2" in html
+    assert "insights.js?v=20261128.4" in html
     assert "Copy browser reset" in javascript
     assert "MirrorTalkAnalyticsCollector/${profileName}" in javascript
     assert 'provider === "apple_podcasts" ? "apple_podcasts"' in javascript
@@ -405,7 +405,7 @@ def test_web_player_analytics_contract_is_copyable_and_tracks_completion_milesto
     javascript = insights
     styles = (STATIC_ROOT / "insights.css").read_text(encoding="utf-8")
 
-    assert "insights.js?v=20261128.1" in html
+    assert "insights.js?v=20261128.4" in html
     assert "Copy player tracking snippet" in insights
     assert "web-player-analytics.js?v=20261127.1" in insights
     for event in ("audio_play", "audio_pause", "audio_progress_25", "audio_progress_50", "audio_progress_75", "audio_complete"):
@@ -438,11 +438,13 @@ def test_web_player_analytics_contract_is_copyable_and_tracks_completion_milesto
         assert f'"{label}"' in script
     assert "Why these numbers differ:" in script
     assert "measured lifetime downloads, plays or views" in script
-    assert "const combined = new Map()" in script
+    assert "const rows = [...episodes, ...platformRows]" in script
+    assert "current.activity = Number(current.activity || 0) + Number(item.activity || 0)" not in script
     assert "Listeners are people who played the show during the provider's stated reporting period" in script
     assert ".freshness{" in styles
     assert "background:rgba(255,255,255,.08);color:var(--text)" in styles
     assert ".freshness.current{background:rgba(93,205,169,.14);color:#9ee5cd" in styles
+    assert ".freshness.aging{background:rgba(233,189,101,.14);color:#f2c46d" in styles
     assert ".freshness.stale{background:rgba(233,189,101,.14);color:#f2c46d" in styles
 
 

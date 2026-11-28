@@ -74,6 +74,8 @@ CANONICAL_METRICS = {
     "device_tv": "count",
     "device_smart_speaker": "count",
     "device_other": "count",
+    "rating_average": "rating",
+    "rating_count": "count",
 }
 MFS_COMPONENTS = ("organic_reach", "consumption_depth_pct", "conversion_rate_pct", "return_rate_pct")
 
@@ -144,6 +146,8 @@ def _metric_value(metric: str, value: Any) -> float:
         raise GrowthIntelligenceError("metric_value must be a finite non-negative number.")
     if CANONICAL_METRICS.get(metric) == "percent" and number > 100:
         raise GrowthIntelligenceError("Percentage metrics cannot exceed 100.")
+    if CANONICAL_METRICS.get(metric) == "rating" and number > 5:
+        raise GrowthIntelligenceError("Rating averages cannot exceed 5.")
     return number
 
 

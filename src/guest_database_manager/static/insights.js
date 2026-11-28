@@ -5,6 +5,7 @@ const safeUrl = (value) => { try { const parsed = new URL(String(value)); return
 const empty = (message) => `<div class="insights-empty"><strong>Collecting automatically</strong><p>${escapeHtml(message)}</p></div>`;
 const csrfToken = () => decodeURIComponent((document.cookie.match(/(?:^|;\s*)dashboard_csrf=([^;]+)/) || [])[1] || "");
 const metricLabel = (value) => String(value || "").replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
+const freshnessLabel = (value) => ({current:"Current",aging:"Aging",stale:"Refresh needed"})[value] || "Unknown";
 const duration = (seconds) => seconds == null ? "Unavailable" : `${Math.floor(Number(seconds) / 60)}m ${Math.round(Number(seconds) % 60)}s`;
 let providerLabels = {};
 let trendRange = 24;
@@ -253,13 +254,15 @@ function renderConnections(connectors) {
     const stale = enabled && connection.status === "stale";
     const failed = enabled && connection.status === "error";
     const waiting = enabled && connection.status === "waiting";
-    const statusLabel = current ? "Current" : reauth ? "Sign-in expired" : failed ? "Sync failed" : stale ? "Mac overdue" : waiting ? "Waiting for first sync" : "Set up";
+    const partial = enabled && connection.status === "degraded";
+    const missingReports = (connection.missing_reports || []).map((name) => ({age:"age", apps:"listening apps", audience:"audience", gender:"gender", geography:"geography"})[name] || "breakdown");
+    const statusLabel = current ? "Current" : partial ? "Partial reports" : reauth ? "Sign-in expired" : failed ? "Sync failed" : stale ? "Mac overdue" : waiting ? "Waiting for first sync" : "Set up";
     const command = `python3 -m guest_database_manager.local_analytics_collector login ${provider} --server ${window.location.origin}`;
     const profileName = provider === "apple_podcasts" ? "apple_podcasts" : "spotify";
     const resetCommand = `pkill -f "Google Chrome --user-data-dir=$HOME/Library/Application Support/MirrorTalkAnalyticsCollector/${profileName}"`;
     const failureGuidance = connection.last_error_code === "export_control_changed" ? "The provider changed its analytics export page; the collector needs review." : "The last automatic collection failed. Run the sign-in command to verify access and synchronize immediately.";
-    const guidance = current ? "Reports are arriving automatically." : reauth ? (provider === "apple_podcasts" ? "Run the sign-in command, complete MFA, and leave the dedicated Apple Chrome window open so automatic sync can reuse that session." : "Run the sign-in command once; it will verify access and synchronize before it finishes.") : failed ? failureGuidance : stale ? "The Mac has not checked in for more than two days. Its daily collector will retry automatically when the Mac is awake." : waiting ? "The collector is enabled but has not completed its first synchronization." : "Enable the collector, then complete the one-time sign-in on the account owner's Mac.";
-    return `<article class="connection-card"><header><div><strong>${label}</strong><p>The secure sign-in stays on the account owner's computer.</p></div><span class="connection-status ${current ? "connected" : "disconnected"}">${statusLabel}</span></header><p>${guidance}</p><small>Last update: ${escapeHtml(connection.last_success_at || "No successful update yet")}</small><div class="connection-actions"><button class="${enabled ? "ghost-button" : "secondary-button"}" data-local-provider="${provider}" data-local-enabled="${enabled ? "false" : "true"}" type="button" ${local.configured ? "" : "disabled"}>${enabled ? "Pause connection" : "Enable collector"}</button>${current ? "" : `<button class="secondary-button" data-copy-command="${escapeHtml(command)}" type="button">Copy sign-in command</button>`}<button class="ghost-button" data-copy-command="${escapeHtml(resetCommand)}" type="button" title="Use only when the dedicated provider Chrome window is stuck">Copy browser reset</button></div></article>`;
+    const guidance = current ? "Reports are arriving automatically." : partial ? `Core reports arrived automatically. ${missingReports.length ? `Spotify did not provide: ${missingReports.join(", ")}.` : "Some breakdowns were unavailable."} The next daily run retries them; no action is needed unless this persists.` : reauth ? (provider === "apple_podcasts" ? "Run the sign-in command, complete MFA, and leave the dedicated Apple Chrome window open so automatic sync can reuse that session." : "Run the sign-in command once; it will verify access and synchronize before it finishes.") : failed ? failureGuidance : stale ? "The Mac has not checked in for more than two days. Its daily collector will retry automatically when the Mac is awake." : waiting ? "The collector is enabled but has not completed its first synchronization." : "Enable the collector, then complete the one-time sign-in on the account owner's Mac.";
+    return `<article class="connection-card"><header><div><strong>${label}</strong><p>The secure sign-in stays on the account owner's computer.</p></div><span class="connection-status ${current || partial ? "connected" : "disconnected"}">${statusLabel}</span></header><p>${escapeHtml(guidance)}</p><small>Last update: ${escapeHtml(connection.last_success_at || "No successful update yet")}</small><div class="connection-actions"><button class="${enabled ? "ghost-button" : "secondary-button"}" data-local-provider="${provider}" data-local-enabled="${enabled ? "false" : "true"}" type="button" ${local.configured ? "" : "disabled"}>${enabled ? "Pause connection" : "Enable collector"}</button>${current || partial ? "" : `<button class="secondary-button" data-copy-command="${escapeHtml(command)}" type="button">Copy sign-in command</button>`}<button class="ghost-button" data-copy-command="${escapeHtml(resetCommand)}" type="button" title="Use only when the dedicated provider Chrome window is stuck">Copy browser reset</button></div></article>`;
   }).join("");
   target.innerHTML = `${cards || '<div class="insights-empty"><strong>Connect YouTube</strong><p>Authorize the channel owner once to unlock viewing, audience, and discovery insights.</p></div>'}<article class="connection-card add-connection-card"><header><div><strong>Add a YouTube channel</strong><p>Each owner approves access independently.</p></div></header><button id="connect-google" class="primary-button" type="button" ${google.oauth_configured ? "" : "disabled"}>Connect YouTube</button></article><div class="connection-group-heading"><strong>Podcast analytics</strong><p>Hosting and native-platform reports refresh automatically; private sign-ins never leave the account owner's computer.</p></div>${localCards}`;
   document.getElementById("connect-google")?.addEventListener("click", async () => { try { const result = await connectorRequest("/api/analytics-connectors/google/connect", {method:"POST", body:"{}"}); window.location.assign(result.authorization_url); } catch (error) { target.prepend(Object.assign(document.createElement("p"), {className:"message error", textContent:error.message})); } });
@@ -283,39 +286,60 @@ function renderBars(items, target) {
   }).join("");
 }
 
+function renderPublicRatings(ratings, status) {
+  const target = document.getElementById("public-ratings");
+  if (!target) return;
+  const storefronts = ratings?.storefronts || [];
+  if (!storefronts.length) {
+    target.innerHTML = empty(status?.status === "error" ? "The last automatic Apple ratings check could not be read. It retries automatically; earlier values are never discarded." : "Apple Podcasts ratings are checked automatically every day across your listening markets.");
+    return;
+  }
+  const items = storefronts.slice(0, 8);
+  const max = Math.max(...items.map((item) => Number(item.count || 0)), 1);
+  const remainder = storefronts.length - items.length;
+  const gaps = ratings.unrated_audience_markets || [];
+  const change = (value) => value == null || Number(value) === 0 ? "" : ` · ${Number(value) > 0 ? "+" : ""}${number(value)} in 30 days`;
+  target.innerHTML = `<p class="metric-pairs"><span>Ratings<strong>${number(ratings.total_ratings)}</strong></span><span>Average<strong>${ratings.weighted_average == null ? "—" : `${percentage(ratings.weighted_average)} ★`}</strong></span><span>New in 30 days<strong>${ratings.new_ratings_30d == null ? "—" : number(ratings.new_ratings_30d)}</strong></span><span>Checked<strong class="freshness ${escapeHtml(ratings.freshness || "unknown")}">${escapeHtml(formatDate(ratings.period_end))}</strong></span></p><div class="insight-bars">${items.map((item) => `<div class="insight-bar"><div><strong>${escapeHtml(item.name)}</strong><span>${percentage(item.average)} ★ · ${number(item.count)} ${Number(item.count) === 1 ? "rating" : "ratings"}</span></div><div class="insight-bar-track"><span style="width:${Math.max(2, Number(item.count || 0) * 100 / max)}%"></span></div><small>Apple storefront${escapeHtml(change(item.change_30d))}</small></div>`).join("")}</div>${remainder > 0 ? `<p class="dimension-note">${remainder} more rated ${remainder === 1 ? "storefront is" : "storefronts are"} included in the totals.</p>` : ""}${gaps.length ? `<p class="dimension-note">Measured listeners in ${escapeHtml(gaps.join(", "))} have not left Apple ratings there yet. A localized rating request could close that gap.</p>` : ""}<p class="dimension-note">${escapeHtml(ratings.definition || "")}</p>`;
+}
+
 function renderEpisodePerformance(episodes, platformItems) {
   const target = document.getElementById("episode-performance");
   const platformRows = platformItems.map((item) => ({
     title:item.title || item.platform_content_id,
-    activity:Number(item.metrics?.plays_downloads || item.metrics?.video_lifetime_views || item.metrics?.video_views || item.metrics?.web_player_play_starts || 0),
+    platform_content_id:item.platform_content_id,
+    period_start:item.period_start,
+    activity:Number(item.metrics?.plays_downloads ?? item.metrics?.video_lifetime_views ?? item.metrics?.video_views ?? item.metrics?.web_player_play_starts ?? item.metrics?.web_player_completions ?? 0),
     metrics:{
       plays:item.metrics?.plays_downloads ?? item.metrics?.video_lifetime_views ?? item.metrics?.video_views ?? item.metrics?.web_player_play_starts,
       watch_time_hours:item.metrics?.video_lifetime_watch_time_hours ?? item.metrics?.video_watch_time_hours,
       average_view_duration_seconds:item.metrics?.video_lifetime_average_view_duration_seconds ?? item.metrics?.video_average_view_duration_seconds,
       consumption_depth_pct:item.metrics?.web_player_play_starts ? Number(item.metrics?.web_player_completions || 0) * 100 / Number(item.metrics.web_player_play_starts) : null,
     },
-    providers:[item.provider],period_end:item.period_end,freshness:"current",
+    providers:[item.provider],period_end:item.period_end,freshness:item.freshness || "unknown",
   }));
-  const combined = new Map();
-  [...episodes, ...platformRows].forEach((item) => {
-    const key = String(item.title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() || `content:${item.platform_content_id || combined.size}`;
-    const current = combined.get(key);
-    if (!current) { combined.set(key, {...item, providers:[...(item.providers || [])]}); return; }
-    current.activity = Number(current.activity || 0) + Number(item.activity || 0);
-    current.providers = [...new Set([...(current.providers || []), ...(item.providers || [])])];
-    current.period_end = [current.period_end, item.period_end].filter(Boolean).sort().at(-1);
-    current.period_start = [current.period_start, item.period_start].filter(Boolean).sort()[0];
-    Object.entries(item.metrics || {}).forEach(([metric, value]) => {
-      if (value != null && current.metrics?.[metric] == null) current.metrics[metric] = value;
-    });
-  });
-  const rows = [...combined.values()].sort((left, right) => Number(right.activity || 0) - Number(left.activity || 0));
+  const rows = [...episodes, ...platformRows].sort((left, right) => Number(right.activity || 0) - Number(left.activity || 0));
   if (!rows.length) { target.innerHTML = empty("Connected sources have not returned episode-level performance yet."); return; }
+  const titleCounts = new Map();
+  rows.forEach((item) => {
+    const key = String(item.title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    titleCounts.set(key, (titleCounts.get(key) || 0) + 1);
+  });
   target.innerHTML = `<div class="episode-table-wrap"><table class="episode-table"><thead><tr><th>Episode</th><th>Activity</th><th>Depth</th><th>Coverage</th></tr></thead><tbody>${rows.slice(0, 12).map((item) => {
     const metrics = item.metrics || {};
     const depth = metrics.consumption_depth_pct != null ? `${percentage(metrics.consumption_depth_pct)}% consumed` : metrics.average_view_duration_seconds != null ? duration(metrics.average_view_duration_seconds) : "Not provided";
     const providerText = (item.providers || []).map(providerLabel).join(", ");
-    return `<tr><td><strong>${escapeHtml(item.title)}</strong><small>Lifetime through ${escapeHtml(item.period_end || "unknown")}</small></td><td><strong>${number(item.activity)}</strong><small>measured lifetime downloads, plays or views</small></td><td>${escapeHtml(depth)}</td><td><span class="freshness ${escapeHtml(item.freshness || "current")}">${escapeHtml(item.freshness === "stale" ? "Refresh needed" : "Current")}</span><small>${escapeHtml(providerText)}</small></td></tr>`;
+    const titleKey = String(item.title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const coverage = [providerText];
+    if (titleCounts.get(titleKey) > 1) {
+      if (item.episode_id != null) {
+        coverage.push(`Episode record ${item.episode_id}`);
+      } else {
+        if (item.period_start) coverage.push(`period starts ${item.period_start}`);
+        if (item.platform_content_id) coverage.push(item.platform_content_id);
+      }
+    }
+    const identity = coverage.filter(Boolean).join(" · ");
+    return `<tr><td><strong>${escapeHtml(item.title)}</strong><small>Lifetime through ${escapeHtml(item.period_end || "unknown")}</small></td><td><strong>${number(item.activity)}</strong><small>measured lifetime downloads, plays or views</small></td><td>${escapeHtml(depth)}</td><td><span class="freshness ${escapeHtml(item.freshness || "unknown")}">${escapeHtml(freshnessLabel(item.freshness))}</span><small>${escapeHtml(identity)}</small></td></tr>`;
   }).join("")}</tbody></table></div>`;
 }
 
@@ -459,6 +483,7 @@ function render(payload) {
   renderBars(payload.demographics || [], document.getElementById("demographic-breakdown"));
   renderBars(payload.traffic_sources || [], document.getElementById("traffic-source-breakdown"));
   renderBars(payload.listening_apps || [], document.getElementById("listening-app-breakdown"));
+  renderPublicRatings(payload.public_ratings, payload.analytics_connectors?.public_ratings);
   renderEpisodePerformance(payload.episode_performance || [], payload.top_platform_content || []);
   renderMonthlyTrends(payload.monthly_trends || {});
   const coverageItems = payload.measurement_coverage || [];

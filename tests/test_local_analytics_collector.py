@@ -1,7 +1,10 @@
+from contextlib import nullcontext
 from pathlib import Path
 from datetime import date
+from unittest.mock import Mock
 
 import pytest
+import requests
 
 import guest_database_manager.local_analytics_collector as collector
 
@@ -92,7 +95,8 @@ def test_macos_spotify_login_keeps_attachable_session_resident(tmp_path: Path, m
 
     assert calls[0][0] == "/Applications/Chrome"
     assert f"--user-data-dir={(tmp_path / 'spotify').resolve()}" in calls[0]
-    assert "--remote-debugging-port=0" in calls[0]
+    assert any(argument.startswith("--remote-debugging-port=") for argument in calls[0])
+    assert (tmp_path / "spotify" / collector.COLLECTOR_DEBUG_PORT_FILE).is_file()
     assert "leave that window open or minimized" in calls[1]
 
 
@@ -113,7 +117,7 @@ def test_macos_apple_login_keeps_session_browser_resident(tmp_path: Path, monkey
 
     assert calls[0][0] == "/Applications/Chrome"
     assert f"--user-data-dir={(tmp_path / 'apple_podcasts').resolve()}" in calls[0]
-    assert "--remote-debugging-port=0" in calls[0]
+    assert any(argument.startswith("--remote-debugging-port=") for argument in calls[0])
     assert "leave that window open" in calls[1]
 
 
@@ -194,9 +198,57 @@ def test_sync_attaches_to_native_chrome_profile_over_cdp(tmp_path: Path, monkeyp
     assert calls[0][0] == "/Applications/Chrome"
     assert f"--user-data-dir={profile}" in calls[0]
     assert "--headless=new" in calls[0]
-    assert ("http://127.0.0.1:49152", 20_000) in calls
+    debug_argument = next(argument for argument in calls[0] if argument.startswith("--remote-debugging-port="))
+    debug_port = debug_argument.rsplit("=", 1)[1]
+    assert (f"http://127.0.0.1:{debug_port}", 1_000) in calls
     assert "browser.close" in calls
     assert "terminate" in calls
+
+
+def test_sync_rotates_stale_persisted_debug_port_before_launch(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "spotify"
+    profile.mkdir()
+    (profile / collector.COLLECTOR_DEBUG_PORT_FILE).write_text("49152", encoding="utf-8")
+    calls = []
+    context = object()
+
+    class Process:
+        poll_count = 0
+
+        def poll(self):
+            self.poll_count += 1
+            return None if self.poll_count == 1 else 0
+
+    class Browser:
+        contexts = [context]
+
+        def close(self):
+            calls.append("browser.close")
+
+    class Chromium:
+        def connect_over_cdp(self, endpoint, timeout):
+            calls.append((endpoint, timeout))
+            if endpoint.endswith(":49153"):
+                return Browser()
+            raise RuntimeError("stale debug port")
+
+    class Playwright:
+        chromium = Chromium()
+
+    monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(collector, "_available_loopback_port", lambda: 49153)
+    monkeypatch.setattr(
+        collector.subprocess, "Popen",
+        lambda arguments, **kwargs: calls.append(arguments) or Process(),
+    )
+
+    with collector._sync_browser_context(Playwright(), profile_path=profile, headless=True) as opened:
+        assert opened is context
+
+    assert "--remote-debugging-port=49153" in calls[1]
+    assert (profile / collector.COLLECTOR_DEBUG_PORT_FILE).read_text(encoding="utf-8") == "49153"
+    assert calls[0] == ("http://127.0.0.1:49152", 5_000)
+    assert calls[2] == ("http://127.0.0.1:49153", 1_000)
 
 
 def test_sync_reuses_resident_browser_without_closing_it(tmp_path: Path, monkeypatch) -> None:
@@ -312,6 +364,56 @@ def test_apple_lifetime_export_uses_earliest_episode_release_date() -> None:
 
     assert "2020-06-12,2026-11-27" in annotated
     collector._validate_provider_export("apple_podcasts", annotated)
+
+
+@pytest.mark.parametrize("status_times_out", [False, True])
+def test_sync_reports_uncertain_uploads_when_the_second_report_times_out(
+    tmp_path: Path, monkeypatch, status_times_out: bool,
+) -> None:
+    page = Mock(url="https://podcastsconnect.apple.com/analytics")
+    export = Mock()
+    export.count.return_value = 1
+    export.nth.return_value.is_visible.return_value = True
+    show_link = Mock()
+    show_link.get_attribute.return_value = "/analytics/show/1/overview"
+    password_fields = Mock()
+    password_fields.count.return_value = 0
+    page.locator.side_effect = [password_fields, Mock(first=show_link), Mock(first=export)]
+    monkeypatch.setattr(collector, "_playwright", lambda: nullcontext)
+    monkeypatch.setattr(
+        collector, "_sync_browser_context", lambda *args, **kwargs: nullcontext(Mock(pages=[page])),
+    )
+    monkeypatch.setattr(collector, "_select_apple_all_time", Mock())
+    monkeypatch.setattr(collector, "_visible_counter", lambda *args: 2)
+    monkeypatch.setattr(collector, "_download_csv", lambda *args: (
+        "episodes.csv",
+        "Show Name,Episode ID,Episode Title,Release Date,Unique Listeners,"
+        "Unique Engaged Listeners,Plays,Average Consumption\n"
+        "Mirror Talk,1001,Episode,2020-06-12,2,1,3,75%\n",
+    ))
+    response = Mock(ok=True)
+    response.json.return_value = {"inserted": 1, "duplicates": 0, "submitted": 1}
+    post = Mock(side_effect=[
+        response,
+        requests.Timeout("private upload details"),
+        requests.Timeout("private status details") if status_times_out else response,
+    ])
+    monkeypatch.setattr(collector.requests, "post", post)
+
+    with pytest.raises(LocalCollectorError, match="failed during dashboard upload") as failure:
+        collector.sync_once(
+            "apple_podcasts", server="http://127.0.0.1:8765", token="x" * 32,
+            profile_root=tmp_path, url=page.url,
+        )
+
+    assert [call.kwargs["json"]["source_reference"] for call in post.call_args_list[:2]] == [
+        "apple-audience-snapshot.csv", "episodes.csv",
+    ]
+    assert post.call_args.kwargs["json"]["error_code"] == "collector_failed:dashboard_upload"
+    message = str(failure.value)
+    assert "Reports may already have been saved" in message
+    assert ("did not acknowledge the failure status" in message) is status_times_out
+    assert "private" not in message
 
 
 def test_spotify_dimension_exports_receive_the_verified_performance_window() -> None:
@@ -520,3 +622,81 @@ def test_scheduled_sync_never_retries_owner_reauthentication(tmp_path: Path, mon
         )
 
     assert attempts == ["apple_podcasts"]
+
+
+def test_missing_spotify_breakdowns_do_not_block_available_reports() -> None:
+    raw = {
+        "geography": ("geo.csv", "Geo,Percentage\nGermany,8\n"),
+        "apps": ("apps.csv", "App,Percentage\nSpotify,24.2\n"),
+        # Gender and age share the window that only the audience export states.
+        "gender": ("gender.csv", "Gender,Percentage\nFemale,12.9\n"),
+    }
+
+    uploads, missing = collector._select_spotify_audience_exports(
+        raw, window_start=date(2026, 10, 27), window_end=date(2026, 11, 25),
+    )
+
+    assert [name for name, _ in uploads] == ["apps.csv", "geo.csv"]
+    assert all("2026-10-27,2026-11-25" in csv_text for _, csv_text in uploads)
+    assert missing == ["age", "audience", "gender"]
+
+
+def test_scheduled_sync_retries_partial_runs_and_keeps_the_saved_result(tmp_path: Path, monkeypatch) -> None:
+    notices = []
+    results = iter([
+        {"status": "degraded", "missing_reports": ["age"], "inserted": 4},
+        {"status": "degraded", "missing_reports": ["age"], "inserted": 0},
+    ])
+    monkeypatch.setattr(collector, "sync_once", lambda provider, **kwargs: next(results))
+    monkeypatch.setattr(collector.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(collector, "_notify_owner", lambda *args: notices.append(args))
+
+    result = collector.scheduled_sync(
+        "spotify", server="https://guest-processing.example", token="x" * 32,
+        profile_root=tmp_path, url="https://creators.spotify.com/analytics",
+        attempts=2, retry_delays=(0,),
+    )
+
+    assert result["status"] == "degraded"
+    assert notices == []
+
+
+def test_scheduled_sync_alerts_the_owner_when_action_or_retries_fail(tmp_path: Path, monkeypatch) -> None:
+    notices = []
+    monkeypatch.setattr(collector, "_notify_owner", lambda provider, message: notices.append(provider))
+    monkeypatch.setattr(collector.time, "sleep", lambda seconds: None)
+    common = {
+        "server": "https://guest-processing.example", "token": "x" * 32, "profile_root": tmp_path,
+        "url": "https://creators.spotify.com/analytics", "retry_delays": (0,),
+    }
+
+    def reauth(provider, **kwargs):
+        raise ReauthenticationRequired("owner action required")
+
+    monkeypatch.setattr(collector, "sync_once", reauth)
+    with pytest.raises(ReauthenticationRequired):
+        collector.scheduled_sync("spotify", attempts=3, **common)
+
+    def broken(provider, **kwargs):
+        raise LocalCollectorError("temporary provider failure")
+
+    monkeypatch.setattr(collector, "sync_once", broken)
+    with pytest.raises(LocalCollectorError):
+        collector.scheduled_sync("apple_podcasts", attempts=2, **common)
+
+    monkeypatch.setattr(collector, "sync_once", lambda provider, **kwargs: {"status": "completed"})
+    collector.scheduled_sync("spotify", attempts=1, **common)
+
+    assert notices == ["spotify", "apple_podcasts"]
+
+
+def test_owner_notification_passes_text_as_data_not_applescript(monkeypatch) -> None:
+    run = Mock()
+    monkeypatch.setattr(collector.sys, "platform", "darwin")
+    monkeypatch.setattr(collector.subprocess, "run", run)
+
+    collector._notify_owner("spotify", 'Sign in" & do shell script "x')
+
+    argv = run.call_args.args[0]
+    assert argv[-1] == 'Sign in" & do shell script "x'
+    assert all('do shell script' not in part for part in argv[:-1])

@@ -499,3 +499,23 @@ def test_ga4_web_player_events_are_normalized_without_becoming_downloads(temp_db
     assert all(row["provider"] == "website" and row["source_class"] == "website" for row in observations)
     assert not {row["metric_name"] for row in observations} & {"downloads", "plays"}
     assert captured[0][2]["filter"]["fieldName"] == "eventName"
+
+
+def test_partial_collector_run_is_degraded_not_failed(temp_db, monkeypatch):
+    token = "collector-token-with-at-least-thirty-two-characters"
+    monkeypatch.setenv(COLLECTOR_TOKEN_ENV, token)
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    connectors.set_local_collector("spotify", enabled=True, actor="admin")
+
+    with pytest.raises(AnalyticsConnectorError, match="missing reports"):
+        connectors.report_local_collector_status(
+            provider="spotify", token=token, status="degraded", error_code="timeout",
+        )
+    connectors.report_local_collector_status(
+        provider="spotify", token=token, status="degraded", error_code="missing_reports_age_gender",
+    )
+
+    connection = connectors.status()["local_collectors"]["connections"]["spotify"]
+    assert connection["status"] == "degraded"
+    assert connection["missing_reports"] == ["age", "gender"]
+    assert connection["consecutive_failures"] == 0

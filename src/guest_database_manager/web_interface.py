@@ -80,6 +80,7 @@ from guest_database_manager.partner_intelligence import PartnerIntelligence, Par
 from guest_database_manager.partner_discovery import curated_signals
 from guest_database_manager.partner_pitch_templates import list_pitch_templates
 from guest_database_manager.podcast_insights import PodcastInsights
+from guest_database_manager.public_ratings import PublicRatingsCollector
 from guest_database_manager.podcast_advisory import PodcastAdvisory
 from guest_database_manager.growth_decision_intelligence import GrowthDecisionIntelligence
 from guest_database_manager.podcast_analytics_connectors import AnalyticsConnectorError, PodcastAnalyticsConnectors
@@ -904,6 +905,7 @@ class GuestWebService:
         self.growth_decision_intelligence = GrowthDecisionIntelligence(self.db_path)
         self.podcast_source_monitor = PodcastSourceMonitor(self.db_path)
         self.podcast_analytics_connectors = PodcastAnalyticsConnectors(self.db_path)
+        self.public_ratings = PublicRatingsCollector(self.db_path)
         self.podcast_release_readiness = PodcastReachReleaseReadiness(self.db_path)
 
     def get_growth_intelligence(self) -> Dict[str, Any]:
@@ -927,6 +929,7 @@ class GuestWebService:
             dashboard["quality"]["status"] = "public_only"
         dashboard["source_coverage"] = coverage
         dashboard["analytics_connectors"] = self.podcast_analytics_connectors.status()
+        dashboard["analytics_connectors"]["public_ratings"] = self.public_ratings.status()
         dashboard["release_readiness"] = self.podcast_release_readiness.report()
         dashboard["decision_intelligence"] = self.growth_decision_intelligence.dashboard(
             dashboard.get("monthly_trends") or {}, self.recommendation_learning.status()
@@ -1436,6 +1439,15 @@ class GuestWebService:
                         )
                     except Exception:
                         logger.exception("OpenPodcast analytics synchronization failed")
+                    try:
+                        if self.public_ratings.due():
+                            outcome = self.public_ratings.run(actor="podcast-analytics-automation")
+                            if outcome.get("error_code"):
+                                logger.warning(
+                                    "Public ratings collection needs attention (%s)", outcome["error_code"]
+                                )
+                    except Exception:
+                        logger.exception("Public ratings collection failed")
                 try:
                     self.run_shadow_learning_cycle(actor="shadow-learning-automation")
                     self.run_recommendation_learning_cycle(actor="learning-automation")

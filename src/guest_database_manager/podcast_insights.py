@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+import pycountry
+
 from guest_database_manager.db_connection import connect_database
 
 
@@ -15,8 +17,21 @@ AUDIENCE_METRICS = {
     "unique_listeners", "new_listeners", "returning_listeners", "unique_viewers",
     "listeners", "followers", "subscribers",
 }
+RATING_METRICS = {"rating_average", "rating_count"}
 DEVICE_PREFIX = "device_"
 COUNTRY_PREFIX = "country_"
+
+
+def _canonical_country_key(value: Any) -> str:
+    """Converge country names and ISO-2/ISO-3 codes on one stable key."""
+    label = re.sub(r"\s+", " ", str(value or "").strip())
+    if not label or label.casefold() == "unknown":
+        return ""
+    candidate = label.upper() if len(label) in {2, 3} else label
+    try:
+        return str(pycountry.countries.lookup(candidate).alpha_2).casefold()
+    except LookupError:
+        return label.casefold()
 DISPLAY_METRICS = {
     "downloads", "plays", "streams", "unique_listeners", "listeners", "followers",
     "subscribers", "watch_time_hours", "average_view_duration_seconds", "organic_reach",
@@ -66,6 +81,10 @@ class PodcastInsights:
                 ).fetchall()
             }
 
+        # Public ratings measure sentiment, not reach; keeping them out of the reach rows
+        # prevents a daily public snapshot from masking a stale private provider export.
+        rating_rows = [row for row in rows if row["metric_name"] in RATING_METRICS]
+        rows = [row for row in rows if row["metric_name"] not in RATING_METRICS]
         scoped_youtube = {str(row["provider"]) for row in rows if str(row["provider"]).startswith("youtube:")}
         if identified_channels and len(scoped_youtube) >= identified_channels:
             scoped_keys = {
@@ -289,6 +308,7 @@ class PodcastInsights:
             "demographics": demographics,
             "traffic_sources": traffic_sources,
             "listening_apps": listening_apps,
+            "public_ratings": self._public_ratings(rating_rows, countries),
             "top_platform_content": top_videos,
             "episode_performance": episode_performance,
             "measurement_coverage": measurement_coverage,
@@ -558,9 +578,9 @@ class PodcastInsights:
         spotify_native_plays = float((spotify_lifetime or {}).get("plays") or 0)
         apple_hours = float((apple_summary or {}).get("listening_time_hours") or 0)
         country_names = {
-            re.sub(r"\s+", " ", str(item.get("name") or "").strip()).casefold()
+            _canonical_country_key(item.get("name"))
             for item in countries
-            if str(item.get("name") or "").strip().casefold() not in {"", "unknown"}
+            if _canonical_country_key(item.get("name"))
             and float(item.get("value") or 0) > 0
         }
         relationship_breakdown: dict[str, float] = {}
@@ -966,6 +986,73 @@ class PodcastInsights:
             ],
         }
 
+    @classmethod
+    def _public_ratings(
+        cls, rows: list[dict[str, Any]], countries: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Summarize the latest public rating snapshot for each storefront."""
+        if not rows:
+            return None
+        snapshots: dict[str, dict[str, dict[str, Any]]] = {}
+        for row in rows:
+            code = str(row.get("country_code") or "").casefold()
+            if code:
+                snapshots.setdefault(code, {}).setdefault(str(row["period_end"]), {})[row["metric_name"]] = row
+        storefronts = []
+        for code, by_period in snapshots.items():
+            complete = {period: values for period, values in by_period.items() if RATING_METRICS <= set(values)}
+            if not complete:
+                continue
+            latest_period = max(complete)
+            latest = complete[latest_period]
+            baseline_cutoff = (datetime.fromisoformat(latest_period).date() - timedelta(days=30)).isoformat()
+            baseline_period = max((period for period in complete if period <= baseline_cutoff), default=None)
+            count = float(latest["rating_count"]["metric_value"])
+            try:
+                name = str(pycountry.countries.get(alpha_2=code.upper()).name)
+            except (AttributeError, LookupError):
+                name = code.upper()
+            storefronts.append({
+                "storefront": code, "name": name,
+                "average": float(latest["rating_average"]["metric_value"]),
+                "count": count,
+                "change_30d": (
+                    count - float(complete[baseline_period]["rating_count"]["metric_value"])
+                    if baseline_period else None
+                ),
+                "period_end": latest_period,
+                "freshness": cls._freshness(latest_period),
+                "source": latest["rating_count"]["source_reference"],
+            })
+        if not storefronts:
+            return None
+        storefronts.sort(key=lambda item: (-item["count"], item["name"]))
+        total = sum(item["count"] for item in storefronts)
+        changes = [item["change_30d"] for item in storefronts if item["change_30d"] is not None]
+        rated = {item["storefront"] for item in storefronts if item["count"] > 0}
+        audience_markets = []
+        for item in countries:
+            code = _canonical_country_key(item.get("name"))
+            if len(code) == 2 and code not in rated and float(item.get("value") or 0) > 0:
+                audience_markets.append(str(item.get("name")))
+        return {
+            "provider": "apple_podcasts",
+            "total_ratings": total,
+            "weighted_average": (
+                round(sum(item["average"] * item["count"] for item in storefronts) / total, 2)
+                if total else None
+            ),
+            "new_ratings_30d": sum(changes) if changes else None,
+            "period_end": max(item["period_end"] for item in storefronts),
+            "freshness": cls._freshness(max(item["period_end"] for item in storefronts)),
+            "storefronts": storefronts,
+            "unrated_audience_markets": list(dict.fromkeys(audience_markets))[:8],
+            "definition": (
+                "Public Apple Podcasts star ratings by storefront. Storefront averages are rounded by "
+                "Apple, so the combined average is a rating-count-weighted approximation."
+            ),
+        }
+
     @staticmethod
     def _freshness(period_end: str) -> str:
         age = (datetime.now(timezone.utc).date() - datetime.fromisoformat(period_end).date()).days
@@ -1348,25 +1435,53 @@ class PodcastInsights:
                 row["metric_name"].startswith("video_")
                 or row["metric_name"].startswith("web_player_")
                 or row["metric_name"] == "plays_downloads"
-            ) and str(row.get("platform_content_id") or "")
+            )
+            and str(row.get("platform_content_id") or "")
+            and row.get("episode_id") is None
         ]
-        grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
         for row in candidates:
-            grouped.setdefault((str(row["provider"]), str(row["platform_content_id"]), row["period_end"]), []).append(row)
-        latest_by_content: dict[tuple[str, str], tuple[str, list[dict[str, Any]]]] = {}
-        for (provider, content_id, period_end), content_rows in grouped.items():
-            key = (provider, content_id)
+            provider = str(row["provider"])
+            content_id = str(row["platform_content_id"])
+            # Spotify's export has no episode ID; its title surrogate needs the publish date.
+            publish_date = (
+                str(row.get("period_start") or "")
+                if provider == "spotify" and content_id.startswith("title:")
+                else ""
+            )
+            grouped.setdefault(
+                (provider, content_id, publish_date, str(row["period_end"])), []
+            ).append(row)
+        latest_by_content: dict[tuple[str, str, str], tuple[str, list[dict[str, Any]]]] = {}
+        for (provider, content_id, publish_date, period_end), content_rows in grouped.items():
+            key = (provider, content_id, publish_date)
             if key not in latest_by_content or period_end > latest_by_content[key][0]:
                 latest_by_content[key] = (period_end, content_rows)
         result = []
-        for (provider, content_id), (period_end, content_rows) in latest_by_content.items():
+        for (provider, content_id, publish_date), (period_end, content_rows) in latest_by_content.items():
             metrics = {row["metric_name"]: float(row["metric_value"]) for row in content_rows}
             result.append({
                 "provider": provider, "platform_content_id": content_id,
                 "title": next((str(row.get("platform_content_title") or "") for row in content_rows if row.get("platform_content_title")), content_id),
-                "period_end": period_end, "metrics": metrics,
+                "period_start": publish_date or min(
+                    (str(row.get("period_start") or "") for row in content_rows), default=""
+                ),
+                "period_end": period_end, "freshness": PodcastInsights._freshness(period_end),
+                "metrics": metrics,
             })
-        return sorted(result, key=lambda item: -sum(
-            item["metrics"].get(metric, 0)
-            for metric in ("plays_downloads", "video_lifetime_views", "video_views", "web_player_play_starts", "web_player_completions")
-        ))[:20]
+        def activity(item: dict[str, Any]) -> float:
+            metrics = item["metrics"]
+            return next((
+                float(metrics[metric]) for metric in (
+                    "plays_downloads", "video_lifetime_views", "video_views",
+                    "web_player_play_starts", "web_player_completions",
+                ) if metrics.get(metric) is not None
+            ), 0.0)
+
+        return sorted(
+            result,
+            key=lambda item: (
+                -activity(item), item["title"].casefold(), item["provider"],
+                item["platform_content_id"], item["period_start"],
+            ),
+        )[:20]

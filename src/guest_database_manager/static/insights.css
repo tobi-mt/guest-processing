@@ -35,7 +35,7 @@
 .attention-item.positive{border-left-color:#9ee5cd}
 .attention-item strong{font-size:.86rem;line-height:1.35}
 .attention-item span{color:var(--muted);font-size:.74rem;line-height:1.4}
-.overall-performance-panel{display:grid;gap:16px}
+.overall-performance-panel{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
 .performance-heading{align-items:end}
 .range-controls{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
 .range-controls button{min-height:40px;padding:7px 12px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--muted);font:inherit;font-size:.78rem;font-weight:800;cursor:pointer}
@@ -106,11 +106,13 @@
 .episode-table th{color:var(--muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.04em}
 .episode-table td:first-child{min-width:280px}
 .episode-table td small{display:block;margin-top:4px;color:var(--muted)}
+.episode-table .freshness{white-space:nowrap}
 .metric-pairs{display:flex;flex-wrap:wrap;gap:6px 12px;margin:.65rem 0}
 .metric-pairs span{display:grid;gap:2px;min-width:110px;font-size:.72rem;text-transform:uppercase;letter-spacing:.025em}
 .metric-pairs strong{color:var(--text);font-size:.95rem;letter-spacing:0;text-transform:none}
 .freshness{padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:rgba(255,255,255,.08);color:var(--text);font-size:.7rem;text-transform:uppercase}
 .freshness.current{background:rgba(93,205,169,.14);color:#9ee5cd;border-color:rgba(93,205,169,.32)}
+.freshness.aging{background:rgba(233,189,101,.14);color:#f2c46d;border-color:rgba(233,189,101,.32)}
 .freshness.stale{background:rgba(233,189,101,.14);color:#f2c46d;border-color:rgba(233,189,101,.32)}
 .insights-empty{padding:18px;border:1px dashed var(--border);border-radius:16px;background:var(--color-surface-raised)}
 .insights-empty p{color:var(--muted)}
