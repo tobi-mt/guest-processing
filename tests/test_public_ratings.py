@@ -33,6 +33,25 @@ def test_apple_rating_requires_the_requested_storefront_and_show():
         parse_apple_rating(_page("de", value="7"), storefront="de")
 
 
+def test_refresh_requests_one_due_ratings_check_across_replicas(temp_db, monkeypatch):
+    from guest_database_manager.web_interface import GuestWebService
+
+    first = GuestWebService(temp_db.db_path)
+    second = GuestWebService(temp_db.db_path)
+    queued = []
+    monkeypatch.setattr("guest_database_manager.web_interface.Thread.start", lambda thread: queued.append(thread))
+    monkeypatch.setattr(first.podcast_source_monitor, "run", lambda **kwargs: {})
+    monkeypatch.setattr(first, "sync_google_analytics", lambda **kwargs: {})
+    monkeypatch.setattr(first, "sync_openpodcast_analytics", lambda **kwargs: {})
+    first.public_ratings.fetch = lambda url: (200, url, _page(url.split("/")[3]))
+    assert first.refresh_podcast_reach(actor="test")["public_ratings"] == {"status": "scheduled"}
+    assert second._schedule_public_ratings(actor="worker") == {"status": "already_scheduled"}
+    assert len(queued) == 1
+    queued.pop().run()
+    assert second.public_ratings.status()["storefronts_rated"] > 0
+    assert second._schedule_public_ratings(actor="worker") == {"status": "not_due"}
+
+
 def test_public_ratings_are_collected_idempotently_and_kept_out_of_reach(temp_db):
     GrowthIntelligence(temp_db.db_path).record_observations([
         {"provider": "spotify", "metric_name": "plays", "metric_value": 40,

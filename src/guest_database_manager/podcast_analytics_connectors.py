@@ -271,6 +271,11 @@ class PodcastAnalyticsConnectors:
                     "credential_rejected"
                     if "credential" in str(exc).casefold() else f"endpoint_failed:{endpoint}"
                 )
+                cause = exc.__cause__
+                if error_code != "credential_rejected" and isinstance(cause, HTTPError):
+                    error_code = f"http_{cause.code}:{endpoint}"
+                elif isinstance(cause, (TimeoutError, URLError)) and not isinstance(cause, HTTPError):
+                    error_code = f"network_failed:{endpoint}"
                 with connect_database(self.db_path) as conn:
                     self._audit(
                         conn, "analytics_sync_failed", actor,

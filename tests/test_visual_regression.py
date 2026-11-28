@@ -252,6 +252,13 @@ def test_reach_keeps_expanded_chart_and_episode_table_inside_a_narrow_viewport(v
         browser = runtime.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 320, "height": 844})
         page.route("**/api/podcast-insights", lambda route: route.fulfill(json={
+            "provider_strength": [{"provider": "spotify", "freshness": "current",
+                                   "period_start": "2026-11-25", "period_end": "2026-11-26"}],
+            "analytics_connectors": {
+                "local_collectors": {"connections": {"spotify": {"enabled": True, "status": "error"}}},
+                "openpodcast": {"status": "error", "last_error_code": "endpoint_failed:episodesDailyMetrics"},
+                "public_ratings": {"status": "waiting", "last_run_at": None},
+            },
             "daily_trends": {"spotify": [
                 {"period": "2026-10-31", "downloads": 5, "plays": 7},
                 {"period": "2026-11-01", "downloads": 6, "plays": 8},
@@ -271,6 +278,10 @@ def test_reach_keeps_expanded_chart_and_episode_table_inside_a_narrow_viewport(v
         trend.get_by_text("View exact values").click()
         assert trend.locator("table").is_visible()
         page.get_by_text("Explore performance", exact=True).click()
+        assert page.locator("#insights-quality").get_by_text("Collection incomplete").is_visible()
+        assert "OpenPodcast: sync failed" in page.locator("#insights-quality").inner_text()
+        assert page.locator("#provider-strength").get_by_text("Sync failed").is_visible()
+        assert page.locator("#public-ratings").get_by_text("Awaiting first ratings check").is_visible()
         badge = page.get_by_text("Refresh needed", exact=True)
         assert badge.is_visible()
         assert page.evaluate("document.documentElement.scrollWidth - innerWidth") == 0

@@ -122,7 +122,8 @@ class PodcastInsights:
                 latest.extend(row for row in metric_rows if row["period_end"] == metric_end)
             metrics: dict[str, float] = {}
             for metric in {row["metric_name"] for row in latest}:
-                if metric in DISPLAY_METRICS:
+                # Per-video averages describe individual videos; their sum is not a channel average.
+                if metric in DISPLAY_METRICS and metric != "video_lifetime_average_view_duration_seconds":
                     metrics[metric] = self._metric_total(latest, metric)
             visible_latest = [row for row in latest if row["metric_name"] in metrics]
             provider_cards.append({

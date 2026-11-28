@@ -271,6 +271,24 @@ def test_openpodcast_rejected_credential_is_reported_without_exposing_it(temp_db
     assert token not in str(status)
 
 
+def test_openpodcast_records_rate_limit_without_upstream_details(temp_db, monkeypatch):
+    from urllib.error import HTTPError
+
+    monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, "test-only")
+    monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+
+    def rate_limited(*args, **kwargs):
+        raise HTTPError("https://example.test", 429, "private response details", {}, None)
+
+    monkeypatch.setattr("guest_database_manager.podcast_analytics_connectors.urlopen", rate_limited)
+    with pytest.raises(AnalyticsConnectorError, match="episodesDailyMetrics"):
+        connectors.sync_openpodcast(actor="test")
+    status = connectors.status()["openpodcast"]
+    assert status["last_error_code"] == "http_429:episodesDailyMetrics"
+    assert "private response details" not in str(status)
+
+
 def test_google_oauth_state_is_hashed_short_lived_and_one_time(temp_db, monkeypatch):
     _configure(monkeypatch)
     connectors = PodcastAnalyticsConnectors(temp_db.db_path)

@@ -154,8 +154,10 @@ export, so they are skipped when that export is missing.
 The scheduled job posts a macOS notification to the owner when sign-in/MFA is required
 or when every automatic retry fails. Notification text is passed as data, never as script.
 
-Public Apple Podcasts ratings are collected by the Railway worker leader every 20 hours
-(6-hour backoff after a failure) from each storefront's structured page data. Storefronts
+Public Apple Podcasts ratings use a dedicated cross-replica lease. Both the scheduled
+worker and **Refresh now** request a background check when due; neither waits for the
+storefront network requests. Checks are normally due every 20 hours, with a 6-hour
+backoff after a failure. Ratings come from each storefront's structured page data. Storefronts
 come from core markets, previously rated storefronts, and every country with measured
 audience, with no storefront cap, so new markets are tracked automatically. Each run is
 bounded to two minutes; storefronts not reached because of that limit or a network error

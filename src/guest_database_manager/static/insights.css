@@ -12,7 +12,7 @@
 .overview-status{display:flex;align-items:center;gap:14px;min-width:0}
 .overview-status>div{min-width:0}
 .insights-quality button{min-height:44px;white-space:nowrap}
-.insights-quality p{margin:.35rem 0 0;color:var(--muted)}
+.insights-quality p{margin:.35rem 0 0;color:var(--muted);overflow-wrap:anywhere}
 .coverage-pill{display:inline-flex;margin-right:10px;padding:5px 10px;border-radius:999px;background:#efe8d8;text-transform:uppercase;font-size:.7rem;font-weight:800;letter-spacing:.06em}
 .coverage-pill.covered{background:var(--color-success-soft);color:var(--color-success)}
 .coverage-pill.partial{background:var(--color-success-soft);color:var(--color-success)}
@@ -246,6 +246,7 @@
 }
 @media(max-width:640px){.insights-shell{width:min(100% - 16px,1240px)}
 .insights-quality{align-items:flex-start;flex-direction:column}
+.overview-status{flex-direction:column;align-items:flex-start}
 .insights-summary,.platform-grid,.definition-grid,.platform-performance-grid,.attention-strip,.coverage-grid{grid-template-columns:1fr}
 .attention-heading{grid-column:auto}
 .trend-row{grid-template-columns:1fr repeat(2,minmax(72px,.5fr))}

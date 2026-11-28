@@ -999,6 +999,7 @@ class GuestWebService:
     def refresh_podcast_reach(self, *, actor: str) -> Dict[str, Any]:
         """Refresh every server-accessible reach source without hiding provider access needs."""
         result: Dict[str, Any] = {
+            "public_ratings": self._schedule_public_ratings(actor=actor),
             "public_distribution": self.podcast_source_monitor.run(actor=actor, force=True),
             "youtube": {"status": "not_connected"},
             "openpodcast": {"status": "not_configured"},
@@ -1439,15 +1440,10 @@ class GuestWebService:
                         )
                     except Exception:
                         logger.exception("OpenPodcast analytics synchronization failed")
-                    try:
-                        if self.public_ratings.due():
-                            outcome = self.public_ratings.run(actor="podcast-analytics-automation")
-                            if outcome.get("error_code"):
-                                logger.warning(
-                                    "Public ratings collection needs attention (%s)", outcome["error_code"]
-                                )
-                    except Exception:
-                        logger.exception("Public ratings collection failed")
+                try:
+                    self._schedule_public_ratings(actor="podcast-analytics-automation")
+                except Exception:
+                    logger.error("Could not schedule public ratings collection")
                 try:
                     self.run_shadow_learning_cycle(actor="shadow-learning-automation")
                     self.run_recommendation_learning_cycle(actor="learning-automation")
@@ -1457,6 +1453,27 @@ class GuestWebService:
 
         self._learning_thread = Thread(target=run, name="recommendation-shadow-learning", daemon=True)
         self._learning_thread.start()
+
+    def _schedule_public_ratings(self, *, actor: str) -> dict[str, str]:
+        if not self.public_ratings.due():
+            return {"status": "not_due"}
+        # Scheduled and user-initiated refreshes share a lease across web replicas.
+        if not self._try_acquire_analytics_job_lease(
+            owner_id=f"ratings-{secrets.token_hex(8)}", lease_seconds=300, job_key="apple-public-ratings",
+        ):
+            return {"status": "already_scheduled"}
+
+        def collect() -> None:
+            try:
+                outcome = self.public_ratings.run(actor=actor)
+            except Exception:
+                logger.error("Public ratings collection failed before completion")
+                return
+            if outcome.get("error_code"):
+                logger.warning("Public ratings collection needs attention (%s)", outcome["error_code"])
+
+        Thread(target=collect, name="apple-public-ratings", daemon=True).start()
+        return {"status": "scheduled"}
 
     def _try_acquire_analytics_job_lease(
         self, *, owner_id: str, lease_seconds: float, job_key: str = "podcast-analytics-cycle"

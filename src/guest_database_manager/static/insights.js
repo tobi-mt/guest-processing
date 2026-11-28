@@ -2,7 +2,7 @@ const escapeHtml = window.PerformanceUtils?.escapeHtml || ((value) => String(val
 const number = (value) => value == null ? "—" : new Intl.NumberFormat().format(Number(value));
 const percentage = (value) => value == null ? "—" : new Intl.NumberFormat(undefined, {maximumFractionDigits:1}).format(Number(value));
 const safeUrl = (value) => { try { const parsed = new URL(String(value)); return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "#"; } catch { return "#"; } };
-const empty = (message) => `<div class="insights-empty"><strong>Collecting automatically</strong><p>${escapeHtml(message)}</p></div>`;
+const empty = (message, title = "Collecting automatically") => `<div class="insights-empty"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(message)}</p></div>`;
 const csrfToken = () => decodeURIComponent((document.cookie.match(/(?:^|;\s*)dashboard_csrf=([^;]+)/) || [])[1] || "");
 const metricLabel = (value) => String(value || "").replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
 const freshnessLabel = (value) => ({current:"Current",aging:"Aging",stale:"Refresh needed"})[value] || "Unknown";
@@ -291,7 +291,11 @@ function renderPublicRatings(ratings, status) {
   if (!target) return;
   const storefronts = ratings?.storefronts || [];
   if (!storefronts.length) {
-    target.innerHTML = empty(status?.status === "error" ? "The last automatic Apple ratings check could not be read. It retries automatically; earlier values are never discarded." : "Apple Podcasts ratings are checked automatically every day across your listening markets.");
+    target.innerHTML = status?.status === "error"
+      ? empty("The last automatic Apple ratings check could not be read. It retries automatically; earlier values are never discarded.", "Ratings check failed")
+      : status?.last_run_at
+        ? empty("The last check returned no ratings for the storefronts checked.", "No ratings reported")
+        : empty("No completed check yet. Refresh now requests a check if one is due.", "Awaiting first ratings check");
     return;
   }
   const items = storefronts.slice(0, 8);
@@ -369,11 +373,24 @@ function render(payload) {
   providerLabels = Object.fromEntries(connections.filter((item) => item.youtube_channel_id).map((item) => [`youtube:${String(item.youtube_channel_id).toLowerCase()}`, item.youtube_channel_title || item.youtube_channel_id]));
   const releaseReady = release.status === "ready";
   const platformMeasurement = payload.platform_measurement || {};
-  const measuredSourcesCurrent = providers.length > 0 && providers.every((item) => item.freshness === "current");
+  const connectors = payload.analytics_connectors || {};
+  const collectorIssues = {};
+  for (const [provider, connection] of Object.entries(connectors.local_collectors?.connections || {})) {
+    const label = {error:"Sync failed", degraded:"Partial reports", reauth_required:"Sign-in required", stale:"Collector overdue", waiting:"Waiting for first sync"}[connection.status];
+    if (connection.enabled && label) collectorIssues[provider] = label;
+  }
+  const notices = Object.entries(collectorIssues).map(([provider, label]) => `${providerLabel(provider)}: ${label}.`);
+  for (const connection of connections.filter((item) => item.status !== "connected")) {
+    notices.push(`${connection.youtube_channel_title || "Google Analytics"}: connection needs attention.`);
+  }
+  if (connectors.openpodcast?.status === "error") notices.push(`OpenPodcast: sync failed (${connectors.openpodcast.last_error_code || "no error code"}).`);
+  if (connectors.public_ratings?.status === "error") notices.push("Apple public ratings: last check failed.");
+  if (connectors.public_ratings?.status === "waiting" && !connectors.public_ratings.last_run_at) notices.push("Apple public ratings: awaiting first check.");
+  const measuredSourcesCurrent = !notices.length && providers.length > 0 && providers.every((item) => item.freshness === "current");
   const rawSetupItems = release.blockers || [];
   const sourceSetupPending = rawSetupItems.some((item) => ["youtube_analytics_not_ready", "provider_collectors_not_ready"].includes(item.code));
   const visibleSetupItems = rawSetupItems.filter((item) => item.code !== "analytics_evidence_incomplete" || !sourceSetupPending);
-  document.getElementById("insights-quality").innerHTML = `<div class="overview-status"><span class="coverage-pill ${measuredSourcesCurrent ? "covered" : "building"}">${measuredSourcesCurrent ? "Live data" : "Connecting data"}</span><div><strong>${number(platformMeasurement.covered_count)} of ${number(platformMeasurement.available_count)} confirmed destinations measured</strong><p>${escapeHtml(platformMeasurement.note || (measuredSourcesCurrent ? "All contributing analytics sources are current." : "Automatic collection is active; unavailable source details are never estimated."))}</p></div></div><div><strong>Latest audience data</strong><p>${escapeHtml(quality.latest_period_end || "Automatic collection is starting")}</p></div><button id="refresh-podcast-reach" class="primary-button" type="button">Refresh now</button>`;
+  document.getElementById("insights-quality").innerHTML = `<div class="overview-status"><span class="coverage-pill ${measuredSourcesCurrent ? "covered" : "building"}">${measuredSourcesCurrent ? "Live data" : notices.length ? "Collection incomplete" : "Connecting data"}</span><div><strong>${number(platformMeasurement.covered_count)} of ${number(platformMeasurement.available_count)} confirmed destinations measured</strong><p>${escapeHtml(platformMeasurement.note || "Unavailable source details are never estimated.")}</p>${notices.length ? `<p>${escapeHtml(notices.join(" "))}</p>` : ""}</div></div><div><strong>Latest audience data</strong><p>${escapeHtml(quality.latest_period_end || "Automatic collection is starting")}</p></div><button id="refresh-podcast-reach" class="primary-button" type="button">Refresh now</button>`;
   const releaseChecks = Object.entries(release.checks || {});
   const setupLabels = {
     distribution_incomplete: ["Refresh platform availability", "We will recheck every known listing and podcast app."],
@@ -389,7 +406,7 @@ function render(payload) {
   }).map((item) => {
     if (item.code === "provider_collectors_not_ready") {
       const missing = release.checks?.provider_collectors?.not_connected || [];
-      return {code:item.code, title:`Reconnect ${missing.map(providerLabel).join(" and ") || "private analytics"}`, detail:"The saved provider session expired. Sign in again only for the named provider."};
+      return {code:item.code, title:`Check ${missing.map(providerLabel).join(" and ") || "private analytics"}`, detail:"See each collector's connection status below. A failed sync does not necessarily mean the sign-in expired."};
     }
     return {code:item.code, ...(setupLabels[item.code] ? {title:setupLabels[item.code][0], detail:setupLabels[item.code][1]} : {title:"Complete data setup", detail:item.message})};
   });
@@ -473,7 +490,7 @@ function render(payload) {
     const measurement = platformCoverageByKey[platform.key];
     return `<a class="platform-card" href="${escapeHtml(safeUrl(platform.url))}" target="_blank" rel="noopener noreferrer"><span>${escapeHtml(mode)}</span><strong>${escapeHtml(platform.name)}</strong><small>${escapeHtml(status)} · ${escapeHtml(checked)}</small>${measurement ? `<small>${escapeHtml(measurement.detail)}</small>` : ""}</a>`;
   }).join("");
-  document.getElementById("provider-strength").innerHTML = providers.length ? providers.map((item) => `<article class="provider-row"><div><strong>${escapeHtml(providerLabel(item.provider))}</strong><span class="freshness ${escapeHtml(item.freshness)}">${item.freshness === "current" ? "Up to date" : "Refresh needed"}</span></div><p class="metric-pairs">${Object.entries(item.metrics || {}).map(([key,value]) => `<span>${escapeHtml(metricLabel(key))}<strong>${number(value)}</strong></span>`).join("")}</p><small>${escapeHtml(item.period_start)} – ${escapeHtml(item.period_end)}</small></article>`).join("") : empty("Connect a provider to see its performance here.");
+  document.getElementById("provider-strength").innerHTML = providers.length ? providers.map((item) => `<article class="provider-row"><div><strong>${escapeHtml(providerLabel(item.provider))}</strong><span class="freshness ${collectorIssues[item.provider] ? "aging" : escapeHtml(item.freshness)}">${escapeHtml(collectorIssues[item.provider] || freshnessLabel(item.freshness))}</span></div><p class="metric-pairs">${Object.entries(item.metrics || {}).map(([key,value]) => `<span>${escapeHtml(metricLabel(key))}<strong>${number(value)}</strong></span>`).join("")}</p><small>Reported data: ${escapeHtml(item.period_start)} – ${escapeHtml(item.period_end)}</small></article>`).join("") : empty("Connect a provider to see its performance here.");
   const audience = payload.audience_by_platform || [];
   const audienceExplanation = `<p class="section-context"><strong>Why these numbers differ:</strong> followers and subscribers are people who opted into an ongoing relationship. Listeners are people who played the show during the provider's stated reporting period; they may not follow, can return in later periods, and cannot be summed across platforms.</p>`;
   document.getElementById("audience-platform").innerHTML = audienceExplanation + (audience.length ? audience.map((item) => `<article class="provider-row"><div><strong>${escapeHtml(providerLabel(item.provider))}</strong><span>${number(item.value)}</span></div><p>${escapeHtml(metricLabel(item.metric))}</p><small>${["unique_listeners", "new_listeners", "returning_listeners", "unique_viewers", "listeners"].includes(item.metric) ? "Latest reported period through" : "Current counter through"} ${escapeHtml(item.period_end)}</small></article>`).join("") : empty("Automatic collectors have not received compatible unique-listener or follower counters yet."));
@@ -488,7 +505,8 @@ function render(payload) {
   renderMonthlyTrends(payload.monthly_trends || {});
   const coverageItems = payload.measurement_coverage || [];
   document.getElementById("measurement-coverage").innerHTML = coverageItems.length ? `<div class="coverage-heading"><div><span class="eyebrow">Measurement coverage</span><h3>${coverageItems.filter((item) => item.available).length}/${coverageItems.length} insight groups available</h3></div><p>Unavailable provider metrics remain blank—not zero.</p></div><div class="coverage-grid">${coverageItems.map((item) => `<article><span class="coverage-dot ${item.available ? "available" : "missing"}"></span><div><strong>${escapeHtml(item.label)}</strong><small>${item.available ? escapeHtml((item.providers || []).map(providerLabel).join(", ") || "Connected source") : item.label === "Web-player engagement" ? "Website connected · awaiting player events and tracking verification" : "Not exposed by connected sources"}</small></div></article>`).join("")}</div>` : "";
-  document.getElementById("metric-definitions").innerHTML = Object.entries(payload.definitions || {}).map(([key,value]) => `<article><strong>${escapeHtml(key.replaceAll("_", " "))}</strong><p>${escapeHtml(value)}</p></article>`).join("") + `<article><strong>Reliability guardrails</strong><p>${(quality.limitations || []).map(escapeHtml).join(" ")}</p></article>`;
+  const overlaps = quality.mixed_grain_conflicts || [];
+  document.getElementById("metric-definitions").innerHTML = Object.entries(payload.definitions || {}).map(([key,value]) => `<article><strong>${escapeHtml(key.replaceAll("_", " "))}</strong><p>${escapeHtml(value)}</p></article>`).join("") + `<article><strong>Reliability guardrails</strong><p>${(quality.limitations || []).map(escapeHtml).join(" ")}</p>${overlaps.length ? `<p>${number(overlaps.length)} reporting windows contain both show and episode observations for the same metric. The show total takes precedence; episode rows are not added on top.</p>` : ""}</article>`;
   document.querySelectorAll("[data-audio-range]").forEach((button) => {
     button.classList.toggle("active", button.dataset.audioRange === audioRange);
     button.setAttribute("aria-pressed", button.dataset.audioRange === audioRange ? "true" : "false");

@@ -863,6 +863,18 @@ def test_episode_measurement_coverage_includes_platform_content_without_internal
     assert episode == {"label": "Episode performance", "available": True, "providers": ["youtube:one"]}
 
 
+def test_provider_card_does_not_add_per_video_average_durations(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "youtube:one", "metric_name": "video_lifetime_average_view_duration_seconds",
+         "metric_value": seconds, "platform_content_id": video, "period_start": "2020-01-01",
+         "period_end": "2026-11-25", "source_reference": "youtube"}
+        for video, seconds in [("one", 20), ("two", 45)]
+    ]}, actor="test")
+    card, = PodcastInsights(temp_db.db_path).dashboard()["provider_strength"]
+    assert "video_lifetime_average_view_duration_seconds" not in card["metrics"]
+
+
 def test_top_platform_content_prefers_lifetime_video_activity():
     rows = [
         {"provider": "youtube:one", "metric_name": "video_views", "metric_value": 12,
