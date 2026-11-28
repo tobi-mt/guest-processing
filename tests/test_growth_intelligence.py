@@ -444,11 +444,11 @@ def test_current_apple_episode_export_preserves_window_and_provider_identity(tem
 
     assert preview["format"] == "provider"
     assert preview["summary"] == {
-        "submitted": 4, "ready": 4, "invalid": 0, "duplicates": 0,
-        "linked_to_episode": 0, "unlinked": 4,
+        "submitted": 3, "ready": 3, "invalid": 0, "duplicates": 0,
+        "linked_to_episode": 0, "unlinked": 3,
     }
     assert {row["metric_name"] for row in preview["observations"]} == {
-        "plays", "unique_listeners", "engaged_listeners", "consumption_depth_pct",
+        "plays", "unique_listeners", "engaged_listeners",
     }
     assert {row["period_start"] for row in preview["observations"]} == {"2026-09-27"}
     assert {row["period_end"] for row in preview["observations"]} == {"2026-11-25"}

@@ -327,11 +327,13 @@ class GrowthIntelligence:
             "Average Consumption", "Analytics Period Start", "Analytics Period End",
         }
         if provider_key == "apple_podcasts" and apple_episode_export.issubset(header_set):
+            # "Average Consumption" in this export is not a percentage of the episode: lifetime
+            # values of 1-4 contradict Apple's own listening time (~27% per play), so it is
+            # not imported until its unit is confirmed.
             metric_columns = {
                 "plays": "Plays",
                 "unique_listeners": "Unique Listeners",
                 "engaged_listeners": "Unique Engaged Listeners",
-                "consumption_depth_pct": "Average Consumption",
             }
             for row_number, raw in enumerate(raw_rows, 2):
                 for metric, column in metric_columns.items():

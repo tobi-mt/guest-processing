@@ -1031,14 +1031,18 @@ def test_provider_card_does_not_sum_per_episode_listeners_or_depth(temp_db):
                 "platform_content_id": content_id, "platform_content_title": f"Episode {content_id}",
             })
     service.record_growth_observations({"observations": rows}, actor="automation")
+    insights = PodcastInsights(temp_db.db_path)
 
-    card = {
-        item["provider"]: item for item in PodcastInsights(temp_db.db_path).dashboard()["provider_strength"]
-    }["apple_podcasts"]
+    card = {item["provider"]: item for item in insights.dashboard()["provider_strength"]}["apple_podcasts"]
 
     assert card["metrics"]["plays"] == 400
     assert "unique_listeners" not in card["metrics"]
-    assert card["metrics"]["consumption_depth_pct"] == 70
+    # Apple's export "Average Consumption" has an unconfirmed unit, so stored rows are not shown.
+    assert "consumption_depth_pct" not in card["metrics"]
+    weighted = PodcastInsights._play_weighted_depth(
+        [row for row in rows if row["metric_name"] == "consumption_depth_pct"], rows,
+    )
+    assert weighted == 70
 
 
 def test_headline_comparison_uses_prior_non_overlapping_window():

@@ -19,6 +19,9 @@ AUDIENCE_METRICS = {
 }
 RATING_METRICS = {"rating_average", "rating_count"}
 CONTENT_NON_ADDITIVE_METRICS = {"unique_listeners", "engaged_listeners", "unique_viewers"}
+# Apple's episode-export "Average Consumption" was imported as a percentage, but its values
+# (1-4) contradict Apple's own listening time; previously stored rows are not displayed.
+UNVERIFIED_UNIT_OVERLAP_GROUPS = {"apple_native_consumption_depth_pct"}
 DEVICE_PREFIX = "device_"
 COUNTRY_PREFIX = "country_"
 
@@ -85,7 +88,11 @@ class PodcastInsights:
         # Public ratings measure sentiment, not reach; keeping them out of the reach rows
         # prevents a daily public snapshot from masking a stale private provider export.
         rating_rows = [row for row in rows if row["metric_name"] in RATING_METRICS]
-        rows = [row for row in rows if row["metric_name"] not in RATING_METRICS]
+        rows = [
+            row for row in rows
+            if row["metric_name"] not in RATING_METRICS
+            and row.get("overlap_group") not in UNVERIFIED_UNIT_OVERLAP_GROUPS
+        ]
         rows = self._prefer_primary_evidence(rows)
         scoped_youtube = {str(row["provider"]) for row in rows if str(row["provider"]).startswith("youtube:")}
         if identified_channels and len(scoped_youtube) >= identified_channels:
