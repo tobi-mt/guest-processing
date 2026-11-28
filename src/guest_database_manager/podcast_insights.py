@@ -85,6 +85,7 @@ class PodcastInsights:
         # prevents a daily public snapshot from masking a stale private provider export.
         rating_rows = [row for row in rows if row["metric_name"] in RATING_METRICS]
         rows = [row for row in rows if row["metric_name"] not in RATING_METRICS]
+        rows = self._prefer_primary_evidence(rows)
         scoped_youtube = {str(row["provider"]) for row in rows if str(row["provider"]).startswith("youtube:")}
         if identified_channels and len(scoped_youtube) >= identified_channels:
             scoped_keys = {
@@ -119,7 +120,23 @@ class PodcastInsights:
                 metric_groups.setdefault(row["metric_name"], []).append(row)
             for metric_rows in metric_groups.values():
                 metric_end = max(row["period_end"] for row in metric_rows)
-                latest.extend(row for row in metric_rows if row["period_end"] == metric_end)
+                end_rows = [row for row in metric_rows if row["period_end"] == metric_end]
+                show_rows = [
+                    row for row in end_rows
+                    if row.get("episode_id") is None and not row.get("platform_content_id")
+                ]
+                if show_rows:
+                    # A daily row and a multi-day window can end on the same date; adding them
+                    # would double count, so show-level cards use the shortest latest window.
+                    show_period = max(
+                        {(row["period_start"], row["period_end"]) for row in show_rows},
+                        key=lambda value: (value[1], value[0]),
+                    )
+                    end_rows = [
+                        row for row in show_rows
+                        if (row["period_start"], row["period_end"]) == show_period
+                    ]
+                latest.extend(end_rows)
             metrics: dict[str, float] = {}
             for metric in {row["metric_name"] for row in latest}:
                 # Per-video averages describe individual videos; their sum is not a channel average.
@@ -687,7 +704,14 @@ class PodcastInsights:
                 and row["metric_name"] in {"downloads", "downloads_7d"}
                 and row.get("source_class") == "host_rss_delivery"
             ]
-            host_rows = cls._prefer_aggregate_rows(daily_host or exact_host)
+            window_days = (end - start).days + 1
+
+            def covers_window(daily: list[dict[str, Any]]) -> bool:
+                return len({row["period_end"] for row in daily}) >= window_days
+
+            host_rows = cls._prefer_aggregate_rows(
+                daily_host if covers_window(daily_host) else exact_host
+            )
             downloads = sum(
                 cls._metric_total(host_rows, metric) for metric in {"downloads", "downloads_7d"}
             )
@@ -707,7 +731,9 @@ class PodcastInsights:
                 and row["metric_name"] in {"plays", "streams"}
                 and row.get("source_class") == "provider_native"
             ]
-            spotify_rows = cls._prefer_aggregate_rows(daily_spotify or exact_spotify)
+            spotify_rows = cls._prefer_aggregate_rows(
+                daily_spotify if covers_window(daily_spotify) else exact_spotify
+            )
             spotify_plays = sum(
                 cls._metric_total(spotify_rows, metric) for metric in {"plays", "streams"}
             )
@@ -1116,14 +1142,45 @@ class PodcastInsights:
         return total
 
     @staticmethod
+    def _prefer_primary_evidence(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Use aggregator copies only for provider measures that no primary source reports.
+
+        Aggregators such as OpenPodcast re-publish provider data with a different grain or
+        shape (daily show plays, country listener counts). Mixing those with the provider's
+        own export would replace lifetime totals with single days or blend counts with shares.
+        """
+        def family(row: dict[str, Any]) -> tuple[str, str]:
+            metric = str(row["metric_name"])
+            dimension = metric.split("_", 1)[0]
+            return (
+                str(row["provider"]).casefold(),
+                dimension if dimension in {"country", "city", "device"} else metric,
+            )
+
+        primary = {family(row) for row in rows if row.get("source_class") != "aggregator_copy"}
+        return [
+            row for row in rows
+            if row.get("source_class") != "aggregator_copy" or family(row) not in primary
+        ]
+
+    @staticmethod
     def _prefer_authoritative_overlap_sources(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Keep one authoritative source family for explicitly overlapping evidence."""
+        """Keep one authoritative source family for explicitly overlapping evidence.
+
+        Overlap is resolved per reporting period: daily rows for different dates often
+        arrive in different collector uploads and are complementary, not duplicates.
+        """
         ungrouped = [row for row in rows if not str(row.get("overlap_group") or "")]
-        grouped: dict[str, list[dict[str, Any]]] = {}
+        grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
         for row in rows:
             overlap_group = str(row.get("overlap_group") or "")
             if overlap_group:
-                grouped.setdefault(overlap_group, []).append(row)
+                key = (
+                    overlap_group,
+                    str(row.get("period_start") or ""),
+                    str(row.get("period_end") or ""),
+                )
+                grouped.setdefault(key, []).append(row)
         priority = {
             "host_rss_delivery": 50,
             "provider_native": 40,

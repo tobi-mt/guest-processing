@@ -384,6 +384,7 @@ function render(payload) {
     notices.push(`${connection.youtube_channel_title || "Google Analytics"}: connection needs attention.`);
   }
   if (connectors.openpodcast?.status === "error") notices.push(`OpenPodcast: sync failed (${connectors.openpodcast.last_error_code || "no error code"}).`);
+  if (connectors.openpodcast?.status === "degraded") notices.push(`OpenPodcast: partial sync (${(connectors.openpodcast.failed_endpoints || []).join(", ") || connectors.openpodcast.last_error_code || "some reports"} unavailable).`);
   if (connectors.public_ratings?.status === "error") notices.push("Apple public ratings: last check failed.");
   if (connectors.public_ratings?.status === "waiting" && !connectors.public_ratings.last_run_at) notices.push("Apple public ratings: awaiting first check.");
   const measuredSourcesCurrent = !notices.length && providers.length > 0 && providers.every((item) => item.freshness === "current");

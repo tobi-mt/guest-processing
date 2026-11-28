@@ -187,6 +187,27 @@ def _collector_debug_port(
     return port
 
 
+def _profile_lock_is_stale(lock_path: Path) -> bool:
+    """Return True only when Chrome's profile lock names a dead process on this computer."""
+    try:
+        target = os.readlink(lock_path)
+    except OSError:
+        return False
+    host, separator, pid_text = target.rpartition("-")
+    if not separator or not pid_text.isdigit():
+        return False
+    local_host = socket.gethostname().split(".")[0].casefold()
+    if host.split(".")[0].casefold() != local_host:
+        return False
+    try:
+        os.kill(int(pid_text), 0)
+    except ProcessLookupError:
+        return True
+    except (PermissionError, OverflowError):
+        return False
+    return False
+
+
 def _launch_browser_context(playwright, *, profile_path: Path, headless: bool):
     options = {
         "headless": headless,
@@ -242,6 +263,11 @@ def _sync_browser_context(
 
     active_port_path.unlink(missing_ok=True)
     profile_lock_path = profile_path / "SingletonLock"
+    if _profile_lock_is_stale(profile_lock_path):
+        # Chrome can exit (crash, sleep, forced quit) without removing its profile lock;
+        # the owning process is gone, so the lock no longer protects any session.
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            (profile_path / name).unlink(missing_ok=True)
     if profile_lock_path.exists() or profile_lock_path.is_symlink():
         raise LocalCollectorError(
             "The dedicated Chrome window is open without collector access. Close that "
@@ -496,6 +522,16 @@ def _select_spotify_all_time(page) -> None:
     page.wait_for_timeout(3_000)
 
 
+def _spotify_export_after(heading):
+    """Return the Export control that belongs to one Spotify analytics section.
+
+    Spotify renders the Performance and Trends sections inside one shared panel, so
+    the nearest ancestor holding an Export button contains both controls. Each
+    section's own control is the first Export button after its heading.
+    """
+    return heading.locator("xpath=following::button[normalize-space()='Export'][1]")
+
+
 def _select_apple_all_time(page) -> None:
     """Select Apple's lifetime episode window and fail closed if it is unavailable."""
     trigger = page.get_by_role("button", name="Choose a date range")
@@ -638,6 +674,7 @@ def sync_once(
     """Download one explicitly labelled provider CSV and upload it through the safe ingestion boundary."""
     sync_playwright = _playwright()
     stage = "browser_session"
+    status_reported = False
     try:
         uploads: list[tuple[str, str]] = []
         missing_reports: list[str] = []
@@ -660,6 +697,7 @@ def sync_once(
                 if visible_password or re.search(r"/(?:login|signin|auth)(?:/|\?|$)", page.url, re.I):
                     login_path = urlsplit(page.url).path[:160]
                     _status(server, token, provider, "reauth_required", "provider_login_required")
+                    status_reported = True
                     raise ReauthenticationRequired(
                         f"Provider login or MFA is required at {login_path or '/'}. "
                         "Run the collector login command again."
@@ -683,20 +721,10 @@ def sync_once(
                         "heading", name="Performance", exact=True,
                     )
                     performance_heading.wait_for(state="visible", timeout=30_000)
-                    performance_section = performance_heading.locator(
-                        "xpath=ancestor::*[.//button[normalize-space()='Export']][1]"
-                    )
-                    export_control = performance_section.get_by_role(
-                        "button", name="Export", exact=True,
-                    )
+                    export_control = _spotify_export_after(performance_heading)
                     trends_heading = page.get_by_role("heading", name="Trends", exact=True)
                     trends_heading.wait_for(state="visible", timeout=30_000)
-                    trends_section = trends_heading.locator(
-                        "xpath=ancestor::*[.//button[normalize-space()='Export']][1]"
-                    )
-                    spotify_episode_export = trends_section.get_by_role(
-                        "button", name="Export", exact=True,
-                    )
+                    spotify_episode_export = _spotify_export_after(trends_heading)
                     apple_range_days = 0
                 elif provider == "apple_podcasts":
                     show_link = page.locator(
@@ -732,12 +760,14 @@ def sync_once(
                            if export_control.nth(index).is_visible()]
                 if not visible:
                     _status(server, token, provider, "error", "export_control_changed")
+                    status_reported = True
                     raise LocalCollectorError(
                         "The provider export control was not found; no control was clicked. "
                         "Run a headed sync to review the provider page."
                     )
                 if len(visible) > 1 and provider != "spotify":
                     _status(server, token, provider, "error", "multiple_export_controls")
+                    status_reported = True
                     raise LocalCollectorError(
                         f"The provider page exposed {len(visible)} export controls; no control was clicked. "
                         "The collector needs a more specific provider selector."
@@ -809,6 +839,13 @@ def sync_once(
             return {"status": "degraded", "missing_reports": missing_reports, **totals}
         return {"status": "completed", **totals}
     except LocalCollectorError:
+        if not status_reported:
+            # Without this, a local failure leaves the dashboard showing the last success.
+            safe_stage = re.sub(r"[^a-z0-9_]+", "_", stage.casefold()).strip("_")[:64] or "unknown"
+            try:
+                _status(server, token, provider, "error", f"collector_failed:{safe_stage}")
+            except (LocalCollectorError, requests.exceptions.RequestException):
+                pass
         raise
     except Exception as exc:
         safe_stage = re.sub(r"[^a-z0-9_]+", "_", stage.casefold()).strip("_")[:64] or "unknown"

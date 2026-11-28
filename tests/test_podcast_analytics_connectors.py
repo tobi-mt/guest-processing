@@ -165,16 +165,22 @@ def test_openpodcast_sync_normalizes_show_level_daily_evidence_and_is_idempotent
     second = connectors.sync_openpodcast(actor="admin", start=__import__("datetime").date(2026, 10, 1),
                                          end=__import__("datetime").date(2026, 10, 7))
 
-    assert first == {"submitted": 9, "inserted": 9, "duplicates": 0, "status": "completed",
+    assert first == {"submitted": 6, "inserted": 6, "duplicates": 0, "status": "completed",
                      "period_start": "2026-10-01", "period_end": "2026-10-07"}
     assert second["inserted"] == 0
-    assert second["duplicates"] == 9
+    assert second["duplicates"] == 6
     with sqlite3.connect(temp_db.db_path) as conn:
         spotify_plays = conn.execute(
             """SELECT metric_value FROM growth_metric_observations
                WHERE provider='spotify' AND metric_name='plays' AND period_end='2026-10-01'"""
         ).fetchone()[0]
+        listener_rows = conn.execute(
+            """SELECT COUNT(*) FROM growth_metric_observations
+               WHERE metric_name IN ('unique_listeners', 'engaged_listeners')"""
+        ).fetchone()[0]
     assert spotify_plays == 18
+    # Per-episode listener counts are not additive into show-level unique listeners.
+    assert listener_rows == 0
     status = connectors.status()["openpodcast"]
     assert status["status"] == "connected"
     assert status["podcast_id"] == "4501"
@@ -287,6 +293,109 @@ def test_openpodcast_records_rate_limit_without_upstream_details(temp_db, monkey
     status = connectors.status()["openpodcast"]
     assert status["last_error_code"] == "http_429:episodesDailyMetrics"
     assert "private response details" not in str(status)
+
+
+class _OpenPodcastResponse:
+    def __init__(self, body: bytes):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self, _limit):
+        return self.body
+
+
+def test_openpodcast_fetches_episode_daily_metrics_in_bounded_windows(temp_db, monkeypatch):
+    import json
+    from urllib.parse import parse_qs, urlsplit
+
+    monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, "server-only-openpodcast-token")
+    monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    daily_windows = []
+
+    def respond(request, timeout):
+        parts = urlsplit(request.full_url)
+        if parts.path.endswith("/episodesDailyMetrics"):
+            query = parse_qs(parts.query)
+            daily_windows.append((query["start"][0], query["end"][0]))
+            # A whole-month response for a large catalog exceeds the 10 MB response cap.
+            if (date.fromisoformat(query["end"][0]) - date.fromisoformat(query["start"][0])).days > 6:
+                return _OpenPodcastResponse(b"x" * 10_000_001)
+            data = [{"date": query["start"][0], "spotify_streams": 1, "spotify_listeners": 1}]
+        else:
+            data = []
+        return _OpenPodcastResponse(json.dumps({"meta": {"result": "success"}, "data": data}).encode())
+
+    monkeypatch.setattr("guest_database_manager.podcast_analytics_connectors.urlopen", respond)
+    result = connectors.sync_openpodcast(actor="admin", start=date(2026, 10, 1), end=date(2026, 10, 30))
+
+    assert result["status"] == "completed"
+    assert daily_windows == [
+        ("2026-10-01", "2026-10-07"), ("2026-10-08", "2026-10-14"), ("2026-10-15", "2026-10-21"),
+        ("2026-10-22", "2026-10-28"), ("2026-10-29", "2026-10-30"),
+    ]
+    assert result["inserted"] == 5
+
+
+def test_openpodcast_keeps_working_endpoints_when_one_upstream_query_fails(temp_db, monkeypatch):
+    import json
+
+    monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, "server-only-openpodcast-token")
+    monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
+    monkeypatch.setenv(OPENPODCAST_AUTO_SYNC_ENV, "true")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    bodies = {
+        # OpenPodcast reports server-side query failures as HTTP 200 with null data.
+        "episodesDailyMetrics": {"meta": {"result": "error", "query": "episodesDailyMetrics"}, "data": None},
+        "podcastFollowers": {"meta": {"result": "success"}, "data": [
+            {"date": "2026-10-07", "spotify_total_followers": 90, "apple_total_followers": 40},
+        ]},
+        "spotifyImpressionsSources": {"meta": {"result": "success"}, "data": []},
+        "spotifyCountries": {"meta": {"result": "success"}, "data": []},
+    }
+
+    def respond(request, timeout):
+        endpoint = next(key for key in bodies if f"/{key}?" in request.full_url)
+        return _OpenPodcastResponse(json.dumps(bodies[endpoint]).encode())
+
+    monkeypatch.setattr("guest_database_manager.podcast_analytics_connectors.urlopen", respond)
+    result = connectors.sync_openpodcast(actor="podcast-analytics-automation",
+                                         start=date(2026, 10, 1), end=date(2026, 10, 7))
+
+    assert result["status"] == "partial"
+    assert result["inserted"] == 2
+    assert result["failed_endpoints"] == ["episodesDailyMetrics"]
+    status = connectors.status()["openpodcast"]
+    assert status["status"] == "degraded"
+    assert status["last_error_code"] == "upstream_query_failed:episodesDailyMetrics"
+    assert status["failed_endpoints"] == ["episodesDailyMetrics"]
+    assert status["last_success_at"]
+    assert connectors.openpodcast_auto_sync_due() is False
+
+
+def test_openpodcast_reports_upstream_query_failure_when_every_endpoint_fails(temp_db, monkeypatch):
+    monkeypatch.setenv(OPENPODCAST_TOKEN_ENV, "server-only-openpodcast-token")
+    monkeypatch.setenv(OPENPODCAST_PODCAST_ID_ENV, "4501")
+    connectors = PodcastAnalyticsConnectors(temp_db.db_path)
+    monkeypatch.setattr(
+        "guest_database_manager.podcast_analytics_connectors.urlopen",
+        lambda *_args, **_kwargs: _OpenPodcastResponse(b'{"meta": {"result": "error"}, "data": null}'),
+    )
+
+    with pytest.raises(AnalyticsConnectorError, match="episodesDailyMetrics"):
+        connectors.sync_openpodcast(actor="admin")
+
+    status = connectors.status()["openpodcast"]
+    assert status["status"] == "error"
+    assert status["last_error_code"] == "upstream_query_failed:episodesDailyMetrics"
+    assert status["failed_endpoints"] == [
+        "episodesDailyMetrics", "podcastFollowers", "spotifyCountries", "spotifyImpressionsSources",
+    ]
 
 
 def test_google_oauth_state_is_hashed_short_lived_and_one_time(temp_db, monkeypatch):

@@ -312,6 +312,102 @@ def test_sync_explains_non_attachable_resident_profile(tmp_path: Path, monkeypat
             pass
 
 
+def test_sync_recovers_from_stale_profile_lock_left_by_a_dead_chrome(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "spotify"
+    profile.mkdir()
+    (profile / "SingletonLock").symlink_to("owner-mac.local-4242")
+    (profile / "SingletonCookie").symlink_to("123")
+    (profile / "SingletonSocket").symlink_to("/tmp/missing/SingletonSocket")
+    launched = []
+
+    def dead_process(pid, signal):
+        assert (pid, signal) == (4242, 0)
+        raise ProcessLookupError
+
+    class Process:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout):
+            return 0
+
+    context = object()
+
+    class Browser:
+        contexts = [context]
+
+        def close(self):
+            pass
+
+    class Chromium:
+        @staticmethod
+        def connect_over_cdp(*args, **kwargs):
+            return Browser()
+
+    class Playwright:
+        chromium = Chromium()
+
+    monkeypatch.setattr(collector.socket, "gethostname", lambda: "Owner-Mac.local")
+    monkeypatch.setattr(collector.os, "kill", dead_process)
+    monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(
+        collector.subprocess, "Popen", lambda arguments, **kwargs: launched.append(arguments) or Process(),
+    )
+
+    with collector._sync_browser_context(
+        Playwright(), profile_path=profile, headless=True,
+    ) as opened_context:
+        assert opened_context is context
+
+    assert launched
+    assert not any((profile / name).is_symlink() for name in (
+        "SingletonLock", "SingletonCookie", "SingletonSocket",
+    ))
+
+
+def test_sync_keeps_profile_lock_owned_by_a_running_chrome(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "spotify"
+    profile.mkdir()
+    (profile / "SingletonLock").symlink_to("owner-mac-4242")
+    monkeypatch.setattr(collector.socket, "gethostname", lambda: "owner-mac")
+    monkeypatch.setattr(collector.os, "kill", lambda pid, signal: None)
+    monkeypatch.setattr(collector, "_native_chrome_executable", lambda: "/Applications/Chrome")
+    monkeypatch.setattr(
+        collector.subprocess, "Popen",
+        lambda *args, **kwargs: pytest.fail("a live profile owner must not get a second Chrome"),
+    )
+
+    with pytest.raises(LocalCollectorError, match="open without collector access"):
+        with collector._sync_browser_context(object(), profile_path=profile, headless=False):
+            pass
+
+    assert (profile / "SingletonLock").is_symlink()
+
+
+def test_local_browser_failures_are_reported_to_the_dashboard(tmp_path: Path, monkeypatch) -> None:
+    def blocked_browser(*args, **kwargs):
+        raise LocalCollectorError("The dedicated Chrome window is open without collector access.")
+
+    monkeypatch.setattr(collector, "_playwright", lambda: nullcontext)
+    monkeypatch.setattr(collector, "_sync_browser_context", blocked_browser)
+    status = Mock()
+    monkeypatch.setattr(collector, "_status", status)
+
+    with pytest.raises(LocalCollectorError, match="without collector access"):
+        collector.sync_once(
+            "apple_podcasts", server="http://127.0.0.1:8765", token="x" * 32,
+            profile_root=tmp_path, url="https://podcastsconnect.apple.com/analytics",
+        )
+
+    status.assert_called_once_with(
+        "http://127.0.0.1:8765", "x" * 32, "apple_podcasts", "error",
+        "collector_failed:browser_session",
+    )
+
+
 def test_provider_export_validation_accepts_supported_spotify_reports() -> None:
     collector._validate_provider_export(
         "spotify",
@@ -700,3 +796,35 @@ def test_owner_notification_passes_text_as_data_not_applescript(monkeypatch) -> 
     argv = run.call_args.args[0]
     assert argv[-1] == 'Sign in" & do shell script "x'
     assert all('do shell script' not in part for part in argv[:-1])
+
+
+def test_spotify_section_exports_resolve_when_sections_share_one_panel():
+    sync_api = pytest.importorskip("playwright.sync_api")
+    markup = """
+    <div data-testid="kpi-chart-panel-performance-stats">
+      <h2>Performance</h2><button>All time</button><button>Export</button>
+      <div><h2>Trends</h2><button>First 7 days</button></div><table></table><button>Export</button>
+    </div>
+    """
+    with sync_api.sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch()
+        except Exception as exc:
+            pytest.skip(f"Playwright Chromium is unavailable: {exc}")
+        try:
+            page = browser.new_page()
+            page.set_content(markup)
+            buttons = page.locator("button", has_text="Export")
+            performance = collector._spotify_export_after(
+                page.get_by_role("heading", name="Performance", exact=True)
+            )
+            trends = collector._spotify_export_after(
+                page.get_by_role("heading", name="Trends", exact=True)
+            )
+
+            assert performance.count() == 1
+            assert trends.count() == 1
+            assert performance.evaluate("(node, first) => node === first", buttons.nth(0).element_handle())
+            assert trends.evaluate("(node, second) => node === second", buttons.nth(1).element_handle())
+        finally:
+            browser.close()

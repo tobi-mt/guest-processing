@@ -30,6 +30,10 @@ OPENPODCAST_TOKEN_ENV = "MIRROR_TALK_OPENPODCAST_TOKEN"
 OPENPODCAST_PODCAST_ID_ENV = "MIRROR_TALK_OPENPODCAST_PODCAST_ID"
 OPENPODCAST_AUTO_SYNC_ENV = "MIRROR_TALK_OPENPODCAST_AUTO_SYNC"
 OPENPODCAST_API_BASE = "https://api.openpodcast.dev/analytics/v1"
+OPENPODCAST_DAILY_CHUNK_DAYS = 7
+OPENPODCAST_ENDPOINTS = (
+    "episodesDailyMetrics", "podcastFollowers", "spotifyImpressionsSources", "spotifyCountries",
+)
 LOCAL_COLLECTOR_PROVIDERS = {"spotify", "apple_podcasts"}
 LOCAL_COLLECTOR_STALE_AFTER = timedelta(days=2)
 WEB_PLAYER_EVENTS = {
@@ -52,6 +56,10 @@ GOOGLE_SCOPES = (
 
 class AnalyticsConnectorError(ValueError):
     """A safe, user-facing connector failure."""
+
+
+class OpenPodcastQueryError(AnalyticsConnectorError):
+    """OpenPodcast accepted the request but could not run the analytics query."""
 
 
 def _now() -> datetime:
@@ -188,6 +196,12 @@ class PodcastAnalyticsConnectors:
             )
         ):
             openpodcast_status = "error"
+        elif (
+            openpodcast_rows and openpodcast_event
+            and openpodcast_event["event_type"] == "analytics_sync_completed"
+            and openpodcast_event_details.get("failed_endpoints")
+        ):
+            openpodcast_status = "degraded"
         return {
             "openpodcast": {
                 "configured": openpodcast_ready,
@@ -197,9 +211,13 @@ class PodcastAnalyticsConnectors:
                 "last_success_at": openpodcast_rows[0]["imported_at"] if openpodcast_rows else None,
                 "latest_period_end": openpodcast_rows[0]["period_end"] if openpodcast_rows else None,
                 "last_error_code": openpodcast_event_details.get("error_code", ""),
+                "failed_endpoints": sorted(openpodcast_event_details.get("failed_endpoints") or {}),
                 "last_error_at": (
                     openpodcast_event["created_at"]
-                    if openpodcast_event and openpodcast_event["event_type"] == "analytics_sync_failed" else None
+                    if openpodcast_event and (
+                        openpodcast_event["event_type"] == "analytics_sync_failed"
+                        or openpodcast_status == "degraded"
+                    ) else None
                 ),
                 "required_environment": [
                     OPENPODCAST_TOKEN_ENV, OPENPODCAST_PODCAST_ID_ENV,
@@ -260,36 +278,39 @@ class PodcastAnalyticsConnectors:
             raise AnalyticsConnectorError("OpenPodcast sync dates must cover no more than 367 days.")
 
         payloads: dict[str, dict[str, Any]] = {}
-        for endpoint in ("episodesDailyMetrics", "podcastFollowers", "spotifyImpressionsSources", "spotifyCountries"):
+        failed_endpoints: dict[str, str] = {}
+        for endpoint in OPENPODCAST_ENDPOINTS:
             try:
-                payloads[endpoint] = self._get_openpodcast_json(
-                    f"{OPENPODCAST_API_BASE}/{podcast_id}/{endpoint}?{urlencode({'start': start.isoformat(), 'end': end.isoformat()})}",
-                    token,
+                payloads[endpoint] = self._get_openpodcast_endpoint(
+                    podcast_id, endpoint, token, start=start, end=end,
                 )
             except AnalyticsConnectorError as exc:
-                error_code = (
-                    "credential_rejected"
-                    if "credential" in str(exc).casefold() else f"endpoint_failed:{endpoint}"
-                )
-                cause = exc.__cause__
-                if error_code != "credential_rejected" and isinstance(cause, HTTPError):
-                    error_code = f"http_{cause.code}:{endpoint}"
-                elif isinstance(cause, (TimeoutError, URLError)) and not isinstance(cause, HTTPError):
-                    error_code = f"network_failed:{endpoint}"
-                with connect_database(self.db_path) as conn:
-                    self._audit(
-                        conn, "analytics_sync_failed", actor,
-                        "OpenPodcast analytics synchronization failed",
-                        {"provider": "openpodcast", "podcast_id": podcast_id,
-                         "endpoint": endpoint, "error_code": error_code},
-                    )
-                    conn.commit()
-                raise AnalyticsConnectorError(
-                    f"OpenPodcast analytics endpoint {endpoint} could not be synchronized."
-                ) from exc
+                error_code = self._openpodcast_error_code(exc, endpoint)
+                if error_code == "credential_rejected":
+                    self._audit_openpodcast_failure(actor, podcast_id, endpoint, error_code)
+                    raise AnalyticsConnectorError(
+                        f"OpenPodcast analytics endpoint {endpoint} could not be synchronized."
+                    ) from exc
+                failed_endpoints[endpoint] = error_code
+        if not payloads:
+            endpoint, error_code = next(iter(failed_endpoints.items()))
+            self._audit_openpodcast_failure(
+                actor, podcast_id, endpoint, error_code, failed_endpoints=failed_endpoints
+            )
+            raise AnalyticsConnectorError(
+                f"OpenPodcast analytics endpoint {endpoint} could not be synchronized."
+            )
         try:
             observations = self._normalize_openpodcast(payloads, start=start, end=end)
             if not observations:
+                if failed_endpoints:
+                    endpoint, error_code = next(iter(failed_endpoints.items()))
+                    self._audit_openpodcast_failure(
+                        actor, podcast_id, endpoint, error_code, failed_endpoints=failed_endpoints
+                    )
+                    raise AnalyticsConnectorError(
+                        f"OpenPodcast analytics endpoint {endpoint} could not be synchronized."
+                    )
                 raise AnalyticsConnectorError("OpenPodcast returned no usable analytics for the selected period.")
             correlation_id = f"openpodcast-{podcast_id}-{start.isoformat()}-{end.isoformat()}"
             result = self.growth.record_observations(observations, actor=actor, correlation_id=correlation_id)
@@ -297,14 +318,79 @@ class PodcastAnalyticsConnectors:
             raise
         except (TypeError, ValueError) as exc:
             raise AnalyticsConnectorError("OpenPodcast returned analytics values that could not be validated.") from exc
+        partial = {
+            "failed_endpoints": failed_endpoints,
+            "error_code": next(iter(failed_endpoints.values())),
+        } if failed_endpoints else {}
         with connect_database(self.db_path) as conn:
             self._audit(
                 conn, "analytics_sync_completed", actor, "Read-only OpenPodcast analytics synchronization",
                 {"provider": "openpodcast", "podcast_id": podcast_id, "period_start": start.isoformat(),
-                 "period_end": end.isoformat(), **result},
+                 "period_end": end.isoformat(), **result, **partial},
             )
             conn.commit()
-        return {**result, "status": "completed", "period_start": start.isoformat(), "period_end": end.isoformat()}
+        return {
+            **result, "status": "partial" if failed_endpoints else "completed",
+            "period_start": start.isoformat(), "period_end": end.isoformat(),
+            **({"failed_endpoints": sorted(failed_endpoints)} if failed_endpoints else {}),
+        }
+
+    def _get_openpodcast_endpoint(
+        self, podcast_id: str, endpoint: str, token: str, *, start: date, end: date,
+    ) -> dict[str, Any]:
+        """Fetch one endpoint, splitting per-episode daily metrics into bounded windows.
+
+        ``episodesDailyMetrics`` returns one row per catalog episode per day (about 18 MB
+        for 30 days of a 2,000-episode catalog), so one request exceeds the response cap.
+        """
+        def fetch(window_start: date, window_end: date) -> dict[str, Any]:
+            query = urlencode({"start": window_start.isoformat(), "end": window_end.isoformat()})
+            return self._get_openpodcast_json(f"{OPENPODCAST_API_BASE}/{podcast_id}/{endpoint}?{query}", token)
+
+        if endpoint != "episodesDailyMetrics":
+            return fetch(start, end)
+        rows: list[Any] = []
+        window_start = start
+        while window_start <= end:
+            window_end = min(end, window_start + timedelta(days=OPENPODCAST_DAILY_CHUNK_DAYS - 1))
+            rows.extend(fetch(window_start, window_end).get("data") or [])
+            window_start = window_end + timedelta(days=1)
+        return {"data": rows}
+
+    @staticmethod
+    def _openpodcast_error_code(exc: AnalyticsConnectorError, endpoint: str) -> str:
+        """Return a safe diagnostic code without upstream bodies or credentials."""
+        if "credential" in str(exc).casefold():
+            return "credential_rejected"
+        if isinstance(exc, OpenPodcastQueryError):
+            return f"upstream_query_failed:{endpoint}"
+        if "too large" in str(exc).casefold():
+            return f"response_too_large:{endpoint}"
+        cause = exc.__cause__
+        if isinstance(cause, HTTPError):
+            return f"http_{cause.code}:{endpoint}"
+        if isinstance(cause, (TimeoutError, URLError)):
+            return f"network_failed:{endpoint}"
+        if isinstance(cause, json.JSONDecodeError):
+            return f"invalid_response:{endpoint}"
+        return f"endpoint_failed:{endpoint}"
+
+    def _audit_openpodcast_failure(
+        self, actor: str, podcast_id: str, endpoint: str, error_code: str,
+        *, failed_endpoints: dict[str, str] | None = None,
+    ) -> None:
+        details: dict[str, Any] = {
+            "provider": "openpodcast", "podcast_id": podcast_id,
+            "endpoint": endpoint, "error_code": error_code,
+        }
+        if failed_endpoints:
+            details["failed_endpoints"] = failed_endpoints
+        with connect_database(self.db_path) as conn:
+            self._audit(
+                conn, "analytics_sync_failed", actor,
+                "OpenPodcast analytics synchronization failed", details,
+            )
+            conn.commit()
 
     @staticmethod
     def _normalize_openpodcast(payloads: dict[str, dict[str, Any]], *, start: date, end: date) -> list[dict[str, Any]]:
@@ -322,12 +408,11 @@ class PodcastAnalyticsConnectors:
             })
 
         daily: dict[tuple[str, str, str], float] = {}
+        # Rows are per episode. Plays add up to show totals; per-episode listener counts
+        # do not, because one listener of several episodes would be counted repeatedly.
         metric_map = {
             "spotify_streams": ("spotify", "plays"),
-            "spotify_listeners": ("spotify", "unique_listeners"),
             "apple_plays": ("apple_podcasts", "plays"),
-            "apple_listeners": ("apple_podcasts", "unique_listeners"),
-            "apple_engaged_listeners": ("apple_podcasts", "engaged_listeners"),
         }
         for row in payloads.get("episodesDailyMetrics", {}).get("data") or []:
             day = str(row.get("date") or "")[:10]
@@ -1115,6 +1200,12 @@ class PodcastAnalyticsConnectors:
             raise AnalyticsConnectorError("OpenPodcast analytics could not be synchronized.") from exc
         except (URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise AnalyticsConnectorError("OpenPodcast analytics could not be synchronized.") from exc
+        # OpenPodcast reports server-side query failures as HTTP 200 with a null data list.
+        if isinstance(payload, dict) and (
+            payload.get("data") is None
+            or (isinstance(payload.get("meta"), dict) and payload["meta"].get("result") == "error")
+        ):
+            raise OpenPodcastQueryError("OpenPodcast could not run this analytics query for the podcast.")
         if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
             raise AnalyticsConnectorError("OpenPodcast returned an unexpected analytics response.")
         return payload

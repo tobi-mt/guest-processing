@@ -168,7 +168,11 @@ Ratings are stored as `apple_podcasts_public` observations, kept out of reach to
 provider freshness, and countries reached. Spotify's public show page exposes no rating,
 so Spotify ratings are not collected.
 
-OpenPodcast is optional secondary evidence. Supplying its token and podcast ID does not start background requests. Set `MIRROR_TALK_OPENPODCAST_AUTO_SYNC=true` only after a manual sync has been verified against the configured OpenPodcast account; automatic failures back off for 20 hours.
+OpenPodcast is optional secondary evidence. Supplying its token and podcast ID does not start background requests. Set `MIRROR_TALK_OPENPODCAST_AUTO_SYNC=true` only after a manual sync has been verified against the configured OpenPodcast account; automatic failures back off for 20 hours. OpenPodcast can return HTTP 200 with `data: null` when one of its queries fails upstream; that is recorded as `upstream_query_failed:<endpoint>`, and the remaining endpoints are still collected. `episodesDailyMetrics` returns one row per catalog episode per day (about 18 MB for 30 days), so it is requested in 7-day windows to stay under the 10 MB response cap. Per-episode listener counts are not summed into show-level listeners because they are not additive. OpenPodcast rows are `aggregator_copy` evidence: the dashboard uses them only for provider measures (a metric, or a country/city/device dimension) that no primary export reports, so they never replace a collector's lifetime totals or mix counts with shares. A sync with some failed endpoints is reported as `degraded`, lists them, and keeps the backoff.
+
+The owner-Mac collectors remove a Chrome profile lock left by a Chrome process that is no longer running, but never remove a lock held by a live process. Every local failure is reported to the dashboard as `collector_failed_<stage>`, so a failing collector no longer appears connected. Spotify exports are located as the first Export button after each section heading, because Spotify renders Performance and Trends in one shared panel.
+
+Overlap deduplication selects one source per overlap group **per period**. Daily rows collected in different runs therefore combine into multi-day totals (28-day, monthly, and trend windows) instead of only the newest upload's days counting.
 
 Acceptance:
 

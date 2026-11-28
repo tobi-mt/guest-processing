@@ -171,6 +171,59 @@ def test_performance_trend_reconciles_exact_windows_and_drives_headline_comparis
     }
 
 
+def test_multi_day_totals_combine_daily_rows_from_separate_collector_uploads(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    observations = []
+    # Each collector run uploads a new file; earlier days are not repeated in later uploads.
+    for index, day in enumerate(("2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04")):
+        observations.extend([
+            {"provider": "spotify", "metric_name": "downloads", "metric_value": 10 + index,
+             "period_start": day, "period_end": day, "source_reference": f"spotify-{day}.csv",
+             "source_class": "host_rss_delivery", "overlap_group": "open_rss_downloads"},
+            {"provider": "spotify", "metric_name": "plays", "metric_value": 5,
+             "period_start": day, "period_end": day, "source_reference": f"spotify-{day}.csv",
+             "source_class": "provider_native", "overlap_group": "spotify_native_plays"},
+        ])
+    observations.extend([
+        {"provider": "youtube:channel", "metric_name": "plays", "metric_value": 30,
+         "period_start": "2026-10-01", "period_end": "2026-10-02", "source_reference": "youtube-api"},
+        # 2026-10-05 has no audio rows, so this window is only partially covered by daily data.
+        {"provider": "youtube:channel", "metric_name": "plays", "metric_value": 40,
+         "period_start": "2026-10-04", "period_end": "2026-10-05", "source_reference": "youtube-api"},
+    ])
+    service.record_growth_observations({"observations": observations}, actor="automation")
+
+    result = PodcastInsights(temp_db.db_path).dashboard()
+
+    monthly = result["monthly_trends"]["spotify"]
+    assert monthly == [{"period": "2026-10", "downloads": 46.0, "plays": 20.0}]
+    assert result["summary"]["spotify_28d"]["downloads"] == 46
+    trend = {point["period_end"]: point for point in result["performance_trend"]}
+    assert trend["2026-10-02"]["open_rss_downloads"] == 21
+    assert trend["2026-10-02"]["spotify_native_plays"] == 10
+    assert trend["2026-10-02"]["coverage"] == "complete"
+    assert trend["2026-10-05"]["open_rss_downloads"] is None
+    assert trend["2026-10-05"]["coverage"] == "partial"
+
+
+def test_provider_card_does_not_add_daily_and_window_rows_ending_together(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    service.record_growth_observations({"observations": [
+        {"provider": "spotify", "metric_name": "downloads", "metric_value": 17,
+         "period_start": "2026-11-26", "period_end": "2026-11-26", "source_reference": "daily.csv",
+         "source_class": "host_rss_delivery", "overlap_group": "open_rss_downloads"},
+        {"provider": "spotify", "metric_name": "downloads", "metric_value": 700,
+         "period_start": "2026-10-30", "period_end": "2026-11-26", "source_reference": "window.csv",
+         "source_class": "host_rss_delivery", "overlap_group": "open_rss_downloads"},
+    ]}, actor="automation")
+
+    cards = PodcastInsights(temp_db.db_path).dashboard()["provider_strength"]
+    spotify = next(card for card in cards if card["provider"] == "spotify")
+
+    assert spotify["metrics"]["downloads"] == 17
+    assert spotify["period_start"] == "2026-11-26"
+
+
 def test_insights_support_source_backed_device_and_country_dimensions(temp_db):
     service = GuestWebService(temp_db.db_path)
     service.record_growth_observations({"observations": [
@@ -924,3 +977,43 @@ def test_unlinked_platform_content_exposes_stale_reporting_period():
     }])
 
     assert result[0]["freshness"] == "stale"
+
+
+def test_aggregator_copies_only_fill_measures_without_primary_provider_evidence(temp_db):
+    service = GuestWebService(temp_db.db_path)
+    openpodcast = {"source_class": "aggregator_copy"}
+    service.record_growth_observations({"observations": [
+        {"provider": "apple_podcasts", "metric_name": "plays", "metric_value": 900,
+         "period_start": "2020-06-01", "period_end": "2026-11-20", "source_reference": "apple.csv",
+         "source_class": "provider_native", "overlap_group": "apple_native_plays",
+         "platform_content_id": "1001", "platform_content_title": "Episode"},
+        {"provider": "spotify", "metric_name": "country_audience_share_pct_germany", "metric_value": 60,
+         "period_start": "2026-10-29", "period_end": "2026-11-25", "source_reference": "spotify.csv",
+         "source_class": "provider_native"},
+        {"provider": "spotify", "metric_name": "country_audience_share_pct_kenya", "metric_value": 40,
+         "period_start": "2026-10-29", "period_end": "2026-11-25", "source_reference": "spotify.csv",
+         "source_class": "provider_native"},
+        # OpenPodcast copies: a newer single-day Apple play count and Spotify listener counts.
+        {"provider": "apple_podcasts", "metric_name": "plays", "metric_value": 2,
+         "period_start": "2026-11-26", "period_end": "2026-11-26",
+         "source_reference": "openpodcast-api:episodesDailyMetrics",
+         "overlap_group": "apple_native_plays", **openpodcast},
+        {"provider": "spotify", "metric_name": "country_listeners_us", "metric_value": 158,
+         "period_start": "2026-10-30", "period_end": "2026-11-28",
+         "source_reference": "openpodcast-api:spotifyCountries", **openpodcast},
+        {"provider": "spotify", "metric_name": "spotify_home_impressions", "metric_value": 1360,
+         "period_start": "2026-10-27", "period_end": "2026-11-25",
+         "source_reference": "openpodcast-api:spotifyImpressionsSources", **openpodcast},
+    ]}, actor="automation")
+
+    result = PodcastInsights(temp_db.db_path).dashboard()
+
+    cards = {card["provider"]: card for card in result["provider_strength"]}
+    assert cards["apple_podcasts"]["metrics"]["plays"] == 900
+    spotify_countries = [item for item in result["countries"] if item["provider"] == "spotify"]
+    assert {item["name"] for item in spotify_countries} == {"Germany", "Kenya"}
+    assert {item["share_pct"] for item in spotify_countries} == {60.0, 40.0}
+    retained = PodcastInsights._prefer_primary_evidence([
+        {"provider": "spotify", "metric_name": "spotify_home_impressions", "source_class": "aggregator_copy"},
+    ])
+    assert len(retained) == 1
